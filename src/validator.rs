@@ -1,0 +1,367 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::schema::{AgentConfig, Contract, TaskSpec};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidationError {
+    message: String,
+}
+
+impl ValidationError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{message}")]
+pub struct ValidationErrors {
+    message: String,
+    errors: Vec<ValidationError>,
+}
+
+impl ValidationErrors {
+    fn from_vec(errors: Vec<ValidationError>) -> Self {
+        let mut message = String::from("INVALID ota.yaml");
+        for error in &errors {
+            message.push_str("\n- ");
+            message.push_str(&error.message);
+        }
+
+        Self { message, errors }
+    }
+
+    #[cfg(test)]
+    pub fn errors(&self) -> &[ValidationError] {
+        &self.errors
+    }
+}
+
+pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
+    let mut errors = Vec::new();
+
+    validate_version(contract, &mut errors);
+    validate_project(contract, &mut errors);
+    validate_execution(contract, &mut errors);
+    validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
+        value.version()
+    });
+    validate_named_versions("tool", &contract.tools, &mut errors, |value| {
+        value.version()
+    });
+    validate_tasks(&contract.tasks, &mut errors);
+    validate_checks(contract, &mut errors);
+    validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationErrors::from_vec(errors))
+    }
+}
+
+fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    if contract.version != 1 {
+        errors.push(ValidationError::new(format!(
+            "unsupported contract version `{}`; expected `1`",
+            contract.version
+        )));
+    }
+}
+
+fn validate_project(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    if contract.project.name.trim().is_empty() {
+        errors.push(ValidationError::new("`project.name` must not be empty"));
+    }
+}
+
+fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(execution) = &contract.execution else {
+        return;
+    };
+
+    if let Some(preferred) = execution.preferred
+        && !execution.supported.is_empty()
+        && !execution.supported.contains(&preferred)
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.preferred` is set to `{}` but it is missing from `execution.supported`",
+            format_backend(preferred)
+        )));
+    }
+}
+
+fn validate_named_versions<T>(
+    label: &str,
+    values: &BTreeMap<String, T>,
+    errors: &mut Vec<ValidationError>,
+    version: impl Fn(&T) -> &str,
+) {
+    for (name, value) in values {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "{label} name must not be empty"
+            )));
+        }
+
+        if version(value).trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` must declare a non-empty version"
+            )));
+        }
+    }
+}
+
+fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
+    for (name, task) in tasks {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new("task name must not be empty"));
+        }
+
+        if task.run.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{name}` must declare a non-empty `run` command"
+            )));
+        }
+
+        for dependency in &task.depends_on {
+            if !tasks.contains_key(dependency) {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` depends on unknown task `{dependency}`"
+                )));
+            }
+        }
+    }
+
+    detect_task_cycles(tasks, errors);
+}
+
+fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
+    let mut visited = BTreeSet::new();
+    let mut active = Vec::new();
+    let mut cycle_roots = BTreeSet::new();
+
+    for name in tasks.keys() {
+        visit_task(
+            name,
+            tasks,
+            &mut visited,
+            &mut active,
+            &mut cycle_roots,
+            errors,
+        );
+    }
+}
+
+fn visit_task(
+    name: &str,
+    tasks: &BTreeMap<String, TaskSpec>,
+    visited: &mut BTreeSet<String>,
+    active: &mut Vec<String>,
+    cycle_roots: &mut BTreeSet<String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if visited.contains(name) {
+        return;
+    }
+
+    if let Some(index) = active.iter().position(|task| task == name) {
+        let cycle = active[index..].to_vec();
+        if cycle_roots.insert(cycle[0].clone()) {
+            errors.push(ValidationError::new(format!(
+                "task dependency cycle detected: {} -> {}",
+                cycle.join(" -> "),
+                name
+            )));
+        }
+        return;
+    }
+
+    let Some(task) = tasks.get(name) else {
+        return;
+    };
+
+    active.push(name.to_string());
+
+    for dependency in &task.depends_on {
+        if tasks.contains_key(dependency) {
+            visit_task(dependency, tasks, visited, active, cycle_roots, errors);
+        }
+    }
+
+    active.pop();
+    visited.insert(name.to_string());
+}
+
+fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for check in &contract.checks {
+        if check.name.trim().is_empty() {
+            errors.push(ValidationError::new("check name must not be empty"));
+        }
+
+        if check.run.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare a non-empty `run` command",
+                check.name
+            )));
+        }
+    }
+}
+
+fn validate_agent(
+    agent: Option<&AgentConfig>,
+    tasks: &BTreeMap<String, TaskSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(agent) = agent else {
+        return;
+    };
+
+    validate_task_reference(
+        "agent.entrypoint",
+        agent.entrypoint.as_deref(),
+        tasks,
+        errors,
+    );
+    validate_task_reference(
+        "agent.default_task",
+        agent.default_task.as_deref(),
+        tasks,
+        errors,
+    );
+
+    for task in &agent.safe_tasks {
+        validate_task_reference("agent.safe_tasks", Some(task.as_str()), tasks, errors);
+    }
+
+    for task in &agent.verify_after_changes {
+        validate_task_reference(
+            "agent.verify_after_changes",
+            Some(task.as_str()),
+            tasks,
+            errors,
+        );
+    }
+
+    for path in &agent.writable_paths {
+        if path.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`agent.writable_paths` entries must not be empty",
+            ));
+        }
+    }
+}
+
+fn validate_task_reference(
+    field: &str,
+    task_name: Option<&str>,
+    tasks: &BTreeMap<String, TaskSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(task_name) = task_name else {
+        return;
+    };
+
+    if !tasks.contains_key(task_name) {
+        errors.push(ValidationError::new(format!(
+            "`{field}` references unknown task `{task_name}`"
+        )));
+    }
+}
+
+fn format_backend(backend: crate::schema::Backend) -> &'static str {
+    match backend {
+        crate::schema::Backend::Native => "native",
+        crate::schema::Backend::Container => "container",
+        crate::schema::Backend::Remote => "remote",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::parser::parse_contract_str;
+
+    use super::validate_contract;
+
+    #[test]
+    fn validates_a_minimal_contract() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_task_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: cargo run
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` depends on unknown task `setup`"
+        );
+    }
+
+    #[test]
+    fn rejects_task_dependency_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo fetch
+    depends_on:
+      - build
+  build:
+    run: cargo build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task dependency cycle detected: build -> setup -> build"
+        );
+    }
+}
