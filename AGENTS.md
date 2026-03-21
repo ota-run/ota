@@ -1,0 +1,618 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# AGENTS.md
+
+## Purpose
+
+This document defines how any AI agent, contributor, or engineer should work inside the Ota repositories to avoid drift, regressions, and helpful-but-wrong changes.
+
+Ota is open infrastructure for repo readiness. It is both:
+- a product
+- a specification surface
+- a CLI/runtime
+- an adoption wedge centered on `ota doctor`, `ota init`, `ota detect`, `ota up`, and `ota run`
+
+Agents must optimize for correctness, trust, determinism, and adoption usefulness.
+
+---
+
+## Core Product Context
+
+Ota is the open repo readiness system for humans and agents.
+
+At the repo level, Ota defines:
+- what a repo needs
+- how it becomes runnable
+- how readiness is validated
+- how tasks are executed
+- how agents can work safely
+
+At the workspace level, Ota can provision multiple repositories into a ready development workspace.
+
+The core architecture is:
+- `ota.yaml` = canonical repo readiness contract
+- `ota.workspace.yaml` = multi-repo workspace/bootstrap contract
+- CLI = deterministic engine and UX layer
+- JSON output = machine-readable integration surface
+
+Agents must preserve this separation.
+
+---
+
+## Efficiency, Quality, and Infrastructure Discipline
+
+Use the minimum context, tokens, tool calls, edits, and validation needed to complete the task correctly.
+
+### Working rules
+
+- **Read narrowly first.** Expand only when needed for correctness.
+- **Edit narrowly, but completely.** Include every directly connected change required for correctness.
+- **Validate with the lightest check that gives real confidence.**
+- **Do not scan the whole codebase** unless the task truly requires it.
+- **Do not perform broad refactors, broad searches, speculative cleanup, or optional exploration** unless requested or clearly necessary.
+- **Do not invent new flows, abstractions, commands, or schema sections** if the existing architecture already supports the task.
+- **Reuse existing code paths, crates, parsers, validators, fixtures, and command patterns** wherever possible.
+- **Keep responses short, direct, and action-focused.**
+
+### Quality guardrails
+
+- **Accuracy is mandatory.**
+- **Completeness matters more than superficial minimalism.**
+- **Minimal work does not mean shallow work.**
+- **If a wider check is required for safety, correctness, or integration integrity, do it — but keep it tightly scoped.**
+- **If a requested change likely affects adjacent logic, inspect the smallest necessary connected surface before editing.**
+- **Make the narrowest correct change, not the fastest careless change.**
+
+### Ota guardrails
+
+- **Preserve determinism.**
+- **Preserve spec clarity and forward compatibility.**
+- **Preserve trust in `ota doctor` and honesty in `ota detect` / `ota init`.**
+- **Prefer canonical flows over parallel implementations.**
+- **Avoid duplicate logic, fragmented behavior, and unnecessary abstractions.**
+- **Keep repo-level contract logic separate from workspace bootstrap logic.**
+- **Keep command behavior stable and machine-readable.**
+
+### Infrastructure and platform judgment
+
+- **Act like a principal infrastructure engineer, not a code generator.**
+- **Recommend the most durable, secure, operationally safe, and platform-aligned path** when it is materially better than the requested implementation.
+- **Favor standardization, observability, deterministic behavior, contract clarity, and clean boundaries** over clever shortcuts.
+- **Call out drift, weak boundaries, duplicated responsibility, leaky abstractions, and anything that undermines Ota as infrastructure.**
+- **Treat naming, schema shape, CLI behavior, JSON output, and execution semantics as strategic product decisions, not local implementation details.**
+- **When several options are viable, recommend the one that best improves long-term reliability, maintainability, developer experience, and adoption leverage.**
+- **Proactively surface high-value improvements, risks, and next best steps without waiting to be asked.**
+
+### Model usage limit discipline
+
+- **Treat agent/model usage limits as a hard engineering constraint.**
+- **Optimize for minimum usage without degrading correctness, safety, or architectural quality.**
+- **Stop exploring once sufficient evidence exists.**
+- **Use the fewest files, shortest useful command output, and narrowest validation** that still gives real confidence.
+- **Avoid speculative work.**
+- **Keep communication compressed, direct, and high-signal.**
+- **Escalate only when necessary.** If materially more usage would be required to increase certainty, state the trade-off briefly before expanding scope.
+
+---
+
+## Strategic Thinking & Challenge Protocol
+
+- **Do not default to agreement.**
+- **If a proposed design has a cleaner, safer, or more scalable alternative, present it.**
+- **If a decision increases long-term complexity, call it out explicitly.**
+- **If multiple valid approaches exist:**
+  - present the top 2 options
+  - state trade-offs clearly
+  - recommend one with justification
+- **If the requested idea is optimal, explain why it is optimal and why alternatives are weaker.**
+- **Prioritize architectural integrity over short-term convenience.**
+
+### Decision evaluation criteria
+
+When evaluating any design choice, assess:
+- **Spec integrity** — does this preserve the canonical contract cleanly?
+- **Execution clarity** — does this make runtime behavior more or less predictable?
+- **Adoption leverage** — does this improve selfish utility for one repo, one developer, one agent?
+- **Trustworthiness** — does this increase or weaken trust in `ota doctor`, `ota init`, or `ota detect`?
+- **Layer purity** — does this belong in repo spec, workspace spec, CLI UX, engine, or optional intelligence?
+- **Long-term maintainability** — will this make future changes easier or harder?
+- **Blast radius** — how much breaks if this changes?
+- **Operational clarity** — can users and agents debug it easily?
+
+If a proposal weakens any of the above, state the risk before implementing.
+
+---
+
+## Product priorities
+
+### Ota’s current wedge
+
+The winning path is:
+1. `ota doctor`
+2. `ota init`
+3. `ota detect`
+4. `ota up`
+5. `ota run`
+
+Agents must respect that priority.
+
+### Product principle
+
+**Doctor first, contract second.**
+
+This means:
+- `ota doctor` must be genuinely useful even before full spec adoption
+- `ota init` and `ota detect` must be honest and trustworthy
+- the contract exists to support execution and diagnosis, not abstract elegance
+
+### Canonical truths
+
+- `ota.yaml` is the source of truth for repo readiness
+- `ota.workspace.yaml` is the source of truth for workspace bootstrap
+- scripts and procedural helpers may exist, but must not replace the contract
+- optional intelligence may assist inference, but must not define runtime truth
+
+### V1 delivery discipline
+
+V1 is the product contract. Phases are the implementation plan.
+
+Agents must follow the phased V1 plan in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
+
+Required discipline:
+
+- **Do not cut V1 scope by silently dropping spec requirements.**
+- **Do not collapse phases together just to move faster.**
+- **Do not pull later-phase features into the current phase** unless correctness requires it.
+- **Do not redefine a phase after implementation pressure appears.** Fix the plan explicitly or finish the phase properly.
+- **Finish trust-sensitive foundations before broader UX surfaces.**
+- **Treat `validate`, `run`, `doctor`, and `detect` as trust-building commands.** Their correctness matters more than feature count.
+- **Do not start the next phase until the current phase has clear fixtures, validation, and stable command behavior.**
+- **If a phase reveals spec pressure, document the issue explicitly instead of improvising product behavior in code.**
+
+Phase order is:
+
+1. `V1a` Contract Core
+2. `V1b` Read Path
+3. `V1c` Execution Core
+4. `V1d` Diagnosis Core
+5. `V1e` Onboarding Path
+6. `V1f` Detection
+7. `V1g` Agent Surface and Polish
+
+When implementing V1:
+
+- **Keep the spec whole.**
+- **Sequence the work honestly.**
+- **Protect determinism before convenience.**
+- **Protect trust before automation.**
+
+---
+
+## Plan mode
+
+Use plan mode whenever work is more than 3 steps or touches architecture.
+
+- Write checklist tasks.
+- Identify risks.
+- Define acceptance criteria.
+- If something goes sideways, stop and re-plan.
+
+---
+
+## Subagent strategy
+
+Use subagents for focused exploration and parallel research to keep main context clean.
+
+### When to use
+
+- Parallel research across files
+- Focused codebase exploration with low confidence
+- Separate investigation of parser, validator, CLI, schema, or output concerns
+- Comparing multiple design options without polluting main context
+
+### When not to use
+
+- Reading a specific file path
+- Searching for a specific struct, enum, or command handler
+- Simple edits or single-step tasks
+
+### Best practices
+
+- Give detailed tasks and clear success criteria
+- Specify exactly what information should be returned
+- Launch multiple subagents only when their work is truly independent
+
+---
+
+## Change discipline
+
+- Prefer minimal, reversible changes.
+- One PR = one theme.
+- Keep the spec and implementation aligned.
+- Do not add speculative features.
+- Do not add hidden behavior.
+- Do not silently broaden command semantics.
+
+---
+
+## Elegance check
+
+For non-trivial changes, pause and ask:
+**Is there a simpler, more durable way?**
+
+If a solution feels hacky, reconsider before proceeding.
+
+---
+
+## Self-improvement loop
+
+After any user correction, capture the lesson to prevent repeating mistakes.
+
+- Update `tasks/lessons.md` with the pattern and correction
+- Write a rule that prevents the same mistake
+- Review relevant lessons at session start
+- Iterate until mistake rate drops
+
+---
+
+## Package / layer rules
+
+Recommended logical boundaries:
+- `schema` → spec types, versioning, JSON schema, serialization model
+- `parser` → file loading and decoding
+- `validator` → structural and semantic validation
+- `doctor` → readiness diagnosis and prioritization
+- `detect` → deterministic repo inspection and inference
+- `init` → onboarding UX above detect
+- `runner` → task execution
+- `workspace` → multi-repo bootstrap logic
+- `export` → interop outputs and generated artifacts
+- `output` → human-readable and JSON output formatting
+- `cli` → command definitions and orchestration only
+
+### Layer rules
+
+- **CLI should stay thin.** It should delegate to domain modules.
+- **Validation logic belongs in validator/checker layers, not scattered across commands.**
+- **Detection logic belongs in detect/init layers, not in general execution paths.**
+- **Workspace bootstrap must not duplicate repo readiness logic.**
+- **Output formatting should not contain business rules.**
+
+---
+
+## Naming rules
+
+Use canonical terms consistently:
+- **repo readiness** = repo-level contract and validation
+- **workspace bootstrap** = multi-repo provisioning
+- **doctor** = diagnosis command
+- **init** = onboarding command that creates starter `ota.yaml`
+- **detect** = inference engine
+- **up** = prepare environment and make repo ready
+- **run** = execute named task
+- **check** = run readiness checks without task execution
+- **contract** = the canonical declarative spec
+
+Avoid inventing overlapping terms if the above already fit.
+
+---
+
+## Security and trust rules
+
+### Never hide uncertainty
+
+- `ota detect` and `ota init` must surface provenance and confidence
+- do not present weak inference as ground truth
+- do not invent secret values or environment values
+
+### Never silently mutate important state
+
+- do not overwrite existing `ota.yaml` without explicit instruction
+- do not auto-fix repos or environment state unless the command and UX clearly say so
+- do not broaden behavior under the hood
+
+### Preserve deterministic behavior
+
+- command results should be explainable
+- exit codes should be stable
+- JSON output should be stable and structured
+- no hidden LLM dependency in core execution paths
+
+---
+
+## Development workflow
+
+### Before starting work
+
+1. Read the relevant spec/docs
+2. Check existing code for the current pattern
+3. Use plan mode for complex changes
+4. Identify what adjacent behavior may be affected
+5. Keep validation tight but real
+6. If touching command UX, think about human output, JSON output, and exit codes together
+
+### Autonomous bug fixing
+
+- **Technical bugs**: fix directly
+- **Spec/behavior bugs**: verify against the canonical spec first
+- **Zero hand-holding**: resolve what can be resolved without unnecessary back-and-forth
+- **Do not invent new product behavior** while fixing a bug unless the spec clearly requires it
+
+### Commit and push rules
+
+- **Do not commit or push** unless explicitly asked by the user
+- After making changes, wait for approval before committing
+- Show what changed and summarize why
+- Only commit when the user explicitly asks
+
+### Implementation guidelines
+
+1. Follow existing patterns
+2. Write or update tests
+3. Update relevant documentation/specs
+4. Preserve schema validity and output stability
+5. Validate behavior before considering the task done
+6. Never create unused code
+
+---
+
+## Rust implementation doctrine
+
+### Language rule
+
+- **Rust is the core implementation language**
+- treat Rust as a product choice, not a local preference
+
+### Rust principles
+
+- Prefer clarity over cleverness
+- Prefer owned data over tricky borrowing in v1/v2 paths where reasonable
+- Keep async minimal unless clearly necessary
+- Keep modules small and explicit
+- Use stable, boring crates where possible
+- Optimize for maintainability and AI-assisted iteration
+- Lock behavior with tests before broad implementation
+- Avoid macro-heavy, overly generic, or lifetime-heavy abstractions unless truly justified
+
+### Recommended crate posture
+
+Use stable foundations such as:
+- `clap`
+- `serde`
+- `serde_yaml`
+- `thiserror`
+- `anyhow`
+- `schemars` where helpful
+
+Avoid unnecessary complexity in the early core.
+
+---
+
+## Testing guidelines
+
+### Core testing expectations
+
+- test parser and validator behavior
+- test semantic validation rules
+- test command UX where practical
+- test JSON output structure for machine-facing commands
+- test exit code semantics
+- test fixture repos across multiple stacks
+
+### Required product tests
+
+- `ota doctor` should correctly classify blockers, warnings, and informational results
+- `ota init` should generate valid starter config
+- `ota detect` should surface provenance and confidence consistently
+- `ota run` should fail clearly on invalid task references
+- task dependency cycles must be rejected
+- `ota up` should produce clear ready/not-ready results
+
+### Fixture strategy
+
+Maintain fixture repositories or fixture directories representing:
+- Node
+- Python
+- Go
+- Java
+- mixed service/container repos
+- eventually monorepo/workspace cases
+
+### Regression discipline
+
+Any bug fix that changes behavior should add a regression test where practical.
+
+---
+
+## Common pitfalls
+
+### 1. Spec drift
+- Problem: implementation behavior stops matching docs/spec
+- Fix: update spec and code together, or explicitly stage the mismatch
+
+### 2. Overconfident inference
+- Problem: `ota detect` or `ota init` makes weak guesses look authoritative
+- Fix: surface source and confidence clearly
+
+### 3. Layer collapse
+- Problem: workspace bootstrap starts re-implementing repo readiness
+- Fix: keep workspace orchestration above repo-level contract
+
+### 4. JSON instability
+- Problem: machine-readable output changes casually
+- Fix: treat JSON shape as contract-like once exposed
+
+### 5. CLI bloat
+- Problem: commands collect too much business logic directly
+- Fix: keep CLI thin and move logic into reusable modules
+
+### 6. Clever Rust
+- Problem: implementation becomes harder to maintain than the product is worth
+- Fix: prefer boring, explicit Rust
+
+### 7. Weak prioritization in `ota doctor`
+- Problem: output is correct but not useful
+- Fix: highest-priority blocking issue should appear first, with next action
+
+---
+
+## Documentation rules
+
+Update documentation when changing:
+- command behavior
+- output format
+- schema shape
+- validation semantics
+- exit code semantics
+- adoption workflow (`doctor`, `init`, `detect`, `up`)
+
+The docs are part of the product.
+
+---
+
+## Code review checklist
+
+- [ ] Does this preserve spec integrity?
+- [ ] Does this keep `ota doctor` useful and trustworthy?
+- [ ] Does this preserve honesty in `ota init` / `ota detect`?
+- [ ] Is the layer boundary correct?
+- [ ] Is JSON output stable and clear?
+- [ ] Are exit codes handled intentionally?
+- [ ] Is the change narrow and complete?
+- [ ] Are tests sufficient?
+- [ ] Is documentation updated?
+- [ ] Is there any unused code?
+- [ ] Is there a simpler design that should have been chosen instead?
+
+---
+
+## Definition of done
+
+Before marking a task complete, all of the following must be satisfied:
+
+### Testing
+- [ ] Relevant tests pass locally
+- [ ] New behavior has test coverage where appropriate
+- [ ] Bug fixes include a regression test where practical
+
+### Documentation
+- [ ] Relevant spec/docs updated
+- [ ] Command or schema changes documented
+- [ ] Summary includes what changed and why
+
+### Code quality
+- [ ] No new lint/format issues
+- [ ] No unused code
+- [ ] No hidden or accidental behavior changes
+
+### Product trust
+- [ ] Human output remains clear
+- [ ] JSON output remains usable
+- [ ] Uncertainty is surfaced honestly
+- [ ] No silent breaking change was introduced
+
+---
+
+## No silent breaking changes
+
+Any breaking change must explicitly call out:
+1. What breaks
+2. Who is affected
+3. Migration path
+4. Whether compatibility/deprecation is possible first
+
+Examples:
+- command flags removed or changed
+- JSON fields removed or renamed
+- schema keys removed or semantics changed
+- exit codes changed
+- task/check interpretation changed
+
+Prefer compatibility and deprecation where feasible.
+
+---
+
+## Resources
+
+Suggested core docs for Ota:
+- `README.md`
+- `docs/spec/`
+- `docs/commands/`
+- `docs/examples/`
+- `docs/roadmap/`
+- workspace bootstrap spec
+- init spec
+- v1 product/spec docs
+
+Keep these updated as Ota evolves.
+
+---
+
+## Support
+
+When in doubt:
+1. Check the current spec first
+2. Check the current implementation pattern
+3. Prefer the simpler, more honest design
+4. Ask for clarification before guessing
+
+Never fake certainty.
+
+---
+
+## Critical copyright notice
+
+**All created files must include the official Ota Apache-2.0 header used in this repository.**
+
+This applies to:
+- `.rs`
+- `.ts`
+- `.js`
+- `.md`
+- `.yaml`
+- `.yml`
+- `.sql`
+- `.json`
+
+If you create a new file, add the header at the top.
+If you modify an existing file without the header, add it unless doing so would be clearly inappropriate for generated or third-party content.
+
+---
+## Open-source quality bar
+
+- Act like a maintainer of high-reputation open infrastructure.
+- Optimize for correctness, clarity, working code, stable behavior, and long-term trust.
+- Prefer explicitness over magic.
+- Do not ship fragile, speculative, or half-correct behavior.
+- Every change should improve or preserve Ota’s reputation for reliability, honesty, and architectural quality.
+- Treat contributor experience, docs quality, and consistency as product features.
+
+## Agent usage discipline
+
+- Treat Codex and other coding-agent credits as a hard engineering constraint.
+- Use the least context, fewest file reads, and smallest correct validation needed.
+- Avoid broad exploration once the safe path is clear.
+- Do not burn credits on speculative searches, optional cleanup, or repeated re-checking.
+- Keep prompts, edits, and validation high-signal and efficient.
