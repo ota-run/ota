@@ -39,7 +39,6 @@ impl ValidationErrors {
         Self { message, errors }
     }
 
-    #[cfg(test)]
     pub fn errors(&self) -> &[ValidationError] {
         &self.errors
     }
