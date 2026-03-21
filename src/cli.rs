@@ -1,3 +1,27 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -8,6 +32,7 @@ use crate::output::{
     ValidateSuccess,
 };
 use crate::parser::{LoadContractError, load_contract};
+use crate::runner::{RunError, run_task};
 use crate::validator::{ValidationErrors, validate_contract};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -35,6 +60,13 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Run a validated task from an Ota contract.
+    Run {
+        /// Task name to execute.
+        task: String,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -69,6 +101,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
     match cli.command {
         Commands::Validate { json, path } => validate(path.as_deref(), format_from_json(json)),
         Commands::Tasks { json, path } => tasks(path.as_deref(), format_from_json(json)),
+        Commands::Run { task, path } => run(task.as_str(), path.as_deref()),
     }
 }
 
@@ -152,6 +185,19 @@ fn tasks(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
     }
 }
 
+fn run(task_name: &str, path: Option<&Path>) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+
+    match load_and_validate(&resolved_path) {
+        Ok(contract) => match run_task(&contract, &resolved_path, task_name) {
+            Ok(outcome) => CommandOutput::status(outcome.exit_code),
+            Err(error) => CommandOutput::failure(render_run_error(error)),
+        },
+        Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
+        Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+    }
+}
+
 fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format!("TASKS {path}");
 
@@ -214,6 +260,10 @@ fn load_and_validate(path: &Path) -> Result<crate::schema::Contract, ContractPro
     let contract = load_contract(path).map_err(ContractProblem::Load)?;
     validate_contract(&contract).map_err(ContractProblem::Validation)?;
     Ok(contract)
+}
+
+fn render_run_error(error: RunError) -> String {
+    error.to_string()
 }
 
 enum ContractProblem {
