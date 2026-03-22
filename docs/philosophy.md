@@ -1,6 +1,6 @@
 # Ota Philosophy
 
-Ota is being built as open repo-readiness infrastructure.
+Ota is being built as open infrastructure for repo readiness.
 
 The project is guided by a small set of principles:
 
@@ -8,7 +8,7 @@ The project is guided by a small set of principles:
 
 A repo should have one explicit readiness contract.
 
-Ota exists to consolidate scattered setup truth into `ota.yaml`, not to create another hidden layer beside the repo's existing reality.
+Ota exists to consolidate scattered setup truth into `ota.yaml`, not to create another hidden layer beside the repo.
 
 ## Determinism before intelligence
 
@@ -40,6 +40,14 @@ The same contract should serve:
 - local tooling
 - agents
 
+## Adoption before elegance
+
+Ota should earn its place on a repo by solving a real problem immediately.
+
+The first value is not abstract standardization.
+
+The first value is helping someone understand why a repo is not ready and what to do next.
+
 ## Conservative generation
 
 Generated configuration is trust-sensitive.
@@ -47,8 +55,10 @@ Generated configuration is trust-sensitive.
 Ota prefers:
 
 - reviewable dry-runs
-- high-confidence writes only
-- refusal to overwrite existing contracts
+- explicit write behavior
+- provenance for inferred fields
+- confidence instead of false certainty
+- refusal to overwrite existing contracts silently
 
 It does not try to look smart by writing ambiguous configuration.
 
@@ -78,6 +88,7 @@ The goal is not a large command catalog.
 
 The goal is a small set of commands that are dependable on real repositories:
 
+- `ota init`
 - `ota validate`
 - `ota run`
 - `ota doctor`
