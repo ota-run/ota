@@ -39,6 +39,7 @@ For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
 ota --help
 ota --version
 ota --debug <command>
+ota --file /path/to/ota.yaml <command>
 ```
 
 Ota currently ships these commands:
@@ -58,6 +59,14 @@ When a command accepts a `PATH`, it may be either:
 
 - a direct path to `ota.yaml`
 - a directory containing `ota.yaml`
+
+For commands that read an existing contract, Ota now resolves in this order:
+
+- `--file <path>`
+- `OTA_FILE`
+- explicit file `PATH`
+- upward discovery from the provided directory `PATH`
+- upward discovery from the current directory
 
 `ota detect` is different. Its `PATH` is a repo root to inspect.
 
@@ -92,7 +101,7 @@ ota validate --json [PATH]
 
 Current behavior:
 
-- loads `ota.yaml`
+- resolves `ota.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - parses the contract
 - applies semantic validation
 - exits `0` on success and non-zero on failure
@@ -120,17 +129,20 @@ Current behavior:
 
 - validates the contract first
 - prints tasks in deterministic order
+- resolves the execution form for the current OS
 - includes task metadata when present
-- shows whether each task uses `run` or `script`
+- includes variant summaries when variants are declared
 
 Text output:
 
 - header: `TASKS <path>`
-- each task may include `kind`, `category`, `depends_on`, and `safe_for_agent`
+- each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
+- each task includes a short execution preview
 
 JSON output:
 
 - success: `ok`, `path`, `tasks`
+- each task includes the resolved execution plus optional `selected_variant_os` and `variants`
 - failure: `ok`, `path`, and either `errors` or `error`
 
 ## `ota run`
@@ -145,10 +157,11 @@ Current behavior:
 
 - validates the contract first
 - resolves task dependencies before execution
+- resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
 - runs in the contract directory
 - applies configured environment values
-- prints an advisory stderr note when `execution.lifecycle: ephemeral` is declared
+- prints task progress and advisory notes on stderr
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

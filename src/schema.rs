@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -188,9 +188,53 @@ pub struct TaskSpec {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub safe_for_agent: bool,
+    #[serde(default)]
+    pub variants: Vec<TaskVariantSpec>,
 }
 
 impl TaskSpec {
+    pub fn default_execution_kind(&self) -> Option<&'static str> {
+        match (self.run.as_ref(), self.script.as_ref()) {
+            (Some(_), None) => Some("run"),
+            (None, Some(_)) => Some("script"),
+            _ => None,
+        }
+    }
+
+    pub fn default_execution_body(&self) -> Option<&str> {
+        match (self.run.as_deref(), self.script.as_deref()) {
+            (Some(run), None) => Some(run),
+            (None, Some(script)) => Some(script),
+            _ => None,
+        }
+    }
+
+    pub fn resolved_execution(&self, os: &str) -> Option<TaskExecution<'_>> {
+        self.variants
+            .iter()
+            .find(|variant| variant.when.matches(os))
+            .and_then(TaskVariantSpec::execution)
+            .or_else(|| {
+                Some(TaskExecution {
+                    kind: self.default_execution_kind()?,
+                    body: self.default_execution_body()?,
+                    os: None,
+                })
+            })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskVariantSpec {
+    pub when: TaskWhen,
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub script: Option<String>,
+}
+
+impl TaskVariantSpec {
     pub fn execution_kind(&self) -> Option<&'static str> {
         match (self.run.as_ref(), self.script.as_ref()) {
             (Some(_), None) => Some("run"),
@@ -206,6 +250,44 @@ impl TaskSpec {
             _ => None,
         }
     }
+
+    pub fn execution(&self) -> Option<TaskExecution<'_>> {
+        Some(TaskExecution {
+            kind: self.execution_kind()?,
+            body: self.execution_body()?,
+            os: self.when.os.as_deref(),
+        })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWhen {
+    #[serde(default)]
+    pub os: Option<String>,
+}
+
+impl TaskWhen {
+    pub fn matches(&self, os: &str) -> bool {
+        self.os.as_deref() == Some(os)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskExecution<'a> {
+    pub kind: &'static str,
+    pub body: &'a str,
+    pub os: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskVariantView<'a> {
+    pub os: &'a str,
+    pub kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]

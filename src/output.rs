@@ -24,7 +24,7 @@ use serde::Serialize;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
-use crate::schema::TaskSpec;
+use crate::schema::{TaskSpec, TaskVariantView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -185,23 +185,45 @@ pub struct TaskSummary<'a> {
     pub run: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_variant_os: Option<&'a str>,
     pub depends_on: &'a [String],
     pub safe_for_agent: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<TaskVariantView<'a>>,
 }
 
 impl<'a> TaskSummary<'a> {
-    pub fn from_spec(name: &'a str, task: &'a TaskSpec) -> Self {
+    pub fn from_spec(name: &'a str, task: &'a TaskSpec, current_os: &str) -> Self {
+        let execution = task
+            .resolved_execution(current_os)
+            .expect("validated task must resolve to a default or variant execution");
         Self {
             name,
             description: task.description.as_deref(),
             category: task.category.as_deref(),
-            kind: task
-                .execution_kind()
-                .expect("validated task must declare exactly one execution form"),
-            run: task.run.as_deref(),
-            script: task.script.as_deref(),
+            kind: execution.kind,
+            run: (execution.kind == "run").then_some(execution.body),
+            script: (execution.kind == "script").then_some(execution.body),
+            selected_variant_os: execution.os,
             depends_on: &task.depends_on,
             safe_for_agent: task.safe_for_agent,
+            variants: task
+                .variants
+                .iter()
+                .map(|variant| TaskVariantView {
+                    os: variant
+                        .when
+                        .os
+                        .as_deref()
+                        .expect("validated task variant must declare `when.os`"),
+                    kind: variant
+                        .execution_kind()
+                        .expect("validated task variant must declare exactly one execution form"),
+                    run: variant.run.as_deref(),
+                    script: variant.script.as_deref(),
+                })
+                .collect(),
         }
     }
 }

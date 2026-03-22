@@ -1,3 +1,27 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
 # Ota Contract Reference
 
 This document describes the current `ota.yaml` contract accepted by the shipped parser and validator.
@@ -263,30 +287,45 @@ tasks:
       pnpm dev
     depends_on:
       - setup
+  bootstrap:
+    run: ./scripts/bootstrap.sh
+    variants:
+      - when:
+          os: windows
+        run: .\scripts\bootstrap.ps1
 ```
 
 Fields:
 
 - `description`: optional string
 - `category`: optional string
-- exactly one of `run` or `script`
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
+- `variants`: optional list of conditional task executions
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
+
+Variant fields:
+
+- `when.os`: required for each current variant entry; supported values are `linux`, `macos`, and `windows`
+- exactly one of `run` or `script`
 
 Rules:
 
 - task names must not be empty
-- tasks must declare exactly one of `run` or `script`
+- tasks must declare a default `run` or `script`, or at least one variant
 - `run` must be non-empty when present
 - `script` must be non-empty when present
+- variant entries must declare `when.os`
+- variant entries must declare exactly one of `run` or `script`
+- duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
 - task dependency cycles are rejected
 
 Current execution model:
 
 - `run` and `script` are shell-compatible execution forms
+- when variants are declared, Ota resolves the best matching `when.os` entry first and falls back to the default execution
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
 

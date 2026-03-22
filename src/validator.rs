@@ -148,6 +148,7 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
             errors.push(ValidationError::new("task name must not be empty"));
         }
 
+        let has_base_fields = task.run.is_some() || task.script.is_some();
         match (task.run.as_deref(), task.script.as_deref()) {
             (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `run` command"),
@@ -155,10 +156,59 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
             (None, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `script` body"),
             )),
-            (Some(_), Some(_)) | (None, None) => errors.push(ValidationError::new(format!(
+            (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
                 "task `{name}` must declare exactly one of `run` or `script`"
             ))),
-            _ => {}
+            (Some(_), None) | (None, Some(_)) => {}
+            (None, None) => {}
+        }
+
+        if !has_base_fields && task.variants.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{name}` must declare exactly one of `run` or `script`"
+            )));
+        }
+
+        let mut seen_variant_os = BTreeSet::new();
+        for (index, variant) in task.variants.iter().enumerate() {
+            let Some(os) = variant.when.os.as_deref() else {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must declare `when.os`"
+                )));
+                continue;
+            };
+
+            if !matches!(os, "linux" | "macos" | "windows") {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} declares unsupported `when.os: {os}`"
+                )));
+            }
+
+            if !seen_variant_os.insert(os.to_string()) {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare multiple variants for `when.os: {os}`"
+                )));
+            }
+
+            match (variant.run.as_deref(), variant.script.as_deref()) {
+                (Some(run), None) if run.trim().is_empty() => {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` variant #{index} must declare a non-empty `run` command"
+                    )))
+                }
+                (None, Some(script)) if script.trim().is_empty() => {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` variant #{index} must declare a non-empty `script` body"
+                    )))
+                }
+                (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must not declare both `run` and `script`"
+                ))),
+                (None, None) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must declare exactly one of `run` or `script`"
+                ))),
+                _ => {}
+            }
         }
 
         for dependency in &task.depends_on {
@@ -649,6 +699,61 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `dev` must declare a non-empty `script` body"
+        );
+    }
+
+    #[test]
+    fn rejects_task_variants_without_when_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    variants:
+      - when: {}
+        run: ./scripts/setup.sh
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `setup` variant #0 must declare `when.os`"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_task_variant_os_values() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: ./scripts/setup.sh
+    variants:
+      - when:
+          os: macos
+        run: ./scripts/setup-macos.sh
+      - when:
+          os: macos
+        run: ./scripts/setup-macos-2.sh
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `setup` must not declare multiple variants for `when.os: macos`"
         );
     }
 
