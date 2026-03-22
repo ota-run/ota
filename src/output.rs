@@ -55,6 +55,31 @@ pub struct WorkspaceDoctorSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceRepoUpReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub ok: bool,
+    pub status: String,
+    pub phase: String,
+    pub findings: Vec<Finding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceUpSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub repos: &'a [WorkspaceRepoUpReport],
+}
+
+#[derive(Debug, Serialize)]
 pub struct InitSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,

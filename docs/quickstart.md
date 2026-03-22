@@ -52,6 +52,7 @@ From a directory with `ota.workspace.yaml`:
 ```bash
 cargo run -- workspace validate
 cargo run -- workspace doctor
+cargo run -- workspace up
 ```
 
 Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.

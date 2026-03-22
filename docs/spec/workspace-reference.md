@@ -115,3 +115,19 @@ Current workspace diagnosis behavior:
 - downgrades optional repo errors to warnings at the workspace layer
 
 This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
+
+## `ota workspace up`
+
+Current workspace prepare behavior:
+
+- validates workspace structure first
+- runs repo-level `up` for each referenced repo
+- aggregates repo-level status, phase, findings, and exit details
+- optional repo failures do not fail the overall workspace status
+
+Current non-goals:
+
+- parallel repo startup
+- cross-repo dependency scheduling
+- host or workstation provisioning
+- a workspace-only bootstrap engine that bypasses repo contracts
