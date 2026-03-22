@@ -25,6 +25,7 @@ use serde::Serialize;
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
 use crate::schema::{TaskSpec, TaskVariantView};
+use crate::workspace::WorkspaceRepoDoctorReport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -44,6 +45,13 @@ pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceDoctorSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub repos: &'a [WorkspaceRepoDoctorReport],
 }
 
 #[derive(Debug, Serialize)]

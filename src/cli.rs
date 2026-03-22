@@ -131,6 +131,14 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Diagnose workspace repo readiness from an ota.workspace.yaml contract.
+    Doctor {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> i32 {
@@ -225,6 +233,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
         }
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Validate { json, path } => commands::workspace_validate(
+                path.as_deref(),
+                file.as_deref(),
+                format_from_json(json),
+                debug,
+            ),
+            WorkspaceCommands::Doctor { json, path } => commands::workspace_doctor(
                 path.as_deref(),
                 file.as_deref(),
                 format_from_json(json),
@@ -1408,6 +1422,89 @@ tasks:
                 .as_deref()
                 .unwrap()
                 .contains("workspace repo `web` contract")
+        );
+    }
+
+    #[test]
+    fn workspace_doctor_json_reports_repo_findings() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+env:
+  OTA_WORKSPACE_REQUIRED:
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["ok"], false);
+        assert_eq!(
+            json["repos"][0]["findings"][0]["summary"],
+            "Missing environment variable: OTA_WORKSPACE_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn workspace_doctor_downgrades_optional_repo_errors_to_warnings() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+env:
+  OTA_OPTIONAL_REQUIRED:
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("web [optional] (READY)"));
+        assert!(
+            output
+                .stdout
+                .contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
         );
     }
 

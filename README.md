@@ -40,6 +40,8 @@ ota check
 ota up
 ota detect --dry-run
 ota detect
+ota workspace validate
+ota workspace doctor
 ```
 
 Global flag:
@@ -61,6 +63,8 @@ Current behavior:
 - `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract from repo signals such as package manifests, runtime files, Java build wrappers, build files, and Docker Compose service declarations, then prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
+- `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
+- `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth
 
 ## Detect trust model
 
@@ -82,6 +86,7 @@ Ota is being built as open infrastructure, not as a vendor-specific workflow.
 The long-term aim is:
 
 - one canonical readiness contract per repo
+- one canonical bootstrap contract per workspace
 - deterministic behavior without LLM dependency in the core path
 - human and agent symmetry
 - interoperability with the existing tool ecosystem
@@ -96,6 +101,7 @@ The repository already contains a working core for the v1 path:
 - readiness diagnosis
 - onboarding via `up`
 - detection with dry-run and conservative write mode
+- separate workspace contract validation and workspace diagnosis
 - fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, and ugly/polyglot mixed-reality repo shapes
 
 ## Quickstart
@@ -132,6 +138,7 @@ Example contracts:
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
+- [Workspace reference](docs/spec/workspace-reference.md)
 - [Service behavior](docs/spec/service-behavior.md)
 - [Shell semantics](docs/spec/shell-semantics.md)
 - [JSON output reference](docs/spec/json-output-reference.md)
@@ -169,3 +176,6 @@ Example contracts:
 - [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
 - [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml)
 - [Full contract example](examples/full-contract/ota.yaml)
+
+### Workspace
+- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml)

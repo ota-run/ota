@@ -22,10 +22,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
+use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
 use crate::parser::{LoadContractError, load_contract};
 use crate::validator::validate_contract;
 
@@ -55,6 +56,30 @@ pub struct WorkspaceRepoSpec {
     pub contract: Option<String>,
     #[serde(default)]
     pub required: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceRepoRef {
+    pub name: String,
+    pub path: PathBuf,
+    pub contract_path: PathBuf,
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceRepoDoctorReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub ok: bool,
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceDoctorReport {
+    pub ok: bool,
+    pub repos: Vec<WorkspaceRepoDoctorReport>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -129,6 +154,52 @@ pub fn validate_workspace_contract(
     workspace_path: &Path,
     contract: &WorkspaceContract,
 ) -> Result<(), WorkspaceValidationErrors> {
+    let repo_refs = validate_workspace_shape(workspace_path, contract)?;
+    let mut errors = Vec::new();
+
+    for repo in repo_refs {
+        match load_contract(&repo.contract_path) {
+            Ok(repo_contract) => {
+                if let Err(error) = validate_contract(&repo_contract) {
+                    for validation_error in error.errors() {
+                        errors.push(WorkspaceValidationError::new(format!(
+                            "workspace repo `{}` contract `{}` is invalid: {}",
+                            repo.name,
+                            repo.contract_path.display(),
+                            validation_error
+                        )));
+                    }
+                }
+            }
+            Err(LoadContractError::Read { .. }) => {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{}` contract was not found: {}",
+                    repo.name,
+                    repo.contract_path.display()
+                )));
+            }
+            Err(error) => {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{}` contract `{}` could not be loaded: {}",
+                    repo.name,
+                    repo.contract_path.display(),
+                    error
+                )));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(WorkspaceValidationErrors::new(errors))
+    }
+}
+
+pub fn validate_workspace_shape(
+    workspace_path: &Path,
+    contract: &WorkspaceContract,
+) -> Result<Vec<WorkspaceRepoRef>, WorkspaceValidationErrors> {
     let mut errors = Vec::new();
 
     if contract.version != 1 {
@@ -155,6 +226,7 @@ pub fn validate_workspace_contract(
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     let mut seen_repo_paths = BTreeSet::new();
+    let mut repo_refs = Vec::new();
 
     for (name, repo) in &contract.repos {
         if name.trim().is_empty() {
@@ -197,38 +269,140 @@ pub fn validate_workspace_contract(
             None => repo_root.join("ota.yaml"),
         };
 
-        match load_contract(&contract_path) {
-            Ok(repo_contract) => {
-                if let Err(error) = validate_contract(&repo_contract) {
-                    for validation_error in error.errors() {
-                        errors.push(WorkspaceValidationError::new(format!(
-                            "workspace repo `{name}` contract `{}` is invalid: {}",
-                            contract_path.display(),
-                            validation_error
-                        )));
-                    }
-                }
-            }
-            Err(LoadContractError::Read { .. }) => {
-                errors.push(WorkspaceValidationError::new(format!(
-                    "workspace repo `{name}` contract was not found: {}",
-                    contract_path.display()
-                )));
-            }
-            Err(error) => {
-                errors.push(WorkspaceValidationError::new(format!(
-                    "workspace repo `{name}` contract `{}` could not be loaded: {}",
-                    contract_path.display(),
-                    error
-                )));
-            }
-        }
+        repo_refs.push(WorkspaceRepoRef {
+            name: name.clone(),
+            path: repo_root,
+            contract_path,
+            required: repo.required,
+        });
     }
 
     if errors.is_empty() {
-        Ok(())
+        Ok(repo_refs)
     } else {
         Err(WorkspaceValidationErrors::new(errors))
+    }
+}
+
+pub fn diagnose_workspace_contract(
+    workspace_path: &Path,
+    contract: &WorkspaceContract,
+) -> Result<WorkspaceDoctorReport, WorkspaceValidationErrors> {
+    let repo_refs = validate_workspace_shape(workspace_path, contract)?;
+    let mut repos = Vec::new();
+
+    for repo in repo_refs {
+        repos.push(diagnose_workspace_repo(repo));
+    }
+
+    let ok = repos.iter().all(|repo| repo.ok);
+    Ok(WorkspaceDoctorReport { ok, repos })
+}
+
+fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
+    let findings = match load_contract(&repo.contract_path) {
+        Ok(contract) => match validate_contract(&contract) {
+            Ok(()) => {
+                adjust_repo_findings(
+                    diagnose_contract(&contract, &repo.contract_path),
+                    repo.required,
+                )
+                .findings
+            }
+            Err(error) => error
+                .errors()
+                .iter()
+                .map(|validation_error| {
+                    repo_finding(
+                        repo.required,
+                        format!("Invalid repo contract: {}", repo.name),
+                        format!(
+                            "repo contract `{}` is invalid: {}",
+                            repo.contract_path.display(),
+                            validation_error
+                        ),
+                        format!(
+                            "fix `{}` and re-run `ota workspace doctor`",
+                            repo.contract_path.display()
+                        ),
+                    )
+                })
+                .collect(),
+        },
+        Err(LoadContractError::Read { .. }) => vec![repo_finding(
+            repo.required,
+            format!("Missing repo contract: {}", repo.name),
+            format!(
+                "workspace repo `{}` does not have a readable contract at `{}`",
+                repo.name,
+                repo.contract_path.display()
+            ),
+            format!(
+                "create `{}` or point `repos.{}.contract` at the correct repo contract",
+                repo.contract_path.display(),
+                repo.name
+            ),
+        )],
+        Err(error) => vec![repo_finding(
+            repo.required,
+            format!("Unreadable repo contract: {}", repo.name),
+            format!(
+                "workspace repo `{}` contract `{}` could not be loaded: {}",
+                repo.name,
+                repo.contract_path.display(),
+                error
+            ),
+            format!(
+                "repair `{}` and re-run `ota workspace doctor`",
+                repo.contract_path.display()
+            ),
+        )],
+    };
+
+    let ok = !findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
+
+    WorkspaceRepoDoctorReport {
+        name: repo.name,
+        path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(),
+        required: repo.required,
+        ok,
+        findings,
+    }
+}
+
+fn adjust_repo_findings(report: DoctorReport, required: bool) -> DoctorReport {
+    if required {
+        return report;
+    }
+
+    DoctorReport {
+        ok: true,
+        findings: report
+            .findings
+            .into_iter()
+            .map(|mut finding| {
+                if finding.severity == FindingSeverity::Error {
+                    finding.severity = FindingSeverity::Warn;
+                }
+                finding
+            })
+            .collect(),
+    }
+}
+
+fn repo_finding(required: bool, summary: String, why: String, next: String) -> Finding {
+    Finding {
+        severity: if required {
+            FindingSeverity::Error
+        } else {
+            FindingSeverity::Warn
+        },
+        summary,
+        why,
+        next,
     }
 }
 

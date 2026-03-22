@@ -53,6 +53,7 @@ Ota currently ships these commands:
 - `ota up`
 - `ota detect`
 - `ota workspace validate`
+- `ota workspace doctor`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -400,3 +401,32 @@ JSON output:
 
 - success: `ok`, `path`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota workspace doctor`
+
+Diagnose workspace repo readiness from an Ota workspace contract.
+
+```bash
+ota workspace doctor [PATH]
+ota workspace doctor --json [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure
+- evaluates each referenced repo through its own `ota.yaml`
+- keeps workspace logic above repo diagnosis instead of duplicating it
+- downgrades findings for optional repos to warnings
+
+Text output:
+
+- header: `WORKSPACE DOCTOR <path>`
+- status line: `READY` or `NOT READY`
+- each repo includes required/optional status, contract path, and findings
+
+JSON output:
+
+- `ok`
+- `path`
+- `repos`
