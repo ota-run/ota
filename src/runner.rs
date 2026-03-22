@@ -65,6 +65,14 @@ pub struct RunOutcome {
     pub exit_code: i32,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct CapturedRunOutcome {
+    pub executed_tasks: Vec<String>,
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
         return Err(RunError::UnknownTask {
@@ -127,10 +135,57 @@ pub fn run_task_with_progress(
     task_name: &str,
     emit_progress: bool,
 ) -> Result<RunOutcome, RunError> {
+    let outcome = run_task_internal(
+        contract,
+        contract_path,
+        task_name,
+        TaskExecutionMode::Stream { emit_progress },
+    )?;
+
+    Ok(RunOutcome {
+        executed_tasks: outcome.executed_tasks,
+        exit_code: outcome.exit_code,
+    })
+}
+
+pub fn run_task_captured(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+) -> Result<CapturedRunOutcome, RunError> {
+    run_task_internal(
+        contract,
+        contract_path,
+        task_name,
+        TaskExecutionMode::Capture,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TaskExecutionMode {
+    Stream { emit_progress: bool },
+    Capture,
+}
+
+#[derive(Debug)]
+struct TaskCommandOutput {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn run_task_internal(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    mode: TaskExecutionMode,
+) -> Result<CapturedRunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
     let env_overrides = resolve_task_env(contract)?;
     let working_dir = contract_working_dir(contract_path);
     let mut executed_tasks = Vec::new();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
     let current_os = current_os();
 
     for task_name in &plan.tasks {
@@ -152,36 +207,86 @@ pub fn run_task_with_progress(
         };
         let command = execution.body;
 
-        if emit_progress {
+        if let TaskExecutionMode::Stream {
+            emit_progress: true,
+        } = mode
+        {
             eprintln!("RUN {task_name}");
         }
 
-        let status = shell_command(command)
-            .current_dir(working_dir)
-            .envs(env_overrides.iter())
-            .stdin(Stdio::inherit())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .map_err(|source| RunError::SpawnFailed {
-                task: task_name.clone(),
-                source,
-            })?;
+        let command_output =
+            execute_task_command(task_name, command, working_dir, &env_overrides, mode)?;
+        stdout.push_str(&command_output.stdout);
+        stderr.push_str(&command_output.stderr);
 
         executed_tasks.push(task_name.clone());
 
-        if !status.success() {
-            return Ok(RunOutcome {
+        if command_output.exit_code != 0 {
+            return Ok(CapturedRunOutcome {
                 executed_tasks,
-                exit_code: status.code().unwrap_or(1),
+                exit_code: command_output.exit_code,
+                stdout,
+                stderr,
             });
         }
     }
 
-    Ok(RunOutcome {
+    Ok(CapturedRunOutcome {
         executed_tasks,
         exit_code: 0,
+        stdout,
+        stderr,
     })
+}
+
+fn execute_task_command(
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    match mode {
+        TaskExecutionMode::Stream { .. } => {
+            let status = shell_command(command)
+                .current_dir(working_dir)
+                .envs(env_overrides.iter())
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: status.code().unwrap_or(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        TaskExecutionMode::Capture => {
+            let output = shell_command(command)
+                .current_dir(working_dir)
+                .envs(env_overrides.iter())
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+    }
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -244,7 +349,8 @@ mod tests {
     use crate::parser::parse_contract_str;
 
     use super::{
-        RunError, plan_task_execution, resolve_task_env, run_task, run_task_with_progress,
+        CapturedRunOutcome, RunError, plan_task_execution, resolve_task_env, run_task,
+        run_task_captured, run_task_with_progress,
     };
 
     #[test]
@@ -424,6 +530,34 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("script-output.txt")).unwrap(),
             "script"
+        );
+    }
+
+    #[test]
+    fn run_task_captured_collects_stdout_and_stderr() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      printf hello
+      printf error >&2
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        assert_eq!(
+            outcome,
+            CapturedRunOutcome {
+                executed_tasks: vec![String::from("setup")],
+                exit_code: 0,
+                stdout: String::from("hello"),
+                stderr: String::from("error"),
+            }
         );
     }
 

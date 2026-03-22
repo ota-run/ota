@@ -147,6 +147,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Maximum number of independent repos to prepare at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -256,9 +259,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Up { json, path } => commands::workspace_up(
+            WorkspaceCommands::Up { json, jobs, path } => commands::workspace_up(
                 path.as_deref(),
                 file.as_deref(),
+                jobs,
                 format_from_json(json),
                 debug,
             ),
@@ -277,6 +281,8 @@ fn format_from_json(json: bool) -> OutputFormat {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::time::{Duration, Instant};
 
     use serde_json::Value;
     use tempfile::TempDir;
@@ -1693,6 +1699,47 @@ tasks:
         );
     }
 
+    #[test]
+    fn workspace_up_rejects_zero_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "up", "--jobs", "0", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--jobs` must be greater than zero")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_up_jobs_runs_independent_repos_in_parallel() {
+        let fixture = WorkspaceFixture::new_parallel_repos();
+
+        let started = Instant::now();
+        let output = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(started.elapsed() < Duration::from_millis(1800));
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["repos"][0]["name"], "one");
+        assert_eq!(json["repos"][0]["stdout"], "one-out");
+        assert_eq!(json["repos"][0]["stderr"], "one-err");
+        assert_eq!(json["repos"][1]["name"], "two");
+        assert_eq!(json["repos"][1]["stdout"], "two-out");
+        assert_eq!(json["repos"][1]["stderr"], "two-err");
+    }
+
     struct ContractFixture {
         dir: TempDir,
         file_path: std::path::PathBuf,
@@ -1828,6 +1875,70 @@ repos:
       - db
   db:
     path: services/db
+    required: true
+"#,
+            )
+            .unwrap();
+
+            Self {
+                dir,
+                workspace_file,
+            }
+        }
+
+        #[cfg(unix)]
+        fn new_parallel_repos() -> Self {
+            let dir = TempDir::new().unwrap();
+            let one_dir = dir.path().join("apps").join("one");
+            let two_dir = dir.path().join("apps").join("two");
+            fs::create_dir_all(&one_dir).unwrap();
+            fs::create_dir_all(&two_dir).unwrap();
+
+            fs::write(
+                one_dir.join("ota.yaml"),
+                r#"
+version: 1
+project:
+  name: one
+tasks:
+  setup:
+    script: |
+      sleep 1
+      printf one-out
+      printf one-err >&2
+"#,
+            )
+            .unwrap();
+
+            fs::write(
+                two_dir.join("ota.yaml"),
+                r#"
+version: 1
+project:
+  name: two
+tasks:
+  setup:
+    script: |
+      sleep 1
+      printf two-out
+      printf two-err >&2
+"#,
+            )
+            .unwrap();
+
+            let workspace_file = dir.path().join("ota.workspace.yaml");
+            fs::write(
+                &workspace_file,
+                r#"
+version: 1
+workspace:
+  name: ota-parallel
+repos:
+  one:
+    path: apps/one
+    required: true
+  two:
+    path: apps/two
     required: true
 "#,
             )

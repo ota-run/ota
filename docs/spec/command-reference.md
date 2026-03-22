@@ -444,6 +444,7 @@ Prepare every repo in an Ota workspace contract.
 ```bash
 ota workspace up [PATH]
 ota workspace up --json [PATH]
+ota workspace up --jobs 4 [PATH]
 ```
 
 Current behavior:
@@ -451,18 +452,20 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
 - runs the existing repo-level `up` flow for each referenced repo
-- executes repos sequentially by design
+- can prepare independent repos concurrently when `--jobs` is greater than `1`
 - respects declared workspace repo dependency order
 - blocks downstream repos when a dependency does not become ready
 - aggregates per-repo status, phase, findings, and exit details
+- captures repo child stdout and stderr per repo so text and JSON output remain deterministic
+- emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
 - optional repo failures do not fail the overall workspace result
-- does not yet parallelize repo execution, because repo-level child process output is still streamed directly and must remain trustworthy
+- defaults to sequential execution because `--jobs` defaults to `1`
 
 Text output:
 
 - header: `WORKSPACE UP <path>`
 - status line: `READY` or `NOT READY`
-- each repo includes required/optional status, phase, and any findings or exit details
+- each repo includes required/optional status, phase, findings, exit details, and captured stdout/stderr when present
 
 JSON output:
 

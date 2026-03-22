@@ -20,10 +20,12 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
 
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
@@ -36,7 +38,7 @@ use crate::output::{
     ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
-use crate::runner::{RunError, run_task, run_task_with_progress};
+use crate::runner::{RunError, run_task, run_task_captured, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -423,14 +425,12 @@ pub fn up(
 
     finalize_debug(
         match load_and_validate(&resolved_path) {
-            Ok(contract) => match execute_repo_up(
-                &contract,
-                &resolved_path,
-                matches!(format, OutputFormat::Text),
-            ) {
-                Ok(result) => render_up_result(&path_display, result, format),
-                Err(error) => CommandOutput::failure(error),
-            },
+            Ok(contract) => {
+                match execute_repo_up(&contract, &resolved_path, RepoExecutionMode::Stream) {
+                    Ok(result) => render_up_result(&path_display, result, format),
+                    Err(error) => CommandOutput::failure(error),
+                }
+            }
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
             Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
         },
@@ -634,9 +634,21 @@ pub fn workspace_doctor(
 pub fn workspace_up(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    jobs: usize,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.up"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
     let resolved_path = match resolve_workspace_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -651,10 +663,12 @@ pub fn workspace_up(
     let debug_lines = vec![
         String::from("DEBUG command=workspace.up"),
         format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
     ];
 
     finalize_debug(
-        match load_and_run_workspace_up(&resolved_path, matches!(format, OutputFormat::Text)) {
+        match load_and_run_workspace_up(&resolved_path, jobs, matches!(format, OutputFormat::Text))
+        {
             Ok(report) => render_workspace_up(&path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
@@ -1115,6 +1129,8 @@ fn render_workspace_up(
                         finding.next
                     ));
                 }
+                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
+                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
 
             CommandOutput {
@@ -1132,6 +1148,20 @@ fn render_workspace_up(
             stderr: None,
             exit_code: if report.ok { 0 } else { 1 },
         },
+    }
+}
+
+fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>) {
+    let Some(contents) = contents.map(str::trim_end) else {
+        return;
+    };
+    if contents.is_empty() {
+        return;
+    }
+
+    buffer.push_str(&format!("\n  {label}:"));
+    for line in contents.lines() {
+        buffer.push_str(&format!("\n    {line}"));
     }
 }
 
@@ -1313,6 +1343,8 @@ struct RepoUpResult {
     service: Option<String>,
     task: Option<String>,
     exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
 }
 
 struct WorkspaceUpReport {
@@ -1320,10 +1352,22 @@ struct WorkspaceUpReport {
     repos: Vec<WorkspaceRepoUpReport>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum RepoExecutionMode {
+    Stream,
+    Capture,
+}
+
+struct CommandRunResult {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
-    emit_progress: bool,
+    mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
     let preflight = diagnose_preconditions(contract, resolved_path);
     if !preflight.ok {
@@ -1335,10 +1379,14 @@ fn execute_repo_up(
             service: None,
             task: None,
             exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
         });
     }
 
     let working_dir = contract_working_dir(resolved_path);
+    let mut stdout = String::new();
+    let mut stderr = String::new();
     for name in service_start_order(contract) {
         let service = contract
             .services
@@ -1346,9 +1394,14 @@ fn execute_repo_up(
             .expect("validated service should exist");
 
         if let Some(start) = service.start.as_deref() {
-            match run_shell_command(start, working_dir) {
-                Ok(0) => {}
-                Ok(exit_code) => {
+            match run_shell_command(start, working_dir, mode) {
+                Ok(command) if command.exit_code == 0 => {
+                    stdout.push_str(&command.stdout);
+                    stderr.push_str(&command.stderr);
+                }
+                Ok(command) => {
+                    stdout.push_str(&command.stdout);
+                    stderr.push_str(&command.stderr);
                     return Ok(RepoUpResult {
                         ok: false,
                         status: "SERVICE START FAILED",
@@ -1359,7 +1412,9 @@ fn execute_repo_up(
                         },
                         service: Some(name.clone()),
                         task: None,
-                        exit_code: Some(exit_code),
+                        exit_code: Some(command.exit_code),
+                        stdout,
+                        stderr,
                     });
                 }
                 Err(error) => return Err(error),
@@ -1376,6 +1431,8 @@ fn execute_repo_up(
                 service: Some(name),
                 task: None,
                 exit_code: None,
+                stdout,
+                stderr,
             });
         }
     }
@@ -1390,12 +1447,35 @@ fn execute_repo_up(
             service: None,
             task: None,
             exit_code: None,
+            stdout,
+            stderr,
         });
     }
 
     if contract.tasks.contains_key("setup") {
-        match run_task_with_progress(contract, resolved_path, "setup", emit_progress) {
+        match match mode {
+            RepoExecutionMode::Stream => {
+                run_task_with_progress(contract, resolved_path, "setup", true).map(|outcome| {
+                    CommandRunResult {
+                        exit_code: outcome.exit_code,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }
+                })
+            }
+            RepoExecutionMode::Capture => {
+                run_task_captured(contract, resolved_path, "setup").map(|outcome| {
+                    CommandRunResult {
+                        exit_code: outcome.exit_code,
+                        stdout: outcome.stdout,
+                        stderr: outcome.stderr,
+                    }
+                })
+            }
+        } {
             Ok(outcome) if outcome.exit_code != 0 => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "SETUP FAILED",
@@ -1407,9 +1487,14 @@ fn execute_repo_up(
                     service: None,
                     task: Some(String::from("setup")),
                     exit_code: Some(outcome.exit_code),
+                    stdout,
+                    stderr,
                 });
             }
-            Ok(_) => {}
+            Ok(outcome) => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+            }
             Err(error) => return Err(render_run_error(error)),
         }
     }
@@ -1423,90 +1508,185 @@ fn execute_repo_up(
         service: None,
         task: None,
         exit_code: None,
+        stdout,
+        stderr,
     })
 }
 
 fn load_and_run_workspace_up(
     path: &Path,
+    jobs: usize,
     emit_progress: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
-    let mut repos = Vec::new();
+    let mut repos = BTreeMap::new();
     let mut ok = true;
-    let mut repo_results = std::collections::BTreeMap::new();
-    for repo in repo_refs {
-        let blocked_dependency = repo
-            .depends_on
+    let mut repo_results = BTreeMap::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let ready = pending
             .iter()
-            .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
-            .cloned();
-        let required = repo.required;
-        let repo_report = match blocked_dependency {
-            Some(dependency) => blocked_workspace_repo_up(repo, dependency),
-            None => run_workspace_repo_up(repo, emit_progress),
-        };
-        if required && !repo_report.ok {
-            ok = false;
+            .enumerate()
+            .filter(|(_, (_, repo))| {
+                repo.depends_on
+                    .iter()
+                    .all(|dependency| repo_results.contains_key(dependency))
+            })
+            .map(|(pending_index, _)| pending_index)
+            .collect::<Vec<_>>();
+
+        let mut selected = Vec::new();
+        let mut blocked = Vec::new();
+
+        for pending_index in ready {
+            let (_, repo) = &pending[pending_index];
+            let blocked_dependency = repo
+                .depends_on
+                .iter()
+                .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+                .cloned();
+            if let Some(dependency) = blocked_dependency {
+                blocked.push((pending_index, dependency));
+            } else if selected.len() < jobs {
+                selected.push(pending_index);
+            }
         }
-        repo_results.insert(repo_report.name.clone(), repo_report.ok);
-        repos.push(repo_report);
+
+        let mut removals = blocked
+            .iter()
+            .map(|(pending_index, _)| *pending_index)
+            .chain(selected.iter().copied())
+            .collect::<Vec<_>>();
+        removals.sort_unstable();
+        removals.dedup();
+
+        let mut runnable = Vec::new();
+        let mut blocked_reports = Vec::new();
+        for pending_index in removals.into_iter().rev() {
+            let (order, repo) = pending.remove(pending_index);
+            if let Some((_, dependency)) = blocked
+                .iter()
+                .find(|(blocked_index, _)| *blocked_index == pending_index)
+            {
+                let report = blocked_workspace_repo_up(repo, dependency.clone());
+                if emit_progress {
+                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                }
+                blocked_reports.push((order, report));
+            } else {
+                runnable.push((order, repo));
+            }
+        }
+
+        runnable.reverse();
+        blocked_reports.reverse();
+
+        let (tx, rx) = mpsc::channel();
+        let handles = runnable
+            .into_iter()
+            .map(|(order, repo)| {
+                if emit_progress {
+                    eprintln!("WORKSPACE RUN {}", repo.name);
+                }
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let report = run_workspace_repo_up(repo);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for (order, report) in blocked_reports {
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx.recv().expect("workspace up worker should send a report");
+            if emit_progress {
+                eprintln!("WORKSPACE {} {}", report.status, report.name);
+            }
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle.join().expect("workspace up thread should not panic");
+        }
     }
 
-    Ok(WorkspaceUpReport { ok, repos })
+    Ok(WorkspaceUpReport {
+        ok,
+        repos: repos.into_values().collect(),
+    })
 }
 
-fn run_workspace_repo_up(repo: WorkspaceRepoRef, emit_progress: bool) -> WorkspaceRepoUpReport {
+fn run_workspace_repo_up(repo: WorkspaceRepoRef) -> WorkspaceRepoUpReport {
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
     match load_and_validate(&repo.contract_path) {
-        Ok(contract) => match execute_repo_up(&contract, &repo.contract_path, emit_progress) {
-            Ok(result) => WorkspaceRepoUpReport {
-                name: repo.name,
-                path: path_display,
-                contract_path: contract_path_display,
-                required: repo.required,
-                ok: if repo.required { result.ok } else { true },
-                status: if repo.required || result.ok {
-                    result.status.to_string()
-                } else {
-                    String::from("WARN")
-                },
-                phase: result.phase.to_string(),
-                findings: adjust_workspace_up_findings(result.report.findings, repo.required),
-                service: result.service,
-                task: result.task,
-                exit_code: result.exit_code,
-            },
-            Err(error) => WorkspaceRepoUpReport {
-                name: repo.name,
-                path: path_display,
-                contract_path: contract_path_display,
-                required: repo.required,
-                ok: !repo.required,
-                status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
-                phase: "setup".to_string(),
-                findings: vec![Finding {
-                    severity: if repo.required {
-                        FindingSeverity::Error
+        Ok(contract) => {
+            match execute_repo_up(&contract, &repo.contract_path, RepoExecutionMode::Capture) {
+                Ok(result) => WorkspaceRepoUpReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: if repo.required { result.ok } else { true },
+                    status: if repo.required || result.ok {
+                        result.status.to_string()
                     } else {
-                        FindingSeverity::Warn
+                        String::from("WARN")
                     },
-                    summary: format!("Repo up failed: {}", repo_name),
-                    why: error,
-                    next: format!(
-                        "repair `{}` and re-run `ota workspace up`",
-                        repo.contract_path.display()
-                    ),
-                }],
-                service: None,
-                task: None,
-                exit_code: None,
-            },
-        },
+                    phase: result.phase.to_string(),
+                    findings: adjust_workspace_up_findings(result.report.findings, repo.required),
+                    service: result.service,
+                    task: result.task,
+                    exit_code: result.exit_code,
+                    stdout: (!result.stdout.is_empty()).then_some(result.stdout),
+                    stderr: (!result.stderr.is_empty()).then_some(result.stderr),
+                },
+                Err(error) => WorkspaceRepoUpReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: !repo.required,
+                    status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
+                    phase: "setup".to_string(),
+                    findings: vec![Finding {
+                        severity: if repo.required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("Repo up failed: {}", repo_name),
+                        why: error,
+                        next: format!(
+                            "repair `{}` and re-run `ota workspace up`",
+                            repo.contract_path.display()
+                        ),
+                    }],
+                    service: None,
+                    task: None,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                },
+            }
+        }
         Err(error) => WorkspaceRepoUpReport {
             name: repo.name,
             path: path_display,
@@ -1531,6 +1711,8 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, emit_progress: bool) -> Workspa
             service: None,
             task: None,
             exit_code: None,
+            stdout: None,
+            stderr: None,
         },
     }
 }
@@ -1557,6 +1739,8 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         service: None,
         task: None,
         exit_code: None,
+        stdout: None,
+        stderr: None,
     }
 }
 
@@ -1632,12 +1816,35 @@ fn visit_service_start_order(
     order.push(name.to_string());
 }
 
-fn run_shell_command(command: &str, working_dir: &Path) -> Result<i32, String> {
-    shell_command(command)
-        .current_dir(working_dir)
-        .status()
-        .map(|status| status.code().unwrap_or(1))
-        .map_err(|error| format!("failed to execute `{command}`: {error}"))
+fn run_shell_command(
+    command: &str,
+    working_dir: &Path,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    match mode {
+        RepoExecutionMode::Stream => shell_command(command)
+            .current_dir(working_dir)
+            .status()
+            .map(|status| CommandRunResult {
+                exit_code: status.code().unwrap_or(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+            .map_err(|error| format!("failed to execute `{command}`: {error}")),
+        RepoExecutionMode::Capture => shell_command(command)
+            .current_dir(working_dir)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|child| child.wait_with_output())
+            .map(|output| CommandRunResult {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+            .map_err(|error| format!("failed to execute `{command}`: {error}")),
+    }
 }
 
 fn lifecycle_notice(contract: &Contract) -> Option<String> {
