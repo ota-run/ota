@@ -42,6 +42,10 @@ pub enum RunError {
         value: String,
         allowed: String,
     },
+    #[error(
+        "task `{task}` does not define a default execution and no variant matches the current os `{os}`"
+    )]
+    NoMatchingTaskVariant { task: String, os: String },
     #[error("failed to start task `{task}`: {source}")]
     SpawnFailed {
         task: String,
@@ -127,20 +131,29 @@ pub fn run_task_with_progress(
     let env_overrides = resolve_task_env(contract)?;
     let working_dir = contract_working_dir(contract_path);
     let mut executed_tasks = Vec::new();
+    let current_os = current_os();
 
     for task_name in &plan.tasks {
         let task = contract
             .tasks
             .get(task_name)
             .expect("validated task plan should only reference known tasks");
-        let command = task
-            .execution_body()
-            .ok_or_else(|| RunError::InvalidTaskExecution {
+        let execution = if let Some(execution) = task.resolved_execution(current_os) {
+            execution
+        } else if task.variants.is_empty() {
+            return Err(RunError::InvalidTaskExecution {
                 task: task_name.clone(),
-            })?;
+            });
+        } else {
+            return Err(RunError::NoMatchingTaskVariant {
+                task: task_name.clone(),
+                os: current_os.to_string(),
+            });
+        };
+        let command = execution.body;
 
         if emit_progress {
-            println!("RUN {task_name}");
+            eprintln!("RUN {task_name}");
         }
 
         let status = shell_command(command)
@@ -176,6 +189,14 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+fn current_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        other => other,
+    }
 }
 
 fn visit_task(
@@ -403,6 +424,40 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("script-output.txt")).unwrap(),
             "script"
+        );
+    }
+
+    #[test]
+    fn runs_matching_task_variant_for_current_os() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf default > variant-output.txt
+    variants:
+      - when:
+          os: macos
+        run: printf macos > variant-output.txt
+      - when:
+          os: windows
+        run: echo windows>variant-output.txt
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        assert_eq!(outcome.executed_tasks, vec!["setup"]);
+        assert_eq!(outcome.exit_code, 0);
+        let expected = match std::env::consts::OS {
+            "macos" => "macos",
+            _ => "default",
+        };
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("variant-output.txt")).unwrap(),
+            expected
         );
     }
 

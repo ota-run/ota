@@ -42,8 +42,22 @@ use crate::validator::{ValidationErrors, validate_contract};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 
-pub fn validate(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn validate(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=validate")],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=validate"),
@@ -86,8 +100,22 @@ pub fn validate(path: Option<&Path>, format: OutputFormat, debug: bool) -> Comma
     )
 }
 
-pub fn tasks(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn tasks(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=tasks")],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=tasks"),
@@ -100,7 +128,7 @@ pub fn tasks(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandO
                 let task_summaries = contract
                     .tasks
                     .iter()
-                    .map(|(name, task)| TaskSummary::from_spec(name, task))
+                    .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
                     .collect::<Vec<_>>();
 
                 match format {
@@ -138,8 +166,25 @@ pub fn tasks(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandO
     )
 }
 
-pub fn run_command(task_name: &str, path: Option<&Path>, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn run_command(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![
+                    String::from("DEBUG command=run"),
+                    format!("DEBUG task={task_name}"),
+                ],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=run"),
@@ -165,8 +210,22 @@ pub fn run_command(task_name: &str, path: Option<&Path>, debug: bool) -> Command
     )
 }
 
-pub fn doctor(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn doctor(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=doctor")],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=doctor"),
@@ -217,8 +276,22 @@ pub fn doctor(path: Option<&Path>, format: OutputFormat, debug: bool) -> Command
     )
 }
 
-pub fn check(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn check(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=check")],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=check"),
@@ -321,8 +394,22 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     )
 }
 
-pub fn up(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
+pub fn up(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=up")],
+            );
+        }
+    };
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
         String::from("DEBUG command=up"),
@@ -709,6 +796,9 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
         let mut details = Vec::new();
         details.push(format!("kind={}", task.kind));
+        if let Some(os) = task.selected_variant_os {
+            details.push(format!("os={os}"));
+        }
         if let Some(category) = task.category {
             details.push(format!("category={category}"));
         }
@@ -717,6 +807,9 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         }
         if task.safe_for_agent {
             details.push(String::from("safe_for_agent=true"));
+        }
+        if !task.variants.is_empty() {
+            details.push(format!("variants={}", task.variants.len()));
         }
 
         if !details.is_empty() {
@@ -728,6 +821,13 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         if let Some(description) = task.description {
             output.push_str(": ");
             output.push_str(description);
+        }
+
+        if let Some(run) = task.run {
+            output.push_str(&format!("\n  run: {run}"));
+        } else if let Some(script) = task.script {
+            let preview = script.lines().next().unwrap_or(script).trim();
+            output.push_str(&format!("\n  script: {preview}"));
         }
     }
 
@@ -868,11 +968,32 @@ fn render_severity(severity: FindingSeverity) -> &'static str {
     }
 }
 
-fn resolve_contract_path(path: Option<&Path>) -> PathBuf {
+fn resolve_contract_path(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+) -> Result<PathBuf, ResolveContractError> {
+    if let Some(file_override) = file_override {
+        return resolve_explicit_contract_path(file_override, "--file");
+    }
+
+    if let Some(file_override) = std::env::var_os("OTA_FILE") {
+        return resolve_explicit_contract_path(Path::new(&file_override), "OTA_FILE");
+    }
+
     match path {
-        Some(path) if path.is_dir() => path.join(DEFAULT_CONTRACT_FILE),
-        Some(path) => path.to_path_buf(),
-        None => PathBuf::from(DEFAULT_CONTRACT_FILE),
+        Some(path) if path.is_file() => Ok(path.to_path_buf()),
+        Some(path) if path.is_dir() => discover_contract_path(path),
+        Some(path) => Err(ResolveContractError::MissingExplicitPath {
+            path: path.display().to_string(),
+        }),
+        None => {
+            let current_dir = std::env::current_dir().map_err(|source| {
+                ResolveContractError::CurrentDirectory {
+                    message: source.to_string(),
+                }
+            })?;
+            discover_contract_path(&current_dir)
+        }
     }
 }
 
@@ -888,6 +1009,53 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+fn resolve_explicit_contract_path(
+    path: &Path,
+    source: &'static str,
+) -> Result<PathBuf, ResolveContractError> {
+    if path.is_file() {
+        Ok(path.to_path_buf())
+    } else {
+        Err(ResolveContractError::MissingExplicitFile {
+            origin: source,
+            path: path.display().to_string(),
+        })
+    }
+}
+
+fn discover_contract_path(start: &Path) -> Result<PathBuf, ResolveContractError> {
+    let mut current = start;
+
+    loop {
+        let candidate = current.join(DEFAULT_CONTRACT_FILE);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+
+        let Some(parent) = current.parent() else {
+            return Err(ResolveContractError::NotFound {
+                start: start.display().to_string(),
+            });
+        };
+
+        if parent == current {
+            return Err(ResolveContractError::NotFound {
+                start: start.display().to_string(),
+            });
+        }
+
+        current = parent;
+    }
+}
+
+fn current_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        other => other,
+    }
 }
 
 fn service_start_order(contract: &Contract) -> Vec<String> {
@@ -1058,4 +1226,18 @@ fn render_inference_section<'a>(
 enum ContractProblem {
     Load(LoadContractError),
     Validation(ValidationErrors),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ResolveContractError {
+    #[error("failed to read the current directory: {message}")]
+    CurrentDirectory { message: String },
+    #[error(
+        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect --dry-run` to create one"
+    )]
+    NotFound { start: String },
+    #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
+    MissingExplicitFile { origin: &'static str, path: String },
+    #[error("contract path does not exist: `{path}`")]
+    MissingExplicitPath { path: String },
 }

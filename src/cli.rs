@@ -36,6 +36,9 @@ pub struct Cli {
     /// Emit command-phase debug tracing to stderr.
     #[arg(long, global = true, action = ArgAction::SetTrue)]
     debug: bool,
+    /// Use an explicit ota.yaml file instead of path discovery.
+    #[arg(long, global = true)]
+    file: Option<PathBuf>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -142,31 +145,67 @@ where
 
 fn dispatch(cli: Cli) -> CommandOutput {
     let debug = cli.debug;
+    let file = cli.file;
     match cli.command {
-        Commands::Validate { json, path } => {
-            commands::validate(path.as_deref(), format_from_json(json), debug)
-        }
-        Commands::Tasks { json, path } => {
-            commands::tasks(path.as_deref(), format_from_json(json), debug)
-        }
+        Commands::Validate { json, path } => commands::validate(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Tasks { json, path } => commands::tasks(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Run { task, path } => {
-            commands::run_command(task.as_str(), path.as_deref(), debug)
+            commands::run_command(task.as_str(), path.as_deref(), file.as_deref(), debug)
         }
-        Commands::Doctor { json, path } => {
-            commands::doctor(path.as_deref(), format_from_json(json), debug)
-        }
+        Commands::Doctor { json, path } => commands::doctor(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Init { write, json, path } => {
+            if file.is_some() {
+                return CommandOutput::failure_with_code(
+                    String::from(
+                        "`--file` is only supported for commands that read an existing contract",
+                    ),
+                    2,
+                );
+            }
             commands::init(path.as_deref(), write, format_from_json(json), debug)
         }
-        Commands::Check { json, path } => {
-            commands::check(path.as_deref(), format_from_json(json), debug)
-        }
-        Commands::Up { json, path } => commands::up(path.as_deref(), format_from_json(json), debug),
+        Commands::Check { json, path } => commands::check(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Up { json, path } => commands::up(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Detect {
             json,
             dry_run,
             path,
-        } => commands::detect(path.as_deref(), dry_run, format_from_json(json), debug),
+        } => {
+            if file.is_some() {
+                return CommandOutput::failure_with_code(
+                    String::from(
+                        "`--file` is only supported for commands that read an existing contract",
+                    ),
+                    2,
+                );
+            }
+            commands::detect(path.as_deref(), dry_run, format_from_json(json), debug)
+        }
     }
 }
 
@@ -265,6 +304,51 @@ unexpected: true
     }
 
     #[test]
+    fn validate_discovers_contract_from_nested_directory() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let nested = fixture.dir.path().join("apps").join("web");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with(["ota", "validate", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("VALID {}", fixture.file_path().display())
+        );
+    }
+
+    #[test]
+    fn validate_supports_explicit_file_override() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "--file",
+            fixture.file_path().to_str().unwrap(),
+            "validate",
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("VALID {}", fixture.file_path().display())
+        );
+    }
+
+    #[test]
     fn tasks_json_is_sorted_and_machine_readable() {
         let fixture = ContractFixture::new(
             r#"
@@ -319,6 +403,47 @@ tasks:
         assert_eq!(json["tasks"][0]["kind"], "script");
         assert_eq!(json["tasks"][0]["script"], "printf ready > prepared.txt\n");
         assert!(json["tasks"][0].get("run").is_none());
+    }
+
+    #[test]
+    fn tasks_json_reports_selected_os_variant() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: ./scripts/setup.sh
+    variants:
+      - when:
+          os: windows
+        run: .\scripts\setup.ps1
+      - when:
+          os: macos
+        run: ./scripts/setup-macos.sh
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let task = &json["tasks"][0];
+
+        match std::env::consts::OS {
+            "macos" => {
+                assert_eq!(task["run"], "./scripts/setup-macos.sh");
+                assert_eq!(task["selected_variant_os"], "macos");
+            }
+            _ => {
+                assert_eq!(task["run"], "./scripts/setup.sh");
+                assert!(task.get("selected_variant_os").is_none());
+            }
+        }
+
+        assert_eq!(task["variants"][0]["os"], "windows");
+        assert_eq!(task["variants"][1]["os"], "macos");
     }
 
     #[test]
