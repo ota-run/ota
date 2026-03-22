@@ -1,0 +1,8 @@
+{
+  "name": "ota-hybrid-app",
+  "packageManager": "npm@10.9.0",
+  "scripts": {
+    "dev": "node server.js",
+    "worker": "python -m ota_worker"
+  }
+}
