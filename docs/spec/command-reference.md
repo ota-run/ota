@@ -224,6 +224,7 @@ Prepare a repo for use with minimal prior knowledge.
 
 ```bash
 ota up [PATH]
+ota up --json [PATH]
 ```
 
 Current behavior:
@@ -240,6 +241,17 @@ Current behavior:
 - includes service start exit code details when a required service start command fails
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
+
+JSON output:
+
+- `ok`
+- `path`
+- `status`
+- `phase`
+- `findings`
+- `service` when a service-start failure occurs
+- `task` when a task failure occurs
+- `exit_code` when a child command failure occurs
 
 ## `ota detect`
 

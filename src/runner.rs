@@ -114,6 +114,15 @@ pub fn run_task(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<RunOutcome, RunError> {
+    run_task_with_progress(contract, contract_path, task_name, true)
+}
+
+pub fn run_task_with_progress(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    emit_progress: bool,
+) -> Result<RunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
     let env_overrides = resolve_task_env(contract)?;
     let working_dir = contract_working_dir(contract_path);
@@ -130,7 +139,9 @@ pub fn run_task(
                 task: task_name.clone(),
             })?;
 
-        println!("RUN {task_name}");
+        if emit_progress {
+            println!("RUN {task_name}");
+        }
 
         let status = shell_command(command)
             .current_dir(working_dir)
@@ -211,7 +222,9 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::{RunError, plan_task_execution, resolve_task_env, run_task};
+    use super::{
+        RunError, plan_task_execution, resolve_task_env, run_task, run_task_with_progress,
+    };
 
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
@@ -339,6 +352,34 @@ tasks:
 
         assert_eq!(outcome.executed_tasks, vec!["fail"]);
         assert_eq!(outcome.exit_code, 7);
+    }
+
+    #[test]
+    fn run_task_can_execute_without_progress_output() {
+        let fixture = TempDir::new().unwrap();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        )
+        .unwrap();
+
+        let outcome = run_task_with_progress(
+            &contract,
+            fixture.path().join("ota.yaml").as_path(),
+            "setup",
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(fixture.path().join("prepared.txt").exists());
     }
 
     #[test]

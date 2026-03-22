@@ -81,6 +81,21 @@ pub struct DetectFailure<'a> {
     pub error: &'a str,
 }
 
+#[derive(Debug, Serialize)]
+pub struct UpStatus<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub status: &'a str,
+    pub phase: &'a str,
+    pub findings: &'a [Finding],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
 impl CommandOutput {
     pub fn success(stdout: String) -> Self {
         Self {
