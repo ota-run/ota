@@ -132,23 +132,23 @@ Current workspace prepare behavior:
 
 - validates workspace structure first
 - runs repo-level `up` for each referenced repo
-- executes repos sequentially by design in the current implementation
+- can prepare independent repos concurrently when `--jobs` is greater than `1`
 - respects declared workspace repo dependency order
 - blocks downstream repos when a dependency does not become ready
 - aggregates repo-level status, phase, findings, and exit details
+- captures repo child stdout and stderr per repo so the final report remains deterministic
+- emits live repo progress on stderr in text mode so users can see execution moving without losing ordered final output
 - optional repo failures do not fail the overall workspace status
-- does not yet parallelize repo execution, because repo-level child process output is still streamed directly and must remain trustworthy
 
 Current execution policy:
 
-- workspace repo execution is intentionally sequential for now
-- Ota does not yet infer safe parallelism between repos
-- bounded parallel execution should only be added after explicit cross-repo dependency semantics and failure policy are proven stable
+- workspace repo execution defaults to sequential because `--jobs` defaults to `1`
+- Ota only parallelizes repos whose dependencies are already satisfied
+- final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 
 Current non-goals:
 
-- parallel repo startup
 - cross-repo dependency scheduling
 - host or workstation provisioning
 - a workspace-only bootstrap engine that bypasses repo contracts
