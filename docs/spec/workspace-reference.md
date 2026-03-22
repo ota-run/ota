@@ -117,6 +117,8 @@ Current workspace diagnosis behavior:
 
 - validates workspace structure first
 - evaluates repos in dependency order
+- can diagnose independent repos concurrently when `--jobs` is greater than `1`
+- preserves deterministic repo ordering in the final report
 - diagnoses each referenced repo through its own `ota.yaml`
 - preserves repo-level diagnosis semantics for required repos
 - downgrades optional repo errors to warnings at the workspace layer
@@ -135,6 +137,7 @@ Current workspace prepare behavior:
 - blocks downstream repos when a dependency does not become ready
 - aggregates repo-level status, phase, findings, and exit details
 - optional repo failures do not fail the overall workspace status
+- does not yet parallelize repo execution, because repo-level child process output is still streamed directly and must remain trustworthy
 
 Current execution policy:
 

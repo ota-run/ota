@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 
@@ -334,15 +335,71 @@ pub fn diagnose_workspace_contract(
     workspace_path: &Path,
     contract: &WorkspaceContract,
 ) -> Result<WorkspaceDoctorReport, WorkspaceValidationErrors> {
-    let repo_refs = ordered_workspace_repo_refs(workspace_path, contract)?;
-    let mut repos = Vec::new();
+    diagnose_workspace_contract_with_jobs(workspace_path, contract, 1)
+}
 
-    for repo in repo_refs {
-        repos.push(diagnose_workspace_repo(repo));
+pub fn diagnose_workspace_contract_with_jobs(
+    workspace_path: &Path,
+    contract: &WorkspaceContract,
+    jobs: usize,
+) -> Result<WorkspaceDoctorReport, WorkspaceValidationErrors> {
+    let repo_refs = ordered_workspace_repo_refs(workspace_path, contract)?;
+    let max_jobs = jobs.max(1);
+    let mut repos = Vec::with_capacity(repo_refs.len());
+    let mut completed = BTreeSet::new();
+    let mut pending = repo_refs;
+
+    while !pending.is_empty() {
+        let batch = take_ready_workspace_repo_batch(&mut pending, &completed, max_jobs);
+        debug_assert!(
+            !batch.is_empty(),
+            "validated workspace repos should remain schedulable"
+        );
+
+        let handles = batch
+            .into_iter()
+            .map(|repo| thread::spawn(move || diagnose_workspace_repo(repo)))
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            let repo = handle
+                .join()
+                .expect("workspace diagnosis thread should not panic");
+            completed.insert(repo.name.clone());
+            repos.push(repo);
+        }
     }
 
     let ok = repos.iter().all(|repo| repo.ok);
     Ok(WorkspaceDoctorReport { ok, repos })
+}
+
+fn take_ready_workspace_repo_batch(
+    pending: &mut Vec<WorkspaceRepoRef>,
+    completed: &BTreeSet<String>,
+    jobs: usize,
+) -> Vec<WorkspaceRepoRef> {
+    let mut selected = Vec::new();
+
+    for (index, repo) in pending.iter().enumerate() {
+        if repo
+            .depends_on
+            .iter()
+            .all(|dependency| completed.contains(dependency))
+        {
+            selected.push(index);
+            if selected.len() == jobs {
+                break;
+            }
+        }
+    }
+
+    let mut batch = Vec::with_capacity(selected.len());
+    for index in selected.into_iter().rev() {
+        batch.push(pending.remove(index));
+    }
+    batch.reverse();
+    batch
 }
 
 fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
@@ -537,9 +594,14 @@ fn visit_workspace_repo(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use tempfile::TempDir;
 
-    use super::{parse_workspace_contract_str, validate_workspace_contract};
+    use super::{
+        diagnose_workspace_contract_with_jobs, parse_workspace_contract_str,
+        validate_workspace_contract,
+    };
 
     #[test]
     fn validates_workspace_with_existing_repo_contracts() {
@@ -727,5 +789,108 @@ repos:
             errors.errors()[0].to_string(),
             "workspace repo `web` is required and must not depend on optional repo `docs`"
         );
+    }
+
+    #[test]
+    fn diagnose_with_jobs_preserves_dependency_order() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("services").join("api")).unwrap();
+        std::fs::create_dir_all(fixture.path().join("services").join("db")).unwrap();
+        std::fs::write(
+            fixture.path().join("services").join("api").join("ota.yaml"),
+            "version: 1\nproject:\n  name: api\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("services").join("db").join("ota.yaml"),
+            "version: 1\nproject:\n  name: db\n",
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  api:
+    path: services/api
+    depends_on:
+      - db
+  db:
+    path: services/db
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_workspace_contract_with_jobs(
+            &fixture.path().join("ota.workspace.yaml"),
+            &contract,
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(report.repos.len(), 2);
+        assert_eq!(report.repos[0].name, "db");
+        assert_eq!(report.repos[1].name, "api");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnose_with_jobs_runs_independent_repos_in_parallel() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("one")).unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("two")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("one").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: one
+checks:
+  - name: slow-one
+    run: sleep 1
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("two").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: two
+checks:
+  - name: slow-two
+    run: sleep 1
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  one:
+    path: apps/one
+  two:
+    path: apps/two
+"#,
+        )
+        .unwrap();
+
+        let started = Instant::now();
+        let report = diagnose_workspace_contract_with_jobs(
+            &fixture.path().join("ota.workspace.yaml"),
+            &contract,
+            2,
+        )
+        .unwrap();
+
+        assert!(report.ok);
+        assert!(started.elapsed() < Duration::from_millis(1800));
     }
 }

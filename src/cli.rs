@@ -136,6 +136,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Maximum number of independent repos to diagnose at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -246,9 +249,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Doctor { json, path } => commands::workspace_doctor(
+            WorkspaceCommands::Doctor { json, jobs, path } => commands::workspace_doctor(
                 path.as_deref(),
                 file.as_deref(),
+                jobs,
                 format_from_json(json),
                 debug,
             ),
@@ -1523,6 +1527,39 @@ env:
     }
 
     #[test]
+    fn workspace_doctor_jobs_preserves_dependency_order_in_output() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["repos"][0]["name"], "db");
+        assert_eq!(json["repos"][1]["name"], "api");
+    }
+
+    #[test]
+    fn workspace_doctor_rejects_zero_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "doctor", "--jobs", "0", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--jobs` must be greater than zero")
+        );
+    }
+
+    #[test]
     fn workspace_up_json_reports_required_repo_failure() {
         let fixture = WorkspaceFixture::new();
         fs::write(
@@ -1623,7 +1660,12 @@ tasks:
     fn workspace_up_blocks_dependent_repo_when_dependency_fails() {
         let fixture = WorkspaceFixture::new_multi_repo();
         fs::write(
-            fixture.dir.path().join("services").join("db").join("ota.yaml"),
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
             r#"
 version: 1
 project:

@@ -41,7 +41,7 @@ use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceRepoRef, WorkspaceValidationErrors,
-    diagnose_workspace_contract, load_workspace_contract, ordered_workspace_repo_refs,
+    diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
     validate_workspace_contract,
 };
 
@@ -561,9 +561,21 @@ pub fn workspace_validate(
 pub fn workspace_doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    jobs: usize,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.doctor"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
     let resolved_path = match resolve_workspace_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -578,10 +590,11 @@ pub fn workspace_doctor(
     let debug_lines = vec![
         String::from("DEBUG command=workspace.doctor"),
         format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
     ];
 
     finalize_debug(
-        match load_and_diagnose_workspace(&resolved_path) {
+        match load_and_diagnose_workspace(&resolved_path, jobs) {
             Ok(report) => match format {
                 OutputFormat::Text => render_workspace_doctor_text(&path_display, &report),
                 OutputFormat::Json => CommandOutput {
@@ -1538,12 +1551,8 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
                 FindingSeverity::Warn
             },
             summary: format!("Blocked by failed dependency: {dependency}"),
-            why: format!(
-                "workspace repo depends on `{dependency}`, which did not become ready"
-            ),
-            next: format!(
-                "repair `{dependency}` first, then re-run `ota workspace up`"
-            ),
+            why: format!("workspace repo depends on `{dependency}`, which did not become ready"),
+            next: format!("repair `{dependency}` first, then re-run `ota workspace up`"),
         }],
         service: None,
         task: None,
@@ -1687,9 +1696,11 @@ fn load_and_validate_workspace(path: &Path) -> Result<(), WorkspaceProblem> {
 
 fn load_and_diagnose_workspace(
     path: &Path,
+    jobs: usize,
 ) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
-    diagnose_workspace_contract(path, &workspace).map_err(WorkspaceProblem::Validation)
+    diagnose_workspace_contract_with_jobs(path, &workspace, jobs)
+        .map_err(WorkspaceProblem::Validation)
 }
 
 fn render_run_error(error: RunError) -> String {
