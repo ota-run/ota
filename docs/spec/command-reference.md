@@ -295,6 +295,17 @@ Dry-run behavior:
 - prints per-field confidence
 - does not write anything
 
+Example dry-run annotations for detected Compose services:
+
+```text
+---
+Annotations:
+- services.db.provider: docker-compose <- from docker-compose.yml#services.db [high]
+- services.db.start: docker compose up -d db <- from docker-compose.yml#services.db [medium]
+- services.db.stop: docker compose stop db <- from docker-compose.yml#services.db [medium]
+- services.db.healthcheck: pg_isready -h localhost -p 5432 <- from docker-compose.yml#services.db.healthcheck.test [medium]
+```
+
 Current precedence is conservative:
 
 - higher confidence beats lower confidence
