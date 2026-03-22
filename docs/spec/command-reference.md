@@ -2,6 +2,8 @@
 
 This document describes the current shipped CLI surface.
 
+For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
+
 ## Global
 
 ```bash
