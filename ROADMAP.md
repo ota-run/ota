@@ -40,6 +40,7 @@ The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-n
 
 - continue hardening the current command surface on real repositories
 - deepen spec-backed behavior where the contract is already accepted
+- decide explicitly whether service dependency ordering belongs in the contract before implementing it
 
 ## Product direction
 

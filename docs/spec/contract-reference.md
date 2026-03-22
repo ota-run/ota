@@ -146,6 +146,7 @@ Current behavior:
 - failed optional service healthchecks are warnings
 - required services without a `healthcheck` produce a warning because readiness cannot be verified yet
 - `ota up` runs explicit `start` commands for required services before `setup`
+- service dependency ordering is not part of the current contract surface yet
 - Ota still does not provide deep service orchestration beyond explicit contract commands
 
 ## `runtimes`
