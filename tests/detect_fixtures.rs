@@ -192,3 +192,127 @@ fn detects_python_version_file_fixture() {
         Some(&"3.13.1".to_string())
     );
 }
+
+#[test]
+fn detects_mixed_node_python_fixture() {
+    let report = assert_detected_contract_valid("mixed-node-python");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-fullstack")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"22".to_string())
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&">=3.12".to_string())
+    );
+    assert_eq!(
+        report.contract.tools.get("pnpm"),
+        Some(&"10.4.0".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("pnpm dev")
+    );
+}
+
+#[test]
+fn detects_fullstack_node_go_fixture() {
+    let report = assert_detected_contract_valid("fullstack-node-go");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-gateway")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"22.4.0".to_string())
+    );
+    assert_eq!(
+        report.contract.runtimes.get("go"),
+        Some(&"1.24.0".to_string())
+    );
+    assert_eq!(
+        report.contract.tools.get("npm"),
+        Some(&"10.8.2".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("build")
+            .map(|task| task.run.as_str()),
+        Some("npm run build")
+    );
+}
+
+#[test]
+fn detects_python_version_priority_fixture() {
+    let report = assert_detected_contract_valid("python-version-priority");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-py-priority")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.13.2".to_string())
+    );
+}
+
+#[test]
+fn detects_polyglot_tool_versions_fixture() {
+    let report = assert_detected_contract_valid("polyglot-tool-versions");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-polyglot")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"22.6.0".to_string())
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.12.4".to_string())
+    );
+    assert_eq!(
+        report.contract.runtimes.get("go"),
+        Some(&"1.24.1".to_string())
+    );
+    assert_eq!(
+        report.contract.tools.get("pnpm"),
+        Some(&"10.5.0".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("build")
+            .map(|task| task.run.as_str()),
+        Some("pnpm build")
+    );
+}
