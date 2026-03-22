@@ -48,6 +48,8 @@ Current detect sources:
 - `build.gradle(.kts)`
 - `gradle/wrapper/gradle-wrapper.properties`
 - `pom.xml`
+- `docker-compose.yml` / `docker-compose.yaml`
+- `compose.yml` / `compose.yaml`
 
 ## Example contract
 
