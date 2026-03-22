@@ -25,9 +25,10 @@ use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Parser, Subcommand};
 
+use crate::doctor::{diagnose_contract, diagnose_preconditions};
 use crate::output::{
-    CommandOutput, OutputFormat, TaskSummary, TasksFailure, TasksSuccess, ValidateFailure,
-    ValidateSuccess,
+    CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
+    ValidateFailure, ValidateSuccess,
 };
 use crate::parser::{LoadContractError, load_contract};
 use crate::runner::{RunError, run_task};
@@ -68,6 +69,19 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Diagnose repo readiness from an Ota contract.
+    Doctor {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Prepare the repo for use with minimal prior knowledge.
+    Up {
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> i32 {
@@ -100,6 +114,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Validate { json, path } => validate(path.as_deref(), format_from_json(json)),
         Commands::Tasks { json, path } => tasks(path.as_deref(), format_from_json(json)),
         Commands::Run { task, path } => run_command(task.as_str(), path.as_deref()),
+        Commands::Doctor { json, path } => doctor(path.as_deref(), format_from_json(json)),
+        Commands::Up { path } => up(path.as_deref()),
     }
 }
 
@@ -196,6 +212,89 @@ fn run_command(task_name: &str, path: Option<&Path>) -> CommandOutput {
     }
 }
 
+fn doctor(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+    let path_display = resolved_path.display().to_string();
+
+    match load_and_validate(&resolved_path) {
+        Ok(contract) => {
+            let report = diagnose_contract(&contract, &resolved_path);
+            match format {
+                OutputFormat::Text => render_doctor_text(&path_display, report),
+                OutputFormat::Json => {
+                    let exit_code = if report.ok { 0 } else { 1 };
+                    CommandOutput {
+                        stdout: to_json(&DoctorSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            findings: &report.findings,
+                        }),
+                        stderr: None,
+                        exit_code,
+                    }
+                }
+            }
+        }
+        Err(ContractProblem::Validation(errors)) => match format {
+            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                ok: false,
+                path: &path_display,
+                errors: errors.errors().iter().map(ToString::to_string).collect(),
+                error: None,
+            })),
+        },
+        Err(ContractProblem::Load(error)) => match format {
+            OutputFormat::Text => CommandOutput::failure(error.to_string()),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                ok: false,
+                path: &path_display,
+                errors: Vec::new(),
+                error: Some(error.to_string()),
+            })),
+        },
+    }
+}
+
+fn up(path: Option<&Path>) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+    let path_display = resolved_path.display().to_string();
+
+    match load_and_validate(&resolved_path) {
+        Ok(contract) => {
+            let preflight = diagnose_preconditions(&contract, &resolved_path);
+            if !preflight.ok {
+                return render_up_text(&path_display, "NOT READY", preflight, false);
+            }
+
+            if contract.tasks.contains_key("setup") {
+                match run_task(&contract, &resolved_path, "setup") {
+                    Ok(outcome) if outcome.exit_code != 0 => {
+                        return CommandOutput {
+                            stdout: format!(
+                                "UP {path_display}\nSETUP FAILED\nNext: inspect the `setup` task output and fix the reported issue"
+                            ),
+                            stderr: None,
+                            exit_code: outcome.exit_code,
+                        };
+                    }
+                    Ok(_) => {}
+                    Err(error) => return CommandOutput::failure(render_run_error(error)),
+                }
+            }
+
+            let report = diagnose_contract(&contract, &resolved_path);
+            if report.ok {
+                render_up_text(&path_display, "READY", report, true)
+            } else {
+                render_up_text(&path_display, "NOT READY", report, false)
+            }
+        }
+        Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
+        Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+    }
+}
+
 fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format!("TASKS {path}");
 
@@ -232,6 +331,66 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     }
 
     output
+}
+
+fn render_doctor_text(path: &str, report: crate::doctor::DoctorReport) -> CommandOutput {
+    let mut stdout = format!("DOCTOR {path}");
+
+    if report.findings.is_empty() {
+        stdout.push_str("\nREADY");
+        return CommandOutput::success(stdout);
+    }
+
+    for finding in &report.findings {
+        stdout.push('\n');
+        stdout.push_str(&format!(
+            "{}  {}\nWhy: {}\nNext: {}",
+            render_severity(finding.severity),
+            finding.summary,
+            finding.why,
+            finding.next
+        ));
+    }
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: if report.ok { 0 } else { 1 },
+    }
+}
+
+fn render_up_text(
+    path: &str,
+    status: &str,
+    report: crate::doctor::DoctorReport,
+    ready: bool,
+) -> CommandOutput {
+    let mut stdout = format!("UP {path}\n{status}");
+
+    for finding in &report.findings {
+        stdout.push('\n');
+        stdout.push_str(&format!(
+            "{}  {}\nWhy: {}\nNext: {}",
+            render_severity(finding.severity),
+            finding.summary,
+            finding.why,
+            finding.next
+        ));
+    }
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: if ready { 0 } else { 1 },
+    }
+}
+
+fn render_severity(severity: crate::doctor::FindingSeverity) -> &'static str {
+    match severity {
+        crate::doctor::FindingSeverity::Error => "ERROR",
+        crate::doctor::FindingSeverity::Warn => "WARN",
+        crate::doctor::FindingSeverity::Info => "INFO",
+    }
 }
 
 fn format_from_json(json: bool) -> OutputFormat {
@@ -360,6 +519,94 @@ tasks:
         assert_eq!(json["tasks"][0]["depends_on"][0], "test");
         assert_eq!(json["tasks"][1]["name"], "test");
         assert_eq!(json["tasks"][1]["safe_for_agent"], true);
+    }
+
+    #[test]
+    fn doctor_json_reports_findings_once() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_DOCTOR_JSON_MISSING:
+    required: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let object = json.as_object().unwrap();
+        assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
+        assert!(object.get("findings").unwrap().is_array());
+        assert_eq!(object.len(), 3);
+    }
+
+    #[test]
+    fn doctor_text_reports_ready_when_no_findings_exist() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+    }
+
+    #[test]
+    fn up_runs_setup_and_reports_ready() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_stops_before_setup_when_preconditions_fail() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_UP_REQUIRED_MISSING:
+    required: true
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
     struct ContractFixture {

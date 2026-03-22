@@ -164,7 +164,7 @@ pub struct CheckSpec {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckKind {
     Precondition,

@@ -22,6 +22,7 @@
 
 use serde::Serialize;
 
+use crate::doctor::Finding;
 use crate::schema::TaskSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +36,13 @@ pub struct CommandOutput {
     pub stdout: String,
     pub stderr: Option<String>,
     pub exit_code: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DoctorSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub findings: &'a [Finding],
 }
 
 impl CommandOutput {
