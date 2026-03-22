@@ -147,9 +147,11 @@ fn dispatch(cli: Cli) -> CommandOutput {
         }
         Commands::Check { json, path } => commands::check(path.as_deref(), format_from_json(json)),
         Commands::Up { path } => commands::up(path.as_deref()),
-        Commands::Detect { json, dry_run, path } => {
-            commands::detect(path.as_deref(), dry_run, format_from_json(json))
-        }
+        Commands::Detect {
+            json,
+            dry_run,
+            path,
+        } => commands::detect(path.as_deref(), dry_run, format_from_json(json)),
     }
 }
 
@@ -220,6 +222,23 @@ tasks:
             json["errors"][0],
             "task `dev` depends on unknown task `setup`"
         );
+    }
+
+    #[test]
+    fn validate_rejects_unknown_top_level_keys() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+unexpected: true
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.as_deref().unwrap().contains("unexpected"));
     }
 
     #[test]
@@ -714,6 +733,28 @@ checks:
                 .stdout
                 .contains("tasks.dev.run: pnpm dev <- from package.json#scripts.dev [high]")
         );
+    }
+
+    #[test]
+    fn detect_json_reports_candidate_contract() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["config"]["project"]["name"], "ota-web");
+        assert_eq!(json["inferred"][0]["field"], "project.name");
     }
 
     #[test]

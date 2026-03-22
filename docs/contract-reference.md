@@ -81,6 +81,7 @@ Optional.
 ```yaml
 execution:
   preferred: native
+  lifecycle: persistent
   supported:
     - native
     - container
@@ -92,11 +93,43 @@ Supported backend values:
 - `container`
 - `remote`
 
+Supported lifecycle values:
+
+- `persistent`
+- `ephemeral`
+
 Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 
 Current implementation only executes tasks natively. The broader execution model remains part of the contract surface.
+
+## `services`
+
+Optional.
+
+```yaml
+services:
+  postgres:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -h localhost -p 5432
+```
+
+Fields:
+
+- `required`: optional boolean
+- `provider`: optional string
+- `start`: optional string
+- `stop`: optional string
+- `healthcheck`: optional string
+
+Current behavior:
+
+- services are part of the accepted V1 contract surface
+- service declarations are not yet deeply orchestrated by the current CLI commands
 
 ## `runtimes`
 
