@@ -94,6 +94,9 @@ enum Commands {
     },
     /// Prepare the repo for use with minimal prior knowledge.
     Up {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -158,7 +161,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Check { json, path } => {
             commands::check(path.as_deref(), format_from_json(json), debug)
         }
-        Commands::Up { path } => commands::up(path.as_deref(), debug),
+        Commands::Up { json, path } => commands::up(path.as_deref(), format_from_json(json), debug),
         Commands::Detect {
             json,
             dry_run,
@@ -779,6 +782,29 @@ tasks:
     }
 
     #[test]
+    fn up_json_reports_ready_status_and_phase() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["status"], "READY");
+        assert_eq!(json["phase"], "post-setup diagnosis");
+        assert!(json["findings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn up_reports_service_start_failure_with_exit_code() {
         let fixture = ContractFixture::new(
             r#"
@@ -804,6 +830,33 @@ tasks:
         assert!(output.stdout.contains("Service: postgres"));
         assert!(output.stdout.contains("Exit code: 9"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_json_reports_service_start_failure_details() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: exit 9
+    healthcheck: exit 0
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 9);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["status"], "SERVICE START FAILED");
+        assert_eq!(json["phase"], "services");
+        assert_eq!(json["service"], "postgres");
+        assert_eq!(json["exit_code"], 9);
+        assert!(json["findings"].as_array().unwrap().is_empty());
     }
 
     #[test]

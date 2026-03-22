@@ -176,6 +176,9 @@ fn detect_json_prefers_repo_specific_signals_in_node_conflict_fixture() {
             && inference["source"] == "package.json#packageManager"
             && inference["value"] == "10.7.0"
     }));
+    assert!(json.get("path").is_some());
+    assert_eq!(json["config"]["version"], 1);
+    assert_eq!(inferred[0]["confidence"], "high");
 }
 
 #[test]
@@ -225,12 +228,15 @@ services:
 
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json["ok"], false);
+    assert!(json.get("path").is_some());
     assert_eq!(json["findings"].as_array().unwrap().len(), 2);
     assert_eq!(json["findings"][0]["severity"], "error");
     assert_eq!(
         json["findings"][0]["summary"],
         "Service healthcheck failed: postgres"
     );
+    assert!(json["findings"][0]["why"].is_string());
+    assert!(json["findings"][0]["next"].is_string());
     assert_eq!(json["findings"][1]["severity"], "warn");
     assert_eq!(
         json["findings"][1]["summary"],
@@ -333,6 +339,42 @@ checks:
     assert!(stdout.contains("ERROR  Check failed: docs-ops"));
     assert!(fixture.path().join(".service-ready").exists());
     assert!(fixture.path().join("prepared.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn up_json_reports_contract_shape_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+    let contract = r#"
+version: 1
+project:
+  name: polyglot-ops
+services:
+  postgres:
+    required: true
+    start: touch .service-ready
+    healthcheck: test -f .service-ready
+  redis:
+    required: false
+    healthcheck: test -f .redis-ready
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["up", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["status"], "READY");
+    assert_eq!(json["phase"], "post-setup diagnosis");
+    assert!(json.get("path").is_some());
+    assert!(json["findings"].as_array().unwrap().len() >= 1);
+    assert_eq!(json["findings"][0]["severity"], "warn");
+    assert!(json.get("service").is_none());
+    assert!(json.get("task").is_none());
 }
 
 #[cfg(unix)]

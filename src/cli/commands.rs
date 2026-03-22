@@ -30,10 +30,11 @@ use crate::doctor::{
 };
 use crate::output::{
     CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
-    OutputFormat, TaskSummary, TasksFailure, TasksSuccess, ValidateFailure, ValidateSuccess,
+    OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
+    ValidateSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
-use crate::runner::{RunError, run_task};
+use crate::runner::{RunError, run_task, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 
@@ -318,7 +319,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     )
 }
 
-pub fn up(path: Option<&Path>, debug: bool) -> CommandOutput {
+pub fn up(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
     let debug_lines = vec![
@@ -331,12 +332,16 @@ pub fn up(path: Option<&Path>, debug: bool) -> CommandOutput {
             Ok(contract) => {
                 let preflight = diagnose_preconditions(&contract, &resolved_path);
                 if !preflight.ok {
-                    return render_up_text(
+                    return render_up(
                         &path_display,
                         "NOT READY",
                         "preconditions",
                         preflight,
                         false,
+                        None,
+                        None,
+                        None,
+                        format,
                     );
                 }
 
@@ -353,29 +358,47 @@ pub fn up(path: Option<&Path>, debug: bool) -> CommandOutput {
                     match run_shell_command(start, working_dir) {
                         Ok(0) => {}
                         Ok(exit_code) => {
-                            return CommandOutput {
-                                stdout: format!(
-                                    "UP {path_display}\nSERVICE START FAILED\nPhase: services\nService: {name}\nExit code: {exit_code}\nNext: inspect `services.{name}.start` output and fix the reported issue"
-                                ),
-                                stderr: None,
-                                exit_code,
-                            };
+                            return render_up(
+                                &path_display,
+                                "SERVICE START FAILED",
+                                "services",
+                                DoctorReport {
+                                    ok: false,
+                                    findings: Vec::new(),
+                                },
+                                false,
+                                Some(name.as_str()),
+                                None,
+                                Some(exit_code),
+                                format,
+                            );
                         }
                         Err(error) => return CommandOutput::failure(error),
                     }
                 }
 
                 if contract.tasks.contains_key("setup") {
-                    match run_task(&contract, &resolved_path, "setup") {
+                    match run_task_with_progress(
+                        &contract,
+                        &resolved_path,
+                        "setup",
+                        matches!(format, OutputFormat::Text),
+                    ) {
                         Ok(outcome) if outcome.exit_code != 0 => {
-                            return CommandOutput {
-                                stdout: format!(
-                                    "UP {path_display}\nSETUP FAILED\nPhase: setup\nTask: setup\nExit code: {}\nNext: inspect the `setup` task output and fix the reported issue",
-                                    outcome.exit_code
-                                ),
-                                stderr: None,
-                                exit_code: outcome.exit_code,
-                            };
+                            return render_up(
+                                &path_display,
+                                "SETUP FAILED",
+                                "setup",
+                                DoctorReport {
+                                    ok: false,
+                                    findings: Vec::new(),
+                                },
+                                false,
+                                None,
+                                Some("setup"),
+                                Some(outcome.exit_code),
+                                format,
+                            );
                         }
                         Ok(_) => {}
                         Err(error) => return CommandOutput::failure(render_run_error(error)),
@@ -384,14 +407,28 @@ pub fn up(path: Option<&Path>, debug: bool) -> CommandOutput {
 
                 let report = diagnose_contract(&contract, &resolved_path);
                 if report.ok {
-                    render_up_text(&path_display, "READY", "post-setup diagnosis", report, true)
+                    render_up(
+                        &path_display,
+                        "READY",
+                        "post-setup diagnosis",
+                        report,
+                        true,
+                        None,
+                        None,
+                        None,
+                        format,
+                    )
                 } else {
-                    render_up_text(
+                    render_up(
                         &path_display,
                         "NOT READY",
                         "post-setup diagnosis",
                         report,
                         false,
+                        None,
+                        None,
+                        None,
+                        format,
                     )
                 }
             }
@@ -691,14 +728,58 @@ fn render_report_text(command: &str, path: &str, report: DoctorReport) -> Comman
     }
 }
 
+fn render_up(
+    path: &str,
+    status: &str,
+    phase: &str,
+    report: DoctorReport,
+    ready: bool,
+    service: Option<&str>,
+    task: Option<&str>,
+    exit_code: Option<i32>,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            render_up_text(path, status, phase, report, ready, service, task, exit_code)
+        }
+        OutputFormat::Json => {
+            render_up_json(path, status, phase, report, ready, service, task, exit_code)
+        }
+    }
+}
+
 fn render_up_text(
     path: &str,
     status: &str,
     phase: &str,
     report: DoctorReport,
     ready: bool,
+    service: Option<&str>,
+    task: Option<&str>,
+    exit_code: Option<i32>,
 ) -> CommandOutput {
     let mut stdout = format!("UP {path}\n{status}\nPhase: {phase}");
+
+    if let Some(service) = service {
+        stdout.push_str(&format!("\nService: {service}"));
+    }
+
+    if let Some(task) = task {
+        stdout.push_str(&format!("\nTask: {task}"));
+    }
+
+    if let Some(exit_code) = exit_code {
+        stdout.push_str(&format!("\nExit code: {exit_code}"));
+        if phase == "services" {
+            stdout.push_str(&format!(
+                "\nNext: inspect `services.{}.start` output and fix the reported issue",
+                service.unwrap_or("service")
+            ));
+        } else if phase == "setup" {
+            stdout.push_str("\nNext: inspect the `setup` task output and fix the reported issue");
+        }
+    }
 
     for finding in &report.findings {
         stdout.push('\n');
@@ -715,6 +796,32 @@ fn render_up_text(
         stdout,
         stderr: None,
         exit_code: if ready { 0 } else { 1 },
+    }
+}
+
+fn render_up_json(
+    path: &str,
+    status: &str,
+    phase: &str,
+    report: DoctorReport,
+    ready: bool,
+    service: Option<&str>,
+    task: Option<&str>,
+    exit_code: Option<i32>,
+) -> CommandOutput {
+    CommandOutput {
+        stdout: to_json(&UpStatus {
+            ok: ready,
+            path,
+            status,
+            phase,
+            findings: &report.findings,
+            service,
+            task,
+            exit_code,
+        }),
+        stderr: None,
+        exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
     }
 }
 
