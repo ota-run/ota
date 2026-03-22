@@ -1,0 +1,8 @@
+{
+  "name": "ota-compose-web",
+  "packageManager": "pnpm@10.6.0",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build"
+  }
+}

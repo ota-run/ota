@@ -1,0 +1,44 @@
+name: V1 Release Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  v1-release-gate:
+    name: V1 Release Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run full test suite
+        run: cargo test
+
+      - name: Run detect fixture suite
+        run: cargo test --test detect_fixtures
+
+      - name: Run real repo fixture suite
+        run: cargo test --test real_repo_fixtures
+
+      - name: Run examples validation suite
+        run: cargo test --test examples_validate
