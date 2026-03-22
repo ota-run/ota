@@ -1,0 +1,6 @@
+{
+  "name": "ota-tool-versions",
+  "scripts": {
+    "build": "tsc -b"
+  }
+}
