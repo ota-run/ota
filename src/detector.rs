@@ -1329,6 +1329,94 @@ requires-python = ">=3.12"
     }
 
     #[test]
+    fn detects_services_from_compose_yml() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "compose.yml",
+            r#"services:
+  cache:
+    image: redis:7
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("cache")
+                .and_then(|service| service.stop.as_deref()),
+            Some("docker compose stop cache")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.cache.stop"
+                && inference.source == "compose.yml#services.cache"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
+    fn detects_services_from_docker_compose_yaml_with_string_healthcheck() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yaml",
+            r#"services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: "pg_isready -h localhost -p 5432"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("db")
+                .and_then(|service| service.healthcheck.as_deref()),
+            Some("pg_isready -h localhost -p 5432")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.db.healthcheck"
+                && inference.source == "docker-compose.yaml#services.db.healthcheck.test"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
+    fn detects_compose_service_healthcheck_from_cmd_array() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "compose.yaml",
+            r#"services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432"]
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("db")
+                .and_then(|service| service.healthcheck.as_deref()),
+            Some("pg_isready -h localhost -p 5432")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.db.healthcheck"
+                && inference.source == "compose.yaml#services.db.healthcheck.test"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
     fn prefers_nvmrc_over_node_version_file() {
         let fixture = Fixture::new();
         fixture.write(".nvmrc", "22\n");

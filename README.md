@@ -121,6 +121,11 @@ Write a conservative first contract:
 cargo run -- detect /path/to/repo
 ```
 
+Example contracts:
+- [basic-node](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
+- [basic-script](/Users/bobai/Workspace/Ota.run/ota/examples/basic-script/ota.yaml)
+- [basic-services](/Users/bobai/Workspace/Ota.run/ota/examples/basic-services/ota.yaml)
+
 ## Documentation
 
 ### Start here
