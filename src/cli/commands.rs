@@ -28,8 +28,8 @@ use crate::doctor::{
     DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
 };
 use crate::output::{
-    CommandOutput, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
-    TasksFailure, TasksSuccess, ValidateFailure, ValidateSuccess,
+    CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
+    OutputFormat, TaskSummary, TasksFailure, TasksSuccess, ValidateFailure, ValidateSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task};
@@ -308,33 +308,66 @@ pub fn up(path: Option<&Path>) -> CommandOutput {
     }
 }
 
-pub fn detect(path: Option<&Path>, dry_run: bool) -> CommandOutput {
+pub fn detect(path: Option<&Path>, dry_run: bool, format: OutputFormat) -> CommandOutput {
     let root = resolve_repo_path(path);
+    let contract_path = root.join(DEFAULT_CONTRACT_FILE);
+    let path_display = contract_path.display().to_string();
     match detect_repo(&root) {
         Ok(report) if dry_run => {
             let yaml = serde_yaml::to_string(&report.contract)
                 .expect("serializing detected contract should not fail");
-            let mut stdout = format!("DETECT {}", report.root.display());
-            stdout.push('\n');
-            stdout.push_str("---");
-            stdout.push('\n');
-            stdout.push_str(yaml.trim_end());
-            render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
-
-            CommandOutput::success(stdout)
+            match format {
+                OutputFormat::Text => {
+                    let mut stdout = format!("DETECT {}", report.root.display());
+                    stdout.push('\n');
+                    stdout.push_str("---");
+                    stdout.push('\n');
+                    stdout.push_str(yaml.trim_end());
+                    render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
+                    CommandOutput::success(stdout)
+                }
+                OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                    ok: true,
+                    path: &path_display,
+                    written: false,
+                    config: &report.contract,
+                    inferred: &report.inferences,
+                })),
+            }
         }
-        Ok(report) => write_detected_contract(report),
-        Err(error) => CommandOutput::failure(error.to_string()),
+        Ok(report) => write_detected_contract(report, format),
+        Err(error) => {
+            let error = error.to_string();
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            }
+        }
     }
 }
 
-fn write_detected_contract(report: DetectReport) -> CommandOutput {
+fn write_detected_contract(report: DetectReport, format: OutputFormat) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
+    let path_display = contract_path.display().to_string();
     if contract_path.exists() {
-        return CommandOutput::failure(format!(
+        let error = format!(
             "`{}` already exists; refusing to overwrite an existing contract",
             contract_path.display()
-        ));
+        );
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+            })),
+        };
     }
 
     let candidate = report.high_confidence_contract();
@@ -355,25 +388,49 @@ fn write_detected_contract(report: DetectReport) -> CommandOutput {
                 "Excluded from automatic write",
                 excluded_write_inferences(&report),
             );
-            return CommandOutput::failure(stderr);
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(stderr),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &stderr,
+                })),
+            };
         }
     }
 
     match fs::write(&contract_path, yaml) {
-        Ok(()) => {
-            let mut stdout = format!("WROTE {}", contract_path.display());
-            render_inference_section(
-                &mut stdout,
-                "Excluded from automatic write",
-                excluded_write_inferences(&report),
-            );
-            CommandOutput::success(stdout)
+        Ok(()) => match format {
+            OutputFormat::Text => {
+                let mut stdout = format!("WROTE {}", contract_path.display());
+                render_inference_section(
+                    &mut stdout,
+                    "Excluded from automatic write",
+                    excluded_write_inferences(&report),
+                );
+                CommandOutput::success(stdout)
+            }
+            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                ok: true,
+                path: &path_display,
+                written: true,
+                config: &candidate,
+                inferred: &report.inferences,
+            })),
+        },
+        Err(error) => {
+            let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            }
         }
-        Err(error) => CommandOutput::failure(format!(
-            "failed to write `{}`: {}",
-            contract_path.display(),
-            error
-        )),
     }
 }
 

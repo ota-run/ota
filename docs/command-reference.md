@@ -221,6 +221,7 @@ Infer a starting contract from repo state.
 
 ```bash
 ota detect --dry-run [PATH]
+ota detect --json --dry-run [PATH]
 ota detect [PATH]
 ```
 
