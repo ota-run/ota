@@ -153,6 +153,7 @@ cargo run -- detect /path/to/repo
 - [Basic Node](examples/basic-node/ota.yaml)
 - [Basic Python](examples/basic-python/ota.yaml)
 - [Basic Go](examples/basic-go/ota.yaml)
+- [Basic Script](examples/basic-script/ota.yaml)
 
 ### Mixed and realistic repos
 - [Mixed Node + Python](examples/mixed-node-python/ota.yaml)

@@ -36,8 +36,13 @@ fn real_fixture_path(name: &str) -> PathBuf {
 }
 
 fn run_ota(args: &[&str]) -> Output {
+    run_ota_with_env(args, [])
+}
+
+fn run_ota_with_env<const N: usize>(args: &[&str], envs: [(&str, &str); N]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
+        .envs(envs)
         .output()
         .expect("ota command should run")
 }
@@ -235,6 +240,103 @@ services:
 
 #[cfg(unix)]
 #[test]
+fn doctor_json_uses_default_env_value_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("docker-legacy");
+    let contract = r#"
+version: 1
+project:
+  name: docker-legacy
+env:
+  OTA_ENV:
+    required: false
+    default: local
+    allowed:
+      - local
+      - ci
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_json_reports_invalid_allowed_env_value_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("docker-legacy");
+    let contract = r#"
+version: 1
+project:
+  name: docker-legacy
+env:
+  OTA_ENV:
+    required: false
+    allowed:
+      - local
+      - ci
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota_with_env(
+        &["doctor", "--json", fixture.path().to_str().unwrap()],
+        [("OTA_ENV", "prod")],
+    );
+    let json =
+        serde_json::from_slice::<Value>(&output.stdout).expect("stdout should be valid JSON");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"][0]["severity"], "error");
+    assert_eq!(
+        json["findings"][0]["summary"],
+        "Invalid environment value: OTA_ENV"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn up_runs_service_start_and_stops_in_post_setup_diagnosis_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+    let contract = r#"
+version: 1
+project:
+  name: polyglot-ops
+services:
+  postgres:
+    required: true
+    start: touch .service-ready
+    healthcheck: test -f .service-ready
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+checks:
+  - name: docs-ops
+    kind: health
+    severity: error
+    run: test -f docs/ops.md
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout.contains("NOT READY"));
+    assert!(stdout.contains("Phase: post-setup diagnosis"));
+    assert!(stdout.contains("ERROR  Check failed: docs-ops"));
+    assert!(fixture.path().join(".service-ready").exists());
+    assert!(fixture.path().join("prepared.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn doctor_json_runs_warning_check_in_ugly_polyglot_fixture() {
     let fixture = copy_fixture_to_temp("ugly-polyglot");
     let contract = r#"
@@ -257,4 +359,66 @@ checks:
     assert_eq!(json["findings"].as_array().unwrap().len(), 1);
     assert_eq!(json["findings"][0]["severity"], "warn");
     assert_eq!(json["findings"][0]["summary"], "Check failed: docs-ops");
+}
+
+#[cfg(unix)]
+#[test]
+fn doctor_json_reports_optional_service_failure_as_warning_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+    let contract = r#"
+version: 1
+project:
+  name: polyglot-ops
+services:
+  redis:
+    required: false
+    healthcheck: test -f .redis-ready
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"][0]["severity"], "warn");
+    assert_eq!(
+        json["findings"][0]["summary"],
+        "Service healthcheck failed: redis"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn up_returns_ready_when_only_warning_findings_remain_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+    let contract = r#"
+version: 1
+project:
+  name: polyglot-ops
+services:
+  postgres:
+    required: true
+    start: touch .service-ready
+    healthcheck: test -f .service-ready
+  redis:
+    required: false
+    healthcheck: test -f .redis-ready
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(stdout.contains("READY"));
+    assert!(stdout.contains("Phase: post-setup diagnosis"));
+    assert!(stdout.contains("WARN  Service healthcheck failed: redis"));
+    assert!(fixture.path().join(".service-ready").exists());
+    assert!(fixture.path().join("prepared.txt").exists());
 }

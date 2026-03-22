@@ -1,0 +1,16 @@
+version: 1
+project:
+  name: ota-script-example
+tasks:
+  setup:
+    description: Prepare generated files with an inline shell script
+    category: setup
+    script: |
+      mkdir -p .ota
+      printf ready > .ota/state.txt
+  test:
+    description: Validate the prepared state
+    category: test
+    depends_on:
+      - setup
+    run: test -f .ota/state.txt
