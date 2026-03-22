@@ -42,6 +42,7 @@ ota detect --dry-run
 ota detect
 ota workspace validate
 ota workspace doctor
+ota workspace up
 ```
 
 Global flag:
@@ -65,6 +66,7 @@ Current behavior:
 - `ota detect` writes a contract conservatively from `high` confidence fields only
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth
+- `ota workspace up` orchestrates repo-level `up` across a workspace contract without inventing a second bootstrap model
 
 ## Detect trust model
 

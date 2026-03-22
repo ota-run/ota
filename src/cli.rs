@@ -139,6 +139,14 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Prepare every repo in an ota.workspace.yaml contract.
+    Up {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> i32 {
@@ -239,6 +247,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
             ),
             WorkspaceCommands::Doctor { json, path } => commands::workspace_doctor(
+                path.as_deref(),
+                file.as_deref(),
+                format_from_json(json),
+                debug,
+            ),
+            WorkspaceCommands::Up { json, path } => commands::workspace_up(
                 path.as_deref(),
                 file.as_deref(),
                 format_from_json(json),
@@ -1506,6 +1520,84 @@ env:
                 .stdout
                 .contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
         );
+    }
+
+    #[test]
+    fn workspace_up_json_reports_required_repo_failure() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: exit 9
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["status"], "SETUP FAILED");
+        assert_eq!(json["repos"][0]["phase"], "setup");
+        assert_eq!(json["repos"][0]["task"], "setup");
+        assert_eq!(json["repos"][0]["exit_code"], 9);
+    }
+
+    #[test]
+    fn workspace_up_ignores_optional_repo_failure_in_aggregate_status() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: exit 7
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("web [optional] (WARN)"));
+        assert!(output.stdout.contains("Exit code: 7"));
     }
 
     struct ContractFixture {

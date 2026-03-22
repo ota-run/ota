@@ -27,21 +27,22 @@ use std::process::Command;
 
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
-    diagnose_service, diagnose_services_only,
+    DoctorReport, Finding, FindingSeverity, diagnose_checks_only, diagnose_contract,
+    diagnose_preconditions, diagnose_service, diagnose_services_only,
 };
 use crate::output::{
     CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
     OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, WorkspaceDoctorSuccess,
+    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
-    DEFAULT_WORKSPACE_FILE, WorkspaceValidationErrors, diagnose_workspace_contract,
-    load_workspace_contract, validate_workspace_contract,
+    DEFAULT_WORKSPACE_FILE, WorkspaceRepoRef, WorkspaceValidationErrors,
+    diagnose_workspace_contract, load_workspace_contract, validate_workspace_contract,
+    validate_workspace_shape,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -422,138 +423,14 @@ pub fn up(
 
     finalize_debug(
         match load_and_validate(&resolved_path) {
-            Ok(contract) => {
-                let preflight = diagnose_preconditions(&contract, &resolved_path);
-                if !preflight.ok {
-                    return render_up(
-                        &path_display,
-                        "NOT READY",
-                        "preconditions",
-                        preflight,
-                        false,
-                        None,
-                        None,
-                        None,
-                        format,
-                    );
-                }
-
-                let working_dir = contract_working_dir(&resolved_path);
-                for name in service_start_order(&contract) {
-                    let service = contract
-                        .services
-                        .get(name.as_str())
-                        .expect("validated service should exist");
-
-                    if let Some(start) = service.start.as_deref() {
-                        match run_shell_command(start, working_dir) {
-                            Ok(0) => {}
-                            Ok(exit_code) => {
-                                return render_up(
-                                    &path_display,
-                                    "SERVICE START FAILED",
-                                    "services",
-                                    DoctorReport {
-                                        ok: false,
-                                        findings: Vec::new(),
-                                    },
-                                    false,
-                                    Some(name.as_str()),
-                                    None,
-                                    Some(exit_code),
-                                    format,
-                                );
-                            }
-                            Err(error) => return CommandOutput::failure(error),
-                        }
-                    }
-
-                    let service_report = diagnose_service(&contract, &resolved_path, name.as_str());
-                    if !service_report.ok {
-                        return render_up(
-                            &path_display,
-                            "NOT READY",
-                            "services",
-                            service_report,
-                            false,
-                            Some(name.as_str()),
-                            None,
-                            None,
-                            format,
-                        );
-                    }
-                }
-
-                let service_report = diagnose_services_only(&contract, &resolved_path);
-                if !service_report.ok {
-                    return render_up(
-                        &path_display,
-                        "NOT READY",
-                        "services",
-                        service_report,
-                        false,
-                        None,
-                        None,
-                        None,
-                        format,
-                    );
-                }
-
-                if contract.tasks.contains_key("setup") {
-                    match run_task_with_progress(
-                        &contract,
-                        &resolved_path,
-                        "setup",
-                        matches!(format, OutputFormat::Text),
-                    ) {
-                        Ok(outcome) if outcome.exit_code != 0 => {
-                            return render_up(
-                                &path_display,
-                                "SETUP FAILED",
-                                "setup",
-                                DoctorReport {
-                                    ok: false,
-                                    findings: Vec::new(),
-                                },
-                                false,
-                                None,
-                                Some("setup"),
-                                Some(outcome.exit_code),
-                                format,
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(error) => return CommandOutput::failure(render_run_error(error)),
-                    }
-                }
-
-                let report = diagnose_contract(&contract, &resolved_path);
-                if report.ok {
-                    render_up(
-                        &path_display,
-                        "READY",
-                        "post-setup diagnosis",
-                        report,
-                        true,
-                        None,
-                        None,
-                        None,
-                        format,
-                    )
-                } else {
-                    render_up(
-                        &path_display,
-                        "NOT READY",
-                        "post-setup diagnosis",
-                        report,
-                        false,
-                        None,
-                        None,
-                        None,
-                        format,
-                    )
-                }
-            }
+            Ok(contract) => match execute_repo_up(
+                &contract,
+                &resolved_path,
+                matches!(format, OutputFormat::Text),
+            ) {
+                Ok(result) => render_up_result(&path_display, result, format),
+                Err(error) => CommandOutput::failure(error),
+            },
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
             Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
         },
@@ -717,6 +594,55 @@ pub fn workspace_doctor(
                     exit_code: if report.ok { 0 } else { 1 },
                 },
             },
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_up(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.up")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.up"),
+        format!("DEBUG workspace_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_up(&resolved_path, matches!(format, OutputFormat::Text)) {
+            Ok(report) => render_workspace_up(&path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -1042,6 +968,20 @@ fn render_up(
     }
 }
 
+fn render_up_result(path: &str, result: RepoUpResult, format: OutputFormat) -> CommandOutput {
+    render_up(
+        path,
+        result.status,
+        result.phase,
+        result.report,
+        result.ok,
+        result.service.as_deref(),
+        result.task.as_deref(),
+        result.exit_code,
+        format,
+    )
+}
+
 fn render_up_text(
     path: &str,
     status: &str,
@@ -1115,6 +1055,70 @@ fn render_up_json(
         }),
         stderr: None,
         exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
+    }
+}
+
+fn render_workspace_up(
+    path: &str,
+    report: &WorkspaceUpReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "WORKSPACE UP {path}\n{}",
+                if report.ok { "READY" } else { "NOT READY" }
+            );
+
+            for repo in &report.repos {
+                stdout.push_str(&format!(
+                    "\n- {} [{}] ({})",
+                    repo.name,
+                    if repo.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    repo.status
+                ));
+                stdout.push_str(&format!("\n  Path: {}", repo.path));
+                stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+                stdout.push_str(&format!("\n  Phase: {}", repo.phase));
+                if let Some(service) = &repo.service {
+                    stdout.push_str(&format!("\n  Service: {service}"));
+                }
+                if let Some(task) = &repo.task {
+                    stdout.push_str(&format!("\n  Task: {task}"));
+                }
+                if let Some(exit_code) = repo.exit_code {
+                    stdout.push_str(&format!("\n  Exit code: {exit_code}"));
+                }
+                for finding in &repo.findings {
+                    stdout.push_str(&format!(
+                        "\n  {}  {}\n  Why: {}\n  Next: {}",
+                        render_severity(finding.severity),
+                        finding.summary,
+                        finding.why,
+                        finding.next
+                    ));
+                }
+            }
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if report.ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&WorkspaceUpSuccess {
+                ok: report.ok,
+                path,
+                repos: &report.repos,
+            }),
+            stderr: None,
+            exit_code: if report.ok { 0 } else { 1 },
+        },
     }
 }
 
@@ -1285,6 +1289,245 @@ fn current_os() -> &'static str {
         "macos" => "macos",
         "windows" => "windows",
         other => other,
+    }
+}
+
+struct RepoUpResult {
+    ok: bool,
+    status: &'static str,
+    phase: &'static str,
+    report: DoctorReport,
+    service: Option<String>,
+    task: Option<String>,
+    exit_code: Option<i32>,
+}
+
+struct WorkspaceUpReport {
+    ok: bool,
+    repos: Vec<WorkspaceRepoUpReport>,
+}
+
+fn execute_repo_up(
+    contract: &Contract,
+    resolved_path: &Path,
+    emit_progress: bool,
+) -> Result<RepoUpResult, String> {
+    let preflight = diagnose_preconditions(contract, resolved_path);
+    if !preflight.ok {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            report: preflight,
+            service: None,
+            task: None,
+            exit_code: None,
+        });
+    }
+
+    let working_dir = contract_working_dir(resolved_path);
+    for name in service_start_order(contract) {
+        let service = contract
+            .services
+            .get(name.as_str())
+            .expect("validated service should exist");
+
+        if let Some(start) = service.start.as_deref() {
+            match run_shell_command(start, working_dir) {
+                Ok(0) => {}
+                Ok(exit_code) => {
+                    return Ok(RepoUpResult {
+                        ok: false,
+                        status: "SERVICE START FAILED",
+                        phase: "services",
+                        report: DoctorReport {
+                            ok: false,
+                            findings: Vec::new(),
+                        },
+                        service: Some(name.clone()),
+                        task: None,
+                        exit_code: Some(exit_code),
+                    });
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let service_report = diagnose_service(contract, resolved_path, name.as_str());
+        if !service_report.ok {
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "NOT READY",
+                phase: "services",
+                report: service_report,
+                service: Some(name),
+                task: None,
+                exit_code: None,
+            });
+        }
+    }
+
+    let service_report = diagnose_services_only(contract, resolved_path);
+    if !service_report.ok {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "services",
+            report: service_report,
+            service: None,
+            task: None,
+            exit_code: None,
+        });
+    }
+
+    if contract.tasks.contains_key("setup") {
+        match run_task_with_progress(contract, resolved_path, "setup", emit_progress) {
+            Ok(outcome) if outcome.exit_code != 0 => {
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "SETUP FAILED",
+                    phase: "setup",
+                    report: DoctorReport {
+                        ok: false,
+                        findings: Vec::new(),
+                    },
+                    service: None,
+                    task: Some(String::from("setup")),
+                    exit_code: Some(outcome.exit_code),
+                });
+            }
+            Ok(_) => {}
+            Err(error) => return Err(render_run_error(error)),
+        }
+    }
+
+    let report = diagnose_contract(contract, resolved_path);
+    Ok(RepoUpResult {
+        ok: report.ok,
+        status: if report.ok { "READY" } else { "NOT READY" },
+        phase: "post-setup diagnosis",
+        report,
+        service: None,
+        task: None,
+        exit_code: None,
+    })
+}
+
+fn load_and_run_workspace_up(
+    path: &Path,
+    emit_progress: bool,
+) -> Result<WorkspaceUpReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let repo_refs =
+        validate_workspace_shape(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    let mut repos = Vec::new();
+    let mut ok = true;
+    for repo in repo_refs {
+        let required = repo.required;
+        let repo_report = run_workspace_repo_up(repo, emit_progress);
+        if required && !repo_report.ok {
+            ok = false;
+        }
+        repos.push(repo_report);
+    }
+
+    Ok(WorkspaceUpReport { ok, repos })
+}
+
+fn run_workspace_repo_up(repo: WorkspaceRepoRef, emit_progress: bool) -> WorkspaceRepoUpReport {
+    let repo_name = repo.name.clone();
+    let contract_path_display = repo.contract_path.display().to_string();
+    let path_display = repo.path.display().to_string();
+    match load_and_validate(&repo.contract_path) {
+        Ok(contract) => match execute_repo_up(&contract, &repo.contract_path, emit_progress) {
+            Ok(result) => WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: if repo.required { result.ok } else { true },
+                status: if repo.required || result.ok {
+                    result.status.to_string()
+                } else {
+                    String::from("WARN")
+                },
+                phase: result.phase.to_string(),
+                findings: adjust_workspace_up_findings(result.report.findings, repo.required),
+                service: result.service,
+                task: result.task,
+                exit_code: result.exit_code,
+            },
+            Err(error) => WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
+                phase: "setup".to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo up failed: {}", repo_name),
+                    why: error,
+                    next: format!(
+                        "repair `{}` and re-run `ota workspace up`",
+                        repo.contract_path.display()
+                    ),
+                }],
+                service: None,
+                task: None,
+                exit_code: None,
+            },
+        },
+        Err(error) => WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: !repo.required,
+            status: if repo.required { "NOT READY" } else { "WARN" }.to_string(),
+            phase: "validation".to_string(),
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo contract failed validation: {}", repo_name),
+                why: render_contract_problem(&error),
+                next: format!(
+                    "repair `{}` and re-run `ota workspace up`",
+                    repo.contract_path.display()
+                ),
+            }],
+            service: None,
+            task: None,
+            exit_code: None,
+        },
+    }
+}
+
+fn adjust_workspace_up_findings(mut findings: Vec<Finding>, required: bool) -> Vec<Finding> {
+    if required {
+        return findings;
+    }
+    for finding in &mut findings {
+        if finding.severity == FindingSeverity::Error {
+            finding.severity = FindingSeverity::Warn;
+        }
+    }
+    findings
+}
+
+fn render_contract_problem(error: &ContractProblem) -> String {
+    match error {
+        ContractProblem::Load(error) => error.to_string(),
+        ContractProblem::Validation(error) => error.to_string(),
     }
 }
 
