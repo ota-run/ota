@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Parser, Subcommand};
 
+use crate::detector::{Confidence, detect_repo};
 use crate::doctor::{diagnose_contract, diagnose_preconditions};
 use crate::output::{
     CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
@@ -82,6 +83,14 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Infer a starting contract from repo state.
+    Detect {
+        /// Print inferred fields without writing ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
+        /// Path to a repo root.
+        path: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> i32 {
@@ -116,6 +125,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Run { task, path } => run_command(task.as_str(), path.as_deref()),
         Commands::Doctor { json, path } => doctor(path.as_deref(), format_from_json(json)),
         Commands::Up { path } => up(path.as_deref()),
+        Commands::Detect { dry_run, path } => detect(path.as_deref(), dry_run),
     }
 }
 
@@ -295,6 +305,45 @@ fn up(path: Option<&Path>) -> CommandOutput {
     }
 }
 
+fn detect(path: Option<&Path>, dry_run: bool) -> CommandOutput {
+    if !dry_run {
+        return CommandOutput::failure(
+            "write mode is not implemented yet; use `ota detect --dry-run`".to_string(),
+        );
+    }
+
+    let root = resolve_repo_path(path);
+    match detect_repo(&root) {
+        Ok(report) => {
+            let yaml = serde_yaml::to_string(&report.contract)
+                .expect("serializing detected contract should not fail");
+            let mut stdout = format!("DETECT {}", report.root.display());
+            stdout.push('\n');
+            stdout.push_str("---");
+            stdout.push('\n');
+            stdout.push_str(yaml.trim_end());
+            stdout.push_str("\n---\nAnnotations:");
+
+            if report.inferences.is_empty() {
+                stdout.push_str("\n- none");
+            } else {
+                for inference in &report.inferences {
+                    stdout.push_str(&format!(
+                        "\n- {}: {} <- from {} [{}]",
+                        inference.field,
+                        inference.value,
+                        inference.source,
+                        render_confidence(inference.confidence)
+                    ));
+                }
+            }
+
+            CommandOutput::success(stdout)
+        }
+        Err(error) => CommandOutput::failure(error.to_string()),
+    }
+}
+
 fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format!("TASKS {path}");
 
@@ -409,6 +458,13 @@ fn resolve_contract_path(path: Option<&Path>) -> PathBuf {
     }
 }
 
+fn resolve_repo_path(path: Option<&Path>) -> PathBuf {
+    match path {
+        Some(path) => path.to_path_buf(),
+        None => PathBuf::from("."),
+    }
+}
+
 fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).expect("serializing CLI output should not fail")
 }
@@ -421,6 +477,14 @@ fn load_and_validate(path: &Path) -> Result<crate::schema::Contract, ContractPro
 
 fn render_run_error(error: RunError) -> String {
     error.to_string()
+}
+
+fn render_confidence(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::High => "high",
+        Confidence::Medium => "medium",
+        Confidence::Low => "low",
+    }
 }
 
 enum ContractProblem {
@@ -609,6 +673,49 @@ tasks:
         assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
+    #[test]
+    fn detect_dry_run_renders_yaml_and_annotations() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("project:"));
+        assert!(output.stdout.contains("name: ota-web"));
+        assert!(
+            output
+                .stdout
+                .contains("runtimes.node: 22 <- from .nvmrc [high]")
+        );
+        assert!(
+            output
+                .stdout
+                .contains("tasks.dev.run: pnpm dev <- from package.json#scripts.dev [high]")
+        );
+    }
+
+    #[test]
+    fn detect_without_dry_run_fails_cleanly() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "detect", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("write mode is not implemented yet; use `ota detect --dry-run`")
+        );
+    }
+
     struct ContractFixture {
         dir: TempDir,
         file_path: std::path::PathBuf,
@@ -623,12 +730,22 @@ tasks:
             Self { dir, file_path }
         }
 
+        fn new_dir() -> Self {
+            let dir = TempDir::new().unwrap();
+            let file_path = dir.path().join("ota.yaml");
+            Self { dir, file_path }
+        }
+
         fn path(&self) -> &str {
             self.dir.path().to_str().unwrap()
         }
 
         fn file_path(&self) -> &std::path::Path {
             &self.file_path
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            fs::write(self.dir.path().join(relative), contents).unwrap();
         }
     }
 }
