@@ -124,12 +124,12 @@ cargo run -- detect /path/to/repo
 ## Documentation
 
 ### Start here
-- [Quickstart](docs/guides/quickstart.md)
+- [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
 
 ### Core concepts
-- [Philosophy](docs/guides/philosophy.md)
+- [Philosophy](docs/philosophy.md)
 - [Compatibility policy](docs/spec/compatibility-policy.md)
 - [Support policy](docs/spec/support-policy.md)
 
