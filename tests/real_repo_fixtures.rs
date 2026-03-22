@@ -63,6 +63,13 @@ fn copy_fixture_to_temp(name: &str) -> TempDir {
     temp
 }
 
+fn rename_if_exists(root: &Path, from: &str, to: &str) {
+    let from_path = root.join(from);
+    if from_path.exists() {
+        fs::rename(from_path, root.join(to)).expect("fixture file should rename");
+    }
+}
+
 fn copy_dir_recursive(src: &Path, dest: &Path) {
     fs::create_dir_all(dest).expect("destination directory should exist");
 
@@ -177,6 +184,36 @@ fn detect_json_handles_docker_heavy_node_fixture() {
         "docker compose stop web"
     );
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_json_handles_compose_yaml_fixture() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+    rename_if_exists(fixture.path(), "docker-compose.yml", "compose.yaml");
+
+    let output = run_ota(&[
+        "detect",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(
+        json["config"]["services"]["web"]["provider"],
+        "docker-compose"
+    );
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "services.web.provider"
+                    && inference["source"] == "compose.yaml#services.web"
+            })
+    );
 }
 
 #[cfg(unix)]

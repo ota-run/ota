@@ -1273,6 +1273,62 @@ requires-python = ">=3.12"
     }
 
     #[test]
+    fn detects_services_from_docker_compose_yaml() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yaml",
+            r#"services:
+  web:
+    build: .
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.provider.as_deref()),
+            Some("docker-compose")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.web.provider"
+                && inference.source == "docker-compose.yaml#services.web"
+                && inference.confidence == Confidence::High
+        }));
+    }
+
+    #[test]
+    fn detects_services_from_compose_yaml() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "compose.yaml",
+            r#"services:
+  db:
+    image: postgres:16
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("db")
+                .and_then(|service| service.start.as_deref()),
+            Some("docker compose up -d db")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.db.start"
+                && inference.source == "compose.yaml#services.db"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
     fn prefers_nvmrc_over_node_version_file() {
         let fixture = Fixture::new();
         fixture.write(".nvmrc", "22\n");
