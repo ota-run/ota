@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 pub mod cli;
+pub mod doctor;
 pub mod output;
 pub mod parser;
 pub mod runner;
