@@ -636,3 +636,90 @@ If you modify an existing file without the header, add it unless doing so would 
 - Avoid broad exploration once the safe path is clear.
 - Do not burn credits on speculative searches, optional cleanup, or repeated re-checking.
 - Keep prompts, edits, and validation high-signal and efficient.
+
+--
+## First-Principles Engineering Rule
+
+When evaluating any idea, proposal, bug, limitation, or implementation path, reason from first principles before reasoning from precedent, habit, convenience, or tool constraints.
+
+### Core rule
+
+- Start from the actual goal.
+- Identify the real constraint.
+- Separate fundamental constraints from accidental constraints.
+- Prefer removing the constraint over building around it when removal is feasible and safe.
+- Do not reject a strong idea just because the current implementation, current tool choice, or current repo state makes it inconvenient.
+- If something solid is being blocked by a fixable limitation, the default posture is: **fix the limitation**.
+
+### Required thinking sequence
+
+Before accepting or rejecting a design, ask:
+
+1. **What is the actual outcome we want?**
+2. **What must be true for that outcome to exist?**
+3. **What is fundamentally required, and what is just a current implementation artifact?**
+4. **What is the smallest durable change that removes the real blocker?**
+5. **Are we preserving a bad boundary, weak assumption, or temporary workaround just because it already exists?**
+
+### Constraint classification
+
+Treat constraints in two buckets:
+
+#### Fundamental constraints
+These are real and must be respected:
+- security boundaries
+- correctness requirements
+- deterministic behavior
+- platform guarantees
+- explicit product scope
+- legal / licensing limits
+- hard runtime limitations
+
+#### Accidental constraints
+These should be challenged:
+- current file layout
+- current implementation awkwardness
+- current tool limitations
+- local code smell that can be improved
+- legacy naming
+- temporary wrappers
+- “that’s how this repo currently does it”
+- model/agent convenience
+- fear of touching adjacent code when the change is actually necessary
+
+Do not let accidental constraints masquerade as product truth.
+
+### Default response to a strong blocked idea
+
+If an idea is strategically sound and aligned with Ota’s goals, and the thing blocking it is internal and fixable, the agent should:
+
+- say that the idea is sound
+- identify the true blocker precisely
+- recommend fixing the blocker if the cost is justified
+- avoid steering toward a weaker design just to preserve local convenience
+
+### Anti-patterns to avoid
+
+- Preserving a weak design because it is already implemented
+- Accepting unnecessary complexity because “the tool works that way”
+- Treating temporary implementation limits as permanent product limits
+- Refusing a good product move because it requires touching more than one layer
+- Hiding behind precedent when first-principles reasoning points to a better path
+
+### Ota-specific application
+
+Apply first-principles thinking especially to:
+- contract shape
+- command semantics
+- JSON/output contracts
+- readiness diagnosis
+- init/detect trust model
+- human/agent symmetry
+- shell/platform behavior
+- workspace vs repo boundaries
+- anything that affects Ota’s long-term credibility as open infrastructure
+
+### Decision rule
+
+When a proposal is stronger by first-principles reasoning, and the blocker is fixable without violating security, determinism, trust, or product scope, prefer the stronger design and fix the blocker.
+Do not optimize for local convenience over product truth.
