@@ -156,3 +156,39 @@ fn detects_poetry_fixture() {
         Some(&"^3.11".to_string())
     );
 }
+
+#[test]
+fn detects_node_version_file_fixture() {
+    let report = assert_detected_contract_valid("node-version-file");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-node-version")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"24.0.1".to_string())
+    );
+}
+
+#[test]
+fn detects_python_version_file_fixture() {
+    let report = assert_detected_contract_valid("python-version-file");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("python-version-file")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.13.1".to_string())
+    );
+}

@@ -1,0 +1,6 @@
+{
+  "name": "ota-node-version",
+  "scripts": {
+    "dev": "vite"
+  }
+}
