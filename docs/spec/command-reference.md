@@ -416,9 +416,11 @@ Current behavior:
 
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
+- evaluates repos in dependency order
 - evaluates each referenced repo through its own `ota.yaml`
 - keeps workspace logic above repo diagnosis instead of duplicating it
 - downgrades findings for optional repos to warnings
+- rejects required repos that depend on optional repos
 
 Text output:
 
@@ -446,6 +448,9 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
 - runs the existing repo-level `up` flow for each referenced repo
+- executes repos sequentially by design
+- respects declared workspace repo dependency order
+- blocks downstream repos when a dependency does not become ready
 - aggregates per-repo status, phase, findings, and exit details
 - optional repo failures do not fail the overall workspace result
 

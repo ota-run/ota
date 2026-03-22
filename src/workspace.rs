@@ -56,6 +56,8 @@ pub struct WorkspaceRepoSpec {
     pub contract: Option<String>,
     #[serde(default)]
     pub required: bool,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,7 @@ pub struct WorkspaceRepoRef {
     pub path: PathBuf,
     pub contract_path: PathBuf,
     pub required: bool,
+    pub depends_on: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,6 +199,28 @@ pub fn validate_workspace_contract(
     }
 }
 
+pub fn ordered_workspace_repo_refs(
+    workspace_path: &Path,
+    contract: &WorkspaceContract,
+) -> Result<Vec<WorkspaceRepoRef>, WorkspaceValidationErrors> {
+    let repo_refs = validate_workspace_shape(workspace_path, contract)?;
+    let mut refs_by_name = repo_refs
+        .into_iter()
+        .map(|repo| (repo.name.clone(), repo))
+        .collect::<BTreeMap<_, _>>();
+    let mut ordered_names = Vec::new();
+    let mut visited = BTreeSet::new();
+
+    for name in contract.repos.keys() {
+        visit_workspace_repo(name, &contract.repos, &mut visited, &mut ordered_names);
+    }
+
+    Ok(ordered_names
+        .into_iter()
+        .filter_map(|name| refs_by_name.remove(&name))
+        .collect())
+}
+
 pub fn validate_workspace_shape(
     workspace_path: &Path,
     contract: &WorkspaceContract,
@@ -274,8 +299,29 @@ pub fn validate_workspace_shape(
             path: repo_root,
             contract_path,
             required: repo.required,
+            depends_on: repo.depends_on.clone(),
         });
+
+        for dependency in &repo.depends_on {
+            if !contract.repos.contains_key(dependency) {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{name}` depends on unknown repo `{dependency}`"
+                )));
+            } else if repo.required
+                && !contract
+                    .repos
+                    .get(dependency)
+                    .map(|dependency_repo| dependency_repo.required)
+                    .unwrap_or(false)
+            {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{name}` is required and must not depend on optional repo `{dependency}`"
+                )));
+            }
+        }
     }
+
+    detect_workspace_repo_cycles(contract, &mut errors);
 
     if errors.is_empty() {
         Ok(repo_refs)
@@ -288,7 +334,7 @@ pub fn diagnose_workspace_contract(
     workspace_path: &Path,
     contract: &WorkspaceContract,
 ) -> Result<WorkspaceDoctorReport, WorkspaceValidationErrors> {
-    let repo_refs = validate_workspace_shape(workspace_path, contract)?;
+    let repo_refs = ordered_workspace_repo_refs(workspace_path, contract)?;
     let mut repos = Vec::new();
 
     for repo in repo_refs {
@@ -406,6 +452,89 @@ fn repo_finding(required: bool, summary: String, why: String, next: String) -> F
     }
 }
 
+fn detect_workspace_repo_cycles(
+    contract: &WorkspaceContract,
+    errors: &mut Vec<WorkspaceValidationError>,
+) {
+    let mut visited = BTreeSet::new();
+    let mut active = Vec::new();
+    let mut cycle_roots = BTreeSet::new();
+
+    for name in contract.repos.keys() {
+        visit_workspace_cycle(
+            name,
+            contract,
+            &mut visited,
+            &mut active,
+            &mut cycle_roots,
+            errors,
+        );
+    }
+}
+
+fn visit_workspace_cycle(
+    name: &str,
+    contract: &WorkspaceContract,
+    visited: &mut BTreeSet<String>,
+    active: &mut Vec<String>,
+    cycle_roots: &mut BTreeSet<String>,
+    errors: &mut Vec<WorkspaceValidationError>,
+) {
+    if active.iter().any(|active_name| active_name == name) {
+        let position = active
+            .iter()
+            .position(|active_name| active_name == name)
+            .expect("active repo should exist in cycle path");
+        let mut cycle = active[position..].to_vec();
+        cycle.push(name.to_string());
+
+        if cycle_roots.insert(name.to_string()) {
+            errors.push(WorkspaceValidationError::new(format!(
+                "workspace repo dependency cycle detected: {}",
+                cycle.join(" -> ")
+            )));
+        }
+        return;
+    }
+
+    if !visited.insert(name.to_string()) {
+        return;
+    }
+
+    active.push(name.to_string());
+
+    if let Some(repo) = contract.repos.get(name) {
+        for dependency in &repo.depends_on {
+            if contract.repos.contains_key(dependency) {
+                visit_workspace_cycle(dependency, contract, visited, active, cycle_roots, errors);
+            }
+        }
+    }
+
+    active.pop();
+}
+
+fn visit_workspace_repo(
+    name: &str,
+    repos: &BTreeMap<String, WorkspaceRepoSpec>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<String>,
+) {
+    if !visited.insert(name.to_string()) {
+        return;
+    }
+
+    let repo = repos
+        .get(name)
+        .expect("validated workspace repo should exist for ordering");
+
+    for dependency in &repo.depends_on {
+        visit_workspace_repo(dependency, repos, visited, ordered);
+    }
+
+    ordered.push(name.to_string());
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -469,6 +598,134 @@ repos:
             errors.errors()[0]
                 .to_string()
                 .contains("workspace repo `web` contract was not found")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_workspace_repo_dependencies() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    depends_on:
+      - api
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "workspace repo `web` depends on unknown repo `api`"
+        );
+    }
+
+    #[test]
+    fn rejects_workspace_repo_dependency_cycles() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("api")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("api").join("ota.yaml"),
+            "version: 1\nproject:\n  name: api\n",
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    depends_on:
+      - api
+  api:
+    path: apps/api
+    depends_on:
+      - web
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "workspace repo dependency cycle detected: api -> web -> api"
+        );
+    }
+
+    #[test]
+    fn rejects_required_repo_depending_on_optional_repo() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("docs")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("docs").join("ota.yaml"),
+            "version: 1\nproject:\n  name: docs\n",
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+    depends_on:
+      - docs
+  docs:
+    path: apps/docs
+    required: false
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "workspace repo `web` is required and must not depend on optional repo `docs`"
         );
     }
 }

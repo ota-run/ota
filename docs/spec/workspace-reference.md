@@ -72,6 +72,8 @@ repos:
     path: services/api
     contract: services/api/ota.yaml
     required: true
+    depends_on:
+      - web
 ```
 
 Fields:
@@ -79,6 +81,7 @@ Fields:
 - `path`: required path to a repo directory, relative to `ota.workspace.yaml`
 - `contract`: optional explicit repo contract path, relative to `ota.workspace.yaml`
 - `required`: optional boolean
+- `depends_on`: optional list of workspace repo names
 
 Current validation behavior:
 
@@ -88,6 +91,8 @@ Current validation behavior:
 - repo `path` must exist and point to a directory
 - `contract` must be non-empty when present
 - if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
+- `depends_on` references must resolve to known workspace repos
+- workspace repo dependency cycles are rejected
 - each referenced repo contract must load and pass repo-level validation
 
 ## Current scope
@@ -97,10 +102,11 @@ The shipped workspace surface is intentionally narrow:
 - workspace contract parsing
 - workspace contract validation
 - repo contract validation through the workspace contract
+- workspace-level diagnosis as orchestration over repo-level `doctor`
+- workspace-level prepare flow as orchestration over repo-level `up`
 
 Current non-goals:
 
-- multi-repo `up`
 - workspace task orchestration
 - workspace-wide environment mutation
 - hidden repo bootstrap behavior
@@ -110,9 +116,11 @@ Current non-goals:
 Current workspace diagnosis behavior:
 
 - validates workspace structure first
+- evaluates repos in dependency order
 - diagnoses each referenced repo through its own `ota.yaml`
 - preserves repo-level diagnosis semantics for required repos
 - downgrades optional repo errors to warnings at the workspace layer
+- rejects required repos that depend on optional repos
 
 This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
 
@@ -122,8 +130,18 @@ Current workspace prepare behavior:
 
 - validates workspace structure first
 - runs repo-level `up` for each referenced repo
+- executes repos sequentially by design in the current implementation
+- respects declared workspace repo dependency order
+- blocks downstream repos when a dependency does not become ready
 - aggregates repo-level status, phase, findings, and exit details
 - optional repo failures do not fail the overall workspace status
+
+Current execution policy:
+
+- workspace repo execution is intentionally sequential for now
+- Ota does not yet infer safe parallelism between repos
+- bounded parallel execution should only be added after explicit cross-repo dependency semantics and failure policy are proven stable
+- required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 
 Current non-goals:
 

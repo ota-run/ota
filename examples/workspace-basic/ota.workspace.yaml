@@ -29,3 +29,5 @@ repos:
     path: ../basic-node
   python-app:
     path: ../basic-python
+    depends_on:
+      - node-app

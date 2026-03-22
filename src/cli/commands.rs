@@ -41,8 +41,8 @@ use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceRepoRef, WorkspaceValidationErrors,
-    diagnose_workspace_contract, load_workspace_contract, validate_workspace_contract,
-    validate_workspace_shape,
+    diagnose_workspace_contract, load_workspace_contract, ordered_workspace_repo_refs,
+    validate_workspace_contract,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -1419,16 +1419,26 @@ fn load_and_run_workspace_up(
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let repo_refs =
-        validate_workspace_shape(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     let mut repos = Vec::new();
     let mut ok = true;
+    let mut repo_results = std::collections::BTreeMap::new();
     for repo in repo_refs {
+        let blocked_dependency = repo
+            .depends_on
+            .iter()
+            .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+            .cloned();
         let required = repo.required;
-        let repo_report = run_workspace_repo_up(repo, emit_progress);
+        let repo_report = match blocked_dependency {
+            Some(dependency) => blocked_workspace_repo_up(repo, dependency),
+            None => run_workspace_repo_up(repo, emit_progress),
+        };
         if required && !repo_report.ok {
             ok = false;
         }
+        repo_results.insert(repo_report.name.clone(), repo_report.ok);
         repos.push(repo_report);
     }
 
@@ -1509,6 +1519,35 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, emit_progress: bool) -> Workspa
             task: None,
             exit_code: None,
         },
+    }
+}
+
+fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> WorkspaceRepoUpReport {
+    WorkspaceRepoUpReport {
+        name: repo.name,
+        path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(),
+        required: repo.required,
+        ok: !repo.required,
+        status: String::from("BLOCKED"),
+        phase: String::from("dependencies"),
+        findings: vec![Finding {
+            severity: if repo.required {
+                FindingSeverity::Error
+            } else {
+                FindingSeverity::Warn
+            },
+            summary: format!("Blocked by failed dependency: {dependency}"),
+            why: format!(
+                "workspace repo depends on `{dependency}`, which did not become ready"
+            ),
+            next: format!(
+                "repair `{dependency}` first, then re-run `ota workspace up`"
+            ),
+        }],
+        service: None,
+        task: None,
+        exit_code: None,
     }
 }
 
