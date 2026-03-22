@@ -17,6 +17,8 @@ Current task execution is shell-compatible:
 
 This is explicit by design. V1 does not provide per-task shell selection.
 
+The full shell contract is documented in [shell-semantics.md](shell-semantics.md).
+
 ## Practical implication
 
 Repos should expect the best behavior today on Linux and macOS.
