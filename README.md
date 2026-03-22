@@ -4,7 +4,6 @@
   <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="100" height="100">
 </div>
 
-Open repo readiness for humans and agents.
 
 Ota is an open source readiness contract and CLI for modern repositories. It gives a repo one place to define what it needs, how it becomes ready, how tasks run, and how humans and agents can operate against the same truth.
 
