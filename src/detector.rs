@@ -563,26 +563,77 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
         }
     }
 
-    builder.set_tool(
-        "maven".to_string(),
-        "*".to_string(),
-        "pom.xml".to_string(),
-        Confidence::Medium,
-    );
+    let maven_wrapper = detect_maven_wrapper(root)?;
+    if let Some((version, source)) = &maven_wrapper {
+        builder.set_tool(
+            "maven".to_string(),
+            version.clone(),
+            source.clone(),
+            Confidence::High,
+        );
+    } else {
+        builder.set_tool(
+            "maven".to_string(),
+            "*".to_string(),
+            "pom.xml".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    let build_command = if root.join("mvnw").exists() {
+        "./mvnw package"
+    } else {
+        "mvn package"
+    };
+    let test_command = if root.join("mvnw").exists() {
+        "./mvnw test"
+    } else {
+        "mvn test"
+    };
+    let task_source = maven_wrapper
+        .as_ref()
+        .map(|(_, source)| source.as_str())
+        .unwrap_or("pom.xml");
+    let task_confidence = if maven_wrapper.is_some() {
+        Confidence::High
+    } else {
+        Confidence::Medium
+    };
+
     builder.set_task(
         "build".to_string(),
-        "mvn package".to_string(),
-        "pom.xml".to_string(),
-        Confidence::Medium,
+        build_command.to_string(),
+        task_source.to_string(),
+        task_confidence,
     );
     builder.set_task(
         "test".to_string(),
-        "mvn test".to_string(),
-        "pom.xml".to_string(),
-        Confidence::Medium,
+        test_command.to_string(),
+        task_source.to_string(),
+        task_confidence,
     );
 
     Ok(())
+}
+
+fn detect_maven_wrapper(root: &Path) -> Result<Option<(String, String)>, DetectError> {
+    let wrapper_script = root.join("mvnw");
+    let wrapper_properties = root
+        .join(".mvn")
+        .join("wrapper")
+        .join("maven-wrapper.properties");
+
+    if !wrapper_script.exists() || !wrapper_properties.exists() {
+        return Ok(None);
+    }
+
+    let contents = read_file(&wrapper_properties)?;
+    Ok(extract_maven_wrapper_version(&contents).map(|version| {
+        (
+            version,
+            String::from(".mvn/wrapper/maven-wrapper.properties#distributionUrl"),
+        )
+    }))
 }
 
 fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -723,6 +774,24 @@ fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
             Confidence::Low,
         );
     }
+}
+
+fn extract_maven_wrapper_version(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        let url = line.strip_prefix("distributionUrl=")?;
+        let version = url
+            .split("apache-maven-")
+            .nth(1)?
+            .split('-')
+            .next()?
+            .trim();
+        if version.is_empty() {
+            None
+        } else {
+            Some(version.to_string())
+        }
+    })
 }
 
 fn extract_quoted_assignment(contents: &str, prefix: &str) -> Option<String> {
@@ -1005,6 +1074,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
+            ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
             "pom.xml" => 1,
             ".tool-versions" => 1,
@@ -1188,6 +1258,48 @@ requires-python = ">=3.12"
                 .get("test")
                 .map(|task| task.run.as_str()),
             Some("mvn test")
+        );
+    }
+
+    #[test]
+    fn detects_maven_wrapper_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pom.xml",
+            r#"<project>
+  <artifactId>ota-maven-service</artifactId>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>"#,
+        );
+        fixture.write("mvnw", "#!/bin/sh\n");
+        fixture.write(
+            ".mvn/wrapper/maven-wrapper.properties",
+            "distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip\n",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tools.get("maven"),
+            Some(&"3.9.9".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("./mvnw package")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("./mvnw test")
         );
     }
 
