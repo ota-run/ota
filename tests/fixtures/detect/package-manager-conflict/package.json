@@ -1,0 +1,7 @@
+{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.4.0",
+  "scripts": {
+    "dev": "vite"
+  }
+}
