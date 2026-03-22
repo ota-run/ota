@@ -112,6 +112,8 @@ Current behavior:
 - validates the contract first
 - checks configured env requirements
 - checks runtime and tool presence on `PATH`
+- runs declared service healthchecks
+- warns when a required service has no healthcheck, because readiness cannot be verified
 - runs configured checks
 - orders findings by severity
 - prints the reason and next action for each finding

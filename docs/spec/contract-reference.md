@@ -129,7 +129,12 @@ Fields:
 Current behavior:
 
 - services are part of the accepted V1 contract surface
-- service declarations are not yet deeply orchestrated by the current CLI commands
+- service declarations must include at least one actionable field: `provider`, `start`, `stop`, or `healthcheck`
+- `ota doctor` runs declared service `healthcheck` commands
+- failed required service healthchecks are blocking errors
+- failed optional service healthchecks are warnings
+- required services without a `healthcheck` produce a warning because readiness cannot be verified yet
+- service start orchestration in `ota up` is not implemented yet
 
 ## `runtimes`
 

@@ -81,6 +81,9 @@ fn diagnose_contract_with_scope(
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
+        if scope == DoctorScope::All {
+            diagnose_services(contract, contract_path, &mut findings);
+        }
     }
     diagnose_checks(contract, contract_path, scope, &mut findings);
 
@@ -91,6 +94,62 @@ fn diagnose_contract_with_scope(
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
         findings,
+    }
+}
+
+fn diagnose_services(contract: &Contract, contract_path: &Path, findings: &mut Vec<Finding>) {
+    let working_dir = contract_working_dir(contract_path);
+
+    for (name, service) in &contract.services {
+        if let Some(healthcheck) = service.healthcheck.as_deref() {
+            match run_check(healthcheck, working_dir, None) {
+                CheckStatus::Passed => {}
+                CheckStatus::Failed => findings.push(Finding {
+                    severity: if service.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Service healthcheck failed: {name}"),
+                    why: format!("service `{name}` did not pass its configured healthcheck"),
+                    next: match service.start.as_deref() {
+                        Some(start) => format!("run `{start}` and re-run `ota doctor`"),
+                        None => format!(
+                            "start or repair `{name}` and re-run its healthcheck: {healthcheck}"
+                        ),
+                    },
+                }),
+                CheckStatus::TimedOut(_) => {
+                    unreachable!("service healthchecks do not set timeouts")
+                }
+            }
+            continue;
+        }
+
+        if service.required {
+            let why = if service.start.is_some() {
+                format!(
+                    "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
+                )
+            } else {
+                format!(
+                    "service `{name}` is required but no `healthcheck` or `start` command is configured, so Ota cannot verify or prepare it"
+                )
+            };
+
+            let next = if service.start.is_some() {
+                format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
+            } else {
+                format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
+            };
+
+            findings.push(Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!("Required service cannot be verified: {name}"),
+                why,
+                next,
+            });
+        }
     }
 }
 
@@ -570,6 +629,85 @@ tasks:
         assert_eq!(
             report.findings[0].summary,
             "Version mismatch for tool: cargo"
+        );
+    }
+
+    #[test]
+    fn reports_required_service_healthcheck_failures_as_errors() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+    healthcheck: exit 1
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(
+            report.findings[0].summary,
+            "Service healthcheck failed: postgres"
+        );
+    }
+
+    #[test]
+    fn reports_optional_service_healthcheck_failures_as_warnings() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  cache:
+    required: false
+    healthcheck: exit 1
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Service healthcheck failed: cache"
+        );
+    }
+
+    #[test]
+    fn warns_when_required_service_has_no_healthcheck() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Required service cannot be verified: postgres"
         );
     }
 
