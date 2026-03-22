@@ -56,3 +56,27 @@ pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadC
         source,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::parse_contract_str;
+
+    #[test]
+    fn rejects_unknown_top_level_keys() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+unexpected: true
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("failed to parse contract"));
+        assert!(error.to_string().contains("unexpected"));
+    }
+}

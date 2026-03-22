@@ -28,8 +28,8 @@ use crate::doctor::{
     DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
 };
 use crate::output::{
-    CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
-    ValidateFailure, ValidateSuccess,
+    CommandOutput, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
+    TasksFailure, TasksSuccess, ValidateFailure, ValidateSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task};
@@ -218,6 +218,44 @@ pub fn check(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
     }
 }
 
+pub fn init(path: Option<&Path>, write: bool, format: OutputFormat) -> CommandOutput {
+    let root = resolve_repo_path(path);
+    let contract_path = root.join(DEFAULT_CONTRACT_FILE);
+    let path_display = contract_path.display().to_string();
+
+    if contract_path.exists() {
+        let error = format!(
+            "`{}` already exists; `ota init` is only for repos without an Ota contract",
+            contract_path.display()
+        );
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+            })),
+        };
+    }
+
+    match detect_repo(&root) {
+        Ok(report) => render_init(report, &contract_path, write, format),
+        Err(error) => {
+            let error = error.to_string();
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            }
+        }
+    }
+}
+
 pub fn up(path: Option<&Path>) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
@@ -336,6 +374,85 @@ fn write_detected_contract(report: DetectReport) -> CommandOutput {
             contract_path.display(),
             error
         )),
+    }
+}
+
+fn render_init(
+    report: DetectReport,
+    contract_path: &Path,
+    write: bool,
+    format: OutputFormat,
+) -> CommandOutput {
+    let yaml =
+        serde_yaml::to_string(&report.contract).expect("serializing init contract should not fail");
+    let mode = init_mode(&report);
+    let path_display = contract_path.display().to_string();
+
+    if let Err(error) = parse_contract_str(contract_path, &yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+    {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+            })),
+        };
+    }
+
+    if write {
+        return match fs::write(contract_path, &yaml) {
+            Ok(()) => match format {
+                OutputFormat::Text => {
+                    let mut stdout = format!("WROTE {}\nMode: {mode}", contract_path.display());
+                    render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
+                    CommandOutput::success(stdout)
+                }
+                OutputFormat::Json => CommandOutput::success(to_json(&InitSuccess {
+                    ok: true,
+                    path: &path_display,
+                    written: true,
+                    mode,
+                    config: &report.contract,
+                    inferred: &report.inferences,
+                })),
+            },
+            Err(error) => {
+                let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                    })),
+                }
+            }
+        };
+    }
+
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "INIT {}\nMode: {mode}\n---\n{}",
+                report.root.display(),
+                yaml.trim_end()
+            );
+            render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
+            CommandOutput::success(stdout)
+        }
+        OutputFormat::Json => CommandOutput::success(to_json(&InitSuccess {
+            ok: true,
+            path: &path_display,
+            written: false,
+            mode,
+            config: &report.contract,
+            inferred: &report.inferences,
+        })),
     }
 }
 
@@ -476,6 +593,19 @@ fn render_confidence(confidence: Confidence) -> &'static str {
         Confidence::High => "high",
         Confidence::Medium => "medium",
         Confidence::Low => "low",
+    }
+}
+
+fn init_mode(report: &DetectReport) -> &'static str {
+    if report.inferences.is_empty()
+        || report
+            .inferences
+            .iter()
+            .all(|inference| inference.source == "directory-name")
+    {
+        "blank"
+    } else {
+        "detected"
     }
 }
 

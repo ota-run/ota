@@ -70,6 +70,17 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Create a starter Ota contract for a repo that does not yet have one.
+    Init {
+        /// Write the inferred starter contract to ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to a repo root.
+        path: Option<PathBuf>,
+    },
     /// Run configured checks from an Ota contract.
     Check {
         /// Print machine-readable JSON output.
@@ -85,6 +96,9 @@ enum Commands {
     },
     /// Infer a starting contract from repo state.
     Detect {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
         /// Print inferred fields without writing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -128,9 +142,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Doctor { json, path } => {
             commands::doctor(path.as_deref(), format_from_json(json))
         }
+        Commands::Init { write, json, path } => {
+            commands::init(path.as_deref(), write, format_from_json(json))
+        }
         Commands::Check { json, path } => commands::check(path.as_deref(), format_from_json(json)),
         Commands::Up { path } => commands::up(path.as_deref()),
-        Commands::Detect { dry_run, path } => commands::detect(path.as_deref(), dry_run),
+        Commands::Detect { json, dry_run, path } => {
+            commands::detect(path.as_deref(), dry_run, format_from_json(json))
+        }
     }
 }
 
@@ -304,6 +323,81 @@ tasks:
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
         assert_eq!(object.len(), 3);
+    }
+
+    #[test]
+    fn init_dry_run_renders_starter_contract_and_annotations() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("INIT"));
+        assert!(output.stdout.contains("Mode: detected"));
+        assert!(output.stdout.contains("name: ota-web"));
+        assert!(
+            output
+                .stdout
+                .contains("tools.pnpm: 10.1.0 <- from package.json#packageManager [high]")
+        );
+        assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn init_write_creates_full_starter_contract() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
+
+        let output = run_with(["ota", "init", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("WROTE"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("name: go-service"));
+        assert!(written.contains("go: 1.24.0"));
+    }
+
+    #[test]
+    fn init_json_reports_blank_mode() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["mode"], "blank");
+    }
+
+    #[test]
+    fn init_refuses_to_overwrite_existing_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("only for repos without an Ota contract")
+        );
     }
 
     #[test]

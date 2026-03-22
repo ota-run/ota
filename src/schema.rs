@@ -38,11 +38,17 @@ pub struct Contract {
     #[serde(default)]
     pub env: BTreeMap<String, EnvRequirement>,
     #[serde(default)]
+    pub services: BTreeMap<String, ServiceSpec>,
+    #[serde(default)]
     pub tasks: BTreeMap<String, TaskSpec>,
     #[serde(default)]
     pub checks: Vec<CheckSpec>,
     #[serde(default)]
     pub agent: Option<AgentConfig>,
+    #[serde(default)]
+    pub exports: BTreeMap<String, serde_yaml::Value>,
+    #[serde(default)]
+    pub policies: BTreeMap<String, serde_yaml::Value>,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_yaml::Value>,
 }
@@ -64,6 +70,8 @@ pub struct Execution {
     pub preferred: Option<Backend>,
     #[serde(default)]
     pub supported: Vec<Backend>,
+    #[serde(default)]
+    pub lifecycle: Option<Lifecycle>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -72,6 +80,13 @@ pub enum Backend {
     Native,
     Container,
     Remote,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Lifecycle {
+    Persistent,
+    Ephemeral,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +152,21 @@ pub struct EnvRequirement {
     pub default: Option<String>,
     #[serde(default)]
     pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceSpec {
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub start: Option<String>,
+    #[serde(default)]
+    pub stop: Option<String>,
+    #[serde(default)]
+    pub healthcheck: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,4 +243,6 @@ pub struct AgentConfig {
     pub verify_after_changes: Vec<String>,
     #[serde(default)]
     pub writable_paths: Vec<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
