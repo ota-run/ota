@@ -121,6 +121,15 @@ Optional.
 
 ```yaml
 services:
+  api:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d api
+    stop: docker compose stop api
+    healthcheck: curl -fsS http://localhost:3000/health
+    depends_on:
+      - postgres
+    timeout: 5000
   postgres:
     required: true
     provider: docker-compose
@@ -136,17 +145,24 @@ Fields:
 - `start`: optional string
 - `stop`: optional string
 - `healthcheck`: optional string
+- `depends_on`: optional list of service names
+- `timeout`: optional healthcheck timeout in milliseconds
 
 Current behavior:
 
 - services are part of the accepted V1 contract surface
 - service declarations must include at least one actionable field: `provider`, `start`, `stop`, or `healthcheck`
+- unknown `depends_on` references are invalid
+- service dependency cycles are invalid
+- `timeout` must be greater than zero when set
 - `ota doctor` runs declared service `healthcheck` commands
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
+- timed out required service healthchecks are blocking errors
+- timed out optional service healthchecks are warnings
 - required services without a `healthcheck` produce a warning because readiness cannot be verified yet
-- `ota up` runs explicit `start` commands for required services before `setup`
-- service dependency ordering is not part of the current contract surface yet
+- `ota up` starts required services, and required-service dependencies, in declared dependency order before `setup`
+- `ota up` treats each required service healthcheck as a readiness gate before moving on to dependents
 - Ota still does not provide deep service orchestration beyond explicit contract commands
 
 ## `runtimes`

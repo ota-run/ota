@@ -2,18 +2,31 @@ version: 1
 project:
   name: basic-services
 services:
+  api:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d api
+    stop: docker compose stop api
+    healthcheck: curl -fsS http://localhost:3000/health
+    depends_on:
+      - postgres
+    timeout: 5000
   postgres:
     required: true
     provider: docker-compose
     start: docker compose up -d postgres
     stop: docker compose stop postgres
     healthcheck: pg_isready -h localhost -p 5432
+    timeout: 5000
   redis:
     required: false
     provider: docker-compose
     start: docker compose up -d redis
     stop: docker compose stop redis
     healthcheck: redis-cli ping
+    depends_on:
+      - postgres
+    timeout: 3000
 tasks:
   setup:
     run: pnpm install

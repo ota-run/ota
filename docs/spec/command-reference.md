@@ -137,6 +137,7 @@ Current behavior:
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
+- honors `services.<name>.timeout` when a service healthcheck is declared
 - warns when `execution.lifecycle: ephemeral` is declared, because V1 does not provide isolated temporary execution
 - runs configured checks
 - orders findings by severity
@@ -235,7 +236,9 @@ Current behavior:
 - validates the contract first
 - runs blocking precondition checks
 - runs explicit `services.<name>.start` commands for required services before setup
-- verifies required service healthchecks before setup and stops in the `services` phase when readiness still fails
+- starts required services, and required-service dependencies, in declared dependency order
+- verifies required service healthchecks before setup and treats them as readiness gates
+- stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists
 - re-runs readiness diagnosis
 - remains shell-native even when `execution.lifecycle: ephemeral` is declared
