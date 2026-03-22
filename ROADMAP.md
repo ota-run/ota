@@ -16,6 +16,7 @@ Current phase map:
 
 The detailed implementation plan is in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
 The detect write threshold is documented in [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md).
+Future task executor expansion is tracked in the product spec.
 
 ## Implemented so far
 
@@ -50,3 +51,4 @@ Longer-term work is expected to include:
 - richer repo examples
 - stronger agent-facing contract guidance
 - more spec/documentation polish for external adoption
+- a possible post-V1 execution model beyond shell-native `run` and `script`

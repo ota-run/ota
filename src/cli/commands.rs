@@ -24,7 +24,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
-use crate::doctor::{DoctorReport, FindingSeverity, diagnose_contract, diagnose_preconditions};
+use crate::doctor::{
+    DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
+};
 use crate::output::{
     CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
     ValidateFailure, ValidateSuccess,
@@ -137,6 +139,50 @@ pub fn doctor(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
             let report = diagnose_contract(&contract, &resolved_path);
             match format {
                 OutputFormat::Text => render_doctor_text(&path_display, report),
+                OutputFormat::Json => {
+                    let exit_code = if report.ok { 0 } else { 1 };
+                    CommandOutput {
+                        stdout: to_json(&DoctorSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            findings: &report.findings,
+                        }),
+                        stderr: None,
+                        exit_code,
+                    }
+                }
+            }
+        }
+        Err(ContractProblem::Validation(errors)) => match format {
+            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                ok: false,
+                path: &path_display,
+                errors: errors.errors().iter().map(ToString::to_string).collect(),
+                error: None,
+            })),
+        },
+        Err(ContractProblem::Load(error)) => match format {
+            OutputFormat::Text => CommandOutput::failure(error.to_string()),
+            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                ok: false,
+                path: &path_display,
+                errors: Vec::new(),
+                error: Some(error.to_string()),
+            })),
+        },
+    }
+}
+
+pub fn check(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+    let path_display = resolved_path.display().to_string();
+
+    match load_and_validate(&resolved_path) {
+        Ok(contract) => {
+            let report = diagnose_checks_only(&contract, &resolved_path);
+            match format {
+                OutputFormat::Text => render_report_text("CHECK", &path_display, report),
                 OutputFormat::Json => {
                     let exit_code = if report.ok { 0 } else { 1 };
                     CommandOutput {
@@ -333,7 +379,11 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 }
 
 fn render_doctor_text(path: &str, report: DoctorReport) -> CommandOutput {
-    let mut stdout = format!("DOCTOR {path}\n{}", render_doctor_status(&report));
+    render_report_text("DOCTOR", path, report)
+}
+
+fn render_report_text(command: &str, path: &str, report: DoctorReport) -> CommandOutput {
+    let mut stdout = format!("{command} {path}\n{}", render_doctor_status(&report));
 
     for finding in &report.findings {
         stdout.push('\n');

@@ -217,6 +217,12 @@ Rules:
 - dependency references must resolve to known tasks
 - task dependency cycles are rejected
 
+Current execution model:
+
+- `run` and `script` are shell-compatible execution forms
+- richer non-shell executors are intentionally out of V1 scope
+- future direction is tracked in the product spec
+
 ## `checks`
 
 Optional.

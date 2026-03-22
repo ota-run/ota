@@ -37,6 +37,7 @@ ota validate
 ota tasks
 ota run <task>
 ota doctor
+ota check
 ota up
 ota detect --dry-run
 ota detect
@@ -48,6 +49,7 @@ Current behavior:
 - `ota tasks` lists validated tasks and their execution form
 - `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
 - `ota doctor` reports readiness findings with severity, explanation, and next action
+- `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract and prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
