@@ -128,16 +128,33 @@ fn init_json_reports_detected_mode_for_java_gradle_multimodule_fixture() {
 }
 
 #[test]
-fn init_json_reports_blank_mode_for_docker_legacy_fixture() {
+fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
     let fixture = real_fixture_path("docker-legacy");
     let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
     assert_eq!(json["written"], false);
-    assert_eq!(json["mode"], "blank");
+    assert_eq!(json["mode"], "detected");
     assert_eq!(json["config"]["project"]["name"], "docker-legacy");
-    assert_eq!(json["inferred"][0]["source"], "directory-name");
+    assert_eq!(
+        json["config"]["services"]["web"]["provider"],
+        "docker-compose"
+    );
+    assert_eq!(
+        json["config"]["services"]["db"]["start"],
+        "docker compose up -d db"
+    );
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "services.web.provider"
+                    && inference["source"] == "docker-compose.yml#services.web"
+            })
+    );
 }
 
 #[test]
@@ -151,7 +168,46 @@ fn detect_json_handles_docker_heavy_node_fixture() {
     assert_eq!(json["config"]["project"]["name"], "ota-containerized-web");
     assert_eq!(json["config"]["runtimes"]["node"], "22.3.0");
     assert_eq!(json["config"]["tools"]["pnpm"], "10.5.0");
+    assert_eq!(
+        json["config"]["services"]["web"]["provider"],
+        "docker-compose"
+    );
+    assert_eq!(
+        json["config"]["services"]["web"]["stop"],
+        "docker compose stop web"
+    );
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("docker-legacy");
+    fs::write(
+        fixture.path().join("docker-compose.yml"),
+        r#"services:
+  web:
+    build: .
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+"#,
+    )
+    .expect("compose file should be written");
+
+    let output = run_ota(&["detect", "--json", "--dry-run", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(
+        json["config"]["services"]["db"]["healthcheck"],
+        "pg_isready -h localhost -p 5432"
+    );
+    assert!(json["inferred"].as_array().unwrap().iter().any(|inference| {
+        inference["field"] == "services.db.healthcheck"
+            && inference["source"] == "docker-compose.yml#services.db.healthcheck.test"
+            && inference["confidence"] == "medium"
+    }));
 }
 
 #[test]
@@ -339,6 +395,37 @@ checks:
     assert!(stdout.contains("ERROR  Check failed: docs-ops"));
     assert!(fixture.path().join(".service-ready").exists());
     assert!(fixture.path().join("prepared.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn up_stops_in_services_phase_when_required_service_healthcheck_still_fails_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+    let contract = r#"
+version: 1
+project:
+  name: polyglot-ops
+services:
+  postgres:
+    required: true
+    start: touch .service-started
+    healthcheck: test -f .service-ready
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#;
+
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
+
+    let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stdout.contains("NOT READY"));
+    assert!(stdout.contains("Phase: services"));
+    assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
+    assert!(fixture.path().join(".service-started").exists());
+    assert!(!fixture.path().join("prepared.txt").exists());
 }
 
 #[cfg(unix)]

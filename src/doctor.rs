@@ -63,11 +63,16 @@ pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> Doctor
     diagnose_contract_with_scope(contract, contract_path, DoctorScope::ChecksOnly)
 }
 
+pub fn diagnose_services_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::ServicesOnly)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DoctorScope {
     All,
     Preconditions,
     ChecksOnly,
+    ServicesOnly,
 }
 
 fn diagnose_contract_with_scope(
@@ -77,16 +82,18 @@ fn diagnose_contract_with_scope(
 ) -> DoctorReport {
     let mut findings = Vec::new();
 
-    if scope != DoctorScope::ChecksOnly {
+    if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
-        if scope == DoctorScope::All {
-            diagnose_services(contract, contract_path, &mut findings);
-        }
     }
-    diagnose_checks(contract, contract_path, scope, &mut findings);
+    if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
+        diagnose_services(contract, contract_path, &mut findings);
+    }
+    if scope != DoctorScope::ServicesOnly {
+        diagnose_checks(contract, contract_path, scope, &mut findings);
+    }
 
     findings.sort_by_key(|finding| finding.severity);
 

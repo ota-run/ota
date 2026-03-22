@@ -27,6 +27,7 @@ use std::process::Command;
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
+    diagnose_services_only,
 };
 use crate::output::{
     CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
@@ -375,6 +376,21 @@ pub fn up(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutp
                         }
                         Err(error) => return CommandOutput::failure(error),
                     }
+                }
+
+                let service_report = diagnose_services_only(&contract, &resolved_path);
+                if !service_report.ok {
+                    return render_up(
+                        &path_display,
+                        "NOT READY",
+                        "services",
+                        service_report,
+                        false,
+                        None,
+                        None,
+                        None,
+                        format,
+                    );
                 }
 
                 if contract.tasks.contains_key("setup") {

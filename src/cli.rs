@@ -782,6 +782,38 @@ tasks:
     }
 
     #[test]
+    fn up_stops_in_services_phase_when_required_service_healthcheck_fails() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: printf service > service.txt
+    healthcheck: test -f service-ready.txt
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("Phase: services"));
+        assert!(
+            output
+                .stdout
+                .contains("ERROR  Service healthcheck failed: postgres")
+        );
+        assert!(fixture.dir.path().join("service.txt").exists());
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
     fn up_json_reports_ready_status_and_phase() {
         let fixture = ContractFixture::new(
             r#"

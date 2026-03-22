@@ -234,6 +234,7 @@ Current behavior:
 - validates the contract first
 - runs blocking precondition checks
 - runs explicit `services.<name>.start` commands for required services before setup
+- verifies required service healthchecks before setup and stops in the `services` phase when readiness still fails
 - runs the `setup` task if one exists
 - re-runs readiness diagnosis
 - remains shell-native even when `execution.lifecycle: ephemeral` is declared
@@ -278,6 +279,14 @@ Current detect sources:
 - `build.gradle(.kts)`
 - `gradle/wrapper/gradle-wrapper.properties`
 - `pom.xml`
+- `docker-compose.yml` / `docker-compose.yaml`
+- `compose.yml` / `compose.yaml`
+
+For Docker Compose service inference, Ota currently derives:
+
+- `provider` at high confidence
+- `start` / `stop` at medium confidence
+- declared `healthcheck.test` at medium confidence
 
 Dry-run behavior:
 

@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::Value as JsonValue;
+use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -54,6 +55,8 @@ pub struct DetectContract {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub services: BTreeMap<String, DetectService>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tasks: BTreeMap<String, DetectTask>,
 }
 
@@ -65,6 +68,18 @@ pub struct DetectProject {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectTask {
     pub run: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectService {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub healthcheck: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -104,6 +119,23 @@ impl DetectReport {
                 contract
                     .tools
                     .insert(tool.to_string(), inference.value.clone());
+                continue;
+            }
+
+            if let Some(service_field) = inference.field.strip_prefix("services.")
+                && let Some((service_name, field_name)) = service_field.split_once('.')
+            {
+                let service = contract
+                    .services
+                    .entry(service_name.to_string())
+                    .or_default();
+                match field_name {
+                    "provider" => service.provider = Some(inference.value.clone()),
+                    "start" => service.start = Some(inference.value.clone()),
+                    "stop" => service.stop = Some(inference.value.clone()),
+                    "healthcheck" => service.healthcheck = Some(inference.value.clone()),
+                    _ => {}
+                }
                 continue;
             }
 
@@ -148,6 +180,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_pyproject(&root, &mut builder)?;
     detect_gradle(&root, &mut builder)?;
     detect_pom_xml(&root, &mut builder)?;
+    detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
     Ok(builder.finish())
@@ -552,6 +585,130 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
     Ok(())
 }
 
+fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+    ]
+    .iter()
+    .map(|name| root.join(name))
+    .find(|path| path.exists());
+    let Some(path) = path else {
+        return Ok(());
+    };
+
+    let contents = read_file(&path)?;
+    let document: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
+
+    let Some(services) = document.get("services").and_then(YamlValue::as_mapping) else {
+        return Ok(());
+    };
+
+    let file_name = path.file_name().unwrap().to_string_lossy();
+    for service_name in services.keys().filter_map(YamlValue::as_str) {
+        builder.set_service_provider(
+            service_name.to_string(),
+            "docker-compose".to_string(),
+            format!("{file_name}#services.{service_name}"),
+            Confidence::High,
+        );
+        builder.set_service_start(
+            service_name.to_string(),
+            format!("docker compose up -d {service_name}"),
+            format!("{file_name}#services.{service_name}"),
+            Confidence::Medium,
+        );
+        builder.set_service_stop(
+            service_name.to_string(),
+            format!("docker compose stop {service_name}"),
+            format!("{file_name}#services.{service_name}"),
+            Confidence::Medium,
+        );
+
+        if let Some(command) = services
+            .get(YamlValue::String(service_name.to_string()))
+            .and_then(extract_compose_healthcheck_command)
+        {
+            builder.set_service_healthcheck(
+                service_name.to_string(),
+                command,
+                format!("{file_name}#services.{service_name}.healthcheck.test"),
+                Confidence::Medium,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_compose_healthcheck_command(service: &YamlValue) -> Option<String> {
+    let test = service
+        .as_mapping()?
+        .get(YamlValue::String(String::from("healthcheck")))?
+        .as_mapping()?
+        .get(YamlValue::String(String::from("test")))?;
+
+    match test {
+        YamlValue::String(command) => {
+            let command = command.trim();
+            if command.is_empty() {
+                None
+            } else {
+                Some(command.to_string())
+            }
+        }
+        YamlValue::Sequence(parts) => {
+            let values = parts.iter().map(YamlValue::as_str).collect::<Option<Vec<_>>>()?;
+            let first = *values.first()?;
+            match first {
+                "NONE" => None,
+                "CMD-SHELL" => {
+                    let command = values.get(1)?.trim();
+                    if command.is_empty() {
+                        None
+                    } else {
+                        Some(command.to_string())
+                    }
+                }
+                "CMD" => {
+                    let command = values
+                        .iter()
+                        .skip(1)
+                        .map(|part| part.trim())
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if command.is_empty() {
+                        None
+                    } else {
+                        Some(command)
+                    }
+                }
+                _ => {
+                    let command = values
+                        .iter()
+                        .map(|part| part.trim())
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if command.is_empty() {
+                        None
+                    } else {
+                        Some(command)
+                    }
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
 fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
     if builder.contract.project.is_none()
         && let Some(name) = root.file_name().and_then(|name| name.to_str())
@@ -719,6 +876,68 @@ impl DetectBuilder {
         }
     }
 
+    fn set_service_provider(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        self.set_service_field(name, "provider", value, source, confidence);
+    }
+
+    fn set_service_start(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        self.set_service_field(name, "start", value, source, confidence);
+    }
+
+    fn set_service_stop(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        self.set_service_field(name, "stop", value, source, confidence);
+    }
+
+    fn set_service_healthcheck(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        self.set_service_field(name, "healthcheck", value, source, confidence);
+    }
+
+    fn set_service_field(
+        &mut self,
+        name: String,
+        field_name: &str,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.{field_name}");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            match field_name {
+                "provider" => service.provider = Some(value.clone()),
+                "start" => service.start = Some(value.clone()),
+                "stop" => service.stop = Some(value.clone()),
+                "healthcheck" => service.healthcheck = Some(value.clone()),
+                _ => {}
+            }
+            self.record(field, value, source, confidence);
+        }
+    }
+
     fn should_replace(&self, field: &str, source: &str, confidence: Confidence) -> bool {
         self.inferences.get(field).is_none_or(|existing| {
             confidence > existing.confidence
@@ -786,6 +1005,17 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "package.json#packageManager" => 2,
             "pom.xml" => 1,
             ".tool-versions" => 1,
+            _ => 0,
+        },
+        _ if field.starts_with("services.") => match source {
+            "docker-compose.yml" | "docker-compose.yaml" | "compose.yml" | "compose.yaml" => 2,
+            _ if source.starts_with("docker-compose.yml#services.")
+                || source.starts_with("docker-compose.yaml#services.")
+                || source.starts_with("compose.yml#services.")
+                || source.starts_with("compose.yaml#services.") =>
+            {
+                2
+            }
             _ => 0,
         },
         _ => 0,
@@ -956,6 +1186,87 @@ requires-python = ">=3.12"
                 .map(|task| task.run.as_str()),
             Some("mvn test")
         );
+    }
+
+    #[test]
+    fn detects_compose_services() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  web:
+    build: .
+  db:
+    image: postgres:16
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.provider.as_deref()),
+            Some("docker-compose")
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.start.as_deref()),
+            Some("docker compose up -d web")
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("db")
+                .and_then(|service| service.stop.as_deref()),
+            Some("docker compose stop db")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.web.provider"
+                && inference.source == "docker-compose.yml#services.web"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.web.start"
+                && inference.source == "docker-compose.yml#services.web"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
+    fn detects_compose_service_healthcheck() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("db")
+                .and_then(|service| service.healthcheck.as_deref()),
+            Some("pg_isready -h localhost -p 5432")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "services.db.healthcheck"
+                && inference.source == "docker-compose.yml#services.db.healthcheck.test"
+                && inference.confidence == Confidence::Medium
+        }));
     }
 
     #[test]
