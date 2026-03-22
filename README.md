@@ -5,7 +5,8 @@
 
 # `ota`
 
-Ota is a readiness contract and CLI for modern repositories. It gives a repo one place to define what it needs, how it becomes ready, how tasks run, and how humans and agents can operate against the same truth.
+Ota is a readiness contract and CLI for modern repositories. It gives every repo one place to define what it needs, how it becomes ready, how tasks run, and how humans and agents operate from the same source of truth.
+
 
 ## Why Ota exists
 
