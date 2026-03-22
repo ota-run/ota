@@ -247,26 +247,68 @@ fn version_matches(requirement: &str, actual: &str) -> bool {
             .is_some_and(|ordering| ordering >= 0);
     }
 
+    if let Some(compatible) = requirement.strip_prefix('^') {
+        return version_matches_caret(actual, compatible.trim());
+    }
+
     actual == requirement || actual.starts_with(&format!("{requirement}."))
+}
+
+fn version_matches_caret(actual: &str, base: &str) -> bool {
+    let actual_parts = match parse_version_parts(actual) {
+        Some(parts) => parts,
+        None => return false,
+    };
+    let base_parts = match parse_version_parts(base) {
+        Some(parts) => parts,
+        None => return false,
+    };
+
+    if compare_parts(&actual_parts, &base_parts) < 0 {
+        return false;
+    }
+
+    let upper_bound = caret_upper_bound(&base_parts);
+    compare_parts(&actual_parts, &upper_bound) < 0
+}
+
+fn caret_upper_bound(base: &[u64]) -> Vec<u64> {
+    let mut upper = base.to_vec();
+    let pivot = base.iter().position(|part| *part != 0).unwrap_or(0);
+
+    if upper.len() <= pivot {
+        upper.resize(pivot + 1, 0);
+    }
+
+    upper[pivot] += 1;
+    for part in upper.iter_mut().skip(pivot + 1) {
+        *part = 0;
+    }
+
+    upper
 }
 
 fn compare_version_tokens(actual: &str, minimum: &str) -> Option<i8> {
     let actual_parts = parse_version_parts(actual)?;
     let minimum_parts = parse_version_parts(minimum)?;
-    let len = actual_parts.len().max(minimum_parts.len());
+    Some(compare_parts(&actual_parts, &minimum_parts))
+}
+
+fn compare_parts(left: &[u64], right: &[u64]) -> i8 {
+    let len = left.len().max(right.len());
 
     for index in 0..len {
-        let left = *actual_parts.get(index).unwrap_or(&0);
-        let right = *minimum_parts.get(index).unwrap_or(&0);
+        let left = *left.get(index).unwrap_or(&0);
+        let right = *right.get(index).unwrap_or(&0);
         if left > right {
-            return Some(1);
+            return 1;
         }
         if left < right {
-            return Some(-1);
+            return -1;
         }
     }
 
-    Some(0)
+    0
 }
 
 fn parse_version_parts(input: &str) -> Option<Vec<u64>> {
@@ -310,7 +352,7 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::{FindingSeverity, diagnose_contract, diagnose_preconditions};
+    use super::{FindingSeverity, diagnose_contract, diagnose_preconditions, version_matches};
 
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
@@ -395,5 +437,78 @@ tasks:
         let report = diagnose_preconditions(&contract, Path::new("ota.yaml"));
         assert!(report.ok);
         assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn reports_optional_tool_version_mismatches_as_warnings() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  cargo:
+    version: "999.0.0"
+    required: false
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Version mismatch for tool: cargo"
+        );
+    }
+
+    #[test]
+    fn sorts_errors_before_warnings_before_info() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_DOCTOR_SORT_REQUIRED:
+    required: true
+tools:
+  cargo:
+    version: "999.0.0"
+    required: false
+checks:
+  - name: informational-check
+    kind: health
+    severity: info
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 3);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(report.findings[1].severity, FindingSeverity::Warn);
+        assert_eq!(report.findings[2].severity, FindingSeverity::Info);
+    }
+
+    #[test]
+    fn supports_caret_requirements_for_detected_versions() {
+        assert!(version_matches("^3.11", "3.11.0"));
+        assert!(version_matches("^3.11", "3.12.4"));
+        assert!(!version_matches("^3.11", "4.0.0"));
+        assert!(version_matches("^0.6.0", "0.6.4"));
+        assert!(!version_matches("^0.6.0", "0.7.0"));
     }
 }

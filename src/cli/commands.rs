@@ -23,7 +23,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::detector::{Confidence, DetectReport, detect_repo};
+use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{DoctorReport, FindingSeverity, diagnose_contract, diagnose_preconditions};
 use crate::output::{
     CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
@@ -222,21 +222,7 @@ pub fn detect(path: Option<&Path>, dry_run: bool) -> CommandOutput {
             stdout.push_str("---");
             stdout.push('\n');
             stdout.push_str(yaml.trim_end());
-            stdout.push_str("\n---\nAnnotations:");
-
-            if report.inferences.is_empty() {
-                stdout.push_str("\n- none");
-            } else {
-                for inference in &report.inferences {
-                    stdout.push_str(&format!(
-                        "\n- {}: {} <- from {} [{}]",
-                        inference.field,
-                        inference.value,
-                        inference.source,
-                        render_confidence(inference.confidence)
-                    ));
-                }
-            }
+            render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
 
             CommandOutput::success(stdout)
         }
@@ -264,15 +250,28 @@ fn write_detected_contract(report: DetectReport) -> CommandOutput {
     {
         Ok(()) => {}
         Err(_) => {
-            return CommandOutput::failure(
-                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"
-                    .to_string(),
-            )
+            let mut stderr = String::from(
+                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields",
+            );
+            render_inference_section(
+                &mut stderr,
+                "Excluded from automatic write",
+                excluded_write_inferences(&report),
+            );
+            return CommandOutput::failure(stderr);
         }
     }
 
     match fs::write(&contract_path, yaml) {
-        Ok(()) => CommandOutput::success(format!("WROTE {}", contract_path.display())),
+        Ok(()) => {
+            let mut stdout = format!("WROTE {}", contract_path.display());
+            render_inference_section(
+                &mut stdout,
+                "Excluded from automatic write",
+                excluded_write_inferences(&report),
+            );
+            CommandOutput::success(stdout)
+        }
         Err(error) => CommandOutput::failure(format!(
             "failed to write `{}`: {}",
             contract_path.display(),
@@ -407,6 +406,37 @@ fn render_confidence(confidence: Confidence) -> &'static str {
         Confidence::High => "high",
         Confidence::Medium => "medium",
         Confidence::Low => "low",
+    }
+}
+
+fn excluded_write_inferences(report: &DetectReport) -> impl Iterator<Item = &Inference> {
+    report
+        .inferences
+        .iter()
+        .filter(|inference| inference.confidence != Confidence::High)
+}
+
+fn render_inference_section<'a>(
+    output: &mut String,
+    title: &str,
+    inferences: impl IntoIterator<Item = &'a Inference>,
+) {
+    output.push_str(&format!("\n---\n{title}:"));
+
+    let mut wrote_any = false;
+    for inference in inferences {
+        wrote_any = true;
+        output.push_str(&format!(
+            "\n- {}: {} <- from {} [{}]",
+            inference.field,
+            inference.value,
+            inference.source,
+            render_confidence(inference.confidence)
+        ));
+    }
+
+    if !wrote_any {
+        output.push_str("\n- none");
     }
 }
 

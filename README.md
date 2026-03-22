@@ -91,6 +91,7 @@ Implementation status and sequencing live in:
 
 - [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md)
 - [ROADMAP.md](/Users/bobai/Workspace/Ota.run/ota/ROADMAP.md)
+- [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md)
 
 ## Quickstart
 
@@ -120,6 +121,7 @@ More detail:
 - [docs/command-reference.md](/Users/bobai/Workspace/Ota.run/ota/docs/command-reference.md)
 - [docs/contract-reference.md](/Users/bobai/Workspace/Ota.run/ota/docs/contract-reference.md)
 - [docs/philosophy.md](/Users/bobai/Workspace/Ota.run/ota/docs/philosophy.md)
+- [CONTRIBUTING.md](/Users/bobai/Workspace/Ota.run/ota/CONTRIBUTING.md)
 - [examples/basic-node/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
 - [examples/basic-python/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-python/ota.yaml)
 - [examples/basic-go/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-go/ota.yaml)

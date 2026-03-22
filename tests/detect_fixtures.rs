@@ -316,3 +316,83 @@ fn detects_polyglot_tool_versions_fixture() {
         Some("pnpm build")
     );
 }
+
+#[test]
+fn detects_python_version_over_tool_versions_fixture() {
+    let report = assert_detected_contract_valid("python-tool-versions-conflict");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-python-conflict")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.13.2".to_string())
+    );
+}
+
+#[test]
+fn detects_go_mod_over_tool_versions_fixture() {
+    let report = assert_detected_contract_valid("go-tool-versions-conflict");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("go-tool-versions-conflict")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("go"),
+        Some(&"1.24.1".to_string())
+    );
+}
+
+#[test]
+fn detects_package_json_project_name_over_pyproject_fixture() {
+    let report = assert_detected_contract_valid("project-name-conflict");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-web")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&">=3.12".to_string())
+    );
+}
+
+#[test]
+fn detects_package_json_package_manager_over_tool_versions_fixture() {
+    let report = assert_detected_contract_valid("package-manager-conflict");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-web")
+    );
+    assert_eq!(
+        report.contract.tools.get("pnpm"),
+        Some(&"10.4.0".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("pnpm dev")
+    );
+}
