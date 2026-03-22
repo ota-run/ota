@@ -440,6 +440,33 @@ tasks:
     }
 
     #[test]
+    fn run_reports_ephemeral_lifecycle_as_advisory_note() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: exit 0
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some(
+                "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
+            )
+        );
+    }
+
+    #[test]
     fn doctor_text_reports_ready_when_no_findings_exist() {
         let fixture = ContractFixture::new(
             r#"
@@ -567,6 +594,33 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_ephemeral_lifecycle_warning() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(
+            output
+                .stdout
+                .contains("WARN  Ephemeral lifecycle is advisory only in V1")
+        );
+    }
+
+    #[test]
     fn doctor_text_orders_error_warn_and_info_findings() {
         let fixture = ContractFixture::new(
             r#"
@@ -676,6 +730,60 @@ tasks:
         assert!(output.stdout.contains("Phase: setup"));
         assert!(output.stdout.contains("Task: setup"));
         assert!(output.stdout.contains("Exit code: 7"));
+    }
+
+    #[test]
+    fn up_runs_required_service_start_before_setup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: printf service > service.txt
+    healthcheck: test -f service.txt
+tasks:
+  setup:
+    run: test -f service.txt && printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(fixture.dir.path().join("service.txt").exists());
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_reports_service_start_failure_with_exit_code() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    start: exit 9
+    healthcheck: exit 0
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 9);
+        assert!(output.stdout.contains("SERVICE START FAILED"));
+        assert!(output.stdout.contains("Phase: services"));
+        assert!(output.stdout.contains("Service: postgres"));
+        assert!(output.stdout.contains("Exit code: 9"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
     #[test]

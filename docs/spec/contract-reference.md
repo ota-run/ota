@@ -102,7 +102,18 @@ Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 
-Current implementation only executes tasks natively. The broader execution model remains part of the contract surface.
+Current implementation only executes tasks natively.
+
+Current lifecycle meaning:
+
+- `persistent`: current default behavior
+- `ephemeral`: advisory only in V1; Ota still executes in the current shell environment and does not provide isolated temporary environments or automatic cleanup
+
+Current command behavior:
+
+- `ota doctor` warns when `ephemeral` is declared
+- `ota run` prints an advisory lifecycle note on stderr
+- `ota up` remains shell-native and does not provide isolation
 
 ## `services`
 
@@ -134,7 +145,8 @@ Current behavior:
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
 - required services without a `healthcheck` produce a warning because readiness cannot be verified yet
-- service start orchestration in `ota up` is not implemented yet
+- `ota up` runs explicit `start` commands for required services before `setup`
+- Ota still does not provide deep service orchestration beyond explicit contract commands
 
 ## `runtimes`
 

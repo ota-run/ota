@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::schema::{CheckKind, CheckSeverity, Contract};
+use crate::schema::{CheckKind, CheckSeverity, Contract, Lifecycle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,6 +78,7 @@ fn diagnose_contract_with_scope(
     let mut findings = Vec::new();
 
     if scope != DoctorScope::ChecksOnly {
+        diagnose_lifecycle(contract, &mut findings);
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
@@ -94,6 +95,27 @@ fn diagnose_contract_with_scope(
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
         findings,
+    }
+}
+
+fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
+    if matches!(
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.lifecycle),
+        Some(Lifecycle::Ephemeral)
+    ) {
+        findings.push(Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Ephemeral lifecycle is advisory only in V1"),
+            why: String::from(
+                "the contract requests `execution.lifecycle: ephemeral`, but current Ota execution remains shell-native and does not create isolated temporary environments",
+            ),
+            next: String::from(
+                "treat `ephemeral` as a portability hint for now; do not rely on isolation or automatic cleanup in V1",
+            ),
+        });
     }
 }
 
@@ -516,6 +538,34 @@ tasks:
             "Missing environment variable: OTA_DOCTOR_REQUIRED_MISSING"
         );
         assert_eq!(report.findings[1].severity, FindingSeverity::Warn);
+    }
+
+    #[test]
+    fn warns_when_ephemeral_lifecycle_is_only_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(
+            report.findings[0].summary,
+            "Ephemeral lifecycle is advisory only in V1"
+        );
     }
 
     #[test]

@@ -51,7 +51,7 @@ Stop designing against idealized examples and start validating against more real
 
 ## Track 2: Services Behavior
 
-Status: in progress
+Status: complete
 
 ### Goal
 
