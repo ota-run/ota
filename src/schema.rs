@@ -167,6 +167,10 @@ pub struct ServiceSpec {
     pub stop: Option<String>,
     #[serde(default)]
     pub healthcheck: Option<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

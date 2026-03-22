@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -27,7 +28,7 @@ use std::process::Command;
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
-    diagnose_services_only,
+    diagnose_service, diagnose_services_only,
 };
 use crate::output::{
     CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
@@ -347,34 +348,48 @@ pub fn up(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutp
                 }
 
                 let working_dir = contract_working_dir(&resolved_path);
-                for (name, service) in &contract.services {
-                    if !service.required {
-                        continue;
+                for name in service_start_order(&contract) {
+                    let service = contract
+                        .services
+                        .get(name.as_str())
+                        .expect("validated service should exist");
+
+                    if let Some(start) = service.start.as_deref() {
+                        match run_shell_command(start, working_dir) {
+                            Ok(0) => {}
+                            Ok(exit_code) => {
+                                return render_up(
+                                    &path_display,
+                                    "SERVICE START FAILED",
+                                    "services",
+                                    DoctorReport {
+                                        ok: false,
+                                        findings: Vec::new(),
+                                    },
+                                    false,
+                                    Some(name.as_str()),
+                                    None,
+                                    Some(exit_code),
+                                    format,
+                                );
+                            }
+                            Err(error) => return CommandOutput::failure(error),
+                        }
                     }
 
-                    let Some(start) = service.start.as_deref() else {
-                        continue;
-                    };
-
-                    match run_shell_command(start, working_dir) {
-                        Ok(0) => {}
-                        Ok(exit_code) => {
-                            return render_up(
-                                &path_display,
-                                "SERVICE START FAILED",
-                                "services",
-                                DoctorReport {
-                                    ok: false,
-                                    findings: Vec::new(),
-                                },
-                                false,
-                                Some(name.as_str()),
-                                None,
-                                Some(exit_code),
-                                format,
-                            );
-                        }
-                        Err(error) => return CommandOutput::failure(error),
+                    let service_report = diagnose_service(&contract, &resolved_path, name.as_str());
+                    if !service_report.ok {
+                        return render_up(
+                            &path_display,
+                            "NOT READY",
+                            "services",
+                            service_report,
+                            false,
+                            Some(name.as_str()),
+                            None,
+                            None,
+                            format,
+                        );
                     }
                 }
 
@@ -873,6 +888,59 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+fn service_start_order(contract: &Contract) -> Vec<String> {
+    let mut selected = BTreeSet::new();
+    for (name, service) in &contract.services {
+        if service.required {
+            collect_service_dependencies(contract, name, &mut selected);
+        }
+    }
+
+    let mut order = Vec::new();
+    let mut visited = BTreeSet::new();
+    for name in selected.clone() {
+        visit_service_start_order(contract, name.as_str(), &selected, &mut visited, &mut order);
+    }
+
+    order
+}
+
+fn collect_service_dependencies(contract: &Contract, name: &str, selected: &mut BTreeSet<String>) {
+    if !selected.insert(name.to_string()) {
+        return;
+    }
+
+    let Some(service) = contract.services.get(name) else {
+        return;
+    };
+
+    for dependency in &service.depends_on {
+        collect_service_dependencies(contract, dependency, selected);
+    }
+}
+
+fn visit_service_start_order(
+    contract: &Contract,
+    name: &str,
+    selected: &BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    order: &mut Vec<String>,
+) {
+    if !visited.insert(name.to_string()) {
+        return;
+    }
+
+    if let Some(service) = contract.services.get(name) {
+        for dependency in &service.depends_on {
+            if selected.contains(dependency) {
+                visit_service_start_order(contract, dependency, selected, visited, order);
+            }
+        }
+    }
+
+    order.push(name.to_string());
 }
 
 fn run_shell_command(command: &str, working_dir: &Path) -> Result<i32, String> {

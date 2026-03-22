@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::schema::{AgentConfig, Contract, TaskSpec};
+use crate::schema::{AgentConfig, Contract, ServiceSpec, TaskSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -173,10 +173,7 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
     detect_task_cycles(tasks, errors);
 }
 
-fn validate_services(
-    services: &BTreeMap<String, crate::schema::ServiceSpec>,
-    errors: &mut Vec<ValidationError>,
-) {
+fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<ValidationError>) {
     for (name, service) in services {
         if name.trim().is_empty() {
             errors.push(ValidationError::new("service name must not be empty"));
@@ -195,6 +192,12 @@ fn validate_services(
             }
         }
 
+        if matches!(service.timeout, Some(0)) {
+            errors.push(ValidationError::new(format!(
+                "service `{name}` must declare a timeout greater than zero"
+            )));
+        }
+
         if service.provider.is_none()
             && service.start.is_none()
             && service.stop.is_none()
@@ -204,7 +207,17 @@ fn validate_services(
                 "service `{name}` must declare at least one of `provider`, `start`, `stop`, or `healthcheck`"
             )));
         }
+
+        for dependency in &service.depends_on {
+            if !services.contains_key(dependency) {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` depends on unknown service `{dependency}`"
+                )));
+            }
+        }
     }
+
+    detect_service_cycles(services, errors);
 }
 
 fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
@@ -216,6 +229,26 @@ fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Valid
         visit_task(
             name,
             tasks,
+            &mut visited,
+            &mut active,
+            &mut cycle_roots,
+            errors,
+        );
+    }
+}
+
+fn detect_service_cycles(
+    services: &BTreeMap<String, ServiceSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut visited = BTreeSet::new();
+    let mut active = Vec::new();
+    let mut cycle_roots = BTreeSet::new();
+
+    for name in services.keys() {
+        visit_service(
+            name,
+            services,
             &mut visited,
             &mut active,
             &mut cycle_roots,
@@ -257,6 +290,46 @@ fn visit_task(
     for dependency in &task.depends_on {
         if tasks.contains_key(dependency) {
             visit_task(dependency, tasks, visited, active, cycle_roots, errors);
+        }
+    }
+
+    active.pop();
+    visited.insert(name.to_string());
+}
+
+fn visit_service(
+    name: &str,
+    services: &BTreeMap<String, ServiceSpec>,
+    visited: &mut BTreeSet<String>,
+    active: &mut Vec<String>,
+    cycle_roots: &mut BTreeSet<String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if visited.contains(name) {
+        return;
+    }
+
+    if let Some(index) = active.iter().position(|service| service == name) {
+        let cycle = active[index..].to_vec();
+        if cycle_roots.insert(cycle[0].clone()) {
+            errors.push(ValidationError::new(format!(
+                "service dependency cycle detected: {} -> {}",
+                cycle.join(" -> "),
+                name
+            )));
+        }
+        return;
+    }
+
+    let Some(service) = services.get(name) else {
+        return;
+    };
+
+    active.push(name.to_string());
+
+    for dependency in &service.depends_on {
+        if services.contains_key(dependency) {
+            visit_service(dependency, services, visited, active, cycle_roots, errors);
         }
     }
 
@@ -458,6 +531,57 @@ tasks:
     }
 
     #[test]
+    fn rejects_unknown_service_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  api:
+    required: true
+    start: docker compose up -d api
+    depends_on:
+      - postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "service `api` depends on unknown service `postgres`"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_service_timeout() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    healthcheck: pg_isready -h localhost -p 5432
+    timeout: 0
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "service `postgres` must declare a timeout greater than zero"
+        );
+    }
+
+    #[test]
     fn rejects_tasks_with_both_run_and_script() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -580,6 +704,37 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task dependency cycle detected: build -> setup -> build"
+        );
+    }
+
+    #[test]
+    fn rejects_service_dependency_cycles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  api:
+    required: true
+    start: docker compose up -d api
+    depends_on:
+      - postgres
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+    depends_on:
+      - api
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "service dependency cycle detected: api -> postgres -> api"
         );
     }
 }

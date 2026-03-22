@@ -58,7 +58,7 @@ Current behavior:
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
-- `ota up` validates, runs blocking preconditions, starts explicit required services, verifies required service healthchecks, runs `setup` if present, and re-checks readiness
+- `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract from repo signals such as package manifests, runtime files, Java build wrappers, build files, and Docker Compose service declarations, then prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
 

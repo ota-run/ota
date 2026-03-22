@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::schema::{CheckKind, CheckSeverity, Contract, Lifecycle};
+use crate::schema::{CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +65,24 @@ pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> Doctor
 
 pub fn diagnose_services_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
     diagnose_contract_with_scope(contract, contract_path, DoctorScope::ServicesOnly)
+}
+
+pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -> DoctorReport {
+    let mut findings = Vec::new();
+    let working_dir = contract_working_dir(contract_path);
+
+    if let Some(service) = contract.services.get(name)
+        && let Some(finding) = service_finding(name, service, working_dir)
+    {
+        findings.push(finding);
+    }
+
+    DoctorReport {
+        ok: !findings
+            .iter()
+            .any(|finding| finding.severity == FindingSeverity::Error),
+        findings,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,56 +148,72 @@ fn diagnose_services(contract: &Contract, contract_path: &Path, findings: &mut V
     let working_dir = contract_working_dir(contract_path);
 
     for (name, service) in &contract.services {
-        if let Some(healthcheck) = service.healthcheck.as_deref() {
-            match run_check(healthcheck, working_dir, None) {
-                CheckStatus::Passed => {}
-                CheckStatus::Failed => findings.push(Finding {
-                    severity: if service.required {
-                        FindingSeverity::Error
-                    } else {
-                        FindingSeverity::Warn
-                    },
-                    summary: format!("Service healthcheck failed: {name}"),
-                    why: format!("service `{name}` did not pass its configured healthcheck"),
-                    next: match service.start.as_deref() {
-                        Some(start) => format!("run `{start}` and re-run `ota doctor`"),
-                        None => format!(
-                            "start or repair `{name}` and re-run its healthcheck: {healthcheck}"
-                        ),
-                    },
-                }),
-                CheckStatus::TimedOut(_) => {
-                    unreachable!("service healthchecks do not set timeouts")
-                }
-            }
-            continue;
-        }
-
-        if service.required {
-            let why = if service.start.is_some() {
-                format!(
-                    "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
-                )
-            } else {
-                format!(
-                    "service `{name}` is required but no `healthcheck` or `start` command is configured, so Ota cannot verify or prepare it"
-                )
-            };
-
-            let next = if service.start.is_some() {
-                format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
-            } else {
-                format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
-            };
-
-            findings.push(Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!("Required service cannot be verified: {name}"),
-                why,
-                next,
-            });
+        if let Some(finding) = service_finding(name, service, working_dir) {
+            findings.push(finding);
         }
     }
+}
+
+fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Option<Finding> {
+    if let Some(healthcheck) = service.healthcheck.as_deref() {
+        return match run_check(healthcheck, working_dir, service.timeout) {
+            CheckStatus::Passed => None,
+            CheckStatus::Failed => Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Service healthcheck failed: {name}"),
+                why: format!("service `{name}` did not pass its configured healthcheck"),
+                next: match service.start.as_deref() {
+                    Some(start) => format!("run `{start}` and re-run `ota doctor`"),
+                    None => format!(
+                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}"
+                    ),
+                },
+            }),
+            CheckStatus::TimedOut(timeout) => Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Service healthcheck timed out: {name}"),
+                why: format!("service `{name}` did not become ready within {}ms", timeout),
+                next: format!(
+                    "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`"
+                ),
+            }),
+        };
+    }
+
+    if service.required {
+        let why = if service.start.is_some() {
+            format!(
+                "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
+            )
+        } else {
+            format!(
+                "service `{name}` is required but no `healthcheck` or `start` command is configured, so Ota cannot verify or prepare it"
+            )
+        };
+
+        let next = if service.start.is_some() {
+            format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
+        } else {
+            format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
+        };
+
+        return Some(Finding {
+            severity: FindingSeverity::Warn,
+            summary: format!("Required service cannot be verified: {name}"),
+            why,
+            next,
+        });
+    }
+
+    None
 }
 
 fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -765,6 +799,33 @@ services:
         assert_eq!(
             report.findings[0].summary,
             "Required service cannot be verified: postgres"
+        );
+    }
+
+    #[test]
+    fn reports_timed_out_service_healthchecks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    healthcheck: sleep 1
+    timeout: 10
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(
+            report.findings[0].summary,
+            "Service healthcheck timed out: postgres"
         );
     }
 

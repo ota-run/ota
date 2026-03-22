@@ -782,6 +782,40 @@ tasks:
     }
 
     #[test]
+    fn up_starts_services_in_dependency_order() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  api:
+    required: true
+    start: test -f db-ready.txt && printf api >> order.txt && printf ready > api-ready.txt
+    healthcheck: test -f api-ready.txt
+    depends_on:
+      - postgres
+  postgres:
+    required: true
+    start: printf db >> order.txt && printf ready > db-ready.txt
+    healthcheck: test -f db-ready.txt
+tasks:
+  setup:
+    run: test "$(cat order.txt)" = "dbapi" && printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            std::fs::read_to_string(fixture.dir.path().join("order.txt")).unwrap(),
+            "dbapi"
+        );
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
     fn up_stops_in_services_phase_when_required_service_healthcheck_fails() {
         let fixture = ContractFixture::new(
             r#"
@@ -810,6 +844,45 @@ tasks:
                 .contains("ERROR  Service healthcheck failed: postgres")
         );
         assert!(fixture.dir.path().join("service.txt").exists());
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_stops_before_starting_dependents_when_dependency_is_not_ready() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  api:
+    required: true
+    start: printf api > api-started.txt
+    healthcheck: test -f api-ready.txt
+    depends_on:
+      - postgres
+  postgres:
+    required: true
+    start: printf db > db-started.txt
+    healthcheck: test -f db-ready.txt
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("Phase: services"));
+        assert!(
+            output
+                .stdout
+                .contains("ERROR  Service healthcheck failed: postgres")
+        );
+        assert!(fixture.dir.path().join("db-started.txt").exists());
+        assert!(!fixture.dir.path().join("api-started.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 

@@ -11,6 +11,8 @@ Current service fields:
 - `start`
 - `stop`
 - `healthcheck`
+- `depends_on`
+- `timeout`
 
 At least one actionable field is required:
 
@@ -26,6 +28,8 @@ Current behavior:
 - runs declared service `healthcheck` commands
 - reports failed required service healthchecks as blocking errors
 - reports failed optional service healthchecks as warnings
+- reports timed out required service healthchecks as blocking errors
+- reports timed out optional service healthchecks as warnings
 - warns when a required service has no `healthcheck`, because readiness cannot be verified
 
 ## `ota up`
@@ -34,8 +38,8 @@ Current behavior:
 
 1. validate the contract
 2. run blocking preconditions
-3. run explicit required-service `start` commands
-4. verify required service healthchecks
+3. start required services, and required-service dependencies, in declared dependency order
+4. verify required service healthchecks as readiness gates
 5. stop in the `services` phase if required services still are not ready
 6. run `setup` if present
 7. re-run readiness diagnosis
@@ -45,7 +49,7 @@ Important boundaries:
 - Ota preserves child exit codes for service start failures
 - Ota does not perform automatic teardown
 - Ota does not provide deep service orchestration
-- service dependency ordering is not part of the current contract surface
+- Ota does not infer service dependency ordering
 
 ## `ota detect`
 
