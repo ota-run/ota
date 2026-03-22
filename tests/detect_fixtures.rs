@@ -43,6 +43,14 @@ fn assert_detected_contract_valid(name: &str) -> ota::detector::DetectReport {
     report
 }
 
+fn assert_high_confidence_projection_valid(report: &ota::detector::DetectReport) {
+    let yaml = serde_yaml::to_string(&report.high_confidence_contract())
+        .expect("projected contract should serialize");
+    let contract =
+        parse_contract_str(Path::new("ota.yaml"), &yaml).expect("projected YAML should parse");
+    validate_contract(&contract).expect("projected contract should validate");
+}
+
 #[test]
 fn detects_node_pnpm_fixture() {
     let report = assert_detected_contract_valid("node-pnpm");
@@ -394,5 +402,115 @@ fn detects_package_json_package_manager_over_tool_versions_fixture() {
             .get("dev")
             .map(|task| task.run.as_str()),
         Some("pnpm dev")
+    );
+}
+
+#[test]
+fn detects_fullstack_node_compose_fixture() {
+    let report = assert_detected_contract_valid("fullstack-node-compose");
+    assert_high_confidence_projection_valid(&report);
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-compose-web")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"22.7.0".to_string())
+    );
+    assert_eq!(
+        report.contract.tools.get("pnpm"),
+        Some(&"10.6.0".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("pnpm dev")
+    );
+    assert_eq!(
+        report
+            .contract
+            .services
+            .get("db")
+            .and_then(|service| service.provider.as_deref()),
+        Some("docker-compose")
+    );
+    assert_eq!(
+        report
+            .contract
+            .services
+            .get("db")
+            .and_then(|service| service.healthcheck.as_deref()),
+        Some("pg_isready -U postgres")
+    );
+    assert_eq!(
+        report
+            .contract
+            .services
+            .get("cache")
+            .and_then(|service| service.start.as_deref()),
+        Some("docker compose up -d cache")
+    );
+}
+
+#[test]
+fn detects_mixed_node_python_compose_fixture() {
+    let report = assert_detected_contract_valid("mixed-node-python-compose");
+    assert_high_confidence_projection_valid(&report);
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-hybrid-app")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("node"),
+        Some(&"22.8.0".to_string())
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&">=3.12".to_string())
+    );
+    assert_eq!(
+        report.contract.tools.get("npm"),
+        Some(&"10.9.0".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("worker")
+            .map(|task| task.run.as_str()),
+        Some("npm run worker")
+    );
+    assert_eq!(
+        report
+            .contract
+            .services
+            .get("postgres")
+            .and_then(|service| service.provider.as_deref()),
+        Some("docker-compose")
+    );
+    assert_eq!(
+        report
+            .contract
+            .services
+            .get("postgres")
+            .and_then(|service| service.healthcheck.as_deref()),
+        Some("pg_isready -U ota")
+    );
+    assert_eq!(
+        report.high_confidence_contract().runtimes.get("python"),
+        None
     );
 }
