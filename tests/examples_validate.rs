@@ -31,6 +31,7 @@ fn example_paths() -> Vec<PathBuf> {
         root.join("basic-go").join("ota.yaml"),
         root.join("basic-node").join("ota.yaml"),
         root.join("basic-python").join("ota.yaml"),
+        root.join("basic-script").join("ota.yaml"),
         root.join("full-contract").join("ota.yaml"),
         root.join("fullstack-node-go").join("ota.yaml"),
         root.join("mixed-node-python").join("ota.yaml"),
