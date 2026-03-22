@@ -2,11 +2,9 @@
   <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="100" height="100">
 </div>
 
-
 # `ota`
+
 Ota is a readiness contract and CLI for modern repositories. It gives every repo one source of truth for what it needs, how it becomes ready, how tasks run, and how humans and AI agents operate. Run any repo without manual setup guesswork.
-
-
 
 ## Why Ota exists
 
@@ -52,7 +50,7 @@ Current behavior:
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
-- `ota up` validates, runs blocking preconditions, runs `setup` if present, and re-checks readiness
+- `ota up` validates, runs blocking preconditions, starts explicit required services, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract and prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
 
@@ -82,7 +80,7 @@ The long-term aim is:
 
 ## Current status
 
-The current repository has a real working core for the first V1 path:
+The repository already contains a working core for the v1 path:
 
 - contract validation
 - task listing
@@ -91,12 +89,6 @@ The current repository has a real working core for the first V1 path:
 - onboarding via `up`
 - detection with dry-run and conservative write mode
 - fixture-backed coverage for Java, Docker-heavy, and ugly mixed-reality repo shapes
-
-Implementation status and sequencing live in:
-
-- [docs/planning/v1-phases.md](docs/planning/v1-phases.md)
-- [ROADMAP.md](ROADMAP.md)
-- [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md)
 
 ## Quickstart
 
@@ -121,22 +113,40 @@ Write a conservative first contract:
 cargo run -- detect /path/to/repo
 ```
 
-More detail:
+## Documentation
 
-- [docs/guides/quickstart.md](docs/guides/quickstart.md)
-- [docs/spec/command-reference.md](docs/spec/command-reference.md)
-- [docs/spec/contract-reference.md](docs/spec/contract-reference.md)
-- [docs/spec/compatibility-policy.md](docs/spec/compatibility-policy.md)
-- [docs/spec/support-policy.md](docs/spec/support-policy.md)
-- [docs/design/security-posture.md](docs/design/security-posture.md)
-- [docs/design/performance-budget.md](docs/design/performance-budget.md)
-- [docs/planning/fixture-repo-plan.md](docs/planning/fixture-repo-plan.md)
-- [docs/design/doctor-quality-bar.md](docs/design/doctor-quality-bar.md)
-- [docs/guides/philosophy.md](docs/guides/philosophy.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
-- [examples/basic-node/ota.yaml](examples/basic-node/ota.yaml)
-- [examples/basic-python/ota.yaml](examples/basic-python/ota.yaml)
-- [examples/basic-go/ota.yaml](examples/basic-go/ota.yaml)
-- [examples/mixed-node-python/ota.yaml](examples/mixed-node-python/ota.yaml)
-- [examples/fullstack-node-go/ota.yaml](examples/fullstack-node-go/ota.yaml)
-- [examples/full-contract/ota.yaml](examples/full-contract/ota.yaml)
+### Start here
+- [Quickstart](docs/guides/quickstart.md)
+- [Command reference](docs/spec/command-reference.md)
+- [Contract reference](docs/spec/contract-reference.md)
+
+### Core concepts
+- [Philosophy](docs/guides/philosophy.md)
+- [Compatibility policy](docs/spec/compatibility-policy.md)
+- [Support policy](docs/spec/support-policy.md)
+
+### Design and engineering
+- [Security posture](docs/design/security-posture.md)
+- [Performance budget](docs/design/performance-budget.md)
+- [Doctor quality bar](docs/design/doctor-quality-bar.md)
+- [Detect write gate](docs/design/detect-write-gate.md)
+
+### Planning and roadmap
+- [V1 phases](docs/planning/v1-phases.md)
+- [Fixture repo plan](docs/planning/fixture-repo-plan.md)
+- [Roadmap](ROADMAP.md)
+
+### Contributing
+- [Contributing guide](CONTRIBUTING.md)
+
+## Examples
+
+### Minimal contracts
+- [Basic Node](examples/basic-node/ota.yaml)
+- [Basic Python](examples/basic-python/ota.yaml)
+- [Basic Go](examples/basic-go/ota.yaml)
+
+### Mixed and realistic repos
+- [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
+- [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml)
+- [Full contract example](examples/full-contract/ota.yaml)
