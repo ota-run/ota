@@ -19,7 +19,6 @@
 //   and limitations under the License.
 //
 //   If you need additional information or have any questions, please email: os@ota.run
-//
 
 use std::collections::{BTreeMap, BTreeSet};
 

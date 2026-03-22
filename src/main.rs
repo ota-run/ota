@@ -20,7 +20,6 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-
 fn main() {
     std::process::exit(ota::cli::run());
 }
