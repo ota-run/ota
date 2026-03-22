@@ -133,7 +133,9 @@ Example contracts:
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
 - [Service behavior](docs/spec/service-behavior.md)
+- [Shell semantics](docs/spec/shell-semantics.md)
 - [JSON output reference](docs/spec/json-output-reference.md)
+- [Exit codes](docs/spec/exit-codes.md)
 
 ### Core concepts
 - [Philosophy](docs/philosophy.md)

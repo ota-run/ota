@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/detect.json",
+  "title": "ota detect --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "config", "inferred"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "written": { "type": "boolean" },
+        "config": { "type": "object" },
+        "inferred": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/inference" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": false },
+        "error": { "type": "string" }
+      }
+    }
+  ]
+}

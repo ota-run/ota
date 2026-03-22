@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/doctor.json",
+  "title": "ota doctor --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "findings"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "summary", "why", "next"],
+        "properties": {
+          "severity": { "enum": ["error", "warn", "info"] },
+          "summary": { "type": "string" },
+          "why": { "type": "string" },
+          "next": { "type": "string" }
+        }
+      }
+    }
+  }
+}

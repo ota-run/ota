@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/up.json",
+  "title": "ota up --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "status", "phase", "findings"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "status": { "type": "string" },
+    "phase": {
+      "enum": ["preconditions", "services", "setup", "post-setup diagnosis"]
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/finding" }
+    },
+    "service": { "type": "string" },
+    "task": { "type": "string" },
+    "exit_code": { "type": "integer" }
+  }
+}

@@ -490,6 +490,24 @@ tasks:
     }
 
     #[test]
+    fn run_preserves_child_exit_code() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: exit 17
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 17);
+    }
+
+    #[test]
     fn doctor_text_reports_ready_when_no_findings_exist() {
         let fixture = ContractFixture::new(
             r#"

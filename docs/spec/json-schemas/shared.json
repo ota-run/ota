@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/shared.json",
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "summary", "why", "next"],
+      "properties": {
+        "severity": { "enum": ["error", "warn", "info"] },
+        "summary": { "type": "string" },
+        "why": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "value", "source", "confidence"],
+      "properties": {
+        "field": { "type": "string" },
+        "value": { "type": "string" },
+        "source": { "type": "string" },
+        "confidence": { "enum": ["low", "medium", "high"] }
+      }
+    }
+  }
+}

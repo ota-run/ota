@@ -3,7 +3,9 @@
 This document describes the current shipped CLI surface.
 
 For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
+For canonical exit-code behavior, see [exit-codes.md](exit-codes.md).
 For service behavior across commands, see [service-behavior.md](service-behavior.md).
+For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
 
 ## Global
 
@@ -38,6 +40,8 @@ When a command accepts a `PATH`, it may be either:
 - `2`: CLI usage or argument parsing error
 - `ota run`: preserves child task exit codes on task failure
 - `ota up`: preserves service-start and setup task exit codes when those commands fail
+
+The canonical registry is in [exit-codes.md](exit-codes.md).
 
 ## `--debug`
 
