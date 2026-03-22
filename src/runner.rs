@@ -30,6 +30,8 @@ use crate::schema::{Contract, TaskSpec};
 pub enum RunError {
     #[error("task `{task}` is not defined in ota.yaml")]
     UnknownTask { task: String },
+    #[error("task `{task}` does not have a valid execution form")]
+    InvalidTaskExecution { task: String },
     #[error("environment variable `{name}` is required for task execution but is not set")]
     MissingRequiredEnv { name: String },
     #[error(
@@ -122,10 +124,15 @@ pub fn run_task(
             .tasks
             .get(task_name)
             .expect("validated task plan should only reference known tasks");
+        let command = task
+            .execution_body()
+            .ok_or_else(|| RunError::InvalidTaskExecution {
+                task: task_name.clone(),
+            })?;
 
         println!("RUN {task_name}");
 
-        let status = shell_command(&task.run)
+        let status = shell_command(command)
             .current_dir(working_dir)
             .envs(env_overrides.iter())
             .stdin(Stdio::inherit())
@@ -218,7 +225,8 @@ tasks:
   setup:
     run: echo setup
   build:
-    run: echo build
+    script: |
+      echo build
     depends_on:
       - setup
   test:
@@ -322,7 +330,8 @@ project:
   name: ota
 tasks:
   fail:
-    run: exit 7
+    script: |
+      exit 7
 "#,
         );
 
@@ -330,6 +339,30 @@ tasks:
 
         assert_eq!(outcome.executed_tasks, vec!["fail"]);
         assert_eq!(outcome.exit_code, 7);
+    }
+
+    #[test]
+    fn executes_script_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      printf script > script-output.txt
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        assert_eq!(outcome.executed_tasks, vec!["setup"]);
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("script-output.txt")).unwrap(),
+            "script"
+        );
     }
 
     struct ContractFixture {

@@ -180,7 +180,13 @@ pub fn up(path: Option<&Path>) -> CommandOutput {
         Ok(contract) => {
             let preflight = diagnose_preconditions(&contract, &resolved_path);
             if !preflight.ok {
-                return render_up_text(&path_display, "NOT READY", preflight, false);
+                return render_up_text(
+                    &path_display,
+                    "NOT READY",
+                    "preconditions",
+                    preflight,
+                    false,
+                );
             }
 
             if contract.tasks.contains_key("setup") {
@@ -188,7 +194,8 @@ pub fn up(path: Option<&Path>) -> CommandOutput {
                     Ok(outcome) if outcome.exit_code != 0 => {
                         return CommandOutput {
                             stdout: format!(
-                                "UP {path_display}\nSETUP FAILED\nNext: inspect the `setup` task output and fix the reported issue"
+                                "UP {path_display}\nSETUP FAILED\nPhase: setup\nTask: setup\nExit code: {}\nNext: inspect the `setup` task output and fix the reported issue",
+                                outcome.exit_code
                             ),
                             stderr: None,
                             exit_code: outcome.exit_code,
@@ -201,9 +208,15 @@ pub fn up(path: Option<&Path>) -> CommandOutput {
 
             let report = diagnose_contract(&contract, &resolved_path);
             if report.ok {
-                render_up_text(&path_display, "READY", report, true)
+                render_up_text(&path_display, "READY", "post-setup diagnosis", report, true)
             } else {
-                render_up_text(&path_display, "NOT READY", report, false)
+                render_up_text(
+                    &path_display,
+                    "NOT READY",
+                    "post-setup diagnosis",
+                    report,
+                    false,
+                )
             }
         }
         Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
@@ -293,6 +306,7 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         output.push_str(task.name);
 
         let mut details = Vec::new();
+        details.push(format!("kind={}", task.kind));
         if let Some(category) = task.category {
             details.push(format!("category={category}"));
         }
@@ -339,8 +353,14 @@ fn render_doctor_text(path: &str, report: DoctorReport) -> CommandOutput {
     }
 }
 
-fn render_up_text(path: &str, status: &str, report: DoctorReport, ready: bool) -> CommandOutput {
-    let mut stdout = format!("UP {path}\n{status}");
+fn render_up_text(
+    path: &str,
+    status: &str,
+    phase: &str,
+    report: DoctorReport,
+    ready: bool,
+) -> CommandOutput {
+    let mut stdout = format!("UP {path}\n{status}\nPhase: {phase}");
 
     for finding in &report.findings {
         stdout.push('\n');

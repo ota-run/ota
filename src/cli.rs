@@ -220,10 +220,55 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["tasks"][0]["name"], "build");
+        assert_eq!(json["tasks"][0]["kind"], "run");
         assert_eq!(json["tasks"][0]["category"], "build");
         assert_eq!(json["tasks"][0]["depends_on"][0], "test");
         assert_eq!(json["tasks"][1]["name"], "test");
         assert_eq!(json["tasks"][1]["safe_for_agent"], true);
+    }
+
+    #[test]
+    fn tasks_json_reports_script_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["tasks"][0]["name"], "setup");
+        assert_eq!(json["tasks"][0]["kind"], "script");
+        assert_eq!(json["tasks"][0]["script"], "printf ready > prepared.txt\n");
+        assert!(json["tasks"][0].get("run").is_none());
+    }
+
+    #[test]
+    fn tasks_text_reports_script_kind() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("setup (kind=script)"));
     }
 
     #[test]
@@ -250,6 +295,26 @@ tasks:
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
         assert_eq!(object.len(), 3);
+    }
+
+    #[test]
+    fn run_executes_script_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
     #[test]
@@ -386,6 +451,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -409,7 +475,57 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("Phase: preconditions"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_reports_setup_failure_with_exit_code() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: exit 7
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        assert!(output.stdout.contains("SETUP FAILED"));
+        assert!(output.stdout.contains("Phase: setup"));
+        assert!(output.stdout.contains("Task: setup"));
+        assert!(output.stdout.contains("Exit code: 7"));
+    }
+
+    #[test]
+    fn up_reports_post_setup_diagnosis_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
+        assert!(output.stdout.contains("ERROR  Check failed: health-check"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
     #[test]

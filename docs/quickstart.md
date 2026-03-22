@@ -17,6 +17,8 @@ Run a task explicitly:
 cargo run -- run test
 ```
 
+Tasks can use either a single-command `run` or an inline multiline `script`.
+
 ## Detect a starting contract
 
 Review first:

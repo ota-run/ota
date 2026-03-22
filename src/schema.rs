@@ -146,11 +146,32 @@ pub struct TaskSpec {
     pub description: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
-    pub run: String,
+    #[serde(default)]
+    pub run: Option<String>,
+    #[serde(default)]
+    pub script: Option<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub safe_for_agent: bool,
+}
+
+impl TaskSpec {
+    pub fn execution_kind(&self) -> Option<&'static str> {
+        match (self.run.as_ref(), self.script.as_ref()) {
+            (Some(_), None) => Some("run"),
+            (None, Some(_)) => Some("script"),
+            _ => None,
+        }
+    }
+
+    pub fn execution_body(&self) -> Option<&str> {
+        match (self.run.as_deref(), self.script.as_deref()) {
+            (Some(run), None) => Some(run),
+            (None, Some(script)) => Some(script),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

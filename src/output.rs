@@ -111,7 +111,11 @@ pub struct TaskSummary<'a> {
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<&'a str>,
-    pub run: &'a str,
+    pub kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<&'a str>,
     pub depends_on: &'a [String],
     pub safe_for_agent: bool,
 }
@@ -122,7 +126,11 @@ impl<'a> TaskSummary<'a> {
             name,
             description: task.description.as_deref(),
             category: task.category.as_deref(),
-            run: &task.run,
+            kind: task
+                .execution_kind()
+                .expect("validated task must declare exactly one execution form"),
+            run: task.run.as_deref(),
+            script: task.script.as_deref(),
             depends_on: &task.depends_on,
             safe_for_agent: task.safe_for_agent,
         }
