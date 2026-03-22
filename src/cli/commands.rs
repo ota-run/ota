@@ -39,216 +39,250 @@ use crate::validator::{ValidationErrors, validate_contract};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 
-pub fn validate(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
+pub fn validate(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=validate"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
 
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => {
-            let _ = contract;
-            match format {
-                OutputFormat::Text => CommandOutput::success(format!("VALID {path_display}")),
-                OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
-                    ok: true,
-                    path: &path_display,
-                })),
-            }
-        }
-        Err(ContractProblem::Validation(errors)) => match format {
-            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: errors.errors().iter().map(ToString::to_string).collect(),
-                error: None,
-            })),
-        },
-        Err(ContractProblem::Load(error)) => match format {
-            OutputFormat::Text => CommandOutput::failure(error.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: Vec::new(),
-                error: Some(error.to_string()),
-            })),
-        },
-    }
-}
-
-pub fn tasks(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
-    let path_display = resolved_path.display().to_string();
-
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => {
-            let task_summaries = contract
-                .tasks
-                .iter()
-                .map(|(name, task)| TaskSummary::from_spec(name, task))
-                .collect::<Vec<_>>();
-
-            match format {
-                OutputFormat::Text => {
-                    CommandOutput::success(render_tasks_text(&path_display, &task_summaries))
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => {
+                let _ = contract;
+                match format {
+                    OutputFormat::Text => CommandOutput::success(format!("VALID {path_display}")),
+                    OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
+                        ok: true,
+                        path: &path_display,
+                    })),
                 }
-                OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
-                    ok: true,
-                    path: &path_display,
-                    tasks: task_summaries,
-                })),
             }
-        }
-        Err(ContractProblem::Validation(errors)) => match format {
-            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
-                ok: false,
-                path: &path_display,
-                errors: errors.errors().iter().map(ToString::to_string).collect(),
-                error: None,
-            })),
-        },
-        Err(ContractProblem::Load(error)) => match format {
-            OutputFormat::Text => CommandOutput::failure(error.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
-                ok: false,
-                path: &path_display,
-                errors: Vec::new(),
-                error: Some(error.to_string()),
-            })),
-        },
-    }
-}
-
-pub fn run_command(task_name: &str, path: Option<&Path>) -> CommandOutput {
-    let resolved_path = resolve_contract_path(path);
-
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => match run_task(&contract, &resolved_path, task_name) {
-            Ok(outcome) => CommandOutput {
-                stdout: String::new(),
-                stderr: lifecycle_notice(&contract),
-                exit_code: outcome.exit_code,
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
             },
-            Err(error) => CommandOutput::failure(render_run_error(error)),
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
         },
-        Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
-        Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
-    }
+        debug,
+        debug_lines,
+    )
 }
 
-pub fn doctor(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
+pub fn tasks(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=tasks"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
 
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => {
-            let report = diagnose_contract(&contract, &resolved_path);
-            match format {
-                OutputFormat::Text => render_doctor_text(&path_display, report),
-                OutputFormat::Json => {
-                    let exit_code = if report.ok { 0 } else { 1 };
-                    CommandOutput {
-                        stdout: to_json(&DoctorSuccess {
-                            ok: report.ok,
-                            path: &path_display,
-                            findings: &report.findings,
-                        }),
-                        stderr: None,
-                        exit_code,
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => {
+                let task_summaries = contract
+                    .tasks
+                    .iter()
+                    .map(|(name, task)| TaskSummary::from_spec(name, task))
+                    .collect::<Vec<_>>();
+
+                match format {
+                    OutputFormat::Text => {
+                        CommandOutput::success(render_tasks_text(&path_display, &task_summaries))
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
+                        ok: true,
+                        path: &path_display,
+                        tasks: task_summaries,
+                    })),
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn run_command(task_name: &str, path: Option<&Path>, debug: bool) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=run"),
+        format!("DEBUG task={task_name}"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => match run_task(&contract, &resolved_path, task_name) {
+                Ok(outcome) => CommandOutput {
+                    stdout: String::new(),
+                    stderr: lifecycle_notice(&contract),
+                    exit_code: outcome.exit_code,
+                },
+                Err(error) => CommandOutput::failure(render_run_error(error)),
+            },
+            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
+            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn doctor(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
+    let resolved_path = resolve_contract_path(path);
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=doctor"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => {
+                let report = diagnose_contract(&contract, &resolved_path);
+                match format {
+                    OutputFormat::Text => render_doctor_text(&path_display, report),
+                    OutputFormat::Json => {
+                        let exit_code = if report.ok { 0 } else { 1 };
+                        CommandOutput {
+                            stdout: to_json(&DoctorSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                findings: &report.findings,
+                            }),
+                            stderr: None,
+                            exit_code,
+                        }
                     }
                 }
             }
-        }
-        Err(ContractProblem::Validation(errors)) => match format {
-            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: errors.errors().iter().map(ToString::to_string).collect(),
-                error: None,
-            })),
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
         },
-        Err(ContractProblem::Load(error)) => match format {
-            OutputFormat::Text => CommandOutput::failure(error.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: Vec::new(),
-                error: Some(error.to_string()),
-            })),
-        },
-    }
+        debug,
+        debug_lines,
+    )
 }
 
-pub fn check(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
+pub fn check(path: Option<&Path>, format: OutputFormat, debug: bool) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=check"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
 
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => {
-            let report = diagnose_checks_only(&contract, &resolved_path);
-            match format {
-                OutputFormat::Text => render_report_text("CHECK", &path_display, report),
-                OutputFormat::Json => {
-                    let exit_code = if report.ok { 0 } else { 1 };
-                    CommandOutput {
-                        stdout: to_json(&DoctorSuccess {
-                            ok: report.ok,
-                            path: &path_display,
-                            findings: &report.findings,
-                        }),
-                        stderr: None,
-                        exit_code,
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => {
+                let report = diagnose_checks_only(&contract, &resolved_path);
+                match format {
+                    OutputFormat::Text => render_report_text("CHECK", &path_display, report),
+                    OutputFormat::Json => {
+                        let exit_code = if report.ok { 0 } else { 1 };
+                        CommandOutput {
+                            stdout: to_json(&DoctorSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                findings: &report.findings,
+                            }),
+                            stderr: None,
+                            exit_code,
+                        }
                     }
                 }
             }
-        }
-        Err(ContractProblem::Validation(errors)) => match format {
-            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: errors.errors().iter().map(ToString::to_string).collect(),
-                error: None,
-            })),
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
         },
-        Err(ContractProblem::Load(error)) => match format {
-            OutputFormat::Text => CommandOutput::failure(error.to_string()),
-            OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                ok: false,
-                path: &path_display,
-                errors: Vec::new(),
-                error: Some(error.to_string()),
-            })),
-        },
-    }
+        debug,
+        debug_lines,
+    )
 }
 
-pub fn init(path: Option<&Path>, write: bool, format: OutputFormat) -> CommandOutput {
+pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool) -> CommandOutput {
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=init"),
+        format!("DEBUG repo_root={}", root.display()),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG write={write}"),
+    ];
 
     if contract_path.exists() {
         let error = format!(
             "`{}` already exists; `ota init` is only for repos without an Ota contract",
             contract_path.display()
         );
-        return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
-            OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
-                ok: false,
-                path: &path_display,
-                written: false,
-                error: &error,
-            })),
-        };
-    }
-
-    match detect_repo(&root) {
-        Ok(report) => render_init(report, &contract_path, write, format),
-        Err(error) => {
-            let error = error.to_string();
+        return finalize_debug(
             match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
@@ -257,129 +291,178 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat) -> CommandOu
                     written: false,
                     error: &error,
                 })),
-            }
-        }
+            },
+            debug,
+            debug_lines,
+        );
     }
+
+    finalize_debug(
+        match detect_repo(&root) {
+            Ok(report) => render_init(report, &contract_path, write, format),
+            Err(error) => {
+                let error = error.to_string();
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                    })),
+                }
+            }
+        },
+        debug,
+        debug_lines,
+    )
 }
 
-pub fn up(path: Option<&Path>) -> CommandOutput {
+pub fn up(path: Option<&Path>, debug: bool) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
     let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=up"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
 
-    match load_and_validate(&resolved_path) {
-        Ok(contract) => {
-            let preflight = diagnose_preconditions(&contract, &resolved_path);
-            if !preflight.ok {
-                return render_up_text(
-                    &path_display,
-                    "NOT READY",
-                    "preconditions",
-                    preflight,
-                    false,
-                );
-            }
-
-            let working_dir = contract_working_dir(&resolved_path);
-            for (name, service) in &contract.services {
-                if !service.required {
-                    continue;
+    finalize_debug(
+        match load_and_validate(&resolved_path) {
+            Ok(contract) => {
+                let preflight = diagnose_preconditions(&contract, &resolved_path);
+                if !preflight.ok {
+                    return render_up_text(
+                        &path_display,
+                        "NOT READY",
+                        "preconditions",
+                        preflight,
+                        false,
+                    );
                 }
 
-                let Some(start) = service.start.as_deref() else {
-                    continue;
-                };
-
-                match run_shell_command(start, working_dir) {
-                    Ok(0) => {}
-                    Ok(exit_code) => {
-                        return CommandOutput {
-                            stdout: format!(
-                                "UP {path_display}\nSERVICE START FAILED\nPhase: services\nService: {name}\nExit code: {exit_code}\nNext: inspect `services.{name}.start` output and fix the reported issue"
-                            ),
-                            stderr: None,
-                            exit_code,
-                        };
+                let working_dir = contract_working_dir(&resolved_path);
+                for (name, service) in &contract.services {
+                    if !service.required {
+                        continue;
                     }
-                    Err(error) => return CommandOutput::failure(error),
-                }
-            }
 
-            if contract.tasks.contains_key("setup") {
-                match run_task(&contract, &resolved_path, "setup") {
-                    Ok(outcome) if outcome.exit_code != 0 => {
-                        return CommandOutput {
-                            stdout: format!(
-                                "UP {path_display}\nSETUP FAILED\nPhase: setup\nTask: setup\nExit code: {}\nNext: inspect the `setup` task output and fix the reported issue",
-                                outcome.exit_code
-                            ),
-                            stderr: None,
-                            exit_code: outcome.exit_code,
-                        };
+                    let Some(start) = service.start.as_deref() else {
+                        continue;
+                    };
+
+                    match run_shell_command(start, working_dir) {
+                        Ok(0) => {}
+                        Ok(exit_code) => {
+                            return CommandOutput {
+                                stdout: format!(
+                                    "UP {path_display}\nSERVICE START FAILED\nPhase: services\nService: {name}\nExit code: {exit_code}\nNext: inspect `services.{name}.start` output and fix the reported issue"
+                                ),
+                                stderr: None,
+                                exit_code,
+                            };
+                        }
+                        Err(error) => return CommandOutput::failure(error),
                     }
-                    Ok(_) => {}
-                    Err(error) => return CommandOutput::failure(render_run_error(error)),
+                }
+
+                if contract.tasks.contains_key("setup") {
+                    match run_task(&contract, &resolved_path, "setup") {
+                        Ok(outcome) if outcome.exit_code != 0 => {
+                            return CommandOutput {
+                                stdout: format!(
+                                    "UP {path_display}\nSETUP FAILED\nPhase: setup\nTask: setup\nExit code: {}\nNext: inspect the `setup` task output and fix the reported issue",
+                                    outcome.exit_code
+                                ),
+                                stderr: None,
+                                exit_code: outcome.exit_code,
+                            };
+                        }
+                        Ok(_) => {}
+                        Err(error) => return CommandOutput::failure(render_run_error(error)),
+                    }
+                }
+
+                let report = diagnose_contract(&contract, &resolved_path);
+                if report.ok {
+                    render_up_text(&path_display, "READY", "post-setup diagnosis", report, true)
+                } else {
+                    render_up_text(
+                        &path_display,
+                        "NOT READY",
+                        "post-setup diagnosis",
+                        report,
+                        false,
+                    )
                 }
             }
-
-            let report = diagnose_contract(&contract, &resolved_path);
-            if report.ok {
-                render_up_text(&path_display, "READY", "post-setup diagnosis", report, true)
-            } else {
-                render_up_text(
-                    &path_display,
-                    "NOT READY",
-                    "post-setup diagnosis",
-                    report,
-                    false,
-                )
-            }
-        }
-        Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
-        Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
-    }
+            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
+            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+        },
+        debug,
+        debug_lines,
+    )
 }
 
-pub fn detect(path: Option<&Path>, dry_run: bool, format: OutputFormat) -> CommandOutput {
+pub fn detect(
+    path: Option<&Path>,
+    dry_run: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
-    match detect_repo(&root) {
-        Ok(report) if dry_run => {
-            let yaml = serde_yaml::to_string(&report.contract)
-                .expect("serializing detected contract should not fail");
-            match format {
-                OutputFormat::Text => {
-                    let mut stdout = format!("DETECT {}", report.root.display());
-                    stdout.push('\n');
-                    stdout.push_str("---");
-                    stdout.push('\n');
-                    stdout.push_str(yaml.trim_end());
-                    render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
-                    CommandOutput::success(stdout)
+    let debug_lines = vec![
+        String::from("DEBUG command=detect"),
+        format!("DEBUG repo_root={}", root.display()),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG dry_run={dry_run}"),
+    ];
+    finalize_debug(
+        match detect_repo(&root) {
+            Ok(report) if dry_run => {
+                let yaml = serde_yaml::to_string(&report.contract)
+                    .expect("serializing detected contract should not fail");
+                match format {
+                    OutputFormat::Text => {
+                        let mut stdout = format!("DETECT {}", report.root.display());
+                        stdout.push('\n');
+                        stdout.push_str("---");
+                        stdout.push('\n');
+                        stdout.push_str(yaml.trim_end());
+                        render_inference_section(
+                            &mut stdout,
+                            "Annotations",
+                            report.inferences.iter(),
+                        );
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                        ok: true,
+                        path: &path_display,
+                        written: false,
+                        config: &report.contract,
+                        inferred: &report.inferences,
+                    })),
                 }
-                OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
-                    ok: true,
-                    path: &path_display,
-                    written: false,
-                    config: &report.contract,
-                    inferred: &report.inferences,
-                })),
             }
-        }
-        Ok(report) => write_detected_contract(report, format),
-        Err(error) => {
-            let error = error.to_string();
-            match format {
-                OutputFormat::Text => CommandOutput::failure(error),
-                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
-                    ok: false,
-                    path: &path_display,
-                    written: false,
-                    error: &error,
-                })),
+            Ok(report) => write_detected_contract(report, format),
+            Err(error) => {
+                let error = error.to_string();
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                    })),
+                }
             }
-        }
-    }
+        },
+        debug,
+        debug_lines,
+    )
 }
 
 fn write_detected_contract(report: DetectReport, format: OutputFormat) -> CommandOutput {
@@ -691,6 +774,14 @@ fn lifecycle_notice(contract: &Contract) -> Option<String> {
     } else {
         None
     }
+}
+
+fn finalize_debug(output: CommandOutput, debug: bool, debug_lines: Vec<String>) -> CommandOutput {
+    if !debug {
+        return output;
+    }
+
+    output.with_stderr(Some(debug_lines.join("\n")))
 }
 
 #[cfg(unix)]

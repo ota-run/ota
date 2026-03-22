@@ -7,6 +7,7 @@ This document describes the current shipped CLI surface.
 ```bash
 ota --help
 ota --version
+ota --debug <command>
 ```
 
 Ota currently ships these commands:
@@ -26,6 +27,24 @@ When a command accepts a `PATH`, it may be either:
 - a directory containing `ota.yaml`
 
 `ota detect` is different. Its `PATH` is a repo root to inspect.
+
+## Current exit semantics
+
+- `0`: success, ready state, or warning-only diagnosis
+- `1`: invalid contract, blocking readiness issue, protected write failure, or general command failure
+- `2`: CLI usage or argument parsing error
+- `ota run`: preserves child task exit codes on task failure
+- `ota up`: preserves service-start and setup task exit codes when those commands fail
+
+## `--debug`
+
+`--debug` emits command-phase tracing to stderr.
+
+Current intent:
+
+- help humans and agents understand which path or mode a command resolved
+- keep normal stdout stable
+- avoid persistent logs or verbose default output
 
 ## `ota validate`
 

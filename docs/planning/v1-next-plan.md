@@ -92,6 +92,8 @@ Make the `services` section useful in V1 without turning Ota into an orchestrato
 
 ## Track 3: `execution.lifecycle`
 
+Status: complete
+
 ### Goal
 
 Define and implement an honest V1 meaning for `persistent` and `ephemeral`.
@@ -128,6 +130,8 @@ Define and implement an honest V1 meaning for `persistent` and `ephemeral`.
 - unsupported lifecycle behavior fails or warns explicitly instead of implying false guarantees
 
 ## Track 4: Exit Codes and Debug Mode
+
+Status: complete
 
 ### Goal
 
