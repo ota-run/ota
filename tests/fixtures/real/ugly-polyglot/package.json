@@ -1,11 +1,11 @@
 {
-  "name": "ota-platform",
-  "packageManager": "pnpm@10.5.0",
+  "name": "ota-polyglot-app",
+  "packageManager": "pnpm@10.6.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "turbo dev",
-    "build": "turbo build"
-  },
-  "engines": {
-    "node": "20"
+    "test": "vitest run"
   }
 }

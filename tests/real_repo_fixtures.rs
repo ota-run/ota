@@ -22,12 +22,12 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use serde_json::Value;
 use tempfile::TempDir;
 
-fn fixture_path(name: &str) -> PathBuf {
+fn real_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
@@ -35,116 +35,119 @@ fn fixture_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn run_ota(args: &[&str]) -> std::process::Output {
+fn run_ota(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
         .output()
-        .expect("ota command should execute")
+        .expect("ota command should run")
 }
 
-fn copy_dir_recursive(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
+fn stdout_json(output: &Output) -> Value {
+    assert!(
+        output.status.success(),
+        "expected success, stderr was: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let from_path = entry.path();
-        let to_path = to.join(entry.file_name());
+    serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
+}
 
-        if from_path.is_dir() {
-            copy_dir_recursive(&from_path, &to_path);
+fn copy_fixture_to_temp(name: &str) -> TempDir {
+    let temp = TempDir::new().expect("temp dir should be created");
+    copy_dir_recursive(&real_fixture_path(name), temp.path());
+    temp
+}
+
+fn copy_dir_recursive(src: &Path, dest: &Path) {
+    fs::create_dir_all(dest).expect("destination directory should exist");
+
+    for entry in fs::read_dir(src).expect("fixture directory should be readable") {
+        let entry = entry.expect("fixture entry should be readable");
+        let entry_path = entry.path();
+        let target_path = dest.join(entry.file_name());
+        let metadata = entry
+            .metadata()
+            .expect("fixture entry metadata should be readable");
+
+        if metadata.is_dir() {
+            copy_dir_recursive(&entry_path, &target_path);
         } else {
-            fs::create_dir_all(to_path.parent().unwrap()).unwrap();
-            fs::copy(&from_path, &to_path).unwrap();
+            fs::copy(&entry_path, &target_path).expect("fixture file should copy");
         }
     }
 }
 
-fn copied_fixture(name: &str) -> TempDir {
-    let dir = TempDir::new().unwrap();
-    copy_dir_recursive(&fixture_path(name), dir.path());
-    dir
-}
-
 #[test]
-fn init_reports_blank_mode_for_java_gradle_fixture() {
-    let output = run_ota(&[
-        "init",
-        "--json",
-        fixture_path("java-gradle").to_str().unwrap(),
-    ]);
+fn init_json_reports_blank_mode_for_java_gradle_fixture() {
+    let fixture = real_fixture_path("java-gradle");
+    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
 
-    assert!(output.status.success());
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["ok"], true);
     assert_eq!(json["written"], false);
     assert_eq!(json["mode"], "blank");
     assert_eq!(json["config"]["project"]["name"], "java-gradle");
+    assert_eq!(json["inferred"][0]["source"], "directory-name");
 }
 
 #[test]
-fn init_reports_detected_mode_for_docker_heavy_fixture() {
-    let output = run_ota(&[
-        "init",
-        "--json",
-        fixture_path("docker-heavy-node").to_str().unwrap(),
-    ]);
+fn detect_json_handles_docker_heavy_node_fixture() {
+    let fixture = real_fixture_path("docker-heavy-node");
+    let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
 
-    assert!(output.status.success());
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["ok"], true);
     assert_eq!(json["written"], false);
-    assert_eq!(json["mode"], "detected");
-    assert_eq!(json["config"]["project"]["name"], "ota-containerized");
-    assert_eq!(json["config"]["runtimes"]["node"], "20");
-}
-
-#[test]
-fn detect_reports_precedence_on_ugly_polyglot_fixture() {
-    let output = run_ota(&[
-        "detect",
-        "--json",
-        "--dry-run",
-        fixture_path("ugly-polyglot").to_str().unwrap(),
-    ]);
-
-    assert!(output.status.success());
-    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(json["ok"], true);
-    assert_eq!(json["written"], false);
-    assert_eq!(json["config"]["project"]["name"], "ota-platform");
-    assert_eq!(json["config"]["runtimes"]["node"], "22");
-    assert_eq!(json["config"]["runtimes"]["python"], "3.13.2");
+    assert_eq!(json["config"]["project"]["name"], "ota-containerized-web");
+    assert_eq!(json["config"]["runtimes"]["node"], "22.3.0");
     assert_eq!(json["config"]["tools"]["pnpm"], "10.5.0");
+    assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+}
+
+#[test]
+fn detect_json_handles_ugly_polyglot_fixture() {
+    let fixture = real_fixture_path("ugly-polyglot");
+    let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+    let inferred = json["inferred"].as_array().unwrap();
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["config"]["project"]["name"], "ota-polyglot-app");
+    assert_eq!(json["config"]["runtimes"]["node"], "22");
+    assert_eq!(json["config"]["runtimes"]["python"], "3.12.4");
+    assert_eq!(json["config"]["runtimes"]["go"], "1.24.0");
+    assert_eq!(json["config"]["tools"]["pnpm"], "10.6.0");
+    assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+    assert!(inferred.iter().any(|inference| {
+        inference["field"] == "runtimes.node"
+            && inference["source"] == ".nvmrc"
+            && inference["value"] == "22"
+    }));
 }
 
 #[cfg(unix)]
 #[test]
-fn doctor_surfaces_real_repo_gap_on_java_fixture() {
-    let fixture = copied_fixture("java-gradle");
-    fs::write(
-        fixture.path().join("ota.yaml"),
-        r#"
+fn doctor_json_runs_warning_check_in_ugly_polyglot_fixture() {
+    let fixture = copy_fixture_to_temp("ugly-polyglot");
+    let contract = r#"
 version: 1
 project:
-  name: java-gradle
+  name: ota-polyglot-app
 checks:
-  - name: gradle-wrapper-present
+  - name: docs-ops
     kind: health
     severity: warn
-    run: test -f gradlew
-tasks:
-  test:
-    run: ./gradlew test
-"#
-        .trim_start(),
-    )
-    .unwrap();
+    run: test -f docs/ops.md
+"#;
 
-    let output = run_ota(&["doctor", fixture.path().to_str().unwrap()]);
+    fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
 
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("DOCTOR"));
-    assert!(stdout.contains("READY"));
-    assert!(stdout.contains("WARN  Check failed: gradle-wrapper-present"));
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"][0]["severity"], "warn");
+    assert_eq!(json["findings"][0]["summary"], "Check failed: docs-ops");
 }

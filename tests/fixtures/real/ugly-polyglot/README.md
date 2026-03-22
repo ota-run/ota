@@ -1,3 +1,3 @@
-# Ota Platform
+# Ota Polyglot
 
-Run `pnpm dev` for the frontend and `python -m pytest` for the API.
+This fixture intentionally mixes multiple repo signals.
