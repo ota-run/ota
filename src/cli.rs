@@ -1600,6 +1600,57 @@ tasks:
         assert!(output.stdout.contains("Exit code: 7"));
     }
 
+    #[test]
+    fn workspace_up_respects_repo_dependency_order() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let marker = fs::read_to_string(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("workspace-order.txt"),
+        )
+        .unwrap();
+        assert_eq!(marker, "db\napi\n");
+    }
+
+    #[test]
+    fn workspace_up_blocks_dependent_repo_when_dependency_fails() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture.dir.path().join("services").join("db").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    run: exit 5
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "db");
+        assert_eq!(json["repos"][0]["status"], "SETUP FAILED");
+        assert_eq!(json["repos"][1]["name"], "api");
+        assert_eq!(json["repos"][1]["status"], "BLOCKED");
+        assert_eq!(json["repos"][1]["phase"], "dependencies");
+        assert_eq!(
+            json["repos"][1]["findings"][0]["summary"],
+            "Blocked by failed dependency: db"
+        );
+    }
+
     struct ContractFixture {
         dir: TempDir,
         file_path: std::path::PathBuf,
@@ -1679,6 +1730,71 @@ repos:
 
         fn workspace_file(&self) -> &std::path::Path {
             &self.workspace_file
+        }
+
+        fn new_multi_repo() -> Self {
+            let dir = TempDir::new().unwrap();
+            let api_dir = dir.path().join("services").join("api");
+            let db_dir = dir.path().join("services").join("db");
+            fs::create_dir_all(&api_dir).unwrap();
+            fs::create_dir_all(&db_dir).unwrap();
+
+            fs::write(
+                db_dir.join("ota.yaml"),
+                format!(
+                    r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    run: printf "db\n" > "{marker}"
+"#,
+                    marker = api_dir.join("workspace-order.txt").display()
+                ),
+            )
+            .unwrap();
+
+            fs::write(
+                api_dir.join("ota.yaml"),
+                format!(
+                    r#"
+version: 1
+project:
+  name: api
+tasks:
+  setup:
+    run: printf "api\n" >> "{marker}"
+"#,
+                    marker = api_dir.join("workspace-order.txt").display()
+                ),
+            )
+            .unwrap();
+
+            let workspace_file = dir.path().join("ota.workspace.yaml");
+            fs::write(
+                &workspace_file,
+                r#"
+version: 1
+workspace:
+  name: ota-stack
+repos:
+  api:
+    path: services/api
+    required: true
+    depends_on:
+      - db
+  db:
+    path: services/db
+    required: true
+"#,
+            )
+            .unwrap();
+
+            Self {
+                dir,
+                workspace_file,
+            }
         }
     }
 }
