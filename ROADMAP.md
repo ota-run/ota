@@ -18,6 +18,7 @@ The detailed implementation plan is in [docs/planning/v1-phases.md](docs/plannin
 The detect write threshold is documented in [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md).
 Future task executor expansion is tracked in the product spec.
 The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-next-plan.md).
+The binding V1 closeout bar is in [docs/planning/v1-release-gate.md](docs/planning/v1-release-gate.md).
 
 ## Implemented so far
 
@@ -33,14 +34,14 @@ The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-n
 
 ## Current focus
 
-- broader V1 hardening against real repos
+- binding the current implementation to the V1 release gate
 - keeping the public spec and docs aligned with shipped behavior
 
 ## Near-term next steps
 
-- continue hardening the current command surface on real repositories
-- deepen spec-backed behavior where the contract is already accepted
-- decide explicitly whether service dependency ordering belongs in the contract before implementing it
+- keep the fixture matrix as the source of truth for V1 closeout
+- expand fixtures only when they expose real gaps
+- avoid post-V1 scope until the release gate is satisfied
 
 ## Product direction
 

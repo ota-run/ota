@@ -20,6 +20,8 @@ Ota needs real repo shapes to avoid designing in fantasy.
 
 These now exist as canonical real-shape fixtures under `tests/fixtures/real`.
 
+The binding V1 bar for these fixtures is in [v1-release-gate.md](v1-release-gate.md).
+
 ## Next fixture pressure
 
 - deeper `doctor` assertions against service and lifecycle behavior

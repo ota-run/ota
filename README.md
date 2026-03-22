@@ -150,6 +150,7 @@ Example contracts:
 
 ### Planning and roadmap
 - [V1 phases](docs/planning/v1-phases.md)
+- [V1 release gate](docs/planning/v1-release-gate.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)
 - [Roadmap](ROADMAP.md)
 
