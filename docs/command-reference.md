@@ -15,6 +15,7 @@ Ota currently ships these commands:
 - `ota tasks`
 - `ota run <task>`
 - `ota doctor`
+- `ota check`
 - `ota up`
 - `ota detect`
 
@@ -126,6 +127,33 @@ JSON output:
 - `findings`
 
 Warnings can still produce `READY`. Errors produce `NOT READY`.
+
+## `ota check`
+
+Run configured checks from a validated contract.
+
+```bash
+ota check [PATH]
+ota check --json [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- runs configured checks only
+- does not perform runtime, tool, or env diagnosis
+- does not execute tasks
+
+Text output:
+
+- header: `CHECK <path>`
+- status line: `READY` or `NOT READY`
+
+JSON output:
+
+- `ok`
+- `path`
+- `findings`
 
 ## `ota up`
 

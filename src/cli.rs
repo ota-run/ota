@@ -70,6 +70,14 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Run configured checks from an Ota contract.
+    Check {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Prepare the repo for use with minimal prior knowledge.
     Up {
         /// Path to an ota.yaml file or a directory containing one.
@@ -120,6 +128,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Doctor { json, path } => {
             commands::doctor(path.as_deref(), format_from_json(json))
         }
+        Commands::Check { json, path } => commands::check(path.as_deref(), format_from_json(json)),
         Commands::Up { path } => commands::up(path.as_deref()),
         Commands::Detect { dry_run, path } => commands::detect(path.as_deref(), dry_run),
     }
@@ -334,6 +343,61 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
+    }
+
+    #[test]
+    fn check_runs_only_configured_checks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_CHECK_REQUIRED:
+    required: true
+checks:
+  - name: health-check
+    kind: health
+    severity: warn
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("CHECK"));
+        assert!(output.stdout.contains("WARN  Check failed: health-check"));
+        assert!(!output.stdout.contains("Missing environment variable"));
+    }
+
+    #[test]
+    fn check_json_reports_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "check", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["findings"][0]["summary"], "Check failed: health-check");
     }
 
     #[test]

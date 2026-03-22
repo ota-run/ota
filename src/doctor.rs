@@ -59,10 +59,15 @@ pub fn diagnose_preconditions(contract: &Contract, contract_path: &Path) -> Doct
     diagnose_contract_with_scope(contract, contract_path, DoctorScope::Preconditions)
 }
 
+pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::ChecksOnly)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DoctorScope {
     All,
     Preconditions,
+    ChecksOnly,
 }
 
 fn diagnose_contract_with_scope(
@@ -72,9 +77,11 @@ fn diagnose_contract_with_scope(
 ) -> DoctorReport {
     let mut findings = Vec::new();
 
-    diagnose_env(contract, &mut findings);
-    diagnose_runtimes(contract, &mut findings);
-    diagnose_tools(contract, &mut findings);
+    if scope != DoctorScope::ChecksOnly {
+        diagnose_env(contract, &mut findings);
+        diagnose_runtimes(contract, &mut findings);
+        diagnose_tools(contract, &mut findings);
+    }
     diagnose_checks(contract, contract_path, scope, &mut findings);
 
     findings.sort_by_key(|finding| finding.severity);
@@ -414,7 +421,10 @@ mod tests {
 
     use crate::parser::parse_contract_str;
 
-    use super::{FindingSeverity, diagnose_contract, diagnose_preconditions, version_matches};
+    use super::{
+        FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
+        version_matches,
+    };
 
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
@@ -499,6 +509,39 @@ tasks:
         let report = diagnose_preconditions(&contract, Path::new("ota.yaml"));
         assert!(report.ok);
         assert!(report.findings.is_empty());
+    }
+
+    #[test]
+    fn checks_only_mode_skips_env_runtime_and_tool_diagnosis() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_REQUIRED:
+    required: true
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
+    required: true
+checks:
+  - name: health-check
+    kind: health
+    severity: warn
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].summary, "Check failed: health-check");
     }
 
     #[test]
