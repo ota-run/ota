@@ -4,6 +4,16 @@ This document records the current machine-readable output shapes for Ota command
 
 The goal is stability for humans, CI, editors, and agents.
 
+Canonical JSON Schema files for the current shipped shapes live in:
+
+- [json-schemas/validate.json](json-schemas/validate.json)
+- [json-schemas/tasks.json](json-schemas/tasks.json)
+- [json-schemas/doctor.json](json-schemas/doctor.json)
+- [json-schemas/check.json](json-schemas/check.json)
+- [json-schemas/init.json](json-schemas/init.json)
+- [json-schemas/up.json](json-schemas/up.json)
+- [json-schemas/detect.json](json-schemas/detect.json)
+
 ## General notes
 
 - success output is printed to stdout
