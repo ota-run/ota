@@ -127,6 +127,7 @@ cargo run -- detect /path/to/repo
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
+- [JSON output reference](docs/spec/json-output-reference.md)
 
 ### Core concepts
 - [Philosophy](docs/philosophy.md)
