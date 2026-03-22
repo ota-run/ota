@@ -22,7 +22,9 @@ tasks:
   setup:
     description: Install frontend and backend dependencies
     category: setup
-    run: pnpm install
+    script: |
+      pnpm install
+      python -m pip install -r requirements.txt
     safe_for_agent: true
   dev:
     description: Start the frontend dev server

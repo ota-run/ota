@@ -191,7 +191,9 @@ tasks:
     run: pnpm install
     safe_for_agent: true
   dev:
-    run: pnpm dev
+    script: |
+      export APP_ENV=development
+      pnpm dev
     depends_on:
       - setup
 ```
@@ -200,13 +202,18 @@ Fields:
 
 - `description`: optional string
 - `category`: optional string
-- `run`: required, non-empty string
+- exactly one of `run` or `script`
+- `run`: optional string for a single shell-compatible command
+- `script`: optional string for an inline multiline shell script
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
 
 Rules:
 
 - task names must not be empty
+- tasks must declare exactly one of `run` or `script`
+- `run` must be non-empty when present
+- `script` must be non-empty when present
 - dependency references must resolve to known tasks
 - task dependency cycles are rejected
 

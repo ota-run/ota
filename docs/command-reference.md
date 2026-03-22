@@ -65,11 +65,12 @@ Current behavior:
 - validates the contract first
 - prints tasks in deterministic order
 - includes task metadata when present
+- shows whether each task uses `run` or `script`
 
 Text output:
 
 - header: `TASKS <path>`
-- each task may include `category`, `depends_on`, and `safe_for_agent`
+- each task may include `kind`, `category`, `depends_on`, and `safe_for_agent`
 
 JSON output:
 
@@ -88,6 +89,7 @@ Current behavior:
 
 - validates the contract first
 - resolves task dependencies before execution
+- executes either `run` or `script`
 - runs in the contract directory
 - applies configured environment values
 - returns the child process exit code
@@ -140,6 +142,8 @@ Current behavior:
 - runs the `setup` task if one exists
 - re-runs readiness diagnosis
 - returns `READY` or `NOT READY`
+- reports the phase where execution stopped: `preconditions`, `setup`, or `post-setup diagnosis`
+- includes setup exit code details when the `setup` task fails
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 

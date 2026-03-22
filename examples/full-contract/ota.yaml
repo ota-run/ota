@@ -33,7 +33,9 @@ tasks:
   setup:
     description: Install project dependencies
     category: setup
-    run: pnpm install
+    script: |
+      pnpm install
+      pnpm exec prisma generate
     safe_for_agent: true
   dev:
     description: Start the local development server

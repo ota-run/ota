@@ -147,10 +147,17 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
             errors.push(ValidationError::new("task name must not be empty"));
         }
 
-        if task.run.trim().is_empty() {
-            errors.push(ValidationError::new(format!(
-                "task `{name}` must declare a non-empty `run` command"
-            )));
+        match (task.run.as_deref(), task.script.as_deref()) {
+            (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
+                format!("task `{name}` must declare a non-empty `run` command"),
+            )),
+            (None, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
+                format!("task `{name}` must declare a non-empty `script` body"),
+            )),
+            (Some(_), Some(_)) | (None, None) => errors.push(ValidationError::new(format!(
+                "task `{name}` must declare exactly one of `run` or `script`"
+            ))),
+            _ => {}
         }
 
         for dependency in &task.depends_on {
@@ -361,6 +368,77 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `dev` depends on unknown task `setup`"
+        );
+    }
+
+    #[test]
+    fn rejects_tasks_with_both_run_and_script() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: cargo run
+    script: |
+      cargo run
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare exactly one of `run` or `script`"
+        );
+    }
+
+    #[test]
+    fn rejects_tasks_with_neither_run_nor_script() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    description: missing execution
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare exactly one of `run` or `script`"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_script_bodies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: "   "
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` must declare a non-empty `script` body"
         );
     }
 
