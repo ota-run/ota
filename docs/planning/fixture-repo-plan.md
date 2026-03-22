@@ -9,12 +9,17 @@ Ota needs real repo shapes to avoid designing in fantasy.
 - Go
 - mixed Node/Python
 - mixed Node/Go
-
-## Remaining target fixtures
-
 - Java
 - Docker-heavy repo
 - ugly real-world repo
+
+These now exist as canonical real-shape fixtures under `tests/fixtures/real`.
+
+## Next fixture pressure
+
+- deeper `doctor` assertions against service and lifecycle behavior
+- more precedence/conflict assertions on mixed-reality repos
+- targeted follow-up fixtures only when they expose a real product gap
 
 ## Purpose
 

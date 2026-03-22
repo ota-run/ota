@@ -194,6 +194,16 @@ fn validate_services(
                 )));
             }
         }
+
+        if service.provider.is_none()
+            && service.start.is_none()
+            && service.stop.is_none()
+            && service.healthcheck.is_none()
+        {
+            errors.push(ValidationError::new(format!(
+                "service `{name}` must declare at least one of `provider`, `start`, `stop`, or `healthcheck`"
+            )));
+        }
     }
 }
 
@@ -397,6 +407,29 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_service_declarations() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "service `postgres` must declare at least one of `provider`, `start`, `stop`, or `healthcheck`"
+        );
     }
 
     #[test]

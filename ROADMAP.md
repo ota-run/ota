@@ -33,15 +33,13 @@ The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-n
 
 ## Current focus
 
-- fixture repos for broader real-world coverage
 - service behavior that stays explicit and non-orchestrator
 - honest `execution.lifecycle` semantics
 - exit-code and debug-mode hardening
 
 ## Near-term next steps
 
-- add Java, Docker-heavy, and ugly real-world fixtures
-- make `services` useful in `doctor` and `up`
+- finish `services` behavior in `doctor` and `up`
 - define and implement honest `execution.lifecycle` behavior
 - formalize exit codes and add debug mode
 

@@ -4,8 +4,8 @@
 
 
 # `ota`
+Ota is a readiness contract and CLI for modern repositories. It gives every repo one source of truth for what it needs, how it becomes ready, how tasks run, and how humans and AI agents operate. Run any repo without manual setup guesswork.
 
-Ota is a readiness contract and CLI for modern repositories. It gives every repo one place to define what it needs, how it becomes ready, how tasks run, and how humans and agents operate from the same source of truth.
 
 
 ## Why Ota exists
@@ -49,7 +49,7 @@ Current behavior:
 - `ota validate` parses and semantically validates `ota.yaml`
 - `ota tasks` lists validated tasks and their execution form
 - `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
-- `ota doctor` reports readiness findings with severity, explanation, and next action
+- `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` if present, and re-checks readiness
@@ -90,6 +90,7 @@ The current repository has a real working core for the first V1 path:
 - readiness diagnosis
 - onboarding via `up`
 - detection with dry-run and conservative write mode
+- fixture-backed coverage for Java, Docker-heavy, and ugly mixed-reality repo shapes
 
 Implementation status and sequencing live in:
 

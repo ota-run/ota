@@ -21,6 +21,8 @@ This order is deliberate. Real fixtures should pressure-test the product before 
 
 ## Track 1: Fixture Repos
 
+Status: complete
+
 ### Goal
 
 Stop designing against idealized examples and start validating against more realistic repository shapes.
@@ -48,6 +50,8 @@ Stop designing against idealized examples and start validating against more real
 - fixture failures explain real product gaps instead of test-only assumptions
 
 ## Track 2: Services Behavior
+
+Status: in progress
 
 ### Goal
 
