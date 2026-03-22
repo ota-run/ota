@@ -114,7 +114,7 @@ pub fn run_task(
 ) -> Result<RunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
     let env_overrides = resolve_task_env(contract)?;
-    let working_dir = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let working_dir = contract_working_dir(contract_path);
     let mut executed_tasks = Vec::new();
 
     for task_name in &plan.tasks {
@@ -151,6 +151,13 @@ pub fn run_task(
         executed_tasks,
         exit_code: 0,
     })
+}
+
+fn contract_working_dir(contract_path: &Path) -> &Path {
+    contract_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn visit_task(

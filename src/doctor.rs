@@ -179,7 +179,7 @@ fn diagnose_checks(
     scope: DoctorScope,
     findings: &mut Vec<Finding>,
 ) {
-    let working_dir = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let working_dir = contract_working_dir(contract_path);
 
     for check in &contract.checks {
         if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
@@ -276,6 +276,13 @@ fn command_version(name: &str) -> Option<String> {
     );
 
     extract_version_token(&combined)
+}
+
+fn contract_working_dir(contract_path: &Path) -> &Path {
+    contract_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
 }
 
 fn extract_version_token(output: &str) -> Option<String> {
