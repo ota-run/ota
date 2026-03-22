@@ -1,0 +1,23 @@
+version: 1
+project:
+  name: basic-node
+runtimes:
+  node: "22"
+tools:
+  pnpm: "10"
+tasks:
+  setup:
+    run: pnpm install
+  dev:
+    run: pnpm dev
+    depends_on:
+      - setup
+  test:
+    run: pnpm test
+    depends_on:
+      - setup
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version

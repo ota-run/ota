@@ -1,0 +1,15 @@
+version: 1
+project:
+  name: basic-go
+runtimes:
+  go: "1.24"
+tasks:
+  setup:
+    run: go mod download
+  test:
+    run: go test ./...
+checks:
+  - name: go-installed
+    kind: precondition
+    severity: error
+    run: go version

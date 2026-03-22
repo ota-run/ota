@@ -1,0 +1,15 @@
+version: 1
+project:
+  name: basic-python
+runtimes:
+  python: "3.12"
+tasks:
+  setup:
+    run: python -m pip install -r requirements.txt
+  test:
+    run: python -m pytest
+checks:
+  - name: python-installed
+    kind: precondition
+    severity: error
+    run: python --version
