@@ -1,9 +1,9 @@
-# `ota`
-
 <div align="center">
   <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="100" height="100">
 </div>
 
+
+# `ota`
 
 Ota is an open source readiness contract and CLI for modern repositories. It gives a repo one place to define what it needs, how it becomes ready, how tasks run, and how humans and agents can operate against the same truth.
 
@@ -44,8 +44,8 @@ ota detect
 Current behavior:
 
 - `ota validate` parses and semantically validates `ota.yaml`
-- `ota tasks` lists validated tasks
-- `ota run <task>` resolves dependencies and executes tasks deterministically
+- `ota tasks` lists validated tasks and their execution form
+- `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
 - `ota doctor` reports readiness findings with severity, explanation, and next action
 - `ota up` validates, runs blocking preconditions, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract and prints provenance and confidence
