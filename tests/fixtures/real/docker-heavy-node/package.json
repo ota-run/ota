@@ -1,8 +1,11 @@
 {
-  "name": "ota-containerized",
-  "packageManager": "pnpm@10.4.0",
+  "name": "ota-containerized-web",
+  "packageManager": "pnpm@10.5.0",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
-    "dev": "node server.js",
-    "build": "node build.js"
+    "dev": "vite",
+    "build": "vite build"
   }
 }

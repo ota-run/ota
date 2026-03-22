@@ -1,5 +1,5 @@
-FROM node:22-alpine
+FROM ubuntu:24.04
 
 WORKDIR /workspace
 COPY . .
-RUN corepack enable
+CMD ["bash"]

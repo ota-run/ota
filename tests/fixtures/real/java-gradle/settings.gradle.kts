@@ -1,1 +1,1 @@
-rootProject.name = "java-gradle"
+rootProject.name = "ota-java-service"
