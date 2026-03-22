@@ -795,7 +795,7 @@ fn render_up_text(
     CommandOutput {
         stdout,
         stderr: None,
-        exit_code: if ready { 0 } else { 1 },
+        exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
     }
 }
 
