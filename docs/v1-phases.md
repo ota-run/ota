@@ -28,6 +28,7 @@ The phased plan exists to:
 5. V1e: Onboarding Path
 6. V1f: Detection
 7. V1g: Agent Surface and Polish
+8. V1h: Remaining V1 Command Surface
 
 ## Cross-Phase Rules
 
@@ -36,6 +37,10 @@ The phased plan exists to:
 - Every phase must leave the CLI in a coherent, testable state.
 - Output shape and exit behavior must be treated as contracts.
 - Do not start the next phase until the current phase has fixtures and verification.
+- Commands should remain primarily stateless in v1.
+- Prefer targeted reads and bounded work over broad scanning.
+- Large repositories must degrade gracefully rather than explosively.
+- Do not introduce background daemons or hidden long-lived runtime state in v1.
 
 ## V1a: Contract Core
 

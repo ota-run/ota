@@ -24,6 +24,8 @@ Future task executor expansion is tracked in the product spec.
 - `ota tasks`
 - `ota run`
 - `ota doctor`
+- `ota init`
+- `ota check`
 - `ota up`
 - `ota detect --dry-run`
 - conservative `ota detect` write mode

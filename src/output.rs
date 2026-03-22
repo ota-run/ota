@@ -22,6 +22,7 @@
 
 use serde::Serialize;
 
+use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
 use crate::schema::TaskSpec;
 
@@ -43,6 +44,41 @@ pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub mode: &'a str,
+    pub config: &'a DetectContract,
+    pub inferred: &'a [Inference],
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub error: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub config: &'a DetectContract,
+    pub inferred: &'a [Inference],
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub error: &'a str,
 }
 
 impl CommandOutput {

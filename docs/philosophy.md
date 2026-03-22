@@ -58,6 +58,20 @@ Ota is being shaped as an open standard and CLI, not as a vendor-specific contro
 
 The project should stay legible, portable, and interoperable with the tooling ecosystems that repos already use.
 
+## Runtime discipline
+
+Ota should stay lightweight and resource-conscious by default.
+
+That means:
+
+- prefer narrow targeted reads over broad repo scans
+- prefer simple stateless commands over background daemons
+- keep caching explicit, small, and easy to invalidate
+- use bounded concurrency when concurrency is introduced
+- make large repos degrade gracefully instead of exploding process or memory usage
+- avoid hidden long-lived runtime state in v1
+- keep process spawning, log capture, and detection behavior conservative by default
+
 ## Small surface, strong guarantees
 
 The goal is not a large command catalog.

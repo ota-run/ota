@@ -24,12 +24,14 @@ Tasks can use either a single-command `run` or an inline multiline `script`.
 Review first:
 
 ```bash
+cargo run -- init
 cargo run -- detect --dry-run /path/to/repo
 ```
 
 Write only if the `high` confidence projection is sufficient:
 
 ```bash
+cargo run -- init --write
 cargo run -- detect /path/to/repo
 ```
 

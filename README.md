@@ -37,6 +37,7 @@ ota validate
 ota tasks
 ota run <task>
 ota doctor
+ota init
 ota check
 ota up
 ota detect --dry-run
@@ -49,6 +50,7 @@ Current behavior:
 - `ota tasks` lists validated tasks and their execution form
 - `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
 - `ota doctor` reports readiness findings with severity, explanation, and next action
+- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` if present, and re-checks readiness
 - `ota detect --dry-run` infers a candidate contract and prints provenance and confidence
@@ -108,6 +110,7 @@ cargo run -- up
 Infer a starting contract from an existing repo:
 
 ```bash
+cargo run -- init
 cargo run -- detect --dry-run /path/to/repo
 ```
 

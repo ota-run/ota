@@ -78,6 +78,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_named_versions("tool", &contract.tools, &mut errors, |value| {
         value.version()
     });
+    validate_services(&contract.services, &mut errors);
     validate_tasks(&contract.tasks, &mut errors);
     validate_checks(contract, &mut errors);
     validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
@@ -170,6 +171,30 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
     }
 
     detect_task_cycles(tasks, errors);
+}
+
+fn validate_services(
+    services: &BTreeMap<String, crate::schema::ServiceSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (name, service) in services {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new("service name must not be empty"));
+        }
+
+        for (field, value) in [
+            ("provider", service.provider.as_deref()),
+            ("start", service.start.as_deref()),
+            ("stop", service.stop.as_deref()),
+            ("healthcheck", service.healthcheck.as_deref()),
+        ] {
+            if matches!(value, Some(value) if value.trim().is_empty()) {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` field `{field}` must not be empty"
+                )));
+            }
+        }
+    }
 }
 
 fn detect_task_cycles(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
@@ -336,6 +361,34 @@ mod tests {
 version: 1
 project:
   name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_services_and_execution_lifecycle() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: persistent
+services:
+  postgres:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -h localhost -p 5432
 tasks:
   test:
     run: cargo test

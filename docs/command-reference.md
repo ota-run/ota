@@ -15,6 +15,7 @@ Ota currently ships these commands:
 - `ota tasks`
 - `ota run <task>`
 - `ota doctor`
+- `ota init`
 - `ota check`
 - `ota up`
 - `ota detect`
@@ -127,6 +128,45 @@ JSON output:
 - `findings`
 
 Warnings can still produce `READY`. Errors produce `NOT READY`.
+
+## `ota init`
+
+Create a starter Ota contract for a repo that does not yet have one.
+
+```bash
+ota init [PATH]
+ota init --write [PATH]
+ota init --json [PATH]
+```
+
+Current behavior:
+
+- inspects the repo using the detection engine
+- defaults to review mode and does not write
+- writes only when `--write` is provided
+- refuses to run when `ota.yaml` already exists
+- can initialize both detected repos and blank repos
+
+Modes:
+
+- `blank`: starter contract derived from minimal repo context
+- `detected`: starter contract derived from detected repo signals
+
+Text output:
+
+- dry-run header: `INIT <path>`
+- write success: `WROTE <path>`
+- includes `Mode: blank` or `Mode: detected`
+- includes inferred-field annotations with source and confidence
+
+JSON output:
+
+- `ok`
+- `path`
+- `written`
+- `mode`
+- `config`
+- `inferred`
 
 ## `ota check`
 
