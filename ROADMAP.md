@@ -14,10 +14,10 @@ Current phase map:
 6. `V1f` Detection
 7. `V1g` Agent Surface and Polish
 
-The detailed implementation plan is in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
-The detect write threshold is documented in [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md).
+The detailed implementation plan is in [docs/planning/v1-phases.md](docs/planning/v1-phases.md).
+The detect write threshold is documented in [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md).
 Future task executor expansion is tracked in the product spec.
-The next execution plan is in [docs/v1-next-plan.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-next-plan.md).
+The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-next-plan.md).
 
 ## Implemented so far
 
