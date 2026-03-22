@@ -172,3 +172,47 @@ Example service-start failure:
   ]
 }
 ```
+
+Example with inferred Docker Compose services:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "written": false,
+  "config": {
+    "version": 1,
+    "project": {
+      "name": "docker-legacy"
+    },
+    "services": {
+      "db": {
+        "provider": "docker-compose",
+        "start": "docker compose up -d db",
+        "stop": "docker compose stop db",
+        "healthcheck": "pg_isready -h localhost -p 5432"
+      }
+    }
+  },
+  "inferred": [
+    {
+      "field": "services.db.provider",
+      "value": "docker-compose",
+      "source": "docker-compose.yml#services.db",
+      "confidence": "high"
+    },
+    {
+      "field": "services.db.start",
+      "value": "docker compose up -d db",
+      "source": "docker-compose.yml#services.db",
+      "confidence": "medium"
+    },
+    {
+      "field": "services.db.healthcheck",
+      "value": "pg_isready -h localhost -p 5432",
+      "source": "docker-compose.yml#services.db.healthcheck.test",
+      "confidence": "medium"
+    }
+  ]
+}
+```
