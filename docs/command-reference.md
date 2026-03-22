@@ -169,6 +169,14 @@ Dry-run behavior:
 - prints per-field confidence
 - does not write anything
 
+Current precedence is conservative:
+
+- higher confidence beats lower confidence
+- when confidence is equal, more repo-specific runtime sources win before generic version-manager aggregation
+- when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
+- when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
+- for example, `.nvmrc`, `.node-version`, `.python-version`, and `go.mod` win over conflicting `.tool-versions` runtime values
+
 Write behavior:
 
 - writes only `high` confidence fields

@@ -142,10 +142,10 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_package_json(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
-    detect_tool_versions(&root, &mut builder)?;
     detect_python_version_file(&root, &mut builder)?;
-    detect_pyproject(&root, &mut builder)?;
     detect_go_mod(&root, &mut builder)?;
+    detect_tool_versions(&root, &mut builder)?;
+    detect_pyproject(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
     Ok(builder.finish())
@@ -498,7 +498,7 @@ impl DetectBuilder {
 
     fn set_project_name(&mut self, value: String, source: String, confidence: Confidence) {
         let field = "project.name".to_string();
-        if self.should_replace(&field, confidence) {
+        if self.should_replace(&field, &source, confidence) {
             self.contract.project = Some(DetectProject {
                 name: value.clone(),
             });
@@ -508,7 +508,7 @@ impl DetectBuilder {
 
     fn set_runtime(&mut self, name: String, value: String, source: String, confidence: Confidence) {
         let field = format!("runtimes.{name}");
-        if self.should_replace(&field, confidence) {
+        if self.should_replace(&field, &source, confidence) {
             self.contract.runtimes.insert(name, value.clone());
             self.record(field, value, source, confidence);
         }
@@ -516,7 +516,7 @@ impl DetectBuilder {
 
     fn set_tool(&mut self, name: String, value: String, source: String, confidence: Confidence) {
         let field = format!("tools.{name}");
-        if self.should_replace(&field, confidence) {
+        if self.should_replace(&field, &source, confidence) {
             self.contract.tools.insert(name, value.clone());
             self.record(field, value, source, confidence);
         }
@@ -524,7 +524,7 @@ impl DetectBuilder {
 
     fn set_task(&mut self, name: String, run: String, source: String, confidence: Confidence) {
         let field = format!("tasks.{name}.run");
-        if self.should_replace(&field, confidence) {
+        if self.should_replace(&field, &source, confidence) {
             self.contract
                 .tasks
                 .insert(name, DetectTask { run: run.clone() });
@@ -532,10 +532,12 @@ impl DetectBuilder {
         }
     }
 
-    fn should_replace(&self, field: &str, confidence: Confidence) -> bool {
-        self.inferences
-            .get(field)
-            .is_none_or(|existing| confidence > existing.confidence)
+    fn should_replace(&self, field: &str, source: &str, confidence: Confidence) -> bool {
+        self.inferences.get(field).is_none_or(|existing| {
+            confidence > existing.confidence
+                || (confidence == existing.confidence
+                    && source_priority(field, source) > source_priority(field, &existing.source))
+        })
     }
 
     fn record(&mut self, field: String, value: String, source: String, confidence: Confidence) {
@@ -548,6 +550,44 @@ impl DetectBuilder {
                 confidence,
             },
         );
+    }
+}
+
+fn source_priority(field: &str, source: &str) -> u8 {
+    match field {
+        "project.name" => match source {
+            "package.json#name" => 5,
+            "pyproject.toml#project.name" => 4,
+            "pyproject.toml#tool.poetry.name" => 3,
+            "go.mod#module" => 2,
+            "directory-name" => 1,
+            _ => 0,
+        },
+        "runtimes.node" => match source {
+            ".nvmrc" => 4,
+            ".node-version" => 3,
+            ".tool-versions" => 2,
+            "package.json#engines.node" => 1,
+            _ => 0,
+        },
+        "runtimes.python" => match source {
+            ".python-version" => 4,
+            ".tool-versions" => 3,
+            "pyproject.toml#project.requires-python" => 2,
+            "pyproject.toml#tool.poetry.dependencies.python" => 1,
+            _ => 0,
+        },
+        "runtimes.go" => match source {
+            "go.mod#go" => 2,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
+        _ if field.starts_with("tools.") => match source {
+            "package.json#packageManager" => 2,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
+        _ => 0,
     }
 }
 
@@ -642,6 +682,91 @@ requires-python = ">=3.12"
         assert_eq!(
             report.contract.runtimes.get("node"),
             Some(&"22".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_python_version_file_over_tool_versions() {
+        let fixture = Fixture::new();
+        fixture.write(".tool-versions", "python 3.12.4\n");
+        fixture.write(".python-version", "3.13.2\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("python"),
+            Some(&"3.13.2".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_go_mod_over_tool_versions() {
+        let fixture = Fixture::new();
+        fixture.write(".tool-versions", "go 1.23.0\n");
+        fixture.write("go.mod", "module github.com/ota/run\n\ngo 1.24.1\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("go"),
+            Some(&"1.24.1".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_package_json_project_name_over_pyproject() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web"
+}"#,
+        );
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "ota-api"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("ota-web")
+        );
+    }
+
+    #[test]
+    fn prefers_package_json_package_manager_over_tool_versions() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.4.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".tool-versions", "pnpm 9.0.0\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.tools.get("pnpm"),
+            Some(&"10.4.0".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("dev")
+                .map(|task| task.run.as_str()),
+            Some("pnpm dev")
         );
     }
 

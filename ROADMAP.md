@@ -15,6 +15,7 @@ Current phase map:
 7. `V1g` Agent Surface and Polish
 
 The detailed implementation plan is in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
+The detect write threshold is documented in [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md).
 
 ## Implemented so far
 
@@ -32,6 +33,7 @@ The detailed implementation plan is in [docs/v1-phases.md](/Users/bobai/Workspac
 - broader fixture coverage
 - better `doctor` quality
 - better detect coverage across common repo shapes
+- clearer contributor-facing guidance
 
 ## Near-term next steps
 

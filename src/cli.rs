@@ -300,6 +300,76 @@ tasks:
     }
 
     #[test]
+    fn doctor_warning_only_json_reports_ok_true() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
+    required: false
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["findings"][0]["severity"], "warn");
+    }
+
+    #[test]
+    fn doctor_text_orders_error_warn_and_info_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_DOCTOR_ORDER_REQUIRED:
+    required: true
+tools:
+  cargo:
+    version: "999.0.0"
+    required: false
+checks:
+  - name: informational-check
+    kind: health
+    severity: info
+    run: exit 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let error_index = output
+            .stdout
+            .find("ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
+            .unwrap();
+        let warn_index = output
+            .stdout
+            .find("WARN  Version mismatch for tool: cargo")
+            .unwrap();
+        let info_index = output
+            .stdout
+            .find("INFO  Check failed: informational-check")
+            .unwrap();
+
+        assert!(error_index < warn_index);
+        assert!(warn_index < info_index);
+    }
+
+    #[test]
     fn up_runs_setup_and_reports_ready() {
         let fixture = ContractFixture::new(
             r#"
@@ -379,6 +449,7 @@ tasks:
             "package.json",
             r#"{
   "name": "ota-web",
+  "engines": { "node": "20" },
   "packageManager": "pnpm@10.1.0",
   "scripts": { "dev": "vite" }
 }"#,
@@ -388,10 +459,17 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("WROTE"));
+        assert!(output.stdout.contains("Excluded from automatic write:"));
+        assert!(
+            output
+                .stdout
+                .contains("runtimes.node: 20 <- from package.json#engines.node [medium]")
+        );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
+        assert!(!written.contains("node:"));
     }
 
     #[test]
@@ -425,10 +503,26 @@ project:
 
         assert_eq!(output.exit_code, 1);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some(
-                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"
-            )
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"),
+            true
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("Excluded from automatic write:")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("project.name: go-service <- from go.mod#module [medium]")
         );
         assert!(!fixture.file_path().exists());
     }
