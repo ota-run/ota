@@ -19,7 +19,6 @@
 //   and limitations under the License.
 //
 //   If you need additional information or have any questions, please email: os@ota.run
-//
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -100,7 +99,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
     match cli.command {
         Commands::Validate { json, path } => validate(path.as_deref(), format_from_json(json)),
         Commands::Tasks { json, path } => tasks(path.as_deref(), format_from_json(json)),
-        Commands::Run { task, path } => run(task.as_str(), path.as_deref()),
+        Commands::Run { task, path } => run_command(task.as_str(), path.as_deref()),
     }
 }
 
@@ -184,7 +183,7 @@ fn tasks(path: Option<&Path>, format: OutputFormat) -> CommandOutput {
     }
 }
 
-fn run(task_name: &str, path: Option<&Path>) -> CommandOutput {
+fn run_command(task_name: &str, path: Option<&Path>) -> CommandOutput {
     let resolved_path = resolve_contract_path(path);
 
     match load_and_validate(&resolved_path) {
