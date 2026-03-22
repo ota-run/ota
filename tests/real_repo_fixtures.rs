@@ -39,10 +39,23 @@ fn run_ota(args: &[&str]) -> Output {
     run_ota_with_env(args, [])
 }
 
+fn run_ota_in_dir(args: &[&str], cwd: &Path) -> Output {
+    run_ota_with_env_in_dir(args, [], cwd)
+}
+
 fn run_ota_with_env<const N: usize>(args: &[&str], envs: [(&str, &str); N]) -> Output {
+    run_ota_with_env_in_dir(args, envs, Path::new("."))
+}
+
+fn run_ota_with_env_in_dir<const N: usize>(
+    args: &[&str],
+    envs: [(&str, &str); N],
+    cwd: &Path,
+) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
         .envs(envs)
+        .current_dir(cwd)
         .output()
         .expect("ota command should run")
 }
@@ -61,6 +74,83 @@ fn copy_fixture_to_temp(name: &str) -> TempDir {
     let temp = TempDir::new().expect("temp dir should be created");
     copy_dir_recursive(&real_fixture_path(name), temp.path());
     temp
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_discovers_contract_from_current_directory_real_fixture() {
+    let fixture = real_fixture_path("task-variant-app");
+    let nested = fixture.join("apps").join("web");
+
+    let output = run_ota_in_dir(&["validate"], &nested);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains(&format!("VALID {}", fixture.join("ota.yaml").display())));
+}
+
+#[test]
+fn validate_uses_ota_file_override_real_fixture() {
+    let fixture = real_fixture_path("task-variant-app");
+    let temp = TempDir::new().expect("temp dir should be created");
+
+    let output = run_ota_with_env_in_dir(
+        &["validate"],
+        [("OTA_FILE", fixture.join("ota.yaml").to_str().unwrap())],
+        temp.path(),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(output.status.success());
+    assert!(stdout.contains(&format!("VALID {}", fixture.join("ota.yaml").display())));
+}
+
+#[test]
+fn tasks_json_reports_resolved_task_variant_on_real_fixture() {
+    let fixture = real_fixture_path("task-variant-app");
+    let output = run_ota(&["tasks", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+    let tasks = json["tasks"].as_array().unwrap();
+    let setup = tasks
+        .iter()
+        .find(|task| task["name"] == "setup")
+        .expect("setup task should be listed");
+
+    match std::env::consts::OS {
+        "macos" => {
+            assert_eq!(setup["run"], "sh ./scripts/setup-macos.sh");
+            assert_eq!(setup["selected_variant_os"], "macos");
+        }
+        _ => {
+            assert_eq!(setup["run"], "sh ./scripts/setup.sh");
+            assert!(setup.get("selected_variant_os").is_none());
+        }
+    }
+
+    assert_eq!(setup["variants"].as_array().unwrap().len(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn run_executes_task_variant_from_nested_directory_real_fixture() {
+    let fixture = copy_fixture_to_temp("task-variant-app");
+    let nested = fixture.path().join("apps").join("web");
+
+    let output = run_ota_in_dir(&["run", "setup"], &nested);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+    assert!(stderr.contains("RUN setup"));
+
+    let expected = match std::env::consts::OS {
+        "macos" => "macos",
+        _ => "default",
+    };
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("setup-output.txt"))
+            .expect("setup output should exist"),
+        expected
+    );
 }
 
 fn rename_if_exists(root: &Path, from: &str, to: &str) {
