@@ -421,6 +421,12 @@ Avoid unnecessary complexity in the early core.
 - test exit code semantics
 - test fixture repos across multiple stacks
 
+#### Project-specific test locations
+
+- All core and regression tests are located in the `tests/` directory at the project root.
+- Test fixtures for detection and contract validation are under `tests/fixtures/` (e.g., `tests/fixtures/detect/`).
+- When adding new tests or fixtures, follow the structure and patterns in these directories.
+
 ### Required product tests
 
 - `ota doctor` should correctly classify blockers, warnings, and informational results
