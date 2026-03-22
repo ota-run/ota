@@ -33,13 +33,11 @@ The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-n
 
 ## Current focus
 
-- service behavior that stays explicit and non-orchestrator
 - honest `execution.lifecycle` semantics
 - exit-code and debug-mode hardening
 
 ## Near-term next steps
 
-- finish `services` behavior in `doctor` and `up`
 - define and implement honest `execution.lifecycle` behavior
 - formalize exit codes and add debug mode
 

@@ -22,6 +22,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
@@ -33,6 +34,7 @@ use crate::output::{
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task};
+use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -122,7 +124,11 @@ pub fn run_command(task_name: &str, path: Option<&Path>) -> CommandOutput {
 
     match load_and_validate(&resolved_path) {
         Ok(contract) => match run_task(&contract, &resolved_path, task_name) {
-            Ok(outcome) => CommandOutput::status(outcome.exit_code),
+            Ok(outcome) => CommandOutput {
+                stdout: String::new(),
+                stderr: lifecycle_notice(&contract),
+                exit_code: outcome.exit_code,
+            },
             Err(error) => CommandOutput::failure(render_run_error(error)),
         },
         Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
@@ -271,6 +277,31 @@ pub fn up(path: Option<&Path>) -> CommandOutput {
                     preflight,
                     false,
                 );
+            }
+
+            let working_dir = contract_working_dir(&resolved_path);
+            for (name, service) in &contract.services {
+                if !service.required {
+                    continue;
+                }
+
+                let Some(start) = service.start.as_deref() else {
+                    continue;
+                };
+
+                match run_shell_command(start, working_dir) {
+                    Ok(0) => {}
+                    Ok(exit_code) => {
+                        return CommandOutput {
+                            stdout: format!(
+                                "UP {path_display}\nSERVICE START FAILED\nPhase: services\nService: {name}\nExit code: {exit_code}\nNext: inspect `services.{name}.start` output and fix the reported issue"
+                            ),
+                            stderr: None,
+                            exit_code,
+                        };
+                    }
+                    Err(error) => return CommandOutput::failure(error),
+                }
             }
 
             if contract.tasks.contains_key("setup") {
@@ -629,6 +660,51 @@ fn resolve_repo_path(path: Option<&Path>) -> PathBuf {
         Some(path) => path.to_path_buf(),
         None => PathBuf::from("."),
     }
+}
+
+fn contract_working_dir(contract_path: &Path) -> &Path {
+    contract_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn run_shell_command(command: &str, working_dir: &Path) -> Result<i32, String> {
+    shell_command(command)
+        .current_dir(working_dir)
+        .status()
+        .map(|status| status.code().unwrap_or(1))
+        .map_err(|error| format!("failed to execute `{command}`: {error}"))
+}
+
+fn lifecycle_notice(contract: &Contract) -> Option<String> {
+    if matches!(
+        contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.lifecycle),
+        Some(Lifecycle::Ephemeral)
+    ) {
+        Some(String::from(
+            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment",
+        ))
+    } else {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn shell_command(command: &str) -> Command {
+    let mut shell = Command::new("sh");
+    shell.arg("-lc").arg(command);
+    shell
+}
+
+#[cfg(windows)]
+fn shell_command(command: &str) -> Command {
+    let mut shell = Command::new("cmd");
+    shell.arg("/C").arg(command);
+    shell
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> String {

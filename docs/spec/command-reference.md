@@ -94,6 +94,7 @@ Current behavior:
 - executes either `run` or `script`
 - runs in the contract directory
 - applies configured environment values
+- prints an advisory stderr note when `execution.lifecycle: ephemeral` is declared
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -114,6 +115,7 @@ Current behavior:
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
+- warns when `execution.lifecycle: ephemeral` is declared, because V1 does not provide isolated temporary execution
 - runs configured checks
 - orders findings by severity
 - prints the reason and next action for each finding
@@ -209,11 +211,14 @@ Current behavior:
 
 - validates the contract first
 - runs blocking precondition checks
+- runs explicit `services.<name>.start` commands for required services before setup
 - runs the `setup` task if one exists
 - re-runs readiness diagnosis
+- remains shell-native even when `execution.lifecycle: ephemeral` is declared
 - returns `READY` or `NOT READY`
-- reports the phase where execution stopped: `preconditions`, `setup`, or `post-setup diagnosis`
+- reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
 - includes setup exit code details when the `setup` task fails
+- includes service start exit code details when a required service start command fails
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 
