@@ -10,8 +10,13 @@ Ota needs real repo shapes to avoid designing in fantasy.
 - mixed Node/Python
 - mixed Node/Go
 - Java
+- Java Maven repo
+- Java Gradle multi-module repo
 - Docker-heavy repo
+- unsupported Docker-only repo
+- Node conflict monorepo
 - ugly real-world repo
+- polyglot ops repo
 
 These now exist as canonical real-shape fixtures under `tests/fixtures/real`.
 

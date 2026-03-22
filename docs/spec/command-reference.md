@@ -260,6 +260,10 @@ Current detect sources:
 - `pyproject.toml`
 - `.python-version`
 - `go.mod`
+- `settings.gradle(.kts)`
+- `build.gradle(.kts)`
+- `gradle/wrapper/gradle-wrapper.properties`
+- `pom.xml`
 
 Dry-run behavior:
 

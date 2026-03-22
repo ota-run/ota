@@ -146,6 +146,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_go_mod(&root, &mut builder)?;
     detect_tool_versions(&root, &mut builder)?;
     detect_pyproject(&root, &mut builder)?;
+    detect_gradle(&root, &mut builder)?;
+    detect_pom_xml(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
     Ok(builder.finish())
@@ -430,6 +432,126 @@ fn detect_go_mod(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectE
     Ok(())
 }
 
+fn detect_gradle(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let settings_path = ["settings.gradle.kts", "settings.gradle"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.exists());
+    if let Some(path) = settings_path {
+        let contents = read_file(&path)?;
+        if let Some(name) = extract_quoted_assignment(&contents, "rootProject.name") {
+            builder.set_project_name(
+                name,
+                format!(
+                    "{}#rootProject.name",
+                    path.file_name().unwrap().to_string_lossy()
+                ),
+                Confidence::High,
+            );
+        }
+    }
+
+    let build_path = ["build.gradle.kts", "build.gradle"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.exists());
+    if let Some(path) = build_path {
+        let contents = read_file(&path)?;
+        if let Some(version) = extract_gradle_java_version(&contents) {
+            builder.set_runtime(
+                "java".to_string(),
+                version,
+                format!(
+                    "{}#java.toolchain",
+                    path.file_name().unwrap().to_string_lossy()
+                ),
+                Confidence::High,
+            );
+        }
+    }
+
+    let wrapper_path = root
+        .join("gradle")
+        .join("wrapper")
+        .join("gradle-wrapper.properties");
+    if wrapper_path.exists() {
+        let contents = read_file(&wrapper_path)?;
+        if let Some(version) = extract_gradle_wrapper_version(&contents) {
+            builder.set_tool(
+                "gradle".to_string(),
+                version,
+                "gradle/wrapper/gradle-wrapper.properties#distributionUrl".to_string(),
+                Confidence::High,
+            );
+            builder.set_task(
+                "build".to_string(),
+                "./gradlew build".to_string(),
+                "gradle/wrapper/gradle-wrapper.properties#distributionUrl".to_string(),
+                Confidence::High,
+            );
+            builder.set_task(
+                "test".to_string(),
+                "./gradlew test".to_string(),
+                "gradle/wrapper/gradle-wrapper.properties#distributionUrl".to_string(),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("pom.xml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+
+    if let Some(name) = extract_xml_tag(&contents, "artifactId") {
+        builder.set_project_name(name, "pom.xml#artifactId".to_string(), Confidence::High);
+    }
+
+    for tag in [
+        "maven.compiler.release",
+        "maven.compiler.target",
+        "maven.compiler.source",
+        "java.version",
+    ] {
+        if let Some(version) = extract_xml_tag(&contents, tag) {
+            builder.set_runtime(
+                "java".to_string(),
+                version,
+                format!("pom.xml#{tag}"),
+                Confidence::High,
+            );
+            break;
+        }
+    }
+
+    builder.set_tool(
+        "maven".to_string(),
+        "*".to_string(),
+        "pom.xml".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "build".to_string(),
+        "mvn package".to_string(),
+        "pom.xml".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "mvn test".to_string(),
+        "pom.xml".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
 fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
     if builder.contract.project.is_none()
         && let Some(name) = root.file_name().and_then(|name| name.to_str())
@@ -440,6 +562,71 @@ fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
             "directory-name".to_string(),
             Confidence::Low,
         );
+    }
+}
+
+fn extract_quoted_assignment(contents: &str, prefix: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let value = trimmed.strip_prefix(prefix)?.trim_start();
+        let value = value.strip_prefix('=')?.trim_start();
+        extract_quoted_string(value)
+    })
+}
+
+fn extract_quoted_string(input: &str) -> Option<String> {
+    let quote = input.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let rest = &input[quote.len_utf8()..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
+fn extract_gradle_java_version(contents: &str) -> Option<String> {
+    for marker in [
+        "JavaLanguageVersion.of(",
+        "languageVersion = JavaLanguageVersion.of(",
+    ] {
+        if let Some(start) = contents.find(marker) {
+            let rest = &contents[start + marker.len()..];
+            let end = rest.find(')')?;
+            let digits = rest[..end].trim();
+            if !digits.is_empty() {
+                return Some(digits.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_gradle_wrapper_version(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let url = trimmed.strip_prefix("distributionUrl=")?;
+        let file = url.rsplit('/').next()?;
+        let version = file.strip_prefix("gradle-")?.split('-').next()?.trim();
+        if version.is_empty() {
+            None
+        } else {
+            Some(version.to_string())
+        }
+    })
+}
+
+fn extract_xml_tag(contents: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = contents.find(&open)? + open.len();
+    let end = contents[start..].find(&close)? + start;
+    let value = contents[start..end].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
     }
 }
 
@@ -557,8 +744,11 @@ fn source_priority(field: &str, source: &str) -> u8 {
     match field {
         "project.name" => match source {
             "package.json#name" => 5,
+            "settings.gradle.kts#rootProject.name" => 4,
+            "settings.gradle#rootProject.name" => 4,
             "pyproject.toml#project.name" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
+            "pom.xml#artifactId" => 3,
             "go.mod#module" => 2,
             "directory-name" => 1,
             _ => 0,
@@ -582,8 +772,19 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".tool-versions" => 1,
             _ => 0,
         },
+        "runtimes.java" => match source {
+            "build.gradle.kts#java.toolchain" => 3,
+            "build.gradle#java.toolchain" => 3,
+            "pom.xml#maven.compiler.release" => 2,
+            "pom.xml#maven.compiler.target" => 2,
+            "pom.xml#maven.compiler.source" => 2,
+            "pom.xml#java.version" => 1,
+            _ => 0,
+        },
         _ if field.starts_with("tools.") => match source {
+            "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
+            "pom.xml" => 1,
             ".tool-versions" => 1,
             _ => 0,
         },
@@ -668,6 +869,92 @@ requires-python = ">=3.12"
         assert_eq!(
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_gradle_java_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "settings.gradle.kts",
+            r#"rootProject.name = "ota-java-service""#,
+        );
+        fixture.write(
+            "build.gradle.kts",
+            r#"java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}"#,
+        );
+        fixture.write(
+            "gradle/wrapper/gradle-wrapper.properties",
+            "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip\n",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("ota-java-service")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21".to_string())
+        );
+        assert_eq!(
+            report.contract.tools.get("gradle"),
+            Some(&"8.10.2".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("./gradlew build")
+        );
+    }
+
+    #[test]
+    fn detects_maven_java_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pom.xml",
+            r#"<project>
+  <artifactId>ota-maven-service</artifactId>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("ota-maven-service")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21".to_string())
+        );
+        assert_eq!(report.contract.tools.get("maven"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("mvn test")
         );
     }
 
@@ -817,7 +1104,11 @@ name = "ota-api"
         }
 
         fn write(&self, relative: &str, contents: &str) {
-            fs::write(self.dir.path().join(relative), contents).unwrap();
+            let path = self.dir.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents).unwrap();
         }
     }
 }

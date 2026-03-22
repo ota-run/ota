@@ -96,7 +96,7 @@ The repository already contains a working core for the v1 path:
 - readiness diagnosis
 - onboarding via `up`
 - detection with dry-run and conservative write mode
-- fixture-backed coverage for Java, Docker-heavy, and ugly mixed-reality repo shapes
+- fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, and ugly/polyglot mixed-reality repo shapes
 
 ## Quickstart
 
