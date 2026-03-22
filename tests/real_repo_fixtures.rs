@@ -196,18 +196,29 @@ fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
     )
     .expect("compose file should be written");
 
-    let output = run_ota(&["detect", "--json", "--dry-run", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&[
+        "detect",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
     let json = stdout_json(&output);
 
     assert_eq!(
         json["config"]["services"]["db"]["healthcheck"],
         "pg_isready -h localhost -p 5432"
     );
-    assert!(json["inferred"].as_array().unwrap().iter().any(|inference| {
-        inference["field"] == "services.db.healthcheck"
-            && inference["source"] == "docker-compose.yml#services.db.healthcheck.test"
-            && inference["confidence"] == "medium"
-    }));
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "services.db.healthcheck"
+                    && inference["source"] == "docker-compose.yml#services.db.healthcheck.test"
+                    && inference["confidence"] == "medium"
+            })
+    );
 }
 
 #[test]

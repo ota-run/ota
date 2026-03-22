@@ -664,7 +664,10 @@ fn extract_compose_healthcheck_command(service: &YamlValue) -> Option<String> {
             }
         }
         YamlValue::Sequence(parts) => {
-            let values = parts.iter().map(YamlValue::as_str).collect::<Option<Vec<_>>>()?;
+            let values = parts
+                .iter()
+                .map(YamlValue::as_str)
+                .collect::<Option<Vec<_>>>()?;
             let first = *values.first()?;
             match first {
                 "NONE" => None,
