@@ -1,0 +1,11 @@
+{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  },
+  "engines": {
+    "node": "20"
+  }
+}
