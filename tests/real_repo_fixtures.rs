@@ -218,6 +218,36 @@ fn detect_json_handles_compose_yaml_fixture() {
 
 #[cfg(unix)]
 #[test]
+fn detect_json_handles_compose_yml_fixture() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+    rename_if_exists(fixture.path(), "docker-compose.yml", "compose.yml");
+
+    let output = run_ota(&[
+        "detect",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(
+        json["config"]["services"]["web"]["provider"],
+        "docker-compose"
+    );
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "services.web.provider"
+                    && inference["source"] == "compose.yml#services.web"
+            })
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
     let fixture = copy_fixture_to_temp("docker-legacy");
     fs::write(
