@@ -192,7 +192,7 @@ This means:
 
 V1 is the product contract. Phases are the implementation plan.
 
-Agents must follow the phased V1 plan in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
+Agents must follow the phased V1 plan in [docs/planning/v1-phases.md](docs/planning/v1-phases.md).
 
 Required discipline:
 

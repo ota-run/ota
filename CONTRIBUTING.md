@@ -37,8 +37,8 @@ Contributions should reinforce the current V1 path:
 
 Detailed sequencing lives in:
 
-- [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md)
-- [ROADMAP.md](/Users/bobai/Workspace/Ota.run/ota/ROADMAP.md)
+- [docs/planning/v1-phases.md](docs/planning/v1-phases.md)
+- [ROADMAP.md](ROADMAP.md)
 
 ## Contribution rules
 
@@ -52,7 +52,7 @@ Detailed sequencing lives in:
 
 Detection work should follow the write gate in:
 
-- [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md)
+- [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md)
 
 That means:
 

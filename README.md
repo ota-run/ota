@@ -93,9 +93,9 @@ The current repository has a real working core for the first V1 path:
 
 Implementation status and sequencing live in:
 
-- [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md)
-- [ROADMAP.md](/Users/bobai/Workspace/Ota.run/ota/ROADMAP.md)
-- [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md)
+- [docs/planning/v1-phases.md](docs/planning/v1-phases.md)
+- [ROADMAP.md](ROADMAP.md)
+- [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md)
 
 ## Quickstart
 
@@ -122,20 +122,20 @@ cargo run -- detect /path/to/repo
 
 More detail:
 
-- [docs/quickstart.md](/Users/bobai/Workspace/Ota.run/ota/docs/quickstart.md)
-- [docs/command-reference.md](/Users/bobai/Workspace/Ota.run/ota/docs/command-reference.md)
-- [docs/contract-reference.md](/Users/bobai/Workspace/Ota.run/ota/docs/contract-reference.md)
-- [docs/compatibility-policy.md](/Users/bobai/Workspace/Ota.run/ota/docs/compatibility-policy.md)
-- [docs/support-policy.md](/Users/bobai/Workspace/Ota.run/ota/docs/support-policy.md)
-- [docs/security-posture.md](/Users/bobai/Workspace/Ota.run/ota/docs/security-posture.md)
-- [docs/performance-budget.md](/Users/bobai/Workspace/Ota.run/ota/docs/performance-budget.md)
-- [docs/fixture-repo-plan.md](/Users/bobai/Workspace/Ota.run/ota/docs/fixture-repo-plan.md)
-- [docs/doctor-quality-bar.md](/Users/bobai/Workspace/Ota.run/ota/docs/doctor-quality-bar.md)
-- [docs/philosophy.md](/Users/bobai/Workspace/Ota.run/ota/docs/philosophy.md)
-- [CONTRIBUTING.md](/Users/bobai/Workspace/Ota.run/ota/CONTRIBUTING.md)
-- [examples/basic-node/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
-- [examples/basic-python/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-python/ota.yaml)
-- [examples/basic-go/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/basic-go/ota.yaml)
-- [examples/mixed-node-python/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/mixed-node-python/ota.yaml)
-- [examples/fullstack-node-go/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/fullstack-node-go/ota.yaml)
-- [examples/full-contract/ota.yaml](/Users/bobai/Workspace/Ota.run/ota/examples/full-contract/ota.yaml)
+- [docs/guides/quickstart.md](docs/guides/quickstart.md)
+- [docs/spec/command-reference.md](docs/spec/command-reference.md)
+- [docs/spec/contract-reference.md](docs/spec/contract-reference.md)
+- [docs/spec/compatibility-policy.md](docs/spec/compatibility-policy.md)
+- [docs/spec/support-policy.md](docs/spec/support-policy.md)
+- [docs/design/security-posture.md](docs/design/security-posture.md)
+- [docs/design/performance-budget.md](docs/design/performance-budget.md)
+- [docs/planning/fixture-repo-plan.md](docs/planning/fixture-repo-plan.md)
+- [docs/design/doctor-quality-bar.md](docs/design/doctor-quality-bar.md)
+- [docs/guides/philosophy.md](docs/guides/philosophy.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [examples/basic-node/ota.yaml](examples/basic-node/ota.yaml)
+- [examples/basic-python/ota.yaml](examples/basic-python/ota.yaml)
+- [examples/basic-go/ota.yaml](examples/basic-go/ota.yaml)
+- [examples/mixed-node-python/ota.yaml](examples/mixed-node-python/ota.yaml)
+- [examples/fullstack-node-go/ota.yaml](examples/fullstack-node-go/ota.yaml)
+- [examples/full-contract/ota.yaml](examples/full-contract/ota.yaml)
