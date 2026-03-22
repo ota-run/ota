@@ -59,7 +59,7 @@ Current behavior:
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, starts explicit required services, verifies required service healthchecks, runs `setup` if present, and re-checks readiness
-- `ota detect --dry-run` infers a candidate contract from repo signals such as package manifests, runtime files, build files, and Docker Compose service declarations, then prints provenance and confidence
+- `ota detect --dry-run` infers a candidate contract from repo signals such as package manifests, runtime files, Java build wrappers, build files, and Docker Compose service declarations, then prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
 
 ## Detect trust model
@@ -132,6 +132,7 @@ Example contracts:
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
+- [Service behavior](docs/spec/service-behavior.md)
 - [JSON output reference](docs/spec/json-output-reference.md)
 
 ### Core concepts
