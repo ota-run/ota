@@ -39,6 +39,10 @@ use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
+use crate::workspace::{
+    DEFAULT_WORKSPACE_FILE, WorkspaceValidationErrors, load_workspace_contract,
+    validate_workspace_contract,
+};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 
@@ -620,6 +624,63 @@ pub fn detect(
     )
 }
 
+pub fn workspace_validate(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.validate")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.validate"),
+        format!("DEBUG workspace_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_and_validate_workspace(&resolved_path) {
+            Ok(()) => match format {
+                OutputFormat::Text => {
+                    CommandOutput::success(format!("VALID WORKSPACE {path_display}"))
+                }
+                OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
+                    ok: true,
+                    path: &path_display,
+                })),
+            },
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 fn write_detected_contract(report: DetectReport, format: OutputFormat) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
@@ -997,6 +1058,35 @@ fn resolve_contract_path(
     }
 }
 
+fn resolve_workspace_path(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+) -> Result<PathBuf, ResolveWorkspaceError> {
+    if let Some(file_override) = file_override {
+        return resolve_explicit_workspace_path(file_override, "--file");
+    }
+
+    if let Some(file_override) = std::env::var_os("OTA_FILE") {
+        return resolve_explicit_workspace_path(Path::new(&file_override), "OTA_FILE");
+    }
+
+    match path {
+        Some(path) if path.is_file() => Ok(path.to_path_buf()),
+        Some(path) if path.is_dir() => discover_workspace_path(path),
+        Some(path) => Err(ResolveWorkspaceError::MissingExplicitPath {
+            path: path.display().to_string(),
+        }),
+        None => {
+            let current_dir = std::env::current_dir().map_err(|source| {
+                ResolveWorkspaceError::CurrentDirectory {
+                    message: source.to_string(),
+                }
+            })?;
+            discover_workspace_path(&current_dir)
+        }
+    }
+}
+
 fn resolve_repo_path(path: Option<&Path>) -> PathBuf {
     match path {
         Some(path) => path.to_path_buf(),
@@ -1042,6 +1132,45 @@ fn discover_contract_path(start: &Path) -> Result<PathBuf, ResolveContractError>
 
         if parent == current {
             return Err(ResolveContractError::NotFound {
+                start: start.display().to_string(),
+            });
+        }
+
+        current = parent;
+    }
+}
+
+fn resolve_explicit_workspace_path(
+    path: &Path,
+    source: &'static str,
+) -> Result<PathBuf, ResolveWorkspaceError> {
+    if path.is_file() {
+        Ok(path.to_path_buf())
+    } else {
+        Err(ResolveWorkspaceError::MissingExplicitFile {
+            origin: source,
+            path: path.display().to_string(),
+        })
+    }
+}
+
+fn discover_workspace_path(start: &Path) -> Result<PathBuf, ResolveWorkspaceError> {
+    let mut current = start;
+
+    loop {
+        let candidate = current.join(DEFAULT_WORKSPACE_FILE);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+
+        let Some(parent) = current.parent() else {
+            return Err(ResolveWorkspaceError::NotFound {
+                start: start.display().to_string(),
+            });
+        };
+
+        if parent == current {
+            return Err(ResolveWorkspaceError::NotFound {
                 start: start.display().to_string(),
             });
         }
@@ -1167,6 +1296,12 @@ fn load_and_validate(path: &Path) -> Result<crate::schema::Contract, ContractPro
     Ok(contract)
 }
 
+fn load_and_validate_workspace(path: &Path) -> Result<(), WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    validate_workspace_contract(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+    Ok(())
+}
+
 fn render_run_error(error: RunError) -> String {
     error.to_string()
 }
@@ -1228,6 +1363,11 @@ enum ContractProblem {
     Validation(ValidationErrors),
 }
 
+enum WorkspaceProblem {
+    Load(crate::workspace::LoadWorkspaceError),
+    Validation(WorkspaceValidationErrors),
+}
+
 #[derive(Debug, thiserror::Error)]
 enum ResolveContractError {
     #[error("failed to read the current directory: {message}")]
@@ -1239,5 +1379,17 @@ enum ResolveContractError {
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
     #[error("contract path does not exist: `{path}`")]
+    MissingExplicitPath { path: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ResolveWorkspaceError {
+    #[error("failed to read the current directory: {message}")]
+    CurrentDirectory { message: String },
+    #[error("no `ota.workspace.yaml` found from `{start}` upward")]
+    NotFound { start: String },
+    #[error("explicit workspace path from {origin} does not point to a file: `{path}`")]
+    MissingExplicitFile { origin: &'static str, path: String },
+    #[error("workspace path does not exist: `{path}`")]
     MissingExplicitPath { path: String },
 }

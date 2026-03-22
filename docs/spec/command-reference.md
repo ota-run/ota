@@ -52,6 +52,7 @@ Ota currently ships these commands:
 - `ota check`
 - `ota up`
 - `ota detect`
+- `ota workspace validate`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -373,3 +374,29 @@ Write behavior:
 - fails if the high-confidence projection is not sufficient
 
 This is intentionally conservative. Review mode comes first, write mode second.
+
+## `ota workspace validate`
+
+Validate an Ota workspace contract.
+
+```bash
+ota workspace validate [PATH]
+ota workspace validate --json [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- parses the workspace contract
+- validates the workspace shape
+- validates each referenced repo contract through the workspace contract
+
+Text output:
+
+- success: `VALID WORKSPACE <path>`
+- failure: validation or load error text
+
+JSON output:
+
+- success: `ok`, `path`
+- failure: `ok`, `path`, and either `errors` or `error`

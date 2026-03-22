@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 use ota::parser::load_contract;
 use ota::validator::validate_contract;
+use ota::workspace::{load_workspace_contract, validate_workspace_contract};
 
 fn example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
@@ -39,6 +40,11 @@ fn example_paths() -> Vec<PathBuf> {
     ]
 }
 
+fn workspace_example_paths() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    vec![root.join("workspace-basic").join("ota.workspace.yaml")]
+}
+
 #[test]
 fn shipped_examples_load_and_validate() {
     for path in example_paths() {
@@ -48,6 +54,25 @@ fn shipped_examples_load_and_validate() {
 
         validate_contract(&contract).unwrap_or_else(|error| {
             panic!("example `{}` should validate: {error}", path.display());
+        });
+    }
+}
+
+#[test]
+fn shipped_workspace_examples_load_and_validate() {
+    for path in workspace_example_paths() {
+        let contract = load_workspace_contract(&path).unwrap_or_else(|error| {
+            panic!(
+                "workspace example `{}` should load: {error}",
+                path.display()
+            );
+        });
+
+        validate_workspace_contract(&path, &contract).unwrap_or_else(|error| {
+            panic!(
+                "workspace example `{}` should validate: {error}",
+                path.display()
+            );
         });
     }
 }
