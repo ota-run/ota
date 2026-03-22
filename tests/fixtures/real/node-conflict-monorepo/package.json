@@ -1,0 +1,12 @@
+{
+  "name": "ota-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.7.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build"
+  }
+}
