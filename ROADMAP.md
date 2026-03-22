@@ -17,6 +17,7 @@ Current phase map:
 The detailed implementation plan is in [docs/v1-phases.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-phases.md).
 The detect write threshold is documented in [docs/detect-write-gate.md](/Users/bobai/Workspace/Ota.run/ota/docs/detect-write-gate.md).
 Future task executor expansion is tracked in the product spec.
+The next execution plan is in [docs/v1-next-plan.md](/Users/bobai/Workspace/Ota.run/ota/docs/v1-next-plan.md).
 
 ## Implemented so far
 
@@ -32,18 +33,17 @@ Future task executor expansion is tracked in the product spec.
 
 ## Current focus
 
-- stronger public docs and examples
-- broader fixture coverage
-- better `doctor` quality
-- better detect coverage across common repo shapes
-- clearer contributor-facing guidance
+- fixture repos for broader real-world coverage
+- service behavior that stays explicit and non-orchestrator
+- honest `execution.lifecycle` semantics
+- exit-code and debug-mode hardening
 
 ## Near-term next steps
 
-- add more real-repo detection fixtures
-- improve command reference docs
-- add more stack examples
-- continue hardening output and exit semantics
+- add Java, Docker-heavy, and ugly real-world fixtures
+- make `services` useful in `doctor` and `up`
+- define and implement honest `execution.lifecycle` behavior
+- formalize exit codes and add debug mode
 
 ## Product direction
 
