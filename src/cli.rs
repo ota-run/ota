@@ -572,6 +572,9 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("INIT"));
         assert!(output.stdout.contains("Mode: detected"));
+        assert!(output.stdout.contains(
+            "Next: review this starter contract, edit it if needed, then run `ota init --write"
+        ));
         assert!(output.stdout.contains("name: ota-web"));
         assert!(
             output
@@ -590,6 +593,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("WROTE"));
+        assert!(output.stdout.contains("Next: run `ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: go-service"));
         assert!(written.contains("go: 1.24.0"));
@@ -606,6 +610,21 @@ tasks:
         assert_eq!(json["ok"], true);
         assert_eq!(json["written"], false);
         assert_eq!(json["mode"], "blank");
+    }
+
+    #[test]
+    fn init_blank_mode_text_calls_out_minimal_coverage() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Mode: blank"));
+        assert!(
+            output.stdout.contains(
+                "Coverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it"
+            )
+        );
     }
 
     #[test]
@@ -627,6 +646,13 @@ project:
                 .as_deref()
                 .unwrap()
                 .contains("only for repos without an Ota contract")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("Next: review the existing contract with `ota validate")
         );
     }
 

@@ -221,6 +221,7 @@ Current behavior:
 - writes only when `--write` is provided
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
+- keeps JSON output stable while using text output to guide review, write, and first validation steps
 
 Modes:
 
@@ -232,6 +233,8 @@ Text output:
 - dry-run header: `INIT <path>`
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
+- includes a `Next:` line that tells the user how to review or validate the starter contract
+- `blank` mode explicitly warns that the starter contract is minimal coverage only
 - includes inferred-field annotations with source and confidence
 
 JSON output:

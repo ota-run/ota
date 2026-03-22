@@ -362,7 +362,9 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 
     if contract_path.exists() {
         let error = format!(
-            "`{}` already exists; `ota init` is only for repos without an Ota contract",
+            "`{}` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate {}` or `ota doctor {}`",
+            contract_path.display(),
+            contract_path.display(),
             contract_path.display()
         );
         return finalize_debug(
@@ -807,7 +809,17 @@ fn render_init(
         return match fs::write(contract_path, &yaml) {
             Ok(()) => match format {
                 OutputFormat::Text => {
-                    let mut stdout = format!("WROTE {}\nMode: {mode}", contract_path.display());
+                    let mut stdout = format!(
+                        "WROTE {}\nMode: {mode}\nNext: run `ota validate {}` and `ota doctor {}`",
+                        contract_path.display(),
+                        contract_path.display(),
+                        contract_path.display()
+                    );
+                    if mode == "blank" {
+                        stdout.push_str(
+                            "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
+                        );
+                    }
                     render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
                     CommandOutput::success(stdout)
                 }
@@ -838,10 +850,16 @@ fn render_init(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "INIT {}\nMode: {mode}\n---\n{}",
+                "INIT {}\nMode: {mode}\nNext: review this starter contract, edit it if needed, then run `ota init --write {}`\n---\n{}",
+                report.root.display(),
                 report.root.display(),
                 yaml.trim_end()
             );
+            if mode == "blank" {
+                stdout.push_str(
+                    "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
+                );
+            }
             render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
             CommandOutput::success(stdout)
         }
