@@ -61,6 +61,20 @@ Agents must preserve this separation.
 
 ---
 
+## Runtime efficiency and safety constraints
+
+- Ota must remain lightweight on memory and process usage.
+- Prefer streaming over buffering large outputs.
+- Do not load or retain more repository state than needed.
+- Use bounded concurrency for checks, detection, and bootstrap flows.
+- Avoid long-lived background daemons in v1.
+- Caching must be explicit, small, and easy to invalidate.
+- Commands like `ota doctor`, `ota init`, and `ota detect` should be primarily stateless.
+- Large repositories must degrade gracefully, not explosively.
+- Process spawning, log capture, and file scanning must be resource-conscious by default.
+
+---
+
 ## Efficiency, Quality, and Infrastructure Discipline
 
 Use the minimum context, tokens, tool calls, edits, and validation needed to complete the task correctly.
