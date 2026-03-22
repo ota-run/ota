@@ -1,6 +1,6 @@
 # Contributing
 
-Ota is being built as open repo-readiness infrastructure. Contributions should preserve trust, determinism, and a small dependable surface.
+Ota is being built as open infrastructure for repo readiness. Contributions should preserve trust, determinism, and a small dependable surface.
 
 ## Development workflow
 
