@@ -234,6 +234,13 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 check.name
             )));
         }
+
+        if matches!(check.timeout, Some(0)) {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must declare a timeout greater than zero",
+                check.name
+            )));
+        }
     }
 }
 
@@ -354,6 +361,32 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `dev` depends on unknown task `setup`"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_check_timeout() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: slow-check
+    kind: health
+    severity: warn
+    run: sleep 1
+    timeout: 0
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "check `slow-check` must declare a timeout greater than zero"
         );
     }
 

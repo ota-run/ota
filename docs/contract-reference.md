@@ -229,12 +229,13 @@ Fields:
 - `kind`: `precondition` or `health`
 - `severity`: `error`, `warn`, or `info`
 - `run`: required, non-empty string
-- `timeout`: optional integer
+- `timeout`: optional integer in milliseconds
 
 Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
+- when `timeout` is set, `doctor` fails the check if it does not finish within the configured millisecond budget
 
 ## `agent`
 

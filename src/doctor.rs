@@ -22,6 +22,8 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -184,19 +186,72 @@ fn diagnose_checks(
             continue;
         }
 
-        let status = shell_command(&check.run).current_dir(working_dir).status();
-        let passed = matches!(status, Ok(status) if status.success());
-
-        if passed {
-            continue;
+        match run_check(&check.run, working_dir, check.timeout) {
+            CheckStatus::Passed => continue,
+            CheckStatus::Failed => findings.push(Finding {
+                severity: map_check_severity(check.severity),
+                summary: format!("Check failed: {}", check.name),
+                why: format!("the configured `{}` check did not succeed", check.name),
+                next: format!("run `{}` and fix the reported issue", check.run),
+            }),
+            CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                severity: map_check_severity(check.severity),
+                summary: format!("Check timed out: {}", check.name),
+                why: format!(
+                    "the configured `{}` check did not finish within {}ms",
+                    check.name, timeout
+                ),
+                next: format!(
+                    "make `{}` complete faster or raise `checks.timeout` for `{}`",
+                    check.run, check.name
+                ),
+            }),
         }
+    }
+}
 
-        findings.push(Finding {
-            severity: map_check_severity(check.severity),
-            summary: format!("Check failed: {}", check.name),
-            why: format!("the configured `{}` check did not succeed", check.name),
-            next: format!("run `{}` and fix the reported issue", check.run),
-        });
+enum CheckStatus {
+    Passed,
+    Failed,
+    TimedOut(u64),
+}
+
+fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> CheckStatus {
+    let Some(timeout_ms) = timeout_ms else {
+        let status = shell_command(command).current_dir(working_dir).status();
+        return if matches!(status, Ok(status) if status.success()) {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
+        };
+    };
+
+    let Ok(mut child) = shell_command(command).current_dir(working_dir).spawn() else {
+        return CheckStatus::Failed;
+    };
+
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    CheckStatus::Passed
+                } else {
+                    CheckStatus::Failed
+                };
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return CheckStatus::TimedOut(timeout_ms);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return CheckStatus::Failed;
+            }
+        }
     }
 }
 
@@ -510,5 +565,35 @@ tasks:
         assert!(!version_matches("^3.11", "4.0.0"));
         assert!(version_matches("^0.6.0", "0.6.4"));
         assert!(!version_matches("^0.6.0", "0.7.0"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_timed_out_checks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: slow-check
+    kind: health
+    severity: warn
+    run: sleep 1
+    timeout: 50
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(report.findings[0].summary, "Check timed out: slow-check");
+        assert!(report.findings[0].why.contains("50ms"));
     }
 }
