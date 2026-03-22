@@ -33,6 +33,9 @@ mod commands;
 #[command(name = "ota")]
 #[command(about = "Open repo readiness CLI", version)]
 pub struct Cli {
+    /// Emit command-phase debug tracing to stderr.
+    #[arg(long, global = true, action = ArgAction::SetTrue)]
+    debug: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -128,30 +131,39 @@ where
 {
     match Cli::try_parse_from(args) {
         Ok(cli) => dispatch(cli),
-        Err(error) => CommandOutput::failure(error.render().to_string().trim_end().to_string()),
+        Err(error) => {
+            CommandOutput::failure_with_code(error.render().to_string().trim_end().to_string(), 2)
+        }
     }
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
+    let debug = cli.debug;
     match cli.command {
         Commands::Validate { json, path } => {
-            commands::validate(path.as_deref(), format_from_json(json))
+            commands::validate(path.as_deref(), format_from_json(json), debug)
         }
-        Commands::Tasks { json, path } => commands::tasks(path.as_deref(), format_from_json(json)),
-        Commands::Run { task, path } => commands::run_command(task.as_str(), path.as_deref()),
+        Commands::Tasks { json, path } => {
+            commands::tasks(path.as_deref(), format_from_json(json), debug)
+        }
+        Commands::Run { task, path } => {
+            commands::run_command(task.as_str(), path.as_deref(), debug)
+        }
         Commands::Doctor { json, path } => {
-            commands::doctor(path.as_deref(), format_from_json(json))
+            commands::doctor(path.as_deref(), format_from_json(json), debug)
         }
         Commands::Init { write, json, path } => {
-            commands::init(path.as_deref(), write, format_from_json(json))
+            commands::init(path.as_deref(), write, format_from_json(json), debug)
         }
-        Commands::Check { json, path } => commands::check(path.as_deref(), format_from_json(json)),
-        Commands::Up { path } => commands::up(path.as_deref()),
+        Commands::Check { json, path } => {
+            commands::check(path.as_deref(), format_from_json(json), debug)
+        }
+        Commands::Up { path } => commands::up(path.as_deref(), debug),
         Commands::Detect {
             json,
             dry_run,
             path,
-        } => commands::detect(path.as_deref(), dry_run, format_from_json(json)),
+        } => commands::detect(path.as_deref(), dry_run, format_from_json(json), debug),
     }
 }
 
@@ -222,6 +234,14 @@ tasks:
             json["errors"][0],
             "task `dev` depends on unknown task `setup`"
         );
+    }
+
+    #[test]
+    fn exit_code_usage_errors_are_two() {
+        let output = run_with(["ota", "validate", "--unknown-flag"]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(output.stderr.as_deref().unwrap().contains("unexpected"));
     }
 
     #[test]
@@ -948,6 +968,65 @@ project:
                 .contains("project.name: go-service <- from go.mod#module [medium]")
         );
         assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn debug_validate_emits_trace_to_stderr() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "--debug", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("VALID {}", fixture.file_path().display())
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("DEBUG command=validate")
+        );
+        assert!(output.stderr.as_deref().unwrap().contains(&format!(
+            "DEBUG contract_path={}",
+            fixture.file_path().display()
+        )));
+    }
+
+    #[test]
+    fn debug_run_appends_trace_after_lifecycle_note() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: exit 0
+"#,
+        );
+
+        let output = run_with(["ota", "--debug", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stderr = output.stderr.as_deref().unwrap();
+        assert!(
+            stderr.contains(
+                "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1"
+            )
+        );
+        assert!(stderr.contains("DEBUG command=run"));
+        assert!(stderr.contains("DEBUG task=setup"));
     }
 
     struct ContractFixture {

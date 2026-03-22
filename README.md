@@ -42,6 +42,14 @@ ota detect --dry-run
 ota detect
 ```
 
+Global flag:
+
+```bash
+ota --debug <command>
+```
+
+`--debug` emits command-phase tracing to stderr without changing normal stdout.
+
 Current behavior:
 
 - `ota validate` parses and semantically validates `ota.yaml`

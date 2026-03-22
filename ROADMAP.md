@@ -33,13 +33,13 @@ The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-n
 
 ## Current focus
 
-- honest `execution.lifecycle` semantics
-- exit-code and debug-mode hardening
+- broader V1 hardening against real repos
+- keeping the public spec and docs aligned with shipped behavior
 
 ## Near-term next steps
 
-- define and implement honest `execution.lifecycle` behavior
-- formalize exit codes and add debug mode
+- continue hardening the current command surface on real repositories
+- deepen spec-backed behavior where the contract is already accepted
 
 ## Product direction
 

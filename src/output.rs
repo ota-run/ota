@@ -105,6 +105,24 @@ impl CommandOutput {
             exit_code: 1,
         }
     }
+
+    pub fn failure_with_code(stderr: String, exit_code: i32) -> Self {
+        Self {
+            stdout: String::new(),
+            stderr: Some(stderr),
+            exit_code,
+        }
+    }
+
+    pub fn with_stderr(mut self, stderr: Option<String>) -> Self {
+        self.stderr = match (self.stderr.take(), stderr) {
+            (None, None) => None,
+            (Some(existing), None) => Some(existing),
+            (None, Some(extra)) => Some(extra),
+            (Some(existing), Some(extra)) => Some(format!("{existing}\n{extra}")),
+        };
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
