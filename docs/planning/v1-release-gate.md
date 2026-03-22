@@ -14,6 +14,10 @@ These must stay green:
 - `cargo test --test examples_validate`
 - `cargo fmt --check`
 
+These commands are now bound into CI via:
+
+- `.github/workflows/v1-release-gate.yml`
+
 ## Binding real-fixture matrix
 
 Current real fixtures under `tests/fixtures/real`:
