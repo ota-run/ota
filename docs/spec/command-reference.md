@@ -410,6 +410,7 @@ Diagnose workspace repo readiness from an Ota workspace contract.
 ```bash
 ota workspace doctor [PATH]
 ota workspace doctor --json [PATH]
+ota workspace doctor --jobs 4 [PATH]
 ```
 
 Current behavior:
@@ -417,6 +418,8 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
 - evaluates repos in dependency order
+- can diagnose independent repos concurrently when `--jobs` is greater than `1`
+- preserves deterministic repo ordering in text and JSON output even when diagnosis runs concurrently
 - evaluates each referenced repo through its own `ota.yaml`
 - keeps workspace logic above repo diagnosis instead of duplicating it
 - downgrades findings for optional repos to warnings
@@ -453,6 +456,7 @@ Current behavior:
 - blocks downstream repos when a dependency does not become ready
 - aggregates per-repo status, phase, findings, and exit details
 - optional repo failures do not fail the overall workspace result
+- does not yet parallelize repo execution, because repo-level child process output is still streamed directly and must remain trustworthy
 
 Text output:
 
