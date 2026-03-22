@@ -1,0 +1,45 @@
+version: 1
+project:
+  name: fullstack-node-go
+  description: Example contract for a Node application with a Go service
+  type: application
+execution:
+  preferred: native
+  supported:
+    - native
+runtimes:
+  node: "22.4.0"
+  go: "1.24.0"
+tools:
+  npm: "10.8.2"
+env:
+  OTA_SERVICE_ENV:
+    default: local
+    allowed:
+      - local
+      - ci
+tasks:
+  setup:
+    description: Install application dependencies
+    category: setup
+    run: npm install
+    safe_for_agent: true
+  build:
+    description: Build the app bundle
+    category: build
+    run: npm run build
+    depends_on:
+      - setup
+  service-test:
+    description: Run the Go service tests
+    category: test
+    run: go test ./...
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version
+  - name: go-installed
+    kind: precondition
+    severity: error
+    run: go version

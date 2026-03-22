@@ -1,0 +1,45 @@
+version: 1
+project:
+  name: mixed-node-python
+  description: Example contract for a repo with a Node frontend and Python service
+  type: application
+execution:
+  preferred: native
+  supported:
+    - native
+runtimes:
+  node: "22"
+  python: ">=3.12"
+tools:
+  pnpm: "10"
+env:
+  OTA_API_ENV:
+    required: true
+    allowed:
+      - local
+      - staging
+tasks:
+  setup:
+    description: Install frontend and backend dependencies
+    category: setup
+    run: pnpm install
+    safe_for_agent: true
+  dev:
+    description: Start the frontend dev server
+    category: dev
+    run: pnpm dev
+    depends_on:
+      - setup
+  api-test:
+    description: Run the backend test suite
+    category: test
+    run: python -m pytest
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version
+  - name: python-installed
+    kind: precondition
+    severity: error
+    run: python --version

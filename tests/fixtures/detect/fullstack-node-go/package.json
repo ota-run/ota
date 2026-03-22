@@ -1,0 +1,8 @@
+{
+  "name": "ota-gateway",
+  "packageManager": "npm@10.8.2",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "tsc -p tsconfig.json"
+  }
+}

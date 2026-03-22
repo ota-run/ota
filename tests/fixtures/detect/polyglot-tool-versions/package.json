@@ -1,0 +1,8 @@
+{
+  "name": "ota-polyglot",
+  "packageManager": "pnpm@10.5.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  }
+}

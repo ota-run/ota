@@ -1,0 +1,74 @@
+version: 1
+project:
+  name: full-contract
+  description: Full example of the current Ota contract surface
+  type: application
+execution:
+  preferred: native
+  supported:
+    - native
+runtimes:
+  node:
+    version: "22"
+    provider: volta
+  python: ">=3.12"
+tools:
+  pnpm:
+    version: "10"
+    required: true
+  uv: "0.6.0"
+env:
+  OTA_ENV:
+    required: true
+    allowed:
+      - local
+      - ci
+  OTA_LOG_LEVEL:
+    default: info
+    allowed:
+      - debug
+      - info
+      - warn
+tasks:
+  setup:
+    description: Install project dependencies
+    category: setup
+    run: pnpm install
+    safe_for_agent: true
+  dev:
+    description: Start the local development server
+    category: dev
+    run: pnpm dev
+    depends_on:
+      - setup
+  test:
+    description: Run the validation suite
+    category: test
+    run: pnpm test
+    depends_on:
+      - setup
+    safe_for_agent: true
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version
+    timeout: 10
+  - name: repo-tests
+    kind: health
+    severity: warn
+    run: pnpm test -- --runInBand
+agent:
+  entrypoint: setup
+  default_task: test
+  safe_tasks:
+    - setup
+    - test
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+    - docs
+metadata:
+  owner: ota
+  team: platform
