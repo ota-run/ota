@@ -74,6 +74,55 @@ pub struct DetectReport {
     pub inferences: Vec<Inference>,
 }
 
+impl DetectReport {
+    pub fn high_confidence_contract(&self) -> DetectContract {
+        let mut contract = DetectContract {
+            version: 1,
+            ..DetectContract::default()
+        };
+
+        for inference in &self.inferences {
+            if inference.confidence != Confidence::High {
+                continue;
+            }
+
+            if inference.field == "project.name" {
+                contract.project = Some(DetectProject {
+                    name: inference.value.clone(),
+                });
+                continue;
+            }
+
+            if let Some(runtime) = inference.field.strip_prefix("runtimes.") {
+                contract
+                    .runtimes
+                    .insert(runtime.to_string(), inference.value.clone());
+                continue;
+            }
+
+            if let Some(tool) = inference.field.strip_prefix("tools.") {
+                contract
+                    .tools
+                    .insert(tool.to_string(), inference.value.clone());
+                continue;
+            }
+
+            if let Some(task_field) = inference.field.strip_prefix("tasks.")
+                && let Some(task_name) = task_field.strip_suffix(".run")
+            {
+                contract.tasks.insert(
+                    task_name.to_string(),
+                    DetectTask {
+                        run: inference.value.clone(),
+                    },
+                );
+            }
+        }
+
+        contract
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DetectError {
     #[error("failed to read `{path}`: {source}")]
@@ -540,6 +589,37 @@ requires-python = ">=3.12"
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
         );
+    }
+
+    #[test]
+    fn projects_high_confidence_fields_only_for_write_mode() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "engines": { "node": "20" },
+  "packageManager": "pnpm@10.2.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        let contract = report.high_confidence_contract();
+
+        assert_eq!(
+            contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("ota-app")
+        );
+        assert_eq!(contract.tools.get("pnpm"), Some(&"10.2.0".to_string()));
+        assert_eq!(
+            contract.tasks.get("dev").map(|task| task.run.as_str()),
+            Some("pnpm dev")
+        );
+        assert!(!contract.runtimes.contains_key("node"));
     }
 
     struct Fixture {
