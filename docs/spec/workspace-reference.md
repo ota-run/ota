@@ -104,3 +104,14 @@ Current non-goals:
 - workspace task orchestration
 - workspace-wide environment mutation
 - hidden repo bootstrap behavior
+
+## `ota workspace doctor`
+
+Current workspace diagnosis behavior:
+
+- validates workspace structure first
+- diagnoses each referenced repo through its own `ota.yaml`
+- preserves repo-level diagnosis semantics for required repos
+- downgrades optional repo errors to warnings at the workspace layer
+
+This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.

@@ -33,15 +33,15 @@ use crate::doctor::{
 use crate::output::{
     CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
     OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess,
+    ValidateSuccess, WorkspaceDoctorSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
-    DEFAULT_WORKSPACE_FILE, WorkspaceValidationErrors, load_workspace_contract,
-    validate_workspace_contract,
+    DEFAULT_WORKSPACE_FILE, WorkspaceValidationErrors, diagnose_workspace_contract,
+    load_workspace_contract, validate_workspace_contract,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -681,6 +681,66 @@ pub fn workspace_validate(
     )
 }
 
+pub fn workspace_doctor(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.doctor")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.doctor"),
+        format!("DEBUG workspace_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_and_diagnose_workspace(&resolved_path) {
+            Ok(report) => match format {
+                OutputFormat::Text => render_workspace_doctor_text(&path_display, &report),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&WorkspaceDoctorSuccess {
+                        ok: report.ok,
+                        path: &path_display,
+                        repos: &report.repos,
+                    }),
+                    stderr: None,
+                    exit_code: if report.ok { 0 } else { 1 },
+                },
+            },
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 fn write_detected_contract(report: DetectReport, format: OutputFormat) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
@@ -897,6 +957,47 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
 fn render_doctor_text(path: &str, report: DoctorReport) -> CommandOutput {
     render_report_text("DOCTOR", path, report)
+}
+
+fn render_workspace_doctor_text(
+    path: &str,
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> CommandOutput {
+    let mut stdout = format!(
+        "WORKSPACE DOCTOR {path}\n{}",
+        if report.ok { "READY" } else { "NOT READY" }
+    );
+
+    for repo in &report.repos {
+        stdout.push_str(&format!(
+            "\n- {} [{}] ({})",
+            repo.name,
+            if repo.required {
+                "required"
+            } else {
+                "optional"
+            },
+            if repo.ok { "READY" } else { "NOT READY" }
+        ));
+        stdout.push_str(&format!("\n  Path: {}", repo.path));
+        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+
+        for finding in &repo.findings {
+            stdout.push_str(&format!(
+                "\n  {}  {}\n  Why: {}\n  Next: {}",
+                render_severity(finding.severity),
+                finding.summary,
+                finding.why,
+                finding.next
+            ));
+        }
+    }
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: if report.ok { 0 } else { 1 },
+    }
 }
 
 fn render_report_text(command: &str, path: &str, report: DoctorReport) -> CommandOutput {
@@ -1300,6 +1401,13 @@ fn load_and_validate_workspace(path: &Path) -> Result<(), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     validate_workspace_contract(path, &workspace).map_err(WorkspaceProblem::Validation)?;
     Ok(())
+}
+
+fn load_and_diagnose_workspace(
+    path: &Path,
+) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    diagnose_workspace_contract(path, &workspace).map_err(WorkspaceProblem::Validation)
 }
 
 fn render_run_error(error: RunError) -> String {
