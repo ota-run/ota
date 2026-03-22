@@ -119,6 +119,28 @@ fn init_json_reports_detected_mode_for_java_maven_fixture() {
     assert_eq!(json["config"]["tasks"]["test"]["run"], "mvn test");
 }
 
+#[cfg(unix)]
+#[test]
+fn init_json_prefers_maven_wrapper_on_real_fixture() {
+    let fixture = copy_fixture_to_temp("java-maven");
+    fs::write(fixture.path().join("mvnw"), "#!/bin/sh\n")
+        .expect("wrapper script should be written");
+    fs::create_dir_all(fixture.path().join(".mvn").join("wrapper"))
+        .expect("wrapper directory should be created");
+    fs::write(
+        fixture.path().join(".mvn").join("wrapper").join("maven-wrapper.properties"),
+        "distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip\n",
+    )
+    .expect("wrapper properties should be written");
+
+    let output = run_ota(&["init", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["config"]["tools"]["maven"], "3.9.9");
+    assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
+    assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
+}
+
 #[test]
 fn init_json_reports_detected_mode_for_java_gradle_multimodule_fixture() {
     let fixture = real_fixture_path("java-gradle-multimodule");

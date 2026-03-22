@@ -3,6 +3,7 @@
 This document describes the current shipped CLI surface.
 
 For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
+For service behavior across commands, see [service-behavior.md](service-behavior.md).
 
 ## Global
 
@@ -279,6 +280,8 @@ Current detect sources:
 - `build.gradle(.kts)`
 - `gradle/wrapper/gradle-wrapper.properties`
 - `pom.xml`
+- `mvnw`
+- `.mvn/wrapper/maven-wrapper.properties`
 - `docker-compose.yml` / `docker-compose.yaml`
 - `compose.yml` / `compose.yaml`
 

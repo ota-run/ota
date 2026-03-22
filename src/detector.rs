@@ -780,12 +780,7 @@ fn extract_maven_wrapper_version(contents: &str) -> Option<String> {
     contents.lines().find_map(|line| {
         let line = line.trim();
         let url = line.strip_prefix("distributionUrl=")?;
-        let version = url
-            .split("apache-maven-")
-            .nth(1)?
-            .split('-')
-            .next()?
-            .trim();
+        let version = url.split("apache-maven-").nth(1)?.split('-').next()?.trim();
         if version.is_empty() {
             None
         } else {
