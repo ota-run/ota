@@ -1,0 +1,3 @@
+[project]
+name = "ota-python-conflict"
+requires-python = ">=3.12"
