@@ -21,17 +21,18 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use crate::detector::{Confidence, detect_repo};
+use crate::detector::{Confidence, DetectReport, detect_repo};
 use crate::doctor::{diagnose_contract, diagnose_preconditions};
 use crate::output::{
     CommandOutput, DoctorSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess,
     ValidateFailure, ValidateSuccess,
 };
-use crate::parser::{LoadContractError, load_contract};
+use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task};
 use crate::validator::{ValidationErrors, validate_contract};
 
@@ -306,15 +307,9 @@ fn up(path: Option<&Path>) -> CommandOutput {
 }
 
 fn detect(path: Option<&Path>, dry_run: bool) -> CommandOutput {
-    if !dry_run {
-        return CommandOutput::failure(
-            "write mode is not implemented yet; use `ota detect --dry-run`".to_string(),
-        );
-    }
-
     let root = resolve_repo_path(path);
     match detect_repo(&root) {
-        Ok(report) => {
+        Ok(report) if dry_run => {
             let yaml = serde_yaml::to_string(&report.contract)
                 .expect("serializing detected contract should not fail");
             let mut stdout = format!("DETECT {}", report.root.display());
@@ -340,7 +335,44 @@ fn detect(path: Option<&Path>, dry_run: bool) -> CommandOutput {
 
             CommandOutput::success(stdout)
         }
+        Ok(report) => write_detected_contract(report),
         Err(error) => CommandOutput::failure(error.to_string()),
+    }
+}
+
+fn write_detected_contract(report: DetectReport) -> CommandOutput {
+    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
+    if contract_path.exists() {
+        return CommandOutput::failure(format!(
+            "`{}` already exists; refusing to overwrite an existing contract",
+            contract_path.display()
+        ));
+    }
+
+    let candidate = report.high_confidence_contract();
+    let yaml = serde_yaml::to_string(&candidate)
+        .expect("serializing detected write candidate should not fail");
+
+    match parse_contract_str(&contract_path, &yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+    {
+        Ok(()) => {}
+        Err(_) => {
+            return CommandOutput::failure(
+                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"
+                    .to_string(),
+            )
+        }
+    }
+
+    match fs::write(&contract_path, yaml) {
+        Ok(()) => CommandOutput::success(format!("WROTE {}", contract_path.display())),
+        Err(error) => CommandOutput::failure(format!(
+            "failed to write `{}`: {}",
+            contract_path.display(),
+            error
+        )),
     }
 }
 
@@ -704,16 +736,64 @@ tasks:
     }
 
     #[test]
-    fn detect_without_dry_run_fails_cleanly() {
+    fn detect_writes_high_confidence_contract() {
         let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("WROTE"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("name: ota-web"));
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+    }
+
+    #[test]
+    fn detect_refuses_to_overwrite_existing_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+
+        let output = run_with(["ota", "detect", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("refusing to overwrite")
+        );
+    }
+
+    #[test]
+    fn detect_refuses_to_write_when_high_confidence_fields_are_insufficient() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
 
         let output = run_with(["ota", "detect", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
         assert_eq!(
             output.stderr.as_deref(),
-            Some("write mode is not implemented yet; use `ota detect --dry-run`")
+            Some(
+                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"
+            )
         );
+        assert!(!fixture.file_path().exists());
     }
 
     struct ContractFixture {
