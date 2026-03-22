@@ -114,6 +114,23 @@ enum Commands {
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
+    /// Work with Ota workspace contracts.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkspaceCommands {
+    /// Validate an ota.workspace.yaml contract.
+    Validate {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
 }
 
 pub fn run() -> i32 {
@@ -206,6 +223,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
             }
             commands::detect(path.as_deref(), dry_run, format_from_json(json), debug)
         }
+        Commands::Workspace { command } => match command {
+            WorkspaceCommands::Validate { json, path } => commands::workspace_validate(
+                path.as_deref(),
+                file.as_deref(),
+                format_from_json(json),
+                debug,
+            ),
+        },
     }
 }
 
@@ -1330,6 +1355,62 @@ tasks:
         assert!(stderr.contains("DEBUG task=setup"));
     }
 
+    #[test]
+    fn workspace_validate_json_reports_success() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.workspace_file().display().to_string());
+    }
+
+    #[test]
+    fn workspace_validate_discovers_workspace_from_nested_directory() {
+        let fixture = WorkspaceFixture::new();
+        let nested = fixture.dir.path().join("apps").join("web").join("src");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with(["ota", "workspace", "validate", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("VALID WORKSPACE {}", fixture.workspace_file().display())
+        );
+    }
+
+    #[test]
+    fn workspace_validate_reports_invalid_repo_contract() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("workspace repo `web` contract")
+        );
+    }
+
     struct ContractFixture {
         dir: TempDir,
         file_path: std::path::PathBuf,
@@ -1360,6 +1441,55 @@ tasks:
 
         fn write(&self, relative: &str, contents: &str) {
             fs::write(self.dir.path().join(relative), contents).unwrap();
+        }
+    }
+
+    struct WorkspaceFixture {
+        dir: TempDir,
+        workspace_file: std::path::PathBuf,
+    }
+
+    impl WorkspaceFixture {
+        fn new() -> Self {
+            let dir = TempDir::new().unwrap();
+            let repo_dir = dir.path().join("apps").join("web");
+            fs::create_dir_all(&repo_dir).unwrap();
+            fs::write(
+                repo_dir.join("ota.yaml"),
+                r#"
+version: 1
+project:
+  name: web
+"#,
+            )
+            .unwrap();
+
+            let workspace_file = dir.path().join("ota.workspace.yaml");
+            fs::write(
+                &workspace_file,
+                r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+"#,
+            )
+            .unwrap();
+
+            Self {
+                dir,
+                workspace_file,
+            }
+        }
+
+        fn path(&self) -> &str {
+            self.dir.path().to_str().unwrap()
+        }
+
+        fn workspace_file(&self) -> &std::path::Path {
+            &self.workspace_file
         }
     }
 }

@@ -28,3 +28,4 @@ pub mod parser;
 pub mod runner;
 pub mod schema;
 pub mod validator;
+pub mod workspace;
