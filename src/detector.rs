@@ -141,7 +141,9 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
 
     detect_package_json(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
+    detect_node_version_file(&root, &mut builder)?;
     detect_tool_versions(&root, &mut builder)?;
+    detect_python_version_file(&root, &mut builder)?;
     detect_pyproject(&root, &mut builder)?;
     detect_go_mod(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
@@ -243,6 +245,25 @@ fn detect_nvmrc(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectEr
     Ok(())
 }
 
+fn detect_node_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".node-version");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let version = read_file(&path)?.trim().trim_start_matches('v').to_string();
+    if !version.is_empty() {
+        builder.set_runtime(
+            "node".to_string(),
+            version,
+            ".node-version".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
 fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
     let path = root.join(".tool-versions");
     if !path.exists() {
@@ -291,6 +312,25 @@ fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
             ),
             _ => {}
         }
+    }
+
+    Ok(())
+}
+
+fn detect_python_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".python-version");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let version = read_file(&path)?.trim().trim_start_matches('v').to_string();
+    if !version.is_empty() {
+        builder.set_runtime(
+            "python".to_string(),
+            version,
+            ".python-version".to_string(),
+            Confidence::High,
+        );
     }
 
     Ok(())
@@ -588,6 +628,20 @@ requires-python = ">=3.12"
         assert_eq!(
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
+        );
+    }
+
+    #[test]
+    fn prefers_nvmrc_over_node_version_file() {
+        let fixture = Fixture::new();
+        fixture.write(".nvmrc", "22\n");
+        fixture.write(".node-version", "24\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("node"),
+            Some(&"22".to_string())
         );
     }
 
