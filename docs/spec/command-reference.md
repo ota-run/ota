@@ -177,6 +177,8 @@ Run a validated task.
 ota run <task> [PATH]
 ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
+ota run <task> --backend native [PATH]
+ota run <task> --backend container --lifecycle ephemeral [PATH]
 ```
 
 Current behavior:
@@ -184,6 +186,7 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
+- `--backend` and `--lifecycle` can override the contract for one invocation
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
