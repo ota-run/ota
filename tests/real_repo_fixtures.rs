@@ -241,6 +241,31 @@ fn init_json_reports_detected_mode_for_java_gradle_fixture() {
 }
 
 #[test]
+fn init_write_writes_high_confidence_contract_for_java_gradle_fixture() {
+    let fixture = copy_fixture_to_temp("java-gradle");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for java gradle fixture");
+
+    assert!(written.contains("name: ota-java-service"));
+    assert!(written.contains("java: '21'"));
+    assert!(written.contains("gradle: 8.10.2"));
+    assert!(written.contains("run: ./gradlew build"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[test]
 fn init_json_reports_detected_mode_for_java_maven_fixture() {
     let fixture = real_fixture_path("java-maven");
     let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
@@ -339,6 +364,32 @@ fn init_json_reports_detected_mode_for_rust_cargo_fixture() {
 }
 
 #[test]
+fn init_write_writes_high_confidence_contract_for_rust_cargo_fixture() {
+    let fixture = copy_fixture_to_temp("rust-cargo");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for rust cargo fixture");
+
+    assert!(written.contains("name: ota-rust-real"));
+    assert!(written.contains("rust: 1.85.0"));
+    assert!(written.contains("cargo: '*'"));
+    assert!(written.contains("run: cargo build"));
+    assert!(written.contains("run: cargo test"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[test]
 fn detect_json_handles_docker_heavy_node_fixture() {
     let fixture = real_fixture_path("docker-heavy-node");
     let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
@@ -382,6 +433,45 @@ fn detect_json_handles_rust_cargo_fixture() {
                     && inference["source"] == "rust-toolchain.toml#toolchain.channel"
             })
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
+    let fixture = copy_fixture_to_temp("java-gradle");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for java gradle fixture");
+
+    assert!(written.contains("name: ota-java-service"));
+    assert!(written.contains("java: '21'"));
+    assert!(written.contains("gradle: 8.10.2"));
+    assert!(written.contains("run: ./gradlew build"));
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_writes_high_confidence_contract_for_rust_cargo_fixture() {
+    let fixture = copy_fixture_to_temp("rust-cargo");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for rust cargo fixture");
+
+    assert!(written.contains("name: ota-rust-real"));
+    assert!(written.contains("rust: 1.85.0"));
+    assert!(written.contains("cargo: '*'"));
+    assert!(written.contains("run: cargo build"));
+    assert!(written.contains("run: cargo test"));
 }
 
 #[cfg(unix)]
