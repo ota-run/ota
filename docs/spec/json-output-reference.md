@@ -20,6 +20,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 
 - success output is printed to stdout
 - command failures may still use stderr when the command cannot produce its normal JSON result
+- some JSON failures include an optional `next` string when Ota can point to one safe follow-up command
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
 - `path` always refers to the resolved contract path
 
@@ -33,6 +34,10 @@ Success:
   "path": "/abs/path/to/ota.yaml"
 }
 ```
+
+Failure shape can also include:
+
+- `next`: optional safe follow-up command, used for trust-sensitive refusal and review-first flows
 
 Failure:
 
@@ -173,6 +178,18 @@ Failure:
 }
 ```
 
+Failure example:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "written": false,
+  "error": "`/abs/path/to/ota.yaml` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate /abs/path/to/ota.yaml` or `ota doctor /abs/path/to/ota.yaml`\nNext: if you want to compare detected repo signals against it, run `ota detect --merge --dry-run /abs/path/to/ota.yaml`",
+  "next": "ota detect --merge --dry-run /abs/path/to/ota.yaml"
+}
+```
+
 ## `ota check --json`
 
 `ota check --json` uses the same finding shape as `ota doctor --json`, but does not include the
@@ -235,6 +252,7 @@ Example service-start failure:
 - `written: true` when additive high-confidence fields were applied
 - `written: false` when there was nothing eligible to add
 - `comparison` describing detected adds and updates against the existing contract
+- `comparison` may include lower-confidence add candidates that remain preview-only
 
 ```json
 {
@@ -263,6 +281,22 @@ Example service-start failure:
       "confidence": "high"
     }
   ]
+}
+```
+
+In conservative mixed-repo or legacy-repo cases, `comparison.changes` can still include `add`
+entries while `written` remains `false`. That means Ota found possible additions, but none were
+eligible for automatic merge under the current high-confidence-only rule.
+
+Failure example:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "written": false,
+  "error": "`/abs/path/to/ota.yaml` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `ota detect --merge --dry-run /abs/path/to/repo`",
+  "next": "ota detect --merge --dry-run /abs/path/to/repo"
 }
 ```
 

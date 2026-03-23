@@ -55,8 +55,18 @@ fn doctor_schema_includes_agent_summary() {
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
 
     assert!(success.get("comparison").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn init_schema_includes_optional_next_on_failures() {
+    let schema = load_schema("docs/spec/json-schemas/init.json");
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert!(failure.get("next").is_some());
 }

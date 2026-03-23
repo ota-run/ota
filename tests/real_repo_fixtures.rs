@@ -76,6 +76,10 @@ fn copy_fixture_to_temp(name: &str) -> TempDir {
     temp
 }
 
+fn write_contract(root: &Path, contents: &str) {
+    fs::write(root.join("ota.yaml"), contents).expect("contract should be written");
+}
+
 #[cfg(unix)]
 #[test]
 fn workspace_up_stream_includes_live_child_output() {
@@ -174,6 +178,120 @@ fn tasks_json_reports_resolved_task_variant_on_real_fixture() {
     }
 
     assert_eq!(setup["variants"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn tasks_json_includes_agent_summary_on_real_contract() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: agent-app
+tasks:
+  setup:
+    run: printf ready
+  test:
+    run: printf test
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+"#,
+    );
+
+    let output = run_ota(&["tasks", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["agent"]["entrypoint"], "setup");
+    assert_eq!(json["agent"]["safe_tasks"][0], "setup");
+    assert_eq!(json["agent"]["verify_after_changes"][0], "test");
+    assert_eq!(json["agent"]["writable_paths"][0], "src");
+}
+
+#[test]
+fn tasks_text_includes_agent_summary_on_real_contract() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: agent-app
+tasks:
+  setup:
+    run: printf ready
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+  writable_paths:
+    - src
+"#,
+    );
+
+    let output = run_ota(&["tasks", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("TASKS"));
+    assert!(stdout.contains("AGENT"));
+    assert!(stdout.contains("entrypoint=setup"));
+    assert!(stdout.contains("safe_tasks=setup"));
+    assert!(stdout.contains("writable_paths=src"));
+}
+
+#[test]
+fn doctor_surfaces_agent_guidance_on_real_contract() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: agent-app
+tasks:
+  setup:
+    run: printf ready
+  test:
+    run: printf test
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+"#,
+    );
+
+    let text_output = run_ota(&["doctor", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&text_output.stdout);
+    assert!(
+        text_output.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&text_output.stderr)
+    );
+    assert!(stdout.contains("AGENT"));
+    assert!(stdout.contains("entrypoint=setup"));
+    assert!(stdout.contains("safe_tasks=setup"));
+
+    let json_output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&json_output);
+    assert_eq!(json["agent"]["entrypoint"], "setup");
+    assert_eq!(json["agent"]["safe_tasks"][0], "setup");
+    assert_eq!(json["agent"]["verify_after_changes"][0], "test");
+    assert_eq!(json["agent"]["writable_paths"][0], "src");
 }
 
 #[cfg(unix)]
@@ -390,6 +508,53 @@ fn init_json_reports_detected_mode_for_rust_cargo_fixture() {
 }
 
 #[test]
+fn init_json_reports_detected_mode_for_python_setup_cfg_fixture() {
+    let fixture = real_fixture_path("python-setup-cfg");
+    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["mode"], "detected");
+    assert_eq!(json["config"]["project"]["name"], "ota-legacy-python");
+    assert_eq!(json["config"]["runtimes"]["python"], "3.12.8");
+}
+
+#[test]
+fn init_json_reports_detected_mode_for_python_requirements_fixture() {
+    let fixture = real_fixture_path("python-requirements");
+    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["mode"], "detected");
+    assert_eq!(json["config"]["project"]["name"], "python-requirements");
+    assert_eq!(json["config"]["runtimes"]["python"], "3.12.7");
+    assert_eq!(json["config"]["tools"]["pip"], "*");
+}
+
+#[test]
+fn init_json_reports_detected_mode_for_mixed_node_python_compose_fixture() {
+    let fixture = real_fixture_path("mixed-node-python-compose");
+    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["mode"], "detected");
+    assert_eq!(json["config"]["project"]["name"], "ota-hybrid-app");
+    assert_eq!(json["config"]["runtimes"]["node"], "22.8.0");
+    assert_eq!(json["config"]["runtimes"]["python"], ">=3.12");
+    assert_eq!(json["config"]["tools"]["npm"], "10.9.0");
+    assert_eq!(json["config"]["tasks"]["worker"]["run"], "npm run worker");
+    assert_eq!(
+        json["config"]["services"]["postgres"]["provider"],
+        "docker-compose"
+    );
+}
+
+#[test]
 fn init_write_writes_high_confidence_contract_for_rust_cargo_fixture() {
     let fixture = copy_fixture_to_temp("rust-cargo");
 
@@ -406,6 +571,99 @@ fn init_write_writes_high_confidence_contract_for_rust_cargo_fixture() {
     assert!(written.contains("cargo: '*'"));
     assert!(written.contains("run: cargo build"));
     assert!(written.contains("run: cargo test"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[test]
+fn init_write_refuses_when_high_confidence_fields_are_insufficient_for_python_requirements_fixture()
+{
+    let fixture = copy_fixture_to_temp("python-requirements");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "stderr was: {stderr}");
+    assert!(stderr.contains("required for a valid contract"));
+    assert!(stderr.contains("tools.pip"));
+    assert!(!fixture.path().join("ota.yaml").exists());
+}
+
+#[test]
+fn init_write_writes_high_confidence_contract_for_mixed_node_python_compose_fixture() {
+    let fixture = copy_fixture_to_temp("mixed-node-python-compose");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for mixed node/python compose fixture");
+
+    assert!(written.contains("name: ota-hybrid-app"));
+    assert!(written.contains("node: 22.8.0"));
+    assert!(written.contains("npm: 10.9.0"));
+    assert!(written.contains("run: npm run dev"));
+    assert!(written.contains("run: npm run worker"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(!written.contains("python:"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[test]
+fn detect_writes_high_confidence_contract_for_mixed_node_python_compose_fixture() {
+    let fixture = copy_fixture_to_temp("mixed-node-python-compose");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for mixed node/python compose fixture");
+
+    assert!(written.contains("name: ota-hybrid-app"));
+    assert!(written.contains("node: 22.8.0"));
+    assert!(written.contains("npm: 10.9.0"));
+    assert!(written.contains("run: npm run dev"));
+    assert!(written.contains("run: npm run worker"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(!written.contains("python:"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[test]
+fn detect_writes_high_confidence_contract_for_python_setup_cfg_fixture() {
+    let fixture = copy_fixture_to_temp("python-setup-cfg");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for python setup.cfg fixture");
+
+    assert!(written.contains("name: ota-legacy-python"));
+    assert!(written.contains("python: 3.12.8"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
     assert!(
@@ -501,6 +759,114 @@ fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     assert!(written.contains("run: pnpm dev"));
 }
 
+#[test]
+fn detect_merge_json_writes_additive_fields_for_docker_heavy_node_fixture() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+"#,
+    )
+    .expect("ota.yaml should be seeded for merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], true);
+    assert_eq!(json["comparison"]["existing_contract"], true);
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "project.name" && change["status"] == "update")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "tools.pnpm" && change["status"] == "add")
+    );
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be merged for docker-heavy fixture");
+
+    assert!(written.contains("name: existing"));
+    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("run: pnpm build"));
+    assert!(written.contains("run: pnpm dev"));
+    assert!(!written.contains("name: ota-containerized-web"));
+}
+
+#[test]
+fn detect_merge_json_writes_only_high_confidence_additions_for_mixed_node_python_compose_fixture() {
+    let fixture = copy_fixture_to_temp("mixed-node-python-compose");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+"#,
+    )
+    .expect("ota.yaml should be seeded for mixed merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], true);
+    assert_eq!(json["comparison"]["existing_contract"], true);
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "project.name" && change["status"] == "update")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "runtimes.python" && change["status"] == "add")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "tools.npm" && change["status"] == "add")
+    );
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be merged for mixed node/python fixture");
+
+    assert!(written.contains("name: existing"));
+    assert!(written.contains("node: 22.8.0"));
+    assert!(written.contains("npm: 10.9.0"));
+    assert!(written.contains("run: npm run dev"));
+    assert!(written.contains("run: npm run worker"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(!written.contains("python:"));
+    assert!(!written.contains("name: ota-hybrid-app"));
+}
+
 #[cfg(unix)]
 #[test]
 fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
@@ -537,6 +903,107 @@ fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
     assert!(written.contains("java: '21'"));
     assert!(!written.contains("tools:"));
     assert!(!written.contains("tasks:"));
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_merge_json_reports_noop_for_java_maven_fixture_when_only_conflicts_remain() {
+    let fixture = copy_fixture_to_temp("java-maven");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+runtimes:
+  java: "21"
+"#,
+    )
+    .expect("ota.yaml should be seeded for merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], false);
+    assert_eq!(json["comparison"]["existing_contract"], true);
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "project.name" && change["status"] == "update")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "tools.maven" && change["status"] == "add")
+    );
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should remain unchanged for java maven merge fixture");
+
+    assert!(written.contains("name: existing"));
+    assert!(written.contains("java: \"21\""));
+    assert!(!written.contains("maven:"));
+    assert!(!written.contains("mvn package"));
+    assert!(!written.contains("name: ota-maven-service"));
+}
+
+#[test]
+fn detect_merge_json_reports_noop_for_python_requirements_fixture_when_only_low_or_medium_changes_remain()
+ {
+    let fixture = copy_fixture_to_temp("python-requirements");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+runtimes:
+  python: "3.12.7"
+"#,
+    )
+    .expect("ota.yaml should be seeded for python requirements merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], false);
+    assert_eq!(json["comparison"]["existing_contract"], true);
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "project.name" && change["status"] == "update")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "tools.pip" && change["status"] == "add")
+    );
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should remain unchanged for python requirements merge fixture");
+
+    assert!(written.contains("name: existing"));
+    assert!(written.contains("python: \"3.12.7\""));
+    assert!(!written.contains("pip:"));
+    assert!(!written.contains("name: python-requirements"));
 }
 
 #[cfg(unix)]

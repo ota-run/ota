@@ -296,6 +296,44 @@ fn detects_uv_fixture() {
 }
 
 #[test]
+fn detects_requirements_fixture() {
+    let report = assert_detected_contract_valid("python-requirements");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("python-requirements")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.12.7".to_string())
+    );
+    assert_eq!(report.contract.tools.get("pip"), Some(&"*".to_string()));
+}
+
+#[test]
+fn detects_setup_cfg_fixture() {
+    let report = assert_detected_contract_valid("python-setup-cfg");
+    assert_high_confidence_projection_valid(&report);
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-legacy-python")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.12.8".to_string())
+    );
+}
+
+#[test]
 fn detects_node_version_file_fixture() {
     let report = assert_detected_contract_valid("node-version-file");
 

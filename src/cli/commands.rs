@@ -373,6 +373,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     ];
 
     if contract_path.exists() {
+        let next = format!("ota detect --merge --dry-run {}", contract_path.display());
         let error = format!(
             "`{}` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate {}` or `ota doctor {}`\nNext: if you want to compare detected repo signals against it, run `ota detect --merge --dry-run {}`",
             contract_path.display(),
@@ -388,6 +389,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: Some(&next),
                 })),
             },
             debug,
@@ -407,6 +409,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
                         path: &path_display,
                         written: false,
                         error: &error,
+                        next: None,
                     })),
                 }
             }
@@ -472,16 +475,31 @@ pub fn detect(
         format!("DEBUG merge={merge}"),
     ];
     if merge && !contract_path.exists() {
+        let error = if dry_run {
+            String::from(
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
+            )
+        } else {
+            String::from(
+                "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
+            )
+        };
+        let next = if dry_run {
+            format!("ota detect --dry-run {}", root.display())
+        } else {
+            format!("ota detect {}", root.display())
+        };
         return finalize_debug(
-            CommandOutput::failure(if dry_run {
-                String::from(
-                    "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
-                )
-            } else {
-                String::from(
-                    "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
-                )
-            }),
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: Some(&next),
+                })),
+            },
             debug,
             debug_lines,
         );
@@ -532,6 +550,7 @@ pub fn detect(
                         path: &path_display,
                         written: false,
                         error: &error,
+                        next: None,
                     })),
                 }
             }
@@ -771,6 +790,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     if contract_path.exists() {
+        let next = format!("ota detect --merge --dry-run {}", report.root.display());
         let error = format!(
             "`{}` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `ota detect --merge --dry-run {}`",
             contract_path.display(),
@@ -783,6 +803,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 path: &path_display,
                 written: false,
                 error: &error,
+                next: Some(&next),
             })),
         };
     }
@@ -812,6 +833,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     path: &path_display,
                     written: false,
                     error: &stderr,
+                    next: Some("ota detect --dry-run"),
                 })),
             };
         }
@@ -846,6 +868,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             }
         }
@@ -866,6 +889,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             };
         }
@@ -919,6 +943,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             };
         }
@@ -939,6 +964,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             };
         }
@@ -971,6 +997,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             };
         }
@@ -987,6 +1014,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                 path: &path_display,
                 written: false,
                 error: &error,
+                next: None,
             })),
         };
     }
@@ -1021,6 +1049,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: None,
                 })),
             }
         }
@@ -1049,6 +1078,7 @@ fn render_init(
                 path: &path_display,
                 written: false,
                 error: &error,
+                next: None,
             })),
         };
     }
@@ -1081,6 +1111,7 @@ fn render_init(
                     path: &path_display,
                     written: false,
                     error: &error,
+                    next: Some("ota detect --dry-run"),
                 })),
             };
         }
@@ -1129,6 +1160,7 @@ fn render_init(
                         path: &path_display,
                         written: false,
                         error: &error,
+                        next: None,
                     })),
                 }
             }
