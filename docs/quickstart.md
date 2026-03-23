@@ -117,6 +117,7 @@ Examples:
 - [../../examples/basic-node/ota.yaml](../../examples/basic-node/ota.yaml)
 - [../../examples/basic-python/ota.yaml](../../examples/basic-python/ota.yaml)
 - [../../examples/basic-go/ota.yaml](../../examples/basic-go/ota.yaml)
+- [../../examples/basic-rust/ota.yaml](../../examples/basic-rust/ota.yaml)
 - [../../examples/basic-script/ota.yaml](../../examples/basic-script/ota.yaml)
 - [../../examples/basic-services/ota.yaml](../../examples/basic-services/ota.yaml)
 - [../../examples/mixed-node-python/ota.yaml](../../examples/mixed-node-python/ota.yaml)
