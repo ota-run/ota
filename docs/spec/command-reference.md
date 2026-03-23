@@ -139,12 +139,14 @@ List tasks from a validated contract.
 ota tasks [PATH]
 ota tasks --json [PATH]
 ota tasks --member api [PATH]
+ota tasks --member api --member web --json [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
 - when `--member` is set, lists tasks from the merged member contract
+- repeated `--member` values list tasks for those members in the provided order
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
 - includes task metadata when present
@@ -161,6 +163,7 @@ JSON output:
 
 - success: `ok`, `path`, `tasks`
 - `agent` is included when the contract declares agent guidance
+- repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
 - failure: `ok`, `path`, and either `errors` or `error`
 
@@ -197,12 +200,14 @@ Diagnose repo readiness from a validated contract.
 ota doctor [PATH]
 ota doctor --json [PATH]
 ota doctor --member api [PATH]
+ota doctor --member api --member web --json [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
 - when `--member` is set, diagnoses the merged member contract
+- repeated `--member` values diagnose those members in the provided order
 - checks configured env requirements
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
@@ -225,6 +230,7 @@ JSON output:
 - `path`
 - `agent` when the contract declares agent guidance
 - `findings`
+- repeated `--member` values return grouped per-member results in `members`
 
 Warnings can still produce `READY`. Errors produce `NOT READY`.
 

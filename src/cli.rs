@@ -61,9 +61,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Run the command against one monorepo member declared by the root contract.
+        /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
-        member: Option<String>,
+        member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -82,9 +82,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Run the command against one monorepo member declared by the root contract.
+        /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
-        member: Option<String>,
+        member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -220,7 +220,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Tasks { json, member, path } => commands::tasks(
             path.as_deref(),
             file.as_deref(),
-            member.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -234,7 +234,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Doctor { json, member, path } => commands::doctor(
             path.as_deref(),
             file.as_deref(),
-            member.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -584,6 +584,125 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_multiple_monorepo_members_in_order() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  setup:
+    run: printf root
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+tasks:
+  lint:
+    run: printf web
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "tasks",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[1]["member"], "web");
+        assert!(
+            members[0]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["name"] == "test")
+        );
+        assert!(
+            members[1]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["name"] == "lint")
+        );
+        assert!(json["tasks"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn tasks_rejects_duplicate_monorepo_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "tasks",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("`--member api` was provided more than once")
+        );
+    }
+
+    #[test]
     fn run_executes_monorepo_member_task_in_member_directory() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -763,6 +882,107 @@ env:
         assert_eq!(
             json["findings"][0]["summary"],
             "Missing environment variable: OTA_MEMBER_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn doctor_json_reports_multiple_monorepo_members_in_order() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[1]["member"], "web");
+        assert_eq!(members[0]["ok"], false);
+        assert_eq!(members[1]["ok"], true);
+        assert_eq!(
+            members[0]["findings"][0]["summary"],
+            "Missing environment variable: OTA_MEMBER_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn doctor_rejects_duplicate_monorepo_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("`--member api` was provided more than once")
         );
     }
 
