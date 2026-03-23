@@ -62,6 +62,12 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "agent": {
+    "entrypoint": "setup",
+    "safe_tasks": ["setup", "test"],
+    "verify_after_changes": ["test"],
+    "writable_paths": ["src", "docs"]
+  },
   "tasks": [
     {
       "name": "setup",
@@ -80,6 +86,10 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "agent": {
+    "entrypoint": "setup",
+    "verify_after_changes": ["test"]
+  },
   "findings": [
     {
       "severity": "warn",

@@ -456,6 +456,41 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_includes_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+  test:
+    run: cargo test
+agent:
+  entrypoint: setup
+  default_task: test
+  safe_tasks:
+    - test
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["agent"]["entrypoint"], "setup");
+        assert_eq!(json["agent"]["default_task"], "test");
+        assert_eq!(json["agent"]["safe_tasks"][0], "test");
+        assert_eq!(json["agent"]["verify_after_changes"][0], "test");
+        assert_eq!(json["agent"]["writable_paths"][0], "src");
+    }
+
+    #[test]
     fn tasks_json_reports_script_tasks() {
         let fixture = ContractFixture::new(
             r#"
@@ -541,6 +576,35 @@ tasks:
     }
 
     #[test]
+    fn tasks_text_includes_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+  writable_paths:
+    - src
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            output
+                .stdout
+                .contains("AGENT entrypoint=setup safe_tasks=setup writable_paths=src")
+        );
+    }
+
+    #[test]
     fn doctor_json_reports_findings_once() {
         let fixture = ContractFixture::new(
             r#"
@@ -564,6 +628,60 @@ tasks:
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
         assert_eq!(object.len(), 3);
+    }
+
+    #[test]
+    fn doctor_json_includes_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+  test:
+    run: cargo test
+agent:
+  entrypoint: setup
+  verify_after_changes:
+    - test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["agent"]["entrypoint"], "setup");
+        assert_eq!(json["agent"]["verify_after_changes"][0], "test");
+    }
+
+    #[test]
+    fn doctor_text_includes_agent_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo build
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            output
+                .stdout
+                .contains("AGENT entrypoint=setup safe_tasks=setup")
+        );
     }
 
     #[test]

@@ -181,6 +181,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_rust_toolchain_files(&root, &mut builder)?;
     detect_tool_versions(&root, &mut builder)?;
     detect_pyproject(&root, &mut builder)?;
+    detect_pipfile(&root, &mut builder)?;
+    detect_uv_lock(&root, &mut builder)?;
     detect_cargo_toml(&root, &mut builder)?;
     detect_gradle(&root, &mut builder)?;
     detect_pom_xml(&root, &mut builder)?;
@@ -212,6 +214,7 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     }
 
     let mut package_manager_name = None;
+    let mut task_confidence = Confidence::Medium;
 
     if let Some(package_manager) = package.get("packageManager").and_then(JsonValue::as_str) {
         if let Some((name, version)) = package_manager.split_once('@') {
@@ -223,8 +226,17 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
                     Confidence::High,
                 );
                 package_manager_name = Some(name.to_string());
+                task_confidence = Confidence::High;
             }
         }
+    } else if let Some((name, source)) = detect_node_package_manager_marker(root) {
+        builder.set_tool(
+            name.to_string(),
+            "*".to_string(),
+            source.to_string(),
+            Confidence::Medium,
+        );
+        package_manager_name = Some(name.to_string());
     }
 
     if let Some(node) = package
@@ -241,11 +253,6 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     }
 
     if let Some(scripts) = package.get("scripts").and_then(JsonValue::as_object) {
-        let task_confidence = if package_manager_name.is_some() {
-            Confidence::High
-        } else {
-            Confidence::Medium
-        };
         let package_manager = package_manager_name
             .clone()
             .unwrap_or_else(|| "npm".to_string());
@@ -263,6 +270,20 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     }
 
     Ok(())
+}
+
+fn detect_node_package_manager_marker(root: &Path) -> Option<(&'static str, &'static str)> {
+    [
+        ("pnpm", "pnpm-workspace.yaml"),
+        ("pnpm", "pnpm-lock.yaml"),
+        ("yarn", "yarn.lock"),
+        ("bun", "bun.lock"),
+        ("bun", "bun.lockb"),
+        ("npm", "package-lock.json"),
+        ("npm", "npm-shrinkwrap.json"),
+    ]
+    .into_iter()
+    .find(|(_, path)| root.join(path).exists())
 }
 
 fn detect_nvmrc(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -500,6 +521,69 @@ fn detect_pyproject(root: &Path, builder: &mut DetectBuilder) -> Result<(), Dete
             Confidence::Medium,
         );
     }
+
+    Ok(())
+}
+
+fn detect_pipfile(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("Pipfile");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    if let Some(python) = document
+        .get("requires")
+        .and_then(|requires| requires.get("python_full_version"))
+        .and_then(TomlValue::as_str)
+    {
+        builder.set_runtime(
+            "python".to_string(),
+            python.to_string(),
+            "Pipfile#requires.python_full_version".to_string(),
+            Confidence::Medium,
+        );
+    } else if let Some(python) = document
+        .get("requires")
+        .and_then(|requires| requires.get("python_version"))
+        .and_then(TomlValue::as_str)
+    {
+        builder.set_runtime(
+            "python".to_string(),
+            python.to_string(),
+            "Pipfile#requires.python_version".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_tool(
+        "pipenv".to_string(),
+        "*".to_string(),
+        "Pipfile".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_uv_lock(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("uv.lock");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let _ = read_file(&path)?;
+    builder.set_tool(
+        "uv".to_string(),
+        "*".to_string(),
+        "uv.lock".to_string(),
+        Confidence::Medium,
+    );
 
     Ok(())
 }
@@ -1229,6 +1313,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".tool-versions" => 3,
             "pyproject.toml#project.requires-python" => 2,
             "pyproject.toml#tool.poetry.dependencies.python" => 1,
+            "Pipfile#requires.python_full_version" => 1,
+            "Pipfile#requires.python_version" => 1,
             _ => 0,
         },
         "runtimes.go" => match source {
@@ -1259,6 +1345,14 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
+            "pnpm-workspace.yaml" => 2,
+            "pnpm-lock.yaml" => 2,
+            "yarn.lock" => 2,
+            "bun.lock" => 2,
+            "bun.lockb" => 2,
+            "package-lock.json" => 2,
+            "npm-shrinkwrap.json" => 2,
+            "uv.lock" => 2,
             "Cargo.toml" => 2,
             "pom.xml" => 1,
             ".tool-versions" => 1,

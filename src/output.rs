@@ -24,8 +24,12 @@ use serde::Serialize;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
-use crate::schema::{TaskSpec, TaskVariantView};
+use crate::schema::{AgentConfig, TaskSpec, TaskVariantView};
 use crate::workspace::WorkspaceRepoDoctorReport;
+
+fn slice_is_empty<T>(value: &[T]) -> bool {
+    value.is_empty()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -44,6 +48,8 @@ pub struct CommandOutput {
 pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentSummary<'a>>,
     pub findings: &'a [Finding],
 }
 
@@ -197,6 +203,8 @@ pub struct ValidateFailure<'a> {
 pub struct TasksSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentSummary<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
 }
 
@@ -208,6 +216,43 @@ pub struct TasksFailure<'a> {
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub safe_tasks: &'a [String],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub verify_after_changes: &'a [String],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub writable_paths: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<&'a str>,
+}
+
+impl<'a> AgentSummary<'a> {
+    pub fn from_config(agent: &'a AgentConfig) -> Option<Self> {
+        let summary = Self {
+            entrypoint: agent.entrypoint.as_deref(),
+            default_task: agent.default_task.as_deref(),
+            safe_tasks: &agent.safe_tasks,
+            verify_after_changes: &agent.verify_after_changes,
+            writable_paths: &agent.writable_paths,
+            notes: agent.notes.as_deref(),
+        };
+
+        (summary.entrypoint.is_some()
+            || summary.default_task.is_some()
+            || !summary.safe_tasks.is_empty()
+            || !summary.verify_after_changes.is_empty()
+            || !summary.writable_paths.is_empty()
+            || summary.notes.is_some())
+        .then_some(summary)
+    }
 }
 
 #[derive(Debug, Serialize)]
