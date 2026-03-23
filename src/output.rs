@@ -229,6 +229,16 @@ pub struct TasksSuccess<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberTasksSuccess<'a>>,
+    pub tasks: Vec<TaskSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemberTasksSuccess<'a> {
+    pub member: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentSummary<'a>>,
     pub tasks: Vec<TaskSummary<'a>>,
 }
 

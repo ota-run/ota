@@ -48,6 +48,10 @@ V3 theme:
 - first-class container backend abstraction
 - first-class remote backend abstraction
 - backend capability negotiation
+- explicit lifecycle semantics for isolated execution
+- command-time backend and lifecycle overrides
+- cleanup / teardown support for isolated execution
+- runtime distribution support where version alone is not sufficient, especially Java
 
 ### Output
 
@@ -66,6 +70,29 @@ V3 theme:
 2. Make container execution a real first-class path
 3. Enable remote execution for coding agents and cloud runners
 4. Lock in machine-readable output as a stable API surface
+
+## Current progress
+
+Implemented so far:
+
+- root/member monorepo declaration in `ota.yaml`
+- member override inheritance
+- explicit `--member` targeting for repo commands
+- automatic member discovery from inside member directories
+- root validation that proves declared members exist and validate as merged contracts
+- selective multi-member execution for `ota run`
+- selective multi-member inspection for `ota tasks`
+
+Still to do in V3:
+
+- member-aware `doctor` and broader root-level inspection
+- first honest root task graph summary
+- real container backend execution
+- explicit `execution.lifecycle` enforcement for isolated backends
+- command-time `--lifecycle` and backend override support
+- cleanup / teardown semantics
+- remote backend execution
+- runtime distribution support such as `runtimes.java.distribution`
 
 ## Workspace model direction
 
