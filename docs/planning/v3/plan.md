@@ -94,11 +94,12 @@ Implemented so far:
 - command-time `ota run --backend` / `--lifecycle` and `ota up --backend` / `--lifecycle` overrides
 - repo-level `ota clean` for persistent container teardown
 - runtime distribution support such as `runtimes.java.distribution`
-- first real remote-backed `ota run` for `provider: daytona` with explicit `target`
+- real remote-backed `ota run` for `provider: daytona` and `provider: ssh` with explicit `target`
+- remote-backed `ota up` setup execution through the same backend path
 
 Still to do in V3:
 
-- broader remote backend support beyond the first `daytona` path
+- broader remote backend support beyond the current `daytona` and `ssh` paths
 
 ## Workspace model direction
 
@@ -126,7 +127,7 @@ execution:
     container:
       image: ghcr.io/myorg/dev:latest
     remote:
-      provider: daytona
+      provider: ssh
       target: sandbox-dev
       cwd: /workspace
 ```

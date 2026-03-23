@@ -148,7 +148,7 @@ execution:
     container:
       image: ghcr.io/ota/dev:latest
     remote:
-      provider: daytona
+      provider: ssh
       target: sandbox-dev
       cwd: /workspace
 ```
@@ -176,9 +176,11 @@ Current implementation:
 - `ota run` now supports `execution.preferred: container` when `execution.backends.container.image` is configured
 - the first container path uses the local `docker` CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
 - `ota up` now runs the `setup` task through the same configured execution backend when one exists
-- `ota run` now supports a first remote path when `execution.backends.remote.provider: daytona` and `execution.backends.remote.target` are configured
-- the current remote path shells out to the local `daytona` CLI with `daytona exec <target>` and optional `execution.backends.remote.cwd`
-- remote provisioning, remote workspace selection, and remote `ota up` are still out of scope today
+- `ota run` now supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
+- current shipped remote providers are `daytona` and `ssh`
+- the current remote path shells out to the local provider CLI with optional `execution.backends.remote.cwd`
+- `ota up` runs its `setup` task through the same remote backend path when remote execution is preferred or explicitly overridden
+- remote provisioning and remote workspace selection are still out of scope today
 
 Current lifecycle meaning:
 

@@ -516,6 +516,7 @@ fn execute_remote_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let mut remote_command = match provider {
         "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
+        "ssh" => ssh_remote_command(target, cwd, command, env_overrides),
         other => {
             return Err(RunError::UnsupportedRemoteProvider {
                 task: task_name.to_string(),
@@ -588,6 +589,21 @@ fn daytona_remote_command(
     remote
 }
 
+fn ssh_remote_command(
+    target: &str,
+    cwd: Option<&str>,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Command {
+    let mut remote = Command::new("ssh");
+    remote
+        .arg(target)
+        .arg("sh")
+        .arg("-lc")
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+    remote
+}
+
 fn shell_script_with_env(command: &str, env_overrides: &BTreeMap<String, String>) -> String {
     if env_overrides.is_empty() {
         return command.to_string();
@@ -603,6 +619,18 @@ fn shell_script_with_env(command: &str, env_overrides: &BTreeMap<String, String>
     }
     script.push_str(command);
     script
+}
+
+fn shell_script_with_env_and_cwd(
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+    cwd: Option<&str>,
+) -> String {
+    let command = shell_script_with_env(command, env_overrides);
+    match cwd {
+        Some(cwd) => format!("cd {} && {}", shell_quote(cwd), command),
+        None => command,
+    }
 }
 
 fn shell_quote(value: &str) -> String {
@@ -1420,6 +1448,90 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn runs_tasks_in_ssh_remote_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let log_path = dir.path().join("ssh-log.txt");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&ssh_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let outcome = run_task(&contract, &file_path, "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn cleans_persistent_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -1614,6 +1726,23 @@ case "$command" in
 esac
 
 exit 1
+"#,
+        )
+        .unwrap();
+    }
+
+    fn install_fake_ssh(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
+exec sh -lc "$1"
 "#,
         )
         .unwrap();
