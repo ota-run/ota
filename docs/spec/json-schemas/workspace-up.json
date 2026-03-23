@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/workspace-up.json",
+  "title": "ota workspace up --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "repos"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "contract_path",
+          "required",
+          "ok",
+          "status",
+          "phase",
+          "findings"
+        ],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "ok": { "type": "boolean" },
+          "status": { "type": "string" },
+          "phase": { "type": "string" },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "./shared.json#/$defs/finding" }
+          },
+          "service": { "type": "string" },
+          "task": { "type": "string" },
+          "exit_code": { "type": "integer" },
+          "stdout": { "type": "string" },
+          "stderr": { "type": "string" }
+        }
+      }
+    }
+  }
+}
