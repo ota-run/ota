@@ -57,6 +57,10 @@ The core architecture is:
 - CLI = deterministic engine and UX layer
 - JSON output = machine-readable integration surface
 
+The CLI command surface is implemented in `src/cli/commands.rs`. All agent and human interactions with the repo should use the CLI as defined there. For canonical contract and workspace contract examples, see the `examples/` directory.
+
+Workspace and monorepo support is first-class: use `ota.workspace.yaml` and the `ota workspace ...` commands for multi-repo orchestration, validation, and bootstrap. See the [README.md](README.md) and `examples/` for usage patterns.
+
 Agents must preserve this separation.
 
 ---
@@ -311,6 +315,8 @@ Recommended logical boundaries:
 - `export` → interop outputs and generated artifacts
 - `output` → human-readable and JSON output formatting
 - `cli` → command definitions and orchestration only
+
+The CLI is implemented in Rust 2024 edition (see `Cargo.toml`). Use stable, explicit crates as listed there. All new Rust code should match the edition and crate posture.
 
 ### Layer rules
 
@@ -591,6 +597,10 @@ Suggested core docs for Ota:
 - workspace bootstrap spec
 - init spec
 - v1 product/spec docs
+
+For canonical contract and workspace contract examples, see the `examples/` directory. For CLI usage and command reference, see `src/cli/commands.rs` and the [README.md](README.md).
+
+Backend abstractions (container, remote, lifecycle negotiation) are part of the V3 roadmap (see `docs/planning/v3/plan.md`) and are not required for current agent implementation unless otherwise specified.
 
 Keep these updated as Ota evolves.
 
