@@ -18,6 +18,27 @@
     },
     "service": { "type": "string" },
     "task": { "type": "string" },
-    "exit_code": { "type": "integer" }
+    "exit_code": { "type": "integer" },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member", "ok", "status", "phase", "findings"],
+        "properties": {
+          "member": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "status": { "type": "string" },
+          "phase": { "type": "string" },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "./shared.json#/$defs/finding" }
+          },
+          "service": { "type": "string" },
+          "task": { "type": "string" },
+          "exit_code": { "type": "integer" }
+        }
+      }
+    }
   }
 }

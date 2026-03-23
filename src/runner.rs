@@ -58,8 +58,14 @@ pub enum RunError {
     MissingContainerImage { task: String },
     #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]
     MissingContainerLifecycle { task: String },
+    #[error("task `{task}` requires `execution.backends.remote.provider` for remote execution")]
+    MissingRemoteProvider { task: String },
+    #[error("task `{task}` requires `execution.backends.remote.target` for remote execution")]
+    MissingRemoteTarget { task: String },
     #[error("task `{task}` cannot use unsupported backend `{backend}` yet")]
     UnsupportedBackend { task: String, backend: &'static str },
+    #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
+    UnsupportedRemoteProvider { task: String, provider: String },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -198,13 +204,55 @@ pub fn run_task_captured(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<CapturedRunOutcome, RunError> {
-    run_task_internal(
+    run_task_captured_with_overrides(
         contract,
         contract_path,
         task_name,
         ExecutionOverrides::default(),
+    )
+}
+
+pub fn run_task_captured_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<CapturedRunOutcome, RunError> {
+    run_task_internal(
+        contract,
+        contract_path,
+        task_name,
+        overrides,
         TaskExecutionMode::Capture,
     )
+}
+
+pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
+    let (backend, lifecycle) = effective_execution(contract, ExecutionOverrides::default());
+    match (backend, lifecycle) {
+        (Backend::Container, Some(Lifecycle::Persistent)) => {
+            let image = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+                .map(|container| container.image.clone())
+                .ok_or(RunError::MissingContainerImage {
+                    task: String::from("clean"),
+                })?;
+            let working_dir = contract_working_dir(contract_path);
+            let container_name = persistent_container_name(working_dir, &image);
+            let inspect_exit_code =
+                docker_command_exit_code(&["inspect", &container_name], None, "clean")?;
+            if inspect_exit_code != 0 {
+                return Ok(false);
+            }
+            let remove_exit_code =
+                docker_command_exit_code(&["rm", "-f", &container_name], None, "clean")?;
+            Ok(remove_exit_code == 0)
+        }
+        _ => Ok(false),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -223,7 +271,15 @@ struct TaskCommandOutput {
 #[derive(Debug, Clone)]
 enum ResolvedExecutionBackend {
     Native,
-    Container { image: String, lifecycle: Lifecycle },
+    Container {
+        image: String,
+        lifecycle: Lifecycle,
+    },
+    Remote {
+        provider: String,
+        target: String,
+        cwd: Option<String>,
+    },
 }
 
 fn run_task_internal(
@@ -358,6 +414,19 @@ fn execute_task_command(
             *lifecycle,
             mode,
         ),
+        ResolvedExecutionBackend::Remote {
+            provider,
+            target,
+            cwd,
+        } => execute_remote_task_command(
+            task_name,
+            command,
+            env_overrides,
+            provider,
+            target,
+            cwd.as_deref(),
+            mode,
+        ),
     }
 }
 
@@ -406,11 +475,138 @@ fn resolve_execution_backend(
                         task: task_name.to_string(),
                     })
             }),
-        Backend::Remote => Err(RunError::UnsupportedBackend {
-            task: task_name.to_string(),
-            backend: "remote",
-        }),
+        Backend::Remote => contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.backends.as_ref())
+            .and_then(|backends| backends.remote.as_ref())
+            .ok_or_else(|| RunError::MissingRemoteProvider {
+                task: task_name.to_string(),
+            })
+            .and_then(|remote| {
+                if remote.provider.trim().is_empty() {
+                    return Err(RunError::MissingRemoteProvider {
+                        task: task_name.to_string(),
+                    });
+                }
+                let target = remote
+                    .target
+                    .clone()
+                    .filter(|target| !target.trim().is_empty())
+                    .ok_or_else(|| RunError::MissingRemoteTarget {
+                        task: task_name.to_string(),
+                    })?;
+                Ok(ResolvedExecutionBackend::Remote {
+                    provider: remote.provider.clone(),
+                    target,
+                    cwd: remote.cwd.clone(),
+                })
+            }),
     }
+}
+
+fn execute_remote_task_command(
+    task_name: &str,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+    provider: &str,
+    target: &str,
+    cwd: Option<&str>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let mut remote_command = match provider {
+        "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
+        other => {
+            return Err(RunError::UnsupportedRemoteProvider {
+                task: task_name.to_string(),
+                provider: other.to_string(),
+            });
+        }
+    };
+
+    match mode {
+        TaskExecutionMode::Stream { emit_progress } => {
+            if emit_progress {
+                eprintln!("RUN {task_name}");
+            }
+
+            let exit_code = remote_command
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?
+                .code()
+                .unwrap_or(1);
+
+            Ok(TaskCommandOutput {
+                exit_code,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        TaskExecutionMode::Capture => {
+            let output = remote_command
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+    }
+}
+
+fn daytona_remote_command(
+    target: &str,
+    cwd: Option<&str>,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Command {
+    let mut remote = Command::new("daytona");
+    remote.arg("exec").arg(target);
+    if let Some(cwd) = cwd {
+        remote.arg("--cwd").arg(cwd);
+    }
+    remote
+        .arg("--")
+        .arg("sh")
+        .arg("-lc")
+        .arg(shell_script_with_env(command, env_overrides));
+    remote
+}
+
+fn shell_script_with_env(command: &str, env_overrides: &BTreeMap<String, String>) -> String {
+    if env_overrides.is_empty() {
+        return command.to_string();
+    }
+
+    let mut script = String::new();
+    for (name, value) in env_overrides {
+        script.push_str("export ");
+        script.push_str(name);
+        script.push('=');
+        script.push_str(&shell_quote(value));
+        script.push_str("; ");
+    }
+    script.push_str(command);
+    script
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 fn execute_container_task_command(
@@ -688,8 +884,9 @@ mod tests {
     use crate::parser::parse_contract_str;
 
     use super::{
-        CapturedRunOutcome, ExecutionOverrides, RunError, plan_task_execution, resolve_task_env,
-        run_task, run_task_captured, run_task_with_overrides, run_task_with_progress,
+        CapturedRunOutcome, ExecutionOverrides, RunError, clean_execution, plan_task_execution,
+        resolve_task_env, run_task, run_task_captured, run_task_with_overrides,
+        run_task_with_progress,
     };
 
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -1149,6 +1346,139 @@ tasks:
     }
 
     #[cfg(unix)]
+    #[test]
+    fn runs_tasks_in_daytona_remote_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: daytona
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let daytona_path = bin_dir.join("daytona");
+        install_fake_daytona(&daytona_path);
+        let mut permissions = fs::metadata(&daytona_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&daytona_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&contract, &file_path, "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(dir.path().join("daytona-log.txt"))
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_persistent_container_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("rm\n")
+        );
+    }
+
+    #[cfg(unix)]
     fn install_fake_docker(path: &Path) {
         fs::write(
             path,
@@ -1238,6 +1568,47 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
+    exec sh -lc "$3"
+    ;;
+  rm)
+    shift
+    [ "$1" = "-f" ] && shift
+    name="$1"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    host_dir=$(cat "$state_dir/$name.path")
+    rm -f "$state_dir/$name.path"
+    printf "rm\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
+esac
+
+exit 1
+"#,
+        )
+        .unwrap();
+    }
+
+    fn install_fake_daytona(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+command="$1"
+shift
+
+case "$command" in
+  exec)
+    target="$1"
+    shift
+    cwd=""
+    if [ "$1" = "--cwd" ]; then
+      cwd="$2"
+      shift 2
+    fi
+    [ "$1" = "--" ] || exit 1
+    shift
+    [ -n "$cwd" ] || exit 1
+    printf "exec %s\n" "$target" >> "$cwd/daytona-log.txt"
+    cd "$cwd" || exit 1
     exec sh -lc "$3"
     ;;
 esac

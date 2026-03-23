@@ -36,8 +36,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
+    let member_properties = &success["members"]["items"]["properties"];
 
     assert!(success.get("agent").is_some());
+    assert!(success.get("members").is_some());
+    assert!(member_properties.get("member").is_some());
+    assert!(member_properties.get("tasks").is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("variants").is_some());
 }
@@ -46,9 +50,13 @@ fn tasks_schema_includes_agent_and_variant_fields() {
 fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
     let properties = &schema["properties"];
+    let member_properties = &properties["members"]["items"]["properties"];
 
     assert!(properties.get("agent").is_some());
     assert!(properties.get("findings").is_some());
+    assert!(properties.get("members").is_some());
+    assert!(member_properties.get("member").is_some());
+    assert!(member_properties.get("findings").is_some());
 }
 
 #[test]
@@ -91,4 +99,27 @@ fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     assert!(repo.get("exit_code").is_some());
     assert!(repo.get("stdout").is_some());
     assert!(repo.get("stderr").is_some());
+}
+
+#[test]
+fn check_schema_includes_member_grouping() {
+    let schema = load_schema("docs/spec/json-schemas/check.json");
+    let properties = &schema["properties"];
+    let member_properties = &properties["members"]["items"]["properties"];
+
+    assert!(properties.get("members").is_some());
+    assert!(member_properties.get("member").is_some());
+    assert!(member_properties.get("findings").is_some());
+}
+
+#[test]
+fn up_schema_includes_member_grouping() {
+    let schema = load_schema("docs/spec/json-schemas/up.json");
+    let properties = &schema["properties"];
+    let member_properties = &properties["members"]["items"]["properties"];
+
+    assert!(properties.get("members").is_some());
+    assert!(member_properties.get("member").is_some());
+    assert!(member_properties.get("status").is_some());
+    assert!(member_properties.get("phase").is_some());
 }

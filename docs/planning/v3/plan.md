@@ -91,13 +91,14 @@ Implemented so far:
 - root-level `ota up` summary for monorepo roots
 - first real container-backed `ota run`
 - `execution.lifecycle` enforcement for container-backed `ota run`
-- command-time `ota run --backend` and `--lifecycle` overrides
+- command-time `ota run --backend` / `--lifecycle` and `ota up --backend` / `--lifecycle` overrides
+- repo-level `ota clean` for persistent container teardown
+- runtime distribution support such as `runtimes.java.distribution`
+- first real remote-backed `ota run` for `provider: daytona` with explicit `target`
 
 Still to do in V3:
 
-- cleanup / teardown semantics
-- remote backend execution
-- runtime distribution support such as `runtimes.java.distribution`
+- broader remote backend support beyond the first `daytona` path
 
 ## Workspace model direction
 
@@ -126,6 +127,8 @@ execution:
       image: ghcr.io/myorg/dev:latest
     remote:
       provider: daytona
+      target: sandbox-dev
+      cwd: /workspace
 ```
 
 ## Success criteria

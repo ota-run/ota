@@ -179,6 +179,7 @@ ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
 ota run <task> --backend native [PATH]
 ota run <task> --backend container --lifecycle ephemeral [PATH]
+ota run <task> --backend remote [PATH]
 ```
 
 Current behavior:
@@ -192,6 +193,8 @@ Current behavior:
 - executes either `run` or `script`
 - when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the local `docker` CLI
 - when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
+- supports a first remote backend path for `execution.backends.remote.provider: daytona` when `execution.backends.remote.target` is configured
+- passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values
 - prints task progress and advisory notes on stderr
@@ -221,7 +224,7 @@ Current behavior:
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
-- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run`, not `ota up`
+- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run` and the `setup` phase of `ota up`, not the full repo lifecycle
 - runs configured checks
 - orders findings by severity
 - includes an `agent` summary when the contract declares one
@@ -329,6 +332,7 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
+ota up --backend container --lifecycle ephemeral [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ```
@@ -345,9 +349,11 @@ Current behavior:
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
-- runs the `setup` task if one exists
+- runs the `setup` task if one exists, using the configured execution backend when present
+- can override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
+- prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
 - re-runs readiness diagnosis
-- remains shell-native even when `execution.lifecycle: ephemeral` is declared
+- still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
 - includes setup exit code details when the `setup` task fails
@@ -366,6 +372,23 @@ JSON output:
 - `task` when a task failure occurs
 - `exit_code` when a child command failure occurs
 - monorepo root and repeated `--member` summaries include grouped per-member results in `members`
+
+## `ota clean`
+
+Clean persistent execution state for a repo.
+
+```bash
+ota clean [PATH]
+ota clean --member api [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, targets the merged member contract
+- when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
+- reports `NO CLEANUP NEEDED` when there is no persistent container state to remove
+- does not stop services or perform workspace-wide cleanup
 
 ## `ota detect`
 

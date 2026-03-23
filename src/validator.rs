@@ -22,7 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::schema::{AgentConfig, Contract, ServiceSpec, TaskSpec};
+use crate::schema::{AgentConfig, Contract, RuntimeRequirement, ServiceSpec, TaskSpec};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -76,6 +76,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
         value.version()
     });
+    validate_runtime_details(&contract.runtimes, &mut errors);
     validate_named_versions("tool", &contract.tools, &mut errors, |value| {
         value.version()
     });
@@ -172,6 +173,34 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         ));
     }
 
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote
+            .target
+            .as_deref()
+            .is_some_and(|target| target.trim().is_empty())
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.target` must not be empty",
+        ));
+    }
+
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| cwd.trim().is_empty())
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.cwd` must not be empty",
+        ));
+    }
+
     if execution.preferred == Some(crate::schema::Backend::Container)
         && execution
             .backends
@@ -203,6 +232,19 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             "`execution.preferred: remote` requires `execution.backends.remote.provider`",
         ));
     }
+
+    if execution.preferred == Some(crate::schema::Backend::Remote)
+        && execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            .and_then(|remote| remote.target.as_deref())
+            .is_none()
+    {
+        errors.push(ValidationError::new(
+            "`execution.preferred: remote` requires `execution.backends.remote.target`",
+        ));
+    }
 }
 
 fn validate_named_versions<T>(
@@ -221,6 +263,37 @@ fn validate_named_versions<T>(
         if version(value).trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "{label} `{name}` must declare a non-empty version"
+            )));
+        }
+    }
+}
+
+fn validate_runtime_details(
+    runtimes: &BTreeMap<String, RuntimeRequirement>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (name, runtime) in runtimes {
+        let RuntimeRequirement::Detailed(detail) = runtime else {
+            continue;
+        };
+
+        if detail
+            .provider
+            .as_deref()
+            .is_some_and(|provider| provider.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "runtime `{name}` must not declare an empty `provider`"
+            )));
+        }
+
+        if detail
+            .distribution
+            .as_deref()
+            .is_some_and(|distribution| distribution.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "runtime `{name}` must not declare an empty `distribution`"
             )));
         }
     }
@@ -614,6 +687,108 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_runtime_distribution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java:
+    version: "21"
+    distribution: temurin
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_empty_runtime_distribution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java:
+    version: "21"
+    distribution: "   "
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "runtime `java` must not declare an empty `distribution`"
+        );
+    }
+
+    #[test]
+    fn validates_remote_backend_target_and_cwd() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: daytona
+      target: sandbox-dev
+      cwd: /workspace
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_remote_backend_without_target_when_preferred() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: daytona
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: remote` requires `execution.backends.remote.target`"
+        );
     }
 
     #[test]

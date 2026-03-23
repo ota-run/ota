@@ -143,9 +143,14 @@ execution:
   supported:
     - native
     - container
+    - remote
   backends:
     container:
       image: ghcr.io/ota/dev:latest
+    remote:
+      provider: daytona
+      target: sandbox-dev
+      cwd: /workspace
 ```
 
 Supported backend values:
@@ -164,26 +169,32 @@ Current validation rule:
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 - `execution.preferred: container` requires `execution.backends.container.image`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
+- `execution.preferred: remote` requires `execution.backends.remote.target`
 
 Current implementation:
 
 - `ota run` now supports `execution.preferred: container` when `execution.backends.container.image` is configured
 - the first container path uses the local `docker` CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
-- `remote` is still declared-only and is not yet a real execution path
-- `ota up` remains shell-native today
+- `ota up` now runs the `setup` task through the same configured execution backend when one exists
+- `ota run` now supports a first remote path when `execution.backends.remote.provider: daytona` and `execution.backends.remote.target` are configured
+- the current remote path shells out to the local `daytona` CLI with `daytona exec <target>` and optional `execution.backends.remote.cwd`
+- remote provisioning, remote workspace selection, and remote `ota up` are still out of scope today
 
 Current lifecycle meaning:
 
-- `persistent`: when `execution.preferred: container` is configured, `ota run` reuses a persistent named container for the effective contract directory
-- `ephemeral`: when `execution.preferred: container` is configured, `ota run` uses a fresh `docker run --rm` container for each invocation
-- outside the container-backed `ota run` path, lifecycle remains advisory today
+- `persistent`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` reuse a persistent named container for the effective contract directory
+- `ephemeral`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` use a fresh `docker run --rm` container for each invocation
+- outside backend-backed task execution, such as service commands, healthchecks, and diagnosis, lifecycle remains advisory today
 
 Current command behavior:
 
-- `ota doctor` warns when `ephemeral` is declared, and clarifies that container-backed isolation currently applies to `ota run` but not `ota up`
+- `ota doctor` warns when `ephemeral` is declared, and clarifies that container-backed isolation currently applies to `ota run` and the `setup` task inside `ota up`, but not the full repo lifecycle
 - `ota run` prints a lifecycle note on stderr and can execute via the configured container backend
 - `ota run` can also override backend and lifecycle for one invocation with `--backend` and `--lifecycle`
-- `ota up` remains shell-native and does not provide isolation
+- `ota up` can also override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
+- `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
+- `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`
+- `ota up` still runs service start commands, service healthchecks, and diagnosis on the host today
 
 ## `services`
 
@@ -251,6 +262,9 @@ Detailed form:
 
 ```yaml
 runtimes:
+  java:
+    version: "21"
+    distribution: temurin
   node:
     version: "22"
     provider: volta
@@ -260,6 +274,14 @@ Rules:
 
 - runtime names must not be empty
 - versions must not be empty
+- `provider`, when set, must not be empty
+- `distribution`, when set, must not be empty
+
+Runtime detail fields:
+
+- `provider`: optional runtime manager or provisioning source hint such as `volta`
+- `distribution`: optional runtime flavor where version alone is not sufficient, especially Java
+  distributions such as `temurin`, `corretto`, `graalvm`, `oracle`, or `zulu`
 
 ## `tools`
 
