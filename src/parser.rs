@@ -21,7 +21,9 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use serde_yaml::{Mapping, Value};
 
 use crate::schema::Contract;
 
@@ -39,15 +41,67 @@ pub enum LoadContractError {
         #[source]
         source: serde_yaml::Error,
     },
+    #[error(
+        "contract `{path}` does not declare `workspace.type: monorepo`; `--member {member}` requires a monorepo root contract"
+    )]
+    MemberModeUnsupported { path: String, member: String },
+    #[error("contract `{path}` does not declare monorepo member `{member}`")]
+    UnknownMember { path: String, member: String },
+    #[error("member contract `{path}` must not declare a top-level `workspace` block")]
+    MemberDeclaresWorkspace { path: String },
 }
 
 pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
-    let contents = fs::read_to_string(path).map_err(|source| LoadContractError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
-
+    let contents = read_contract_contents(path)?;
     parse_contract_str(path, &contents)
+}
+
+pub fn load_contract_for_member(
+    path: &Path,
+    member: &str,
+) -> Result<(Contract, PathBuf), LoadContractError> {
+    let root_contents = read_contract_contents(path)?;
+    let mut root_value = parse_contract_value(path, &root_contents)?;
+    let root_contract = parse_contract_str(path, &root_contents)?;
+    let root_display = path.display().to_string();
+
+    let Some(workspace) = root_contract.workspace.as_ref() else {
+        return Err(LoadContractError::MemberModeUnsupported {
+            path: root_display,
+            member: member.to_string(),
+        });
+    };
+
+    if !workspace.members.iter().any(|entry| entry == member) {
+        return Err(LoadContractError::UnknownMember {
+            path: path.display().to_string(),
+            member: member.to_string(),
+        });
+    }
+
+    let member_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(member)
+        .join("ota.yaml");
+    let member_contents = read_contract_contents(&member_path)?;
+    let member_value = parse_contract_value(&member_path, &member_contents)?;
+
+    if member_declares_workspace(&member_value) {
+        return Err(LoadContractError::MemberDeclaresWorkspace {
+            path: member_path.display().to_string(),
+        });
+    }
+
+    merge_yaml_value(&mut root_value, member_value);
+
+    let contract =
+        serde_yaml::from_value(root_value).map_err(|source| LoadContractError::Parse {
+            path: member_path.display().to_string(),
+            source,
+        })?;
+
+    Ok((contract, member_path))
 }
 
 pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadContractError> {
@@ -57,10 +111,57 @@ pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadC
     })
 }
 
+fn read_contract_contents(path: &Path) -> Result<String, LoadContractError> {
+    fs::read_to_string(path).map_err(|source| LoadContractError::Read {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContractError> {
+    serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
+        path: path.display().to_string(),
+        source,
+    })
+}
+
+fn member_declares_workspace(value: &Value) -> bool {
+    value
+        .as_mapping()
+        .and_then(|mapping| mapping.get(Value::String(String::from("workspace"))))
+        .is_some()
+}
+
+fn merge_yaml_value(root: &mut Value, override_value: Value) {
+    match (root, override_value) {
+        (Value::Mapping(root_map), Value::Mapping(override_map)) => {
+            merge_yaml_mapping(root_map, override_map);
+        }
+        (root_value, override_value) => {
+            *root_value = override_value;
+        }
+    }
+}
+
+fn merge_yaml_mapping(root: &mut Mapping, override_map: Mapping) {
+    for (key, override_value) in override_map {
+        match root.get_mut(&key) {
+            Some(root_value) => merge_yaml_value(root_value, override_value),
+            None => {
+                root.insert(key, override_value);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
 
+    use tempfile::TempDir;
+
+    use super::load_contract_for_member;
     use super::parse_contract_str;
 
     #[test]
@@ -78,5 +179,82 @@ unexpected: true
 
         assert!(error.to_string().contains("failed to parse contract"));
         assert!(error.to_string().contains("unexpected"));
+    }
+
+    #[test]
+    fn loads_monorepo_member_contract_by_merging_root_and_member() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf root
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        )
+        .unwrap();
+
+        let (contract, member_path) =
+            load_contract_for_member(&fixture.path().join("ota.yaml"), "api").unwrap();
+
+        assert_eq!(member_path, fixture.path().join("api").join("ota.yaml"));
+        assert_eq!(contract.project.name, "api");
+        assert!(contract.tasks.contains_key("setup"));
+        assert!(contract.tasks.contains_key("test"));
+    }
+
+    #[test]
+    fn rejects_workspace_block_inside_member_contract() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        )
+        .unwrap();
+
+        let error = load_contract_for_member(&fixture.path().join("ota.yaml"), "api").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("must not declare a top-level `workspace`")
+        );
     }
 }

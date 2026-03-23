@@ -102,6 +102,34 @@ Use `project` for stable repo identity only. Churn-heavy descriptive fields such
 `created_at`, or publishing metadata should live under `metadata` unless Ota grows a dedicated
 package or distribution contract later.
 
+## `workspace`
+
+Optional.
+
+Current V3 support is repo-level monorepo declaration:
+
+```yaml
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+```
+
+Fields:
+
+- `type`: currently only `monorepo`
+- `members`: required, non-empty list of member paths relative to the root contract directory
+
+Current behavior:
+
+- the root contract remains a normal `ota.yaml`
+- member contracts live at `<member>/ota.yaml`
+- member contracts inherit the root contract and override only what they declare
+- member contracts must not declare a top-level `workspace` block
+- repo commands can target a member with `--member <name>`
+- current member targeting expects the named member to be declared in `workspace.members`
+
 ## `execution`
 
 Optional.

@@ -138,6 +138,7 @@ The current shipped foundation includes:
 - detection with dry-run, conservative first write, and conservative additive merge
 - separate workspace contract validation, diagnosis, and bootstrap
 - generic git-based workspace acquisition for missing repos
+- monorepo root/member loading for repo commands via `--member`
 - fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, mixed Node/Python, legacy Python, and ugly/polyglot mixed-reality repo shapes
 
 Current planning state:
@@ -145,8 +146,8 @@ Current planning state:
 - V1 archive: [docs/planning/v1/phases.md](docs/planning/v1/phases.md)
 - V1 release gate: [docs/planning/v1/release-gate.md](docs/planning/v1/release-gate.md)
 - V2 archive: [docs/planning/v2/plan.md](docs/planning/v2/plan.md)
-- Active version: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
-- Next version (planned, inactive): [docs/planning/v3/plan.md](docs/planning/v3/plan.md)
+- V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
+- Active version: [docs/planning/v3/plan.md](docs/planning/v3/plan.md)
 
 ## Quickstart
 

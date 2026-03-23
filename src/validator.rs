@@ -71,6 +71,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
 
     validate_version(contract, &mut errors);
     validate_project(contract, &mut errors);
+    validate_repo_workspace(contract, &mut errors);
     validate_execution(contract, &mut errors);
     validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
         value.version()
@@ -102,6 +103,35 @@ fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
 fn validate_project(contract: &Contract, errors: &mut Vec<ValidationError>) {
     if contract.project.name.trim().is_empty() {
         errors.push(ValidationError::new("`project.name` must not be empty"));
+    }
+}
+
+fn validate_repo_workspace(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(workspace) = &contract.workspace else {
+        return;
+    };
+
+    if workspace.members.is_empty() {
+        errors.push(ValidationError::new(
+            "`workspace.members` must contain at least one member",
+        ));
+        return;
+    }
+
+    let mut seen = BTreeSet::new();
+    for member in &workspace.members {
+        if member.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`workspace.members` must not contain empty member paths",
+            ));
+            continue;
+        }
+
+        if !seen.insert(member) {
+            errors.push(ValidationError::new(format!(
+                "`workspace.members` must not declare duplicate member `{member}`"
+            )));
+        }
     }
 }
 

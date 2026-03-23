@@ -30,6 +30,8 @@ pub struct Contract {
     pub version: u32,
     pub project: Project,
     #[serde(default)]
+    pub workspace: Option<RepoWorkspaceSpec>,
+    #[serde(default)]
     pub execution: Option<Execution>,
     #[serde(default)]
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
@@ -61,6 +63,20 @@ pub struct Project {
     pub description: Option<String>,
     #[serde(rename = "type", default)]
     pub project_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoWorkspaceSpec {
+    #[serde(rename = "type")]
+    pub workspace_type: RepoWorkspaceType,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoWorkspaceType {
+    Monorepo,
 }
 
 #[derive(Debug, Deserialize)]

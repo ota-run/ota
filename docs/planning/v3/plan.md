@@ -24,7 +24,7 @@
 
 # V3 Plan
 
-Status: planned and inactive until V2.1 closes.
+Status: active.
 
 Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/08-v3-spec.md)
 
