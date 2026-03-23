@@ -99,6 +99,12 @@ Fields:
 - `repo`: repo path or slug resolved against `workspace.git_base`
 - `ref`: optional branch, tag, or ref to checkout after clone
 
+Design intent:
+
+- `source.git` is the canonical acquisition field
+- `source.repo` is shorthand for multiple repos sharing the same `workspace.git_base`
+- both are generic git concepts and work for GitHub, GitLab, Bitbucket, and internal git hosts
+
 Current validation behavior:
 
 - repo names must not be empty

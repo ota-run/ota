@@ -1956,6 +1956,65 @@ repos:
 
     #[cfg(unix)]
     #[test]
+    fn workspace_up_acquires_missing_repo_from_repo_source() {
+        let fixture = TempDir::new().unwrap();
+        let origins = TempDir::new().unwrap();
+        let origin = init_named_git_repo(
+            origins.path(),
+            "web-origin",
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        );
+
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: ota-dev
+  git_base: {}
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      repo: {}
+"#,
+                origins.path().display(),
+                origin.file_name().unwrap().to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["status"], "READY");
+        assert!(
+            fixture
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml")
+                .is_file()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn workspace_up_jobs_runs_independent_repos_in_parallel() {
         let fixture = WorkspaceFixture::new_parallel_repos();
 
@@ -2202,6 +2261,19 @@ repos:
         fs::write(dir.path().join("ota.yaml"), contract.trim_start()).unwrap();
         run_git(dir.path(), &["add", "ota.yaml"]);
         run_git(dir.path(), &["commit", "-m", "initial"]);
+        dir
+    }
+
+    #[cfg(unix)]
+    fn init_named_git_repo(root: &std::path::Path, name: &str, contract: &str) -> std::path::PathBuf {
+        let dir = root.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        run_git(&dir, &["init"]);
+        run_git(&dir, &["config", "user.email", "ota@example.com"]);
+        run_git(&dir, &["config", "user.name", "Ota Tests"]);
+        fs::write(dir.join("ota.yaml"), contract.trim_start()).unwrap();
+        run_git(&dir, &["add", "ota.yaml"]);
+        run_git(&dir, &["commit", "-m", "initial"]);
         dir
     }
 

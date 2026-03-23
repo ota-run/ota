@@ -60,6 +60,9 @@ Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota
 If a workspace repo is missing locally but declares `repos.<name>.source`, `ota workspace up`
 can acquire it first and then reuse the existing repo-level bootstrap flow.
 
+Use `source.git` as the canonical explicit clone URL. Use `source.repo` only as shorthand when
+multiple repos share the same `workspace.git_base`.
+
 If you want raw live child logs during workspace setup, opt in explicitly:
 
 ```bash
