@@ -630,6 +630,82 @@ project:
     }
 
     #[test]
+    fn validate_discovers_member_contract_from_member_directory_without_member_flag() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let nested = fixture.dir.path().join("api");
+        let output = run_with(["ota", "validate", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            output.stdout.contains(
+                &fixture
+                    .dir
+                    .path()
+                    .join("api")
+                    .join("ota.yaml")
+                    .display()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn run_executes_member_task_from_member_directory_without_member_flag() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api > member-output.txt
+"#,
+        );
+
+        let nested = fixture.dir.path().join("api");
+        let output = run_with(["ota", "run", "test", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(nested.join("member-output.txt").is_file());
+    }
+
+    #[test]
     fn exit_code_usage_errors_are_two() {
         let output = run_with(["ota", "validate", "--unknown-flag"]);
 
