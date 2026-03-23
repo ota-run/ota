@@ -70,6 +70,10 @@ fn stdout_json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
 }
 
+fn stdout_json_any(output: &Output) -> Value {
+    serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
+}
+
 fn copy_fixture_to_temp(name: &str) -> TempDir {
     let temp = TempDir::new().expect("temp dir should be created");
     copy_dir_recursive(&real_fixture_path(name), temp.path());
@@ -163,7 +167,7 @@ repos:
         "--json",
         temp.path().to_str().unwrap(),
     ]);
-    let json = stdout_json(&output);
+    let json = stdout_json_any(&output);
 
     assert_eq!(json["ok"], false);
     assert_eq!(json["repos"][0]["name"], "web");
