@@ -50,6 +50,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -58,6 +61,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -65,6 +71,9 @@ enum Commands {
     Run {
         /// Task name to execute.
         task: String,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -73,6 +82,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -92,6 +104,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -100,6 +115,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -192,24 +210,45 @@ fn dispatch(cli: Cli) -> CommandOutput {
     let debug = cli.debug;
     let file = cli.file;
     match cli.command {
-        Commands::Validate { json, path } => commands::validate(
+        Commands::Validate { json, member, path } => commands::validate(
             path.as_deref(),
             file.as_deref(),
+            member.as_deref(),
             format_from_json(json),
             debug,
         ),
-        Commands::Tasks { json, path } => commands::tasks(
+        Commands::Tasks { json, member, path } => commands::tasks(
             path.as_deref(),
             file.as_deref(),
+            member.as_deref(),
             format_from_json(json),
             debug,
         ),
-        Commands::Run { task, path } => {
-            commands::run_command(task.as_str(), path.as_deref(), file.as_deref(), debug)
-        }
-        Commands::Doctor { json, path } => commands::doctor(
+        Commands::Run { task, member, path } => commands::run_command(
+            task.as_str(),
             path.as_deref(),
             file.as_deref(),
+            member.as_deref(),
+            debug,
+        ),
+        Commands::Doctor { json, member, path } => commands::doctor(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Check { json, member, path } => commands::check(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Up { json, member, path } => commands::up(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
             format_from_json(json),
             debug,
         ),
@@ -224,18 +263,6 @@ fn dispatch(cli: Cli) -> CommandOutput {
             }
             commands::init(path.as_deref(), write, format_from_json(json), debug)
         }
-        Commands::Check { json, path } => commands::check(
-            path.as_deref(),
-            file.as_deref(),
-            format_from_json(json),
-            debug,
-        ),
-        Commands::Up { json, path } => commands::up(
-            path.as_deref(),
-            file.as_deref(),
-            format_from_json(json),
-            debug,
-        ),
         Commands::Detect {
             json,
             dry_run,
@@ -360,6 +387,246 @@ tasks:
             json["errors"][0],
             "task `dev` depends on unknown task `setup`"
         );
+    }
+
+    #[test]
+    fn validate_json_reports_monorepo_member_success() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "validate",
+            "--member",
+            "api",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.file_path().display().to_string());
+    }
+
+    #[test]
+    fn validate_member_rejects_non_monorepo_root_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "validate", "--member", "api", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("requires a monorepo root contract")
+        );
+    }
+
+    #[test]
+    fn validate_member_rejects_unknown_monorepo_member() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+
+        let output = run_with(["ota", "validate", "--member", "web", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("does not declare monorepo member `web`")
+        );
+    }
+
+    #[test]
+    fn tasks_json_reports_monorepo_member_inherited_and_overridden_tasks() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf root
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--member", "api", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let tasks = json["tasks"].as_array().unwrap();
+        assert!(tasks.iter().any(|task| task["name"] == "setup"));
+        assert!(tasks.iter().any(|task| task["name"] == "test"));
+    }
+
+    #[test]
+    fn run_executes_monorepo_member_task_in_member_directory() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api > member-output.txt
+"#,
+        );
+
+        let output = run_with(["ota", "run", "test", "--member", "api", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            fixture
+                .dir
+                .path()
+                .join("api")
+                .join("member-output.txt")
+                .is_file()
+        );
+        assert!(!fixture.dir.path().join("member-output.txt").is_file());
+    }
+
+    #[test]
+    fn doctor_json_reports_monorepo_member_findings() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--member", "api", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(
+            json["findings"][0]["summary"],
+            "Missing environment variable: OTA_MEMBER_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn up_json_runs_inherited_setup_in_monorepo_member_directory() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf ready > ready.txt
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--member", "api", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["status"], "READY");
+        assert!(fixture.dir.path().join("api").join("ready.txt").is_file());
+        assert!(!fixture.dir.path().join("ready.txt").is_file());
     }
 
     #[test]
@@ -2498,7 +2765,11 @@ repos:
         }
 
         fn write(&self, relative: &str, contents: &str) {
-            fs::write(self.dir.path().join(relative), contents).unwrap();
+            let path = self.dir.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents).unwrap();
         }
     }
 

@@ -28,8 +28,8 @@
 
 V1 is complete and frozen.
 V2 is complete and archived.
-V2.1 is the active version and must close before V3 starts.
-V3 is planned but inactive.
+V2.1 is complete and archived.
+V3 is active.
 
 ## V1 archive
 
@@ -42,16 +42,15 @@ V3 is planned but inactive.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- finish V2.1 cleanly before opening V3 work
-- keep V2.1 machine-facing contracts and workspace surfaces stable
+- ship V3 in narrow, real slices
+- start with monorepo/root-member support before backend expansion
 
-## Active version
+## V2 archive
 
+- [V2 plan](docs/planning/v2/plan.md)
 - [V2.1 plan](docs/planning/v2.1/plan.md)
 
-## Next version
-
-V3 remains planned and inactive until V2.1 is explicitly complete.
+## Active version
 
 - [V3 plan](docs/planning/v3/plan.md)
 
@@ -65,7 +64,7 @@ V3 remains planned and inactive until V2.1 is explicitly complete.
 ## Near-term next steps
 
 - keep the V2 trust/adoption baseline stable
-- close V2.1 machine-integration and workspace leverage gaps without opening V3 scope
+- ship root/member monorepo support across repo commands
 - keep extending fixtures only when they expose real gaps
 - avoid V3 scope that weakens V1, V2, or V2.1 trust or determinism
 - keep exports optional unless one exact target proves real duplicated-truth pain
@@ -81,7 +80,7 @@ Shipped V2 work so far is still intentionally narrow:
 
 ## Archived V2.1 shape
 
-The active repo-first bridge work beyond that foundation focuses on:
+The repo-first bridge work beyond that foundation focused on:
 
 - narrow interoperability framing without broad exports
 - stronger machine-facing guidance and JSON clarity
@@ -89,7 +88,7 @@ The active repo-first bridge work beyond that foundation focuses on:
 
 ## Product direction
 
-Planned V3 themes should build on the fully closed V2.1 foundation with:
+V3 themes build on the fully closed V2.1 foundation with:
 - monorepo and workspace maturity
 - first-class backend execution beyond native-only operation
 - stable machine-readable diagnostics and richer operational policy

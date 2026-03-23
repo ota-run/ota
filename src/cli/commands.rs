@@ -40,7 +40,9 @@ use crate::output::{
     TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
     WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
-use crate::parser::{LoadContractError, load_contract, parse_contract_str};
+use crate::parser::{
+    LoadContractError, load_contract, load_contract_for_member, parse_contract_str,
+};
 use crate::runner::{RunError, run_task, run_task_captured, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
@@ -55,6 +57,7 @@ const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 pub fn validate(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -69,17 +72,23 @@ pub fn validate(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
         String::from("DEBUG command=validate"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
+        match load_and_validate_target(&resolved_path, member) {
             Ok(contract) => {
                 let _ = contract;
                 match format {
-                    OutputFormat::Text => CommandOutput::success(format!("VALID {path_display}")),
+                    OutputFormat::Text => {
+                        CommandOutput::success(format!("VALID {text_path_display}"))
+                    }
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
                         path: &path_display,
@@ -113,6 +122,7 @@ pub fn validate(
 pub fn tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -127,16 +137,25 @@ pub fn tasks(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
         String::from("DEBUG command=tasks"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
-            Ok(contract) => {
-                let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
-                let task_summaries = contract
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let agent_summary = target
+                    .contract
+                    .agent
+                    .as_ref()
+                    .and_then(AgentSummary::from_config);
+                let task_summaries = target
+                    .contract
                     .tasks
                     .iter()
                     .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
@@ -144,7 +163,7 @@ pub fn tasks(
 
                 match format {
                     OutputFormat::Text => CommandOutput::success(render_tasks_text(
-                        &path_display,
+                        &text_path_display,
                         agent_summary.as_ref(),
                         &task_summaries,
                     )),
@@ -184,6 +203,7 @@ pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     debug: bool,
 ) -> CommandOutput {
     let resolved_path = match resolve_contract_path(path, file_override) {
@@ -200,18 +220,21 @@ pub fn run_command(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let mut debug_lines = vec![
         String::from("DEBUG command=run"),
         format!("DEBUG task={task_name}"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
-            Ok(contract) => match run_task(&contract, &resolved_path, task_name) {
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => match run_task(&target.contract, &target.contract_path, task_name) {
                 Ok(outcome) => CommandOutput {
                     stdout: String::new(),
-                    stderr: lifecycle_notice(&contract),
+                    stderr: lifecycle_notice(&target.contract),
                     exit_code: outcome.exit_code,
                 },
                 Err(error) => CommandOutput::failure(render_run_error(error)),
@@ -227,6 +250,7 @@ pub fn run_command(
 pub fn doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -241,19 +265,27 @@ pub fn doctor(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
         String::from("DEBUG command=doctor"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
-            Ok(contract) => {
-                let report = diagnose_contract(&contract, &resolved_path);
-                let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let report = diagnose_contract(&target.contract, &target.contract_path);
+                let agent_summary = target
+                    .contract
+                    .agent
+                    .as_ref()
+                    .and_then(AgentSummary::from_config);
                 match format {
                     OutputFormat::Text => {
-                        render_doctor_text(&path_display, agent_summary.as_ref(), report)
+                        render_doctor_text(&text_path_display, agent_summary.as_ref(), report)
                     }
                     OutputFormat::Json => {
                         let exit_code = if report.ok { 0 } else { 1 };
@@ -297,6 +329,7 @@ pub fn doctor(
 pub fn check(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -311,17 +344,23 @@ pub fn check(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
         String::from("DEBUG command=check"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
-            Ok(contract) => {
-                let report = diagnose_checks_only(&contract, &resolved_path);
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let report = diagnose_checks_only(&target.contract, &target.contract_path);
                 match format {
-                    OutputFormat::Text => render_report_text("CHECK", &path_display, None, report),
+                    OutputFormat::Text => {
+                        render_report_text("CHECK", &text_path_display, None, report)
+                    }
                     OutputFormat::Json => {
                         let exit_code = if report.ok { 0 } else { 1 };
                         CommandOutput {
@@ -422,6 +461,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 pub fn up(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    member: Option<&str>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -436,16 +476,26 @@ pub fn up(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let debug_lines = vec![
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
         String::from("DEBUG command=up"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
 
     finalize_debug(
-        match load_and_validate(&resolved_path) {
-            Ok(contract) => {
-                match execute_repo_up(&contract, &resolved_path, RepoExecutionMode::Stream) {
-                    Ok(result) => render_up_result(&path_display, result, format),
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                match execute_repo_up(
+                    &target.contract,
+                    &target.contract_path,
+                    RepoExecutionMode::Stream,
+                ) {
+                    Ok(result) => {
+                        render_up_result(&path_display, &text_path_display, result, format)
+                    }
                     Err(error) => CommandOutput::failure(error),
                 }
             }
@@ -1658,9 +1708,17 @@ fn render_up(
     }
 }
 
-fn render_up_result(path: &str, result: RepoUpResult, format: OutputFormat) -> CommandOutput {
+fn render_up_result(
+    path: &str,
+    text_path: &str,
+    result: RepoUpResult,
+    format: OutputFormat,
+) -> CommandOutput {
     render_up(
-        path,
+        match format {
+            OutputFormat::Text => text_path,
+            OutputFormat::Json => path,
+        },
         result.status,
         result.phase,
         result.report,
@@ -1670,6 +1728,13 @@ fn render_up_result(path: &str, result: RepoUpResult, format: OutputFormat) -> C
         result.exit_code,
         format,
     )
+}
+
+fn display_contract_target(path: &str, member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!("{path} [member {member}]"),
+        None => path.to_string(),
+    }
 }
 
 fn render_up_text(
@@ -2546,8 +2611,8 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
         }
     }
 
-    match load_and_validate(&repo.contract_path) {
-        Ok(contract) => match execute_repo_up(&contract, &repo.contract_path, mode) {
+    match load_and_validate_target(&repo.contract_path, None) {
+        Ok(target) => match execute_repo_up(&target.contract, &target.contract_path, mode) {
             Ok(result) => WorkspaceRepoUpReport {
                 name: repo.name,
                 path: path_display,
@@ -2807,10 +2872,27 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).expect("serializing CLI output should not fail")
 }
 
-fn load_and_validate(path: &Path) -> Result<crate::schema::Contract, ContractProblem> {
-    let contract = load_contract(path).map_err(ContractProblem::Load)?;
+struct LoadedContractTarget {
+    contract: crate::schema::Contract,
+    contract_path: PathBuf,
+}
+
+fn load_and_validate_target(
+    path: &Path,
+    member: Option<&str>,
+) -> Result<LoadedContractTarget, ContractProblem> {
+    let (contract, contract_path) = match member {
+        Some(member) => load_contract_for_member(path, member).map_err(ContractProblem::Load)?,
+        None => (
+            load_contract(path).map_err(ContractProblem::Load)?,
+            path.to_path_buf(),
+        ),
+    };
     validate_contract(&contract).map_err(ContractProblem::Validation)?;
-    Ok(contract)
+    Ok(LoadedContractTarget {
+        contract,
+        contract_path,
+    })
 }
 
 fn load_and_validate_workspace(path: &Path) -> Result<(), WorkspaceProblem> {

@@ -24,7 +24,7 @@
 
 # V2.1 Plan
 
-Status: active.
+Status: completed and archived.
 
 V2.1 is the bridge after V2:
 
@@ -103,5 +103,5 @@ V2.1 is complete only when:
 
 - machine-readable command surfaces are documented and backed by canonical schemas where Ota publishes them
 - workspace JSON and orchestration behavior are covered through the real CLI path, not only unit tests
-- top-level docs and planning state agree that V2.1 is the active version
-- V3 remains planned and inactive until the above is true
+- top-level docs and planning state were aligned while closing V2.1
+- V3 should not start until the above is true

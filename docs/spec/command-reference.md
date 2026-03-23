@@ -42,6 +42,12 @@ ota --debug <command>
 ota --file /path/to/ota.yaml <command>
 ```
 
+Repo commands that read an existing `ota.yaml` can also target a monorepo member with:
+
+```bash
+ota <command> --member <name> [PATH]
+```
+
 Ota currently ships these commands:
 
 - `ota validate`
@@ -100,11 +106,13 @@ Validate an Ota contract.
 ```bash
 ota validate [PATH]
 ota validate --json [PATH]
+ota validate --member api [PATH]
 ```
 
 Current behavior:
 
 - resolves `ota.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- when `--member` is set, loads the root contract, merges the declared member override, and validates the merged contract
 - parses the contract
 - applies semantic validation
 - exits `0` on success and non-zero on failure
@@ -126,11 +134,13 @@ List tasks from a validated contract.
 ```bash
 ota tasks [PATH]
 ota tasks --json [PATH]
+ota tasks --member api [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
+- when `--member` is set, lists tasks from the merged member contract
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
 - includes task metadata when present
@@ -156,15 +166,17 @@ Run a validated task.
 
 ```bash
 ota run <task> [PATH]
+ota run <task> --member api [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
+- when `--member` is set, resolves the merged member contract from the monorepo root
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
-- runs in the contract directory
+- runs in the effective target contract directory
 - applies configured environment values
 - prints task progress and advisory notes on stderr
 - returns the child process exit code
@@ -178,11 +190,13 @@ Diagnose repo readiness from a validated contract.
 ```bash
 ota doctor [PATH]
 ota doctor --json [PATH]
+ota doctor --member api [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
+- when `--member` is set, diagnoses the merged member contract
 - checks configured env requirements
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
@@ -261,7 +275,13 @@ Run configured checks from a validated contract.
 ```bash
 ota check [PATH]
 ota check --json [PATH]
+ota check --member api [PATH]
 ```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, runs checks from the merged member contract only
 
 Current behavior:
 
@@ -288,7 +308,14 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
+ota up --member api [PATH]
 ```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, prepares the merged member contract
+- runs inherited or overridden setup in the effective member directory
 
 Current behavior:
 
