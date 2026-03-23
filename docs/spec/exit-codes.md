@@ -64,6 +64,23 @@ This document records the current command exit-code contract for the shipped V1 
 - `1` on detection failure
 - `1` on write failure
 
+## `ota workspace validate`
+
+- `0` on valid workspace contract
+- `1` on load or validation failure
+
+## `ota workspace doctor`
+
+- `0` when all required repos are ready or warning-only
+- `1` when any required repo has a blocking finding
+- `1` on load or validation failure
+
+## `ota workspace up`
+
+- `0` when all required repos reach `READY`
+- `1` when any required repo fails acquisition or does not become ready
+- `1` on load or validation failure
+
 ## Notes
 
 - JSON mode does not change exit-code behavior

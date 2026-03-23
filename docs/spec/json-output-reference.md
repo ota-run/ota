@@ -13,6 +13,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
+- [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
+- [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 
 ## General notes
 
@@ -84,6 +86,56 @@ Success:
       "summary": "...",
       "why": "...",
       "next": "..."
+    }
+  ]
+}
+```
+
+## `ota workspace validate --json`
+
+`ota workspace validate --json` uses the same success/failure shape as `ota validate --json`,
+but `path` refers to the resolved `ota.workspace.yaml`.
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml"
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "errors": ["..."]
+}
+```
+
+## `ota workspace doctor --json`
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": false,
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Repo not acquired: web",
+          "why": "...",
+          "next": "..."
+        }
+      ]
     }
   ]
 }
@@ -178,6 +230,63 @@ Example service-start failure:
       "value": "22",
       "source": ".nvmrc",
       "confidence": "high"
+    }
+  ]
+}
+```
+
+## `ota workspace up --json`
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": true,
+      "status": "READY",
+      "phase": "post-setup diagnosis",
+      "findings": []
+    }
+  ]
+}
+```
+
+Optional per-repo fields:
+
+- `service`
+- `task`
+- `exit_code`
+- `stdout`
+- `stderr`
+
+Example acquisition/setup failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "web",
+      "required": true,
+      "ok": false,
+      "status": "ACQUIRE FAILED",
+      "phase": "acquisition",
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Repo acquisition failed: web",
+          "why": "...",
+          "next": "..."
+        }
+      ],
+      "exit_code": 128,
+      "stderr": "fatal: ..."
     }
   ]
 }
