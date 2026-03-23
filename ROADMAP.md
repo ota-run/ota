@@ -54,15 +54,16 @@ V2 planning is now the active track.
 
 ## Near-term next steps
 
-- define the first bounded V2 track
+- tighten V2 around trust, adoption, real-repo handling, and stronger agent usefulness
 - keep extending fixtures only when they expose real gaps
 - avoid V2 scope that weakens V1 trust or determinism
+- keep exports optional unless one exact target proves real duplicated-truth pain
 
 ## Product direction
 
 Planned V2 themes include:
 
-- broader interop coverage
-- stronger agent-facing contract guidance
-- richer workspace ergonomics
-- a possible post-V1 execution model expansion beyond the current shell-native contract
+- stronger trust on real repos
+- lower adoption cost
+- better mixed and messy repo handling
+- stronger agent usefulness without parallel truth
