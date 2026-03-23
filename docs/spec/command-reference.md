@@ -326,6 +326,7 @@ Infer a starting contract from repo state.
 ota detect --dry-run [PATH]
 ota detect --json --dry-run [PATH]
 ota detect --merge --dry-run [PATH]
+ota detect --merge [PATH]
 ota detect [PATH]
 ```
 
@@ -380,6 +381,14 @@ Current merge-preview behavior:
 - it requires an existing `ota.yaml`
 - it does not write
 - it reuses the comparison preview instead of applying changes
+
+Current merge-write behavior:
+
+- `ota detect --merge` requires an existing `ota.yaml`
+- it applies only `high` confidence missing fields
+- it does not overwrite conflicting existing values
+- it validates the merged contract before writing
+- it is additive only in the current implementation
 
 Example dry-run annotations for detected Compose services:
 

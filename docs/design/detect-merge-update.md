@@ -55,7 +55,7 @@ The first merge/update surface should be review-first:
 ota detect --merge --dry-run [PATH]
 ```
 
-Only after that mode is trusted should Ota consider:
+The next step after that mode is trusted is:
 
 ```bash
 ota detect --merge [PATH]
@@ -102,8 +102,7 @@ The first write policy should be conservative:
 - do not auto-apply any conflicting updates at first
 - conflicting updates must remain preview-only until proven safe
 
-That means the first merge write, if shipped, is really an additive fill-in mode, not a true
-overwrite mode.
+That means the first merge write is an additive fill-in mode, not a true overwrite mode.
 
 ## Conflict policy
 

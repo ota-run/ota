@@ -27,6 +27,8 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 
+use serde_yaml::{Mapping, Value as YamlValue};
+
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, Finding, FindingSeverity, diagnose_checks_only, diagnose_contract,
@@ -469,21 +471,17 @@ pub fn detect(
         format!("DEBUG dry_run={dry_run}"),
         format!("DEBUG merge={merge}"),
     ];
-    if merge && !dry_run {
-        return finalize_debug(
-            CommandOutput::failure_with_code(
-                String::from("`--merge` currently requires `--dry-run`"),
-                2,
-            ),
-            debug,
-            debug_lines,
-        );
-    }
     if merge && !contract_path.exists() {
         return finalize_debug(
-            CommandOutput::failure(String::from(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
-            )),
+            CommandOutput::failure(if dry_run {
+                String::from(
+                    "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
+                )
+            } else {
+                String::from(
+                    "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
+                )
+            }),
             debug,
             debug_lines,
         );
@@ -523,6 +521,7 @@ pub fn detect(
                     })),
                 }
             }
+            Ok(report) if merge => write_detected_merge(report, format),
             Ok(report) => write_detected_contract(report, format),
             Err(error) => {
                 let error = error.to_string();
@@ -836,6 +835,181 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 config: &candidate,
                 inferred: &report.inferences,
                 comparison: None,
+            })),
+        },
+        Err(error) => {
+            let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            }
+        }
+    }
+}
+
+fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOutput {
+    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
+    let path_display = contract_path.display().to_string();
+    let existing_contract = match load_contract(&contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            let error = error.to_string();
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            };
+        }
+    };
+
+    let comparison = DetectComparison {
+        existing_contract: true,
+        changes: collect_detect_changes(&existing_contract, &report.contract),
+        error: None,
+    };
+
+    let addable_fields = comparison
+        .changes
+        .iter()
+        .filter(|change| change.status == "add")
+        .filter(|change| {
+            report
+                .inferences
+                .iter()
+                .find(|inference| inference.field == change.field)
+                .is_some_and(|inference| inference.confidence == Confidence::High)
+        })
+        .collect::<Vec<_>>();
+
+    if addable_fields.is_empty() {
+        return match format {
+            OutputFormat::Text => {
+                let mut stdout = format!("NO CHANGES {}", contract_path.display());
+                render_detect_comparison_section(&mut stdout, Some(&comparison));
+                CommandOutput::success(stdout)
+            }
+            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                ok: true,
+                path: &path_display,
+                written: false,
+                config: &report.contract,
+                inferred: &report.inferences,
+                comparison: Some(&comparison),
+            })),
+        };
+    }
+
+    let contents = match fs::read_to_string(&contract_path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            let error = format!("failed to read `{}`: {}", contract_path.display(), error);
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            };
+        }
+    };
+
+    let mut document: YamlValue = match serde_yaml::from_str(&contents) {
+        Ok(document) => document,
+        Err(error) => {
+            let error = format!(
+                "failed to parse existing contract `{}` for merge: {}",
+                contract_path.display(),
+                error
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            };
+        }
+    };
+
+    let mut applied = Vec::new();
+    for change in addable_fields {
+        if apply_detect_addition(&mut document, change) {
+            applied.push(DetectComparisonChange {
+                field: change.field.clone(),
+                status: change.status,
+                existing: change.existing.clone(),
+                detected: change.detected.clone(),
+            });
+        }
+    }
+
+    let yaml = match serde_yaml::to_string(&document) {
+        Ok(yaml) => yaml,
+        Err(error) => {
+            let error = format!(
+                "failed to serialize merged contract `{}`: {}",
+                contract_path.display(),
+                error
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            };
+        }
+    };
+
+    if let Err(error) = parse_contract_str(&contract_path, &yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+    {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+            })),
+        };
+    }
+
+    match fs::write(&contract_path, yaml) {
+        Ok(()) => match format {
+            OutputFormat::Text => {
+                let mut stdout = format!("MERGED {}", contract_path.display());
+                render_detect_change_section(
+                    &mut stdout,
+                    "Applied high-confidence additions",
+                    &applied,
+                );
+                render_detect_comparison_section(&mut stdout, Some(&comparison));
+                CommandOutput::success(stdout)
+            }
+            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                ok: true,
+                path: &path_display,
+                written: true,
+                config: &report.contract,
+                inferred: &report.inferences,
+                comparison: Some(&comparison),
             })),
         },
         Err(error) => {
@@ -1169,6 +1343,68 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
             _ => {}
         }
     }
+}
+
+fn render_detect_change_section(
+    stdout: &mut String,
+    title: &str,
+    changes: &[DetectComparisonChange],
+) {
+    if changes.is_empty() {
+        return;
+    }
+
+    stdout.push('\n');
+    stdout.push_str(title);
+    stdout.push(':');
+    for change in changes {
+        stdout.push_str("\n- ");
+        stdout.push_str(&change.field);
+        stdout.push_str(": added `");
+        stdout.push_str(&change.detected);
+        stdout.push('`');
+    }
+}
+
+fn apply_detect_addition(document: &mut YamlValue, change: &DetectComparisonChange) -> bool {
+    let Some(root) = document.as_mapping_mut() else {
+        return false;
+    };
+
+    let segments = change.field.split('.').collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["project", "name"] => add_string_field(root, &segments, &change.detected),
+        ["runtimes", _] | ["tools", _] => add_string_field(root, &segments, &change.detected),
+        ["services", _, _] => add_string_field(root, &segments, &change.detected),
+        ["tasks", _, "run"] => add_string_field(root, &segments, &change.detected),
+        _ => false,
+    }
+}
+
+fn add_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+    if segments.len() < 2 {
+        return false;
+    }
+
+    let mut current = root;
+    for segment in &segments[..segments.len() - 1] {
+        let key = YamlValue::String((*segment).to_string());
+        let entry = current
+            .entry(key)
+            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+        let Some(mapping) = entry.as_mapping_mut() else {
+            return false;
+        };
+        current = mapping;
+    }
+
+    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
+    if current.contains_key(&final_key) {
+        return false;
+    }
+
+    current.insert(final_key, YamlValue::String(value.to_string()));
+    true
 }
 
 fn render_tasks_text(
