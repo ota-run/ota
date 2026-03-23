@@ -230,6 +230,12 @@ Example service-start failure:
 `ota detect --merge --json --dry-run` currently uses the same success shape as `ota detect --json
 --dry-run`, but requires an existing contract and includes `comparison`.
 
+`ota detect --merge --json` uses the same success shape with:
+
+- `written: true` when additive high-confidence fields were applied
+- `written: false` when there was nothing eligible to add
+- `comparison` describing detected adds and updates against the existing contract
+
 ```json
 {
   "ok": true,

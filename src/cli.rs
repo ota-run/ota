@@ -1528,20 +1528,22 @@ project:
     }
 
     #[test]
-    fn detect_merge_requires_dry_run() {
+    fn detect_merge_requires_existing_contract() {
         let fixture = ContractFixture::new_dir();
 
         let output = run_with(["ota", "detect", "--merge", fixture.path()]);
 
-        assert_eq!(output.exit_code, 2);
+        assert_eq!(output.exit_code, 1);
         assert_eq!(
             output.stderr.as_deref(),
-            Some("`--merge` currently requires `--dry-run`")
+            Some(
+                "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
+            )
         );
     }
 
     #[test]
-    fn detect_merge_requires_existing_contract() {
+    fn detect_merge_dry_run_requires_existing_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -1560,6 +1562,37 @@ project:
                 "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract"
             )
         );
+    }
+
+    #[test]
+    fn detect_merge_writes_high_confidence_missing_fields_only() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let output = run_with(["ota", "detect", "--merge", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("MERGED"));
+        assert!(output.stdout.contains("Applied high-confidence additions:"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("name: existing"));
+        assert!(!written.contains("name: ota-web"));
     }
 
     #[test]
