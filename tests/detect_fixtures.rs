@@ -82,6 +82,98 @@ fn detects_node_pnpm_fixture() {
 }
 
 #[test]
+fn detects_node_pnpm_lock_fixture() {
+    let report = assert_detected_contract_valid("node-pnpm-lock");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-pnpm-lock")
+    );
+    assert_eq!(report.contract.tools.get("pnpm"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("pnpm dev")
+    );
+}
+
+#[test]
+fn detects_node_yarn_lock_fixture() {
+    let report = assert_detected_contract_valid("node-yarn-lock");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-yarn-lock")
+    );
+    assert_eq!(report.contract.tools.get("yarn"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("test")
+            .map(|task| task.run.as_str()),
+        Some("yarn test")
+    );
+}
+
+#[test]
+fn detects_node_pnpm_workspace_fixture() {
+    let report = assert_detected_contract_valid("node-pnpm-workspace");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-pnpm-workspace")
+    );
+    assert_eq!(report.contract.tools.get("pnpm"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("pnpm dev")
+    );
+}
+
+#[test]
+fn detects_node_bun_lock_fixture() {
+    let report = assert_detected_contract_valid("node-bun-lock");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-bun-lock")
+    );
+    assert_eq!(report.contract.tools.get("bun"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("dev")
+            .map(|task| task.run.as_str()),
+        Some("bun run dev")
+    );
+}
+
+#[test]
 fn detects_python_fixture() {
     let report = assert_detected_contract_valid("python-project");
 
@@ -163,6 +255,44 @@ fn detects_poetry_fixture() {
         report.contract.runtimes.get("python"),
         Some(&"^3.11".to_string())
     );
+}
+
+#[test]
+fn detects_pipenv_fixture() {
+    let report = assert_detected_contract_valid("python-pipenv");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("python-pipenv")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&"3.12".to_string())
+    );
+    assert_eq!(report.contract.tools.get("pipenv"), Some(&"*".to_string()));
+}
+
+#[test]
+fn detects_uv_fixture() {
+    let report = assert_detected_contract_valid("python-uv");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-uv")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("python"),
+        Some(&">=3.12".to_string())
+    );
+    assert_eq!(report.contract.tools.get("uv"), Some(&"*".to_string()));
 }
 
 #[test]

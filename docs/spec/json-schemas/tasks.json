@@ -10,6 +10,27 @@
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
+        "agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "entrypoint": { "type": "string" },
+            "default_task": { "type": "string" },
+            "safe_tasks": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "verify_after_changes": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "writable_paths": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "notes": { "type": "string" }
+          }
+        },
         "tasks": {
           "type": "array",
           "items": {
@@ -22,11 +43,26 @@
               "kind": { "enum": ["run", "script"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
+              "selected_variant_os": { "type": "string" },
               "depends_on": {
                 "type": "array",
                 "items": { "type": "string" }
               },
-              "safe_for_agent": { "type": "boolean" }
+              "safe_for_agent": { "type": "boolean" },
+              "variants": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["os", "kind"],
+                  "properties": {
+                    "os": { "type": "string" },
+                    "kind": { "enum": ["run", "script"] },
+                    "run": { "type": "string" },
+                    "script": { "type": "string" }
+                  }
+                }
+              }
             },
             "additionalProperties": false
           }

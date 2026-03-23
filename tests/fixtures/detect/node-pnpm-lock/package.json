@@ -1,0 +1,7 @@
+{
+  "name": "ota-pnpm-lock",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run"
+  }
+}

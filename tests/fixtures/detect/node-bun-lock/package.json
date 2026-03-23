@@ -1,0 +1,7 @@
+{
+  "name": "ota-bun-lock",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "test": "bun test"
+  }
+}

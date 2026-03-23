@@ -1,0 +1,6 @@
+{
+  "name": "ota-pnpm-workspace",
+  "scripts": {
+    "dev": "vite"
+  }
+}

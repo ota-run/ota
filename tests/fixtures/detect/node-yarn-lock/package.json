@@ -1,0 +1,7 @@
+{
+  "name": "ota-yarn-lock",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run"
+  }
+}

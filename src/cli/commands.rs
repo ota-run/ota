@@ -33,8 +33,8 @@ use crate::doctor::{
     diagnose_preconditions, diagnose_service, diagnose_services_only,
 };
 use crate::output::{
-    CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure, InitSuccess,
-    OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
+    AgentSummary, CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure,
+    InitSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
     ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
@@ -132,6 +132,7 @@ pub fn tasks(
     finalize_debug(
         match load_and_validate(&resolved_path) {
             Ok(contract) => {
+                let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
                 let task_summaries = contract
                     .tasks
                     .iter()
@@ -139,12 +140,15 @@ pub fn tasks(
                     .collect::<Vec<_>>();
 
                 match format {
-                    OutputFormat::Text => {
-                        CommandOutput::success(render_tasks_text(&path_display, &task_summaries))
-                    }
+                    OutputFormat::Text => CommandOutput::success(render_tasks_text(
+                        &path_display,
+                        agent_summary.as_ref(),
+                        &task_summaries,
+                    )),
                     OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
                         ok: true,
                         path: &path_display,
+                        agent: agent_summary,
                         tasks: task_summaries,
                     })),
                 }
@@ -243,14 +247,18 @@ pub fn doctor(
         match load_and_validate(&resolved_path) {
             Ok(contract) => {
                 let report = diagnose_contract(&contract, &resolved_path);
+                let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
                 match format {
-                    OutputFormat::Text => render_doctor_text(&path_display, report),
+                    OutputFormat::Text => {
+                        render_doctor_text(&path_display, agent_summary.as_ref(), report)
+                    }
                     OutputFormat::Json => {
                         let exit_code = if report.ok { 0 } else { 1 };
                         CommandOutput {
                             stdout: to_json(&DoctorSuccess {
                                 ok: report.ok,
                                 path: &path_display,
+                                agent: agent_summary,
                                 findings: &report.findings,
                             }),
                             stderr: None,
@@ -310,13 +318,14 @@ pub fn check(
             Ok(contract) => {
                 let report = diagnose_checks_only(&contract, &resolved_path);
                 match format {
-                    OutputFormat::Text => render_report_text("CHECK", &path_display, report),
+                    OutputFormat::Text => render_report_text("CHECK", &path_display, None, report),
                     OutputFormat::Json => {
                         let exit_code = if report.ok { 0 } else { 1 };
                         CommandOutput {
                             stdout: to_json(&DoctorSuccess {
                                 ok: report.ok,
                                 path: &path_display,
+                                agent: None,
                                 findings: &report.findings,
                             }),
                             stderr: None,
@@ -947,8 +956,44 @@ fn render_init(
     }
 }
 
-fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
+fn render_tasks_text(
+    path: &str,
+    agent: Option<&AgentSummary<'_>>,
+    tasks: &[TaskSummary<'_>],
+) -> String {
     let mut output = format!("TASKS {path}");
+
+    if let Some(agent) = agent {
+        let mut details = Vec::new();
+        if let Some(entrypoint) = agent.entrypoint {
+            details.push(format!("entrypoint={entrypoint}"));
+        }
+        if let Some(default_task) = agent.default_task {
+            details.push(format!("default_task={default_task}"));
+        }
+        if !agent.safe_tasks.is_empty() {
+            details.push(format!("safe_tasks={}", agent.safe_tasks.join(",")));
+        }
+        if !agent.verify_after_changes.is_empty() {
+            details.push(format!(
+                "verify_after_changes={}",
+                agent.verify_after_changes.join(",")
+            ));
+        }
+        if !agent.writable_paths.is_empty() {
+            details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
+        }
+
+        if !details.is_empty() {
+            output.push_str("\nAGENT ");
+            output.push_str(&details.join(" "));
+        }
+
+        if let Some(notes) = agent.notes {
+            output.push_str("\nAgent notes: ");
+            output.push_str(notes);
+        }
+    }
 
     if tasks.is_empty() {
         output.push_str("\n- none");
@@ -999,8 +1044,12 @@ fn render_tasks_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     output
 }
 
-fn render_doctor_text(path: &str, report: DoctorReport) -> CommandOutput {
-    render_report_text("DOCTOR", path, report)
+fn render_doctor_text(
+    path: &str,
+    agent: Option<&AgentSummary<'_>>,
+    report: DoctorReport,
+) -> CommandOutput {
+    render_report_text("DOCTOR", path, agent, report)
 }
 
 fn render_workspace_doctor_text(
@@ -1044,8 +1093,20 @@ fn render_workspace_doctor_text(
     }
 }
 
-fn render_report_text(command: &str, path: &str, report: DoctorReport) -> CommandOutput {
+fn render_report_text(
+    command: &str,
+    path: &str,
+    agent: Option<&AgentSummary<'_>>,
+    report: DoctorReport,
+) -> CommandOutput {
     let mut stdout = format!("{command} {path}\n{}", render_doctor_status(&report));
+
+    if let Some(agent) = agent {
+        if let Some(summary) = render_agent_summary_line(agent) {
+            stdout.push('\n');
+            stdout.push_str(&summary);
+        }
+    }
 
     for finding in &report.findings {
         stdout.push('\n');
@@ -1062,6 +1123,34 @@ fn render_report_text(command: &str, path: &str, report: DoctorReport) -> Comman
         stdout,
         stderr: None,
         exit_code: if report.ok { 0 } else { 1 },
+    }
+}
+
+fn render_agent_summary_line(agent: &AgentSummary<'_>) -> Option<String> {
+    let mut details = Vec::new();
+    if let Some(entrypoint) = agent.entrypoint {
+        details.push(format!("entrypoint={entrypoint}"));
+    }
+    if let Some(default_task) = agent.default_task {
+        details.push(format!("default_task={default_task}"));
+    }
+    if !agent.safe_tasks.is_empty() {
+        details.push(format!("safe_tasks={}", agent.safe_tasks.join(",")));
+    }
+    if !agent.verify_after_changes.is_empty() {
+        details.push(format!(
+            "verify_after_changes={}",
+            agent.verify_after_changes.join(",")
+        ));
+    }
+    if !agent.writable_paths.is_empty() {
+        details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
+    }
+
+    if details.is_empty() {
+        None
+    } else {
+        Some(format!("AGENT {}", details.join(" ")))
     }
 }
 

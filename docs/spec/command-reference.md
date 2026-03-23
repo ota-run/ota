@@ -134,6 +134,7 @@ Current behavior:
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
 - includes task metadata when present
+- includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
 
 Text output:
@@ -145,6 +146,7 @@ Text output:
 JSON output:
 
 - success: `ok`, `path`, `tasks`
+- `agent` is included when the contract declares agent guidance
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
 - failure: `ok`, `path`, and either `errors` or `error`
 
@@ -189,6 +191,7 @@ Current behavior:
 - warns when `execution.lifecycle: ephemeral` is declared, because V1 does not provide isolated temporary execution
 - runs configured checks
 - orders findings by severity
+- includes an `agent` summary when the contract declares one
 - prints the reason and next action for each finding
 
 Text output:
@@ -200,6 +203,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `agent` when the contract declares agent guidance
 - `findings`
 
 Warnings can still produce `READY`. Errors produce `NOT READY`.
@@ -327,10 +331,18 @@ ota detect [PATH]
 Current detect sources:
 
 - `package.json`
+- `pnpm-workspace.yaml`
+- `pnpm-lock.yaml`
+- `yarn.lock`
+- `bun.lock` / `bun.lockb`
+- `package-lock.json`
+- `npm-shrinkwrap.json`
 - `.nvmrc`
 - `.node-version`
 - `.tool-versions`
 - `pyproject.toml`
+- `Pipfile`
+- `uv.lock`
 - `.python-version`
 - `.java-version`
 - `.sdkmanrc`
@@ -377,6 +389,9 @@ Current precedence is conservative:
 - when confidence is equal, more repo-specific runtime sources win before generic version-manager aggregation
 - when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
 - when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
+- when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
+- `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
+- `uv.lock` can contribute `uv` tool inference conservatively
 - for example, `.nvmrc`, `.node-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `go.mod`, `rust-toolchain.toml`, and `rust-toolchain` win over conflicting `.tool-versions` runtime values
 
 Write behavior:
