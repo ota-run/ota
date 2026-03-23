@@ -48,7 +48,7 @@ pub struct WorkspaceInfo {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub github_base: Option<String>,
+    pub git_base: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,7 +71,7 @@ pub struct WorkspaceRepoSourceSpec {
     #[serde(default)]
     pub git: Option<String>,
     #[serde(default)]
-    pub github: Option<String>,
+    pub repo: Option<String>,
     #[serde(rename = "ref", default)]
     pub git_ref: Option<String>,
 }
@@ -578,7 +578,7 @@ fn resolve_workspace_repo_source(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let github = source
-        .github
+        .repo
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
@@ -594,12 +594,12 @@ fn resolve_workspace_repo_source(
     }
 
     if source
-        .github
+        .repo
         .as_deref()
         .is_some_and(|value| value.trim().is_empty())
     {
         errors.push(WorkspaceValidationError::new(format!(
-            "workspace repo `{repo_name}` must not declare an empty `source.github`"
+            "workspace repo `{repo_name}` must not declare an empty `source.repo`"
         )));
     }
 
@@ -622,35 +622,31 @@ fn resolve_workspace_repo_source(
         }
         (None, None) => {
             errors.push(WorkspaceValidationError::new(format!(
-                "workspace repo `{repo_name}` must declare `source.git` or `source.github`"
+                "workspace repo `{repo_name}` must declare `source.git` or `source.repo`"
             )));
             None
         }
         (Some(url), None) => Some(url.to_string()),
         (None, Some(project)) => {
-            let Some(base) = contract.workspace.github_base.as_deref().map(str::trim) else {
+            let Some(base) = contract.workspace.git_base.as_deref().map(str::trim) else {
                 errors.push(WorkspaceValidationError::new(format!(
-                    "workspace repo `{repo_name}` uses `source.github` but `workspace.github_base` is not set"
+                    "workspace repo `{repo_name}` uses `source.repo` but `workspace.git_base` is not set"
                 )));
                 return None;
             };
 
             if base.is_empty() {
                 errors.push(WorkspaceValidationError::new(
-                    "workspace `github_base` must not be empty",
+                    "workspace `git_base` must not be empty",
                 ));
                 return None;
             }
 
-            let mut url = format!(
+            Some(format!(
                 "{}/{}",
                 base.trim_end_matches('/'),
                 project.trim_start_matches('/')
-            );
-            if !url.ends_with(".git") {
-                url.push_str(".git");
-            }
-            Some(url)
+            ))
         }
     }
 }
@@ -852,12 +848,12 @@ repos:
 version: 1
 workspace:
   name: ota-dev
-  github_base: https://github.com/ota
+  git_base: https://github.com/ota
 repos:
   web:
     path: apps/web
     source:
-      github: web
+      repo: web
 "#,
         )
         .unwrap();
@@ -866,7 +862,7 @@ repos:
     }
 
     #[test]
-    fn rejects_github_source_without_workspace_github_base() {
+    fn rejects_repo_source_without_workspace_git_base() {
         let fixture = TempDir::new().unwrap();
 
         let contract = parse_workspace_contract_str(
@@ -879,7 +875,7 @@ repos:
   web:
     path: apps/web
     source:
-      github: web
+      repo: web
 "#,
         )
         .unwrap();
@@ -891,7 +887,7 @@ repos:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "workspace repo `web` uses `source.github` but `workspace.github_base` is not set"
+            "workspace repo `web` uses `source.repo` but `workspace.git_base` is not set"
         );
     }
 
