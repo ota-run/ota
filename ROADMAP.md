@@ -27,8 +27,9 @@
 ## Current state
 
 V1 is complete and frozen.
-V2 is complete enough to archive as the current trust/adoption foundation.
-V3 planning is now the active track.
+V2 is complete and archived.
+V2.1 is the active version and must close before V3 starts.
+V3 is planned but inactive.
 
 ## V1 archive
 
@@ -41,9 +42,16 @@ V3 planning is now the active track.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- start V3 from the now-proven V1 and V2 core instead of broadening V2 indefinitely
+- finish V2.1 cleanly before opening V3 work
+- keep V2.1 machine-facing contracts and workspace surfaces stable
 
-## V3 planning
+## Active version
+
+- [V2.1 plan](docs/planning/v2.1/plan.md)
+
+## Next version
+
+V3 remains planned and inactive until V2.1 is explicitly complete.
 
 - [V3 plan](docs/planning/v3/plan.md)
 
@@ -57,8 +65,9 @@ V3 planning is now the active track.
 ## Near-term next steps
 
 - keep the V2 trust/adoption baseline stable
+- close V2.1 machine-integration and workspace leverage gaps without opening V3 scope
 - keep extending fixtures only when they expose real gaps
-- avoid V3 scope that weakens V1 or V2 trust or determinism
+- avoid V3 scope that weakens V1, V2, or V2.1 trust or determinism
 - keep exports optional unless one exact target proves real duplicated-truth pain
 
 ## Archived V2 shape
@@ -70,11 +79,18 @@ Shipped V2 work so far is still intentionally narrow:
 - stronger real-fixture coverage for mixed, legacy, and conflicting repo shapes
 - agent guidance surfaced on existing machine-readable and human-readable command paths
 
+## Archived V2.1 shape
+
+The active repo-first bridge work beyond that foundation focuses on:
+
+- narrow interoperability framing without broad exports
+- stronger machine-facing guidance and JSON clarity
+- tighter workspace/team leverage boundaries without a second bootstrap engine
+
 ## Product direction
 
-Planned V3 themes should build on that foundation with:
-
-- narrow interoperability where Ota remains canonical
-- team and workspace leverage without a second bootstrap engine
-- stronger machine integration without hidden mutation
-- no broad exports or provider-specific platform logic by default
+Planned V3 themes should build on the fully closed V2.1 foundation with:
+- monorepo and workspace maturity
+- first-class backend execution beyond native-only operation
+- stable machine-readable diagnostics and richer operational policy
+- serious multi-package and remote/container team workflows

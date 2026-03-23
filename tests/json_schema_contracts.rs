@@ -70,3 +70,25 @@ fn init_schema_includes_optional_next_on_failures() {
 
     assert!(failure.get("next").is_some());
 }
+
+#[test]
+fn workspace_doctor_schema_exists_and_covers_repo_reports() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-doctor.json");
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+
+    assert!(repo.get("contract_path").is_some());
+    assert!(repo.get("required").is_some());
+    assert!(repo.get("findings").is_some());
+}
+
+#[test]
+fn workspace_up_schema_exists_and_covers_repo_status_fields() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+
+    assert!(repo.get("status").is_some());
+    assert!(repo.get("phase").is_some());
+    assert!(repo.get("exit_code").is_some());
+    assert!(repo.get("stdout").is_some());
+    assert!(repo.get("stderr").is_some());
+}

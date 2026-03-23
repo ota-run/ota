@@ -24,75 +24,83 @@
 
 # V3 Plan
 
-Status: active planning.
+Status: planned and inactive until V2.1 closes.
 
-V3 should begin from a stable core:
+Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/08-v3-spec.md)
 
-- V1 proved repo readiness, workspace bootstrap, and deterministic execution
-- V2 proved conservative onboarding, real-repo handling, and agent-useful contract surfaces
+V3 theme:
 
-The point of V3 is not more breadth for its own sake.
+- real scale
+- serious team use
+- robust multi-package support
 
-The point of V3 is to increase Ota's leverage as infrastructure around the now-trusted core.
+## Included capabilities
 
-V3 should make Ota:
+### Workspace and monorepo
 
-- easier to integrate into existing toolchains without creating parallel truth
-- more useful for teams coordinating across many repos
-- stronger as a machine-facing contract while staying human-legible
-- more valuable as shared infrastructure, not just a repo-local CLI
+- root/member contracts with inheritance
+- member-level overrides
+- workspace task graph
+- selective execution for specific members
+
+### Backends
+
+- first-class container backend abstraction
+- first-class remote backend abstraction
+- backend capability negotiation
+
+### Output
+
+- stable machine-readable diagnostics schema
+- richer exit codes
+
+### Policy
+
+- stricter validation modes
+- task safety policy
+- agent writable-path policy
 
 ## Priorities
 
-1. Narrow interoperability
-2. Team and workspace leverage
-3. Machine integration stability
-4. Optional execution expansion only when clearly justified
+1. Support real monorepo structures cleanly
+2. Make container execution a real first-class path
+3. Enable remote execution for coding agents and cloud runners
+4. Lock in machine-readable output as a stable API surface
 
-## Rules
+## Workspace model direction
 
-- `ota.yaml` remains the canonical repo contract
-- `ota.workspace.yaml` remains the canonical workspace/bootstrap contract
-- derived artifacts must stay one-way outputs, not peer sources of truth
-- no provider-specific GitHub, GitLab, or Bitbucket product logic in the core model
-- no hidden mutation, background daemons, or opaque state
-- no broad export family until one target proves clear duplicated-truth pain
-- no workspace feature that duplicates repo readiness semantics
+```yaml
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+    - sdk
+```
 
-## Candidate tracks
+Member contracts should inherit from the root and override only what differs.
 
-### Track 1: Narrow interoperability
+## Backend model direction
 
-- pick at most one derived output first
-- only ship it if it clearly removes duplicated truth
-- keep Ota canonical and the output disposable/regenerable
+```yaml
+execution:
+  preferred: container
+  supported:
+    - native
+    - container
+    - remote
+  backends:
+    container:
+      image: ghcr.io/myorg/dev:latest
+    remote:
+      provider: daytona
+```
 
-Likely first candidate:
+## Success criteria
 
-- `AGENTS.md` derived from `ota.yaml`, only if teams are already duplicating that guidance manually
+V3 succeeds when:
 
-### Track 2: Team and workspace leverage
-
-- improve workspace summaries and status surfaces
-- consider bounded workspace task orchestration only if it composes existing repo truth cleanly
-- keep workspace logic orchestration-only
-
-### Track 3: Machine integration stability
-
-- keep JSON output and schema stability high as the integration surface grows
-- extend machine-readable guidance only where it improves trust or automation quality
-- prefer additive, explicit contract evolution over implicit behavior
-
-### Track 4: Execution model expansion
-
-- only consider broader execution backends if the current shell-native model proves insufficient
-- require determinism, debuggability, and clear contract semantics before expanding here
-
-## Non-goals
-
-- replacing Ota with a generator-first system
-- broad export matrices
-- hidden workstation or host provisioning
-- provider-specific platform integrations
-- a second execution truth outside the contract
-- workspace features that collapse repo/workspace boundaries
+- a monorepo with 3 or more members can be fully described and run via Ota
+- task execution can target one member cleanly
+- container execution is a real code path, not just declared metadata
+- remote sandbox execution works end to end for coding-agent workflows
