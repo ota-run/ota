@@ -1,4 +1,30 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
 # V1 Release Gate
+
+Status: satisfied and frozen as the V1 release record.
 
 This document is the binding release bar for calling Ota V1 done.
 
@@ -74,10 +100,4 @@ These do not count as V1 readiness by themselves:
 
 ## Current status
 
-The repo is close to this bar.
-
-What remains after the current pass is mostly closeout discipline:
-
-- keep expanding the fixture matrix only when it exposes real gaps
-- keep machine and compatibility contracts aligned as code changes land
-- avoid adding post-V1 scope before this gate is treated as the source of truth
+This gate is satisfied in the current repository state and now serves as the frozen V1 release record.
