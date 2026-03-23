@@ -139,6 +139,7 @@ Current workspace prepare behavior:
 - captures repo child stdout and stderr per repo so the final report remains deterministic
 - emits live repo progress on stderr in text mode so users can see execution moving without losing ordered final output
 - optional repo failures do not fail the overall workspace status
+- `--stream` opts into raw live child process output instead of buffered per-repo output
 
 Current execution policy:
 
@@ -146,6 +147,7 @@ Current execution policy:
 - Ota only parallelizes repos whose dependencies are already satisfied
 - final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
+- `--stream` is currently text-only and requires `--jobs 1` so raw child logs do not interleave
 
 Current non-goals:
 

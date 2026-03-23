@@ -202,6 +202,88 @@ fn detects_python_version_file_fixture() {
 }
 
 #[test]
+fn detects_java_version_file_fixture() {
+    let report = assert_detected_contract_valid("java-version-file");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("java-version-file")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("java"),
+        Some(&"21".to_string())
+    );
+}
+
+#[test]
+fn detects_sdkman_java_fixture() {
+    let report = assert_detected_contract_valid("sdkman-java");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("sdkman-java")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("java"),
+        Some(&"21.0.2-tem".to_string())
+    );
+}
+
+#[test]
+fn detects_rust_cargo_fixture() {
+    let report = assert_detected_contract_valid("rust-cargo");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("ota-rust")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("rust"),
+        Some(&"1.85.0".to_string())
+    );
+    assert_eq!(report.contract.tools.get("cargo"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("test")
+            .map(|task| task.run.as_str()),
+        Some("cargo test")
+    );
+}
+
+#[test]
+fn detects_rust_toolchain_file_fixture() {
+    let report = assert_detected_contract_valid("rust-toolchain-file");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("rust-toolchain-file")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("rust"),
+        Some(&"stable".to_string())
+    );
+    assert_eq!(report.contract.tools.get("cargo"), Some(&"*".to_string()));
+}
+
+#[test]
 fn detects_mixed_node_python_fixture() {
     let report = assert_detected_contract_valid("mixed-node-python");
 

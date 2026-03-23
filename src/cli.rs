@@ -150,6 +150,9 @@ enum WorkspaceCommands {
         /// Maximum number of independent repos to prepare at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
+        /// Stream raw child process output live instead of buffering it into the final report.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -259,10 +262,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Up { json, jobs, path } => commands::workspace_up(
+            WorkspaceCommands::Up {
+                json,
+                jobs,
+                stream,
+                path,
+            } => commands::workspace_up(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                stream,
                 format_from_json(json),
                 debug,
             ),
@@ -587,16 +596,52 @@ tasks:
     #[test]
     fn init_write_creates_full_starter_contract() {
         let fixture = ContractFixture::new_dir();
-        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
 
         let output = run_with(["ota", "init", "--write", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("WROTE"));
+        assert!(output.stdout.contains(
+            "Write policy: detected mode writes only high-confidence fields automatically"
+        ));
         assert!(output.stdout.contains("Next: run `ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("name: go-service"));
-        assert!(written.contains("go: 1.24.0"));
+        assert!(written.contains("name: ota-web"));
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+    }
+
+    #[test]
+    fn init_write_refuses_when_detected_high_confidence_fields_are_insufficient() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
+
+        let output = run_with(["ota", "init", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract; review `ota init` output or use `ota detect --dry-run` before writing")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("Excluded from automatic write:")
+        );
+        assert!(!fixture.file_path().exists());
     }
 
     #[test]
@@ -1735,6 +1780,47 @@ tasks:
         assert_eq!(
             output.stderr.as_deref(),
             Some("`--jobs` must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn workspace_up_rejects_stream_with_json() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--json",
+            "--stream",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` is only supported for text output")
+        );
+    }
+
+    #[test]
+    fn workspace_up_rejects_stream_with_parallel_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--stream",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` currently requires `--jobs 1`")
         );
     }
 

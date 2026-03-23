@@ -175,9 +175,13 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_python_version_file(&root, &mut builder)?;
+    detect_java_version_file(&root, &mut builder)?;
+    detect_sdkmanrc(&root, &mut builder)?;
     detect_go_mod(&root, &mut builder)?;
+    detect_rust_toolchain_files(&root, &mut builder)?;
     detect_tool_versions(&root, &mut builder)?;
     detect_pyproject(&root, &mut builder)?;
+    detect_cargo_toml(&root, &mut builder)?;
     detect_gradle(&root, &mut builder)?;
     detect_pom_xml(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
@@ -339,6 +343,18 @@ fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
                 ".tool-versions".to_string(),
                 Confidence::High,
             ),
+            "rust" => builder.set_runtime(
+                "rust".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
+            "java" => builder.set_runtime(
+                "java".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
             "pnpm" | "npm" | "yarn" | "bun" => builder.set_tool(
                 tool.to_string(),
                 version.to_string(),
@@ -366,6 +382,59 @@ fn detect_python_version_file(root: &Path, builder: &mut DetectBuilder) -> Resul
             ".python-version".to_string(),
             Confidence::High,
         );
+    }
+
+    Ok(())
+}
+
+fn detect_java_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".java-version");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let version = read_file(&path)?.trim().trim_start_matches('v').to_string();
+    if !version.is_empty() {
+        builder.set_runtime(
+            "java".to_string(),
+            version,
+            ".java-version".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_sdkmanrc(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".sdkmanrc");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "java" {
+            continue;
+        }
+
+        let version = value.trim().trim_start_matches('v').to_string();
+        if !version.is_empty() {
+            builder.set_runtime(
+                "java".to_string(),
+                version,
+                ".sdkmanrc#java".to_string(),
+                Confidence::High,
+            );
+        }
     }
 
     Ok(())
@@ -461,6 +530,114 @@ fn detect_go_mod(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectE
             );
         }
     }
+
+    Ok(())
+}
+
+fn detect_rust_toolchain_files(
+    root: &Path,
+    builder: &mut DetectBuilder,
+) -> Result<(), DetectError> {
+    let toml_path = root.join("rust-toolchain.toml");
+    if toml_path.exists() {
+        let contents = read_file(&toml_path)?;
+        let document: TomlValue =
+            toml::from_str(&contents).map_err(|source| DetectError::Parse {
+                path: toml_path.display().to_string(),
+                message: source.to_string(),
+            })?;
+        if let Some(channel) = document
+            .get("toolchain")
+            .and_then(|toolchain| toolchain.get("channel"))
+            .and_then(TomlValue::as_str)
+        {
+            builder.set_runtime(
+                "rust".to_string(),
+                channel.to_string(),
+                "rust-toolchain.toml#toolchain.channel".to_string(),
+                Confidence::High,
+            );
+        }
+    }
+
+    let path = root.join("rust-toolchain");
+    if path.exists() {
+        let contents = read_file(&path)?;
+        let version = contents
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'))
+            .unwrap_or_default()
+            .trim_start_matches('v')
+            .to_string();
+        if !version.is_empty() {
+            builder.set_runtime(
+                "rust".to_string(),
+                version,
+                "rust-toolchain".to_string(),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_cargo_toml(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("Cargo.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    if let Some(name) = document
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(TomlValue::as_str)
+    {
+        builder.set_project_name(
+            name.to_string(),
+            "Cargo.toml#package.name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    if let Some(version) = document
+        .get("package")
+        .and_then(|package| package.get("rust-version"))
+        .and_then(TomlValue::as_str)
+    {
+        builder.set_runtime(
+            "rust".to_string(),
+            version.to_string(),
+            "Cargo.toml#package.rust-version".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_tool(
+        "cargo".to_string(),
+        "*".to_string(),
+        "Cargo.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "build".to_string(),
+        "cargo build".to_string(),
+        "Cargo.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "cargo test".to_string(),
+        "Cargo.toml".to_string(),
+        Confidence::High,
+    );
 
     Ok(())
 }
@@ -1032,6 +1209,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "package.json#name" => 5,
             "settings.gradle.kts#rootProject.name" => 4,
             "settings.gradle#rootProject.name" => 4,
+            "Cargo.toml#package.name" => 4,
             "pyproject.toml#project.name" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
@@ -1059,18 +1237,29 @@ fn source_priority(field: &str, source: &str) -> u8 {
             _ => 0,
         },
         "runtimes.java" => match source {
+            ".java-version" => 5,
+            ".sdkmanrc#java" => 4,
             "build.gradle.kts#java.toolchain" => 3,
             "build.gradle#java.toolchain" => 3,
             "pom.xml#maven.compiler.release" => 2,
             "pom.xml#maven.compiler.target" => 2,
             "pom.xml#maven.compiler.source" => 2,
+            ".tool-versions" => 1,
             "pom.xml#java.version" => 1,
+            _ => 0,
+        },
+        "runtimes.rust" => match source {
+            "rust-toolchain.toml#toolchain.channel" => 3,
+            "rust-toolchain" => 2,
+            ".tool-versions" => 1,
+            "Cargo.toml#package.rust-version" => 1,
             _ => 0,
         },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
+            "Cargo.toml" => 2,
             "pom.xml" => 1,
             ".tool-versions" => 1,
             _ => 0,
@@ -1167,6 +1356,80 @@ requires-python = ">=3.12"
         assert_eq!(
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_cargo_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota-rust"
+rust-version = "1.84"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("ota-rust")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("rust"),
+            Some(&"1.84".to_string())
+        );
+        assert_eq!(report.contract.tools.get("cargo"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("cargo build")
+        );
+    }
+
+    #[test]
+    fn detects_rust_toolchain_toml() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota-rust"
+rust-version = "1.80"
+"#,
+        );
+        fixture.write(
+            "rust-toolchain.toml",
+            r#"[toolchain]
+channel = "1.85.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("rust"),
+            Some(&"1.85.0".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_rust_toolchain_file() {
+        let fixture = Fixture::new();
+        fixture.write("rust-toolchain", "stable\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("rust"),
+            Some(&"stable".to_string())
         );
     }
 
@@ -1295,6 +1558,62 @@ requires-python = ">=3.12"
                 .get("test")
                 .map(|task| task.run.as_str()),
             Some("./mvnw test")
+        );
+    }
+
+    #[test]
+    fn detects_java_version_file() {
+        let fixture = Fixture::new();
+        fixture.write(".java-version", "21\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21".to_string())
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "runtimes.java"
+                    && inference.source == ".java-version"
+                    && inference.confidence == Confidence::High)
+        );
+    }
+
+    #[test]
+    fn detects_sdkmanrc_java_version() {
+        let fixture = Fixture::new();
+        fixture.write(".sdkmanrc", "java=21.0.2-tem\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21.0.2-tem".to_string())
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "runtimes.java"
+                    && inference.source == ".sdkmanrc#java"
+                    && inference.confidence == Confidence::High)
+        );
+    }
+
+    #[test]
+    fn prefers_java_version_file_over_tool_versions_for_java() {
+        let fixture = Fixture::new();
+        fixture.write(".java-version", "21\n");
+        fixture.write(".tool-versions", "java 17.0.10-tem\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21".to_string())
         );
     }
 
