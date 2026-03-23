@@ -1,3 +1,27 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
 <div align="center">
   <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="100" height="100">
 </div>
@@ -65,8 +89,8 @@ Current behavior:
 - `ota detect --dry-run` infers a candidate contract from repo signals such as package manifests, runtime files, Java build wrappers, build files, and Docker Compose service declarations, then prints provenance and confidence
 - `ota detect` writes a contract conservatively from `high` confidence fields only
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
-- `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth
-- `ota workspace up` orchestrates repo-level `up` across a workspace contract without inventing a second bootstrap model
+- `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
+- `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
 
 ## Detect trust model
 
@@ -103,7 +127,8 @@ The repository already contains a working core for the v1 path:
 - readiness diagnosis
 - onboarding via `up`
 - detection with dry-run and conservative write mode
-- separate workspace contract validation and workspace diagnosis
+- separate workspace contract validation, diagnosis, and bootstrap
+- generic git-based workspace acquisition for missing repos
 - fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, and ugly/polyglot mixed-reality repo shapes
 
 ## Quickstart
@@ -131,8 +156,11 @@ cargo run -- detect /path/to/repo
 
 Example contracts:
 - [basic-node](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
+- [basic-java](/Users/bobai/Workspace/Ota.run/ota/examples/basic-java/ota.yaml)
+- [basic-rust](/Users/bobai/Workspace/Ota.run/ota/examples/basic-rust/ota.yaml)
 - [basic-script](/Users/bobai/Workspace/Ota.run/ota/examples/basic-script/ota.yaml)
 - [basic-services](/Users/bobai/Workspace/Ota.run/ota/examples/basic-services/ota.yaml)
+- [workspace-acquire](/Users/bobai/Workspace/Ota.run/ota/examples/workspace-acquire/ota.workspace.yaml)
 
 ## Documentation
 
@@ -170,8 +198,10 @@ Example contracts:
 
 ### Minimal contracts
 - [Basic Node](examples/basic-node/ota.yaml)
+- [Basic Java](examples/basic-java/ota.yaml)
 - [Basic Python](examples/basic-python/ota.yaml)
 - [Basic Go](examples/basic-go/ota.yaml)
+- [Basic Rust](examples/basic-rust/ota.yaml)
 - [Basic Script](examples/basic-script/ota.yaml)
 
 ### Mixed and realistic repos
@@ -181,3 +211,4 @@ Example contracts:
 
 ### Workspace
 - [Basic Workspace](examples/workspace-basic/ota.workspace.yaml)
+- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)

@@ -2265,7 +2265,11 @@ repos:
     }
 
     #[cfg(unix)]
-    fn init_named_git_repo(root: &std::path::Path, name: &str, contract: &str) -> std::path::PathBuf {
+    fn init_named_git_repo(
+        root: &std::path::Path,
+        name: &str,
+        contract: &str,
+    ) -> std::path::PathBuf {
         let dir = root.join(name);
         fs::create_dir_all(&dir).unwrap();
         run_git(&dir, &["init"]);
