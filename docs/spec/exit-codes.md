@@ -83,6 +83,12 @@ This document records the current command exit-code contract for the shipped Ota
 - `1` when any required repo task fails, acquisition fails, or is blocked by dependency failure
 - `1` on load or validation failure
 
+## `ota workspace check`
+
+- `0` when all required repos are check-ready or warning-only
+- `1` when any required repo has a blocking check finding
+- `1` on load or validation failure
+
 ## `ota clean`
 
 - `0` when persistent execution state is removed

@@ -61,6 +61,7 @@ Ota currently ships these commands:
 - `ota workspace validate`
 - `ota workspace tasks`
 - `ota workspace run <task>`
+- `ota workspace check`
 - `ota workspace doctor`
 - `ota workspace up`
 
@@ -602,6 +603,37 @@ JSON output:
 - `task`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, and optional `exit_code`/`stdout`/`stderr`
+
+## `ota workspace check`
+
+Run configured checks across workspace repos in dependency order.
+
+```bash
+ota workspace check [PATH]
+ota workspace check --json [PATH]
+ota workspace check --jobs 4 [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure and referenced repo contracts
+- evaluates repo checks in workspace dependency order
+- can check independent repos concurrently when `--jobs` is greater than `1`
+- preserves deterministic repo ordering in text and JSON output even when checks run concurrently
+- downgrades findings for optional repos to warnings
+
+Text output:
+
+- header: `WORKSPACE CHECK <path>`
+- status line: `READY` or `NOT READY`
+- each repo includes required/optional status, contract path, and findings
+
+JSON output:
+
+- `ok`
+- `path`
+- `repos`
 
 ## `ota workspace doctor`
 

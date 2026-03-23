@@ -58,6 +58,7 @@ From a directory with `ota.workspace.yaml`:
 cargo run -- workspace validate
 cargo run -- workspace tasks
 cargo run -- workspace run setup
+cargo run -- workspace check
 cargo run -- workspace doctor
 cargo run -- workspace up
 ```
