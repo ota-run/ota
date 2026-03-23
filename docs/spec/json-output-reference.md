@@ -175,7 +175,8 @@ Failure:
 
 ## `ota check --json`
 
-`ota check --json` uses the same shape as `ota doctor --json`:
+`ota check --json` uses the same finding shape as `ota doctor --json`, but does not include the
+optional `agent` summary:
 
 ```json
 {
@@ -226,6 +227,9 @@ Example service-start failure:
 
 ## `ota detect --json`
 
+`ota detect --merge --json --dry-run` currently uses the same success shape as `ota detect --json
+--dry-run`, but requires an existing contract and includes `comparison`.
+
 ```json
 {
   "ok": true,
@@ -233,6 +237,17 @@ Example service-start failure:
   "written": false,
   "config": {
     "version": 1
+  },
+  "comparison": {
+    "existing_contract": true,
+    "changes": [
+      {
+        "field": "project.name",
+        "status": "update",
+        "existing": "existing",
+        "detected": "ota-web"
+      }
+    ]
   },
   "inferred": [
     {

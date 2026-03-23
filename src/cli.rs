@@ -111,6 +111,9 @@ enum Commands {
         /// Print inferred fields without writing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
+        /// Preview how detected fields would merge into an existing ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue)]
+        merge: bool,
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
@@ -236,6 +239,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Detect {
             json,
             dry_run,
+            merge,
             path,
         } => {
             if file.is_some() {
@@ -246,7 +250,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     2,
                 );
             }
-            commands::detect(path.as_deref(), dry_run, format_from_json(json), debug)
+            commands::detect(
+                path.as_deref(),
+                dry_run,
+                merge,
+                format_from_json(json),
+                debug,
+            )
         }
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Validate { json, path } => commands::workspace_validate(
@@ -818,6 +828,13 @@ project:
                 .as_deref()
                 .unwrap()
                 .contains("Next: review the existing contract with `ota validate")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("ota detect --merge --dry-run")
         );
     }
 
@@ -1441,6 +1458,111 @@ checks:
     }
 
     #[test]
+    fn detect_dry_run_reports_existing_contract_comparison_in_text() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  pnpm: "9"
+tasks:
+  dev:
+    run: npm run dev
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Existing contract comparison:"));
+        assert!(
+            output
+                .stdout
+                .contains("project.name: would update `existing` -> `ota-web`")
+        );
+        assert!(
+            output
+                .stdout
+                .contains("tools.pnpm: would update `9` -> `10.1.0`")
+        );
+        assert!(
+            output
+                .stdout
+                .contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`")
+        );
+    }
+
+    #[test]
+    fn detect_json_reports_existing_contract_comparison() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["comparison"]["existing_contract"], true);
+        assert_eq!(json["comparison"]["changes"][0]["field"], "project.name");
+    }
+
+    #[test]
+    fn detect_merge_requires_dry_run() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "detect", "--merge", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--merge` currently requires `--dry-run`")
+        );
+    }
+
+    #[test]
+    fn detect_merge_requires_existing_contract() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0"
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some(
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract"
+            )
+        );
+    }
+
+    #[test]
     fn detect_writes_high_confidence_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -1489,6 +1611,13 @@ project:
                 .as_deref()
                 .unwrap()
                 .contains("refusing to overwrite")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("ota detect --merge --dry-run")
         );
     }
 

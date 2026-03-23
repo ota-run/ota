@@ -12,6 +12,29 @@
         "path": { "type": "string" },
         "written": { "type": "boolean" },
         "config": { "type": "object" },
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existing_contract"],
+          "properties": {
+            "existing_contract": { "const": true },
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["field", "status", "detected"],
+                "properties": {
+                  "field": { "type": "string" },
+                  "status": { "enum": ["add", "update"] },
+                  "existing": { "type": "string" },
+                  "detected": { "type": "string" }
+                }
+              }
+            },
+            "error": { "type": "string" }
+          }
+        },
         "inferred": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/inference" }

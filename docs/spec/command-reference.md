@@ -325,6 +325,7 @@ Infer a starting contract from repo state.
 ```bash
 ota detect --dry-run [PATH]
 ota detect --json --dry-run [PATH]
+ota detect --merge --dry-run [PATH]
 ota detect [PATH]
 ```
 
@@ -370,7 +371,15 @@ Dry-run behavior:
 - prints a candidate `ota.yaml`
 - prints per-field provenance
 - prints per-field confidence
+- when `ota.yaml` already exists, prints a non-destructive comparison preview for detected fields
 - does not write anything
+
+Current merge-preview behavior:
+
+- `ota detect --merge --dry-run` is a review-only mode
+- it requires an existing `ota.yaml`
+- it does not write
+- it reuses the comparison preview instead of applying changes
 
 Example dry-run annotations for detected Compose services:
 
@@ -399,6 +408,7 @@ Write behavior:
 - writes only `high` confidence fields
 - validates the projected contract before writing
 - refuses to overwrite an existing `ota.yaml`
+- when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run`
 - fails if the high-confidence projection is not sufficient
 
 This is intentionally conservative. Review mode comes first, write mode second.

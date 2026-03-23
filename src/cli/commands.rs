@@ -33,9 +33,10 @@ use crate::doctor::{
     diagnose_preconditions, diagnose_service, diagnose_services_only,
 };
 use crate::output::{
-    AgentSummary, CommandOutput, DetectFailure, DetectSuccess, DoctorSuccess, InitFailure,
-    InitSuccess, OutputFormat, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceRepoUpReport, WorkspaceUpSuccess,
+    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
+    DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
+    TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
+    WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
 use crate::parser::{LoadContractError, load_contract, parse_contract_str};
 use crate::runner::{RunError, run_task, run_task_captured, run_task_with_progress};
@@ -371,7 +372,8 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 
     if contract_path.exists() {
         let error = format!(
-            "`{}` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate {}` or `ota doctor {}`",
+            "`{}` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate {}` or `ota doctor {}`\nNext: if you want to compare detected repo signals against it, run `ota detect --merge --dry-run {}`",
+            contract_path.display(),
             contract_path.display(),
             contract_path.display(),
             contract_path.display()
@@ -453,6 +455,7 @@ pub fn up(
 pub fn detect(
     path: Option<&Path>,
     dry_run: bool,
+    merge: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -464,15 +467,40 @@ pub fn detect(
         format!("DEBUG repo_root={}", root.display()),
         format!("DEBUG contract_path={path_display}"),
         format!("DEBUG dry_run={dry_run}"),
+        format!("DEBUG merge={merge}"),
     ];
+    if merge && !dry_run {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--merge` currently requires `--dry-run`"),
+                2,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+    if merge && !contract_path.exists() {
+        return finalize_debug(
+            CommandOutput::failure(String::from(
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
+            )),
+            debug,
+            debug_lines,
+        );
+    }
     finalize_debug(
         match detect_repo(&root) {
             Ok(report) if dry_run => {
+                let comparison = compare_detected_contract(&contract_path, &report.contract);
                 let yaml = serde_yaml::to_string(&report.contract)
                     .expect("serializing detected contract should not fail");
                 match format {
                     OutputFormat::Text => {
-                        let mut stdout = format!("DETECT {}", report.root.display());
+                        let mut stdout = if merge {
+                            format!("DETECT MERGE {}", report.root.display())
+                        } else {
+                            format!("DETECT {}", report.root.display())
+                        };
                         stdout.push('\n');
                         stdout.push_str("---");
                         stdout.push('\n');
@@ -482,6 +510,7 @@ pub fn detect(
                             "Annotations",
                             report.inferences.iter(),
                         );
+                        render_detect_comparison_section(&mut stdout, comparison.as_ref());
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -490,6 +519,7 @@ pub fn detect(
                         written: false,
                         config: &report.contract,
                         inferred: &report.inferences,
+                        comparison: comparison.as_ref(),
                     })),
                 }
             }
@@ -743,8 +773,9 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let path_display = contract_path.display().to_string();
     if contract_path.exists() {
         let error = format!(
-            "`{}` already exists; refusing to overwrite an existing contract",
-            contract_path.display()
+            "`{}` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `ota detect --merge --dry-run {}`",
+            contract_path.display(),
+            report.root.display()
         );
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -804,6 +835,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 written: true,
                 config: &candidate,
                 inferred: &report.inferences,
+                comparison: None,
             })),
         },
         Err(error) => {
@@ -953,6 +985,189 @@ fn render_init(
             config: &report.contract,
             inferred: &report.inferences,
         })),
+    }
+}
+
+fn compare_detected_contract(
+    contract_path: &Path,
+    detected: &crate::detector::DetectContract,
+) -> Option<DetectComparison> {
+    if !contract_path.exists() {
+        return None;
+    }
+
+    match load_contract(contract_path) {
+        Ok(existing) => Some(DetectComparison {
+            existing_contract: true,
+            changes: collect_detect_changes(&existing, detected),
+            error: None,
+        }),
+        Err(error) => Some(DetectComparison {
+            existing_contract: true,
+            changes: Vec::new(),
+            error: Some(format!(
+                "failed to load existing contract for comparison: {error}"
+            )),
+        }),
+    }
+}
+
+fn collect_detect_changes(
+    existing: &Contract,
+    detected: &crate::detector::DetectContract,
+) -> Vec<DetectComparisonChange> {
+    let mut changes = Vec::new();
+
+    if let Some(project) = detected.project.as_ref() {
+        push_detect_change(
+            &mut changes,
+            "project.name",
+            Some(existing.project.name.as_str()),
+            Some(project.name.as_str()),
+        );
+    }
+
+    for (name, value) in &detected.runtimes {
+        push_detect_change(
+            &mut changes,
+            &format!("runtimes.{name}"),
+            existing
+                .runtimes
+                .get(name)
+                .map(|requirement| requirement.version()),
+            Some(value.as_str()),
+        );
+    }
+
+    for (name, value) in &detected.tools {
+        push_detect_change(
+            &mut changes,
+            &format!("tools.{name}"),
+            existing
+                .tools
+                .get(name)
+                .map(|requirement| requirement.version()),
+            Some(value.as_str()),
+        );
+    }
+
+    for (name, service) in &detected.services {
+        push_detect_change(
+            &mut changes,
+            &format!("services.{name}.provider"),
+            existing
+                .services
+                .get(name)
+                .and_then(|existing_service| existing_service.provider.as_deref()),
+            service.provider.as_deref(),
+        );
+        push_detect_change(
+            &mut changes,
+            &format!("services.{name}.start"),
+            existing
+                .services
+                .get(name)
+                .and_then(|existing_service| existing_service.start.as_deref()),
+            service.start.as_deref(),
+        );
+        push_detect_change(
+            &mut changes,
+            &format!("services.{name}.stop"),
+            existing
+                .services
+                .get(name)
+                .and_then(|existing_service| existing_service.stop.as_deref()),
+            service.stop.as_deref(),
+        );
+        push_detect_change(
+            &mut changes,
+            &format!("services.{name}.healthcheck"),
+            existing
+                .services
+                .get(name)
+                .and_then(|existing_service| existing_service.healthcheck.as_deref()),
+            service.healthcheck.as_deref(),
+        );
+    }
+
+    for (name, task) in &detected.tasks {
+        let existing_value =
+            existing
+                .tasks
+                .get(name)
+                .and_then(|task| match task.default_execution_kind() {
+                    Some("run") => task.default_execution_body(),
+                    _ => None,
+                });
+        push_detect_change(
+            &mut changes,
+            &format!("tasks.{name}.run"),
+            existing_value,
+            Some(task.run.as_str()),
+        );
+    }
+
+    changes
+}
+
+fn push_detect_change(
+    changes: &mut Vec<DetectComparisonChange>,
+    field: &str,
+    existing: Option<&str>,
+    detected: Option<&str>,
+) {
+    let Some(detected) = detected else {
+        return;
+    };
+
+    match existing {
+        None => changes.push(DetectComparisonChange {
+            field: field.to_string(),
+            status: "add",
+            existing: None,
+            detected: detected.to_string(),
+        }),
+        Some(existing) if existing != detected => changes.push(DetectComparisonChange {
+            field: field.to_string(),
+            status: "update",
+            existing: Some(existing.to_string()),
+            detected: detected.to_string(),
+        }),
+        Some(_) => {}
+    }
+}
+
+fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&DetectComparison>) {
+    let Some(comparison) = comparison else {
+        return;
+    };
+
+    stdout.push('\n');
+    stdout.push_str("Existing contract comparison:");
+
+    if let Some(error) = comparison.error.as_deref() {
+        stdout.push_str("\n- ");
+        stdout.push_str(error);
+        return;
+    }
+
+    if comparison.changes.is_empty() {
+        stdout.push_str("\n- no detected changes against the existing contract");
+        return;
+    }
+
+    for change in &comparison.changes {
+        stdout.push_str("\n- ");
+        stdout.push_str(&change.field);
+        match change.status {
+            "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
+            "update" => stdout.push_str(&format!(
+                ": would update `{}` -> `{}`",
+                change.existing.as_deref().unwrap_or(""),
+                change.detected
+            )),
+            _ => {}
+        }
     }
 }
 

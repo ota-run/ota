@@ -114,6 +114,8 @@ pub struct DetectSuccess<'a> {
     pub written: bool,
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<&'a DetectComparison>,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +124,24 @@ pub struct DetectFailure<'a> {
     pub path: &'a str,
     pub written: bool,
     pub error: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectComparison {
+    pub existing_contract: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<DetectComparisonChange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DetectComparisonChange {
+    pub field: String,
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub existing: Option<String>,
+    pub detected: String,
 }
 
 #[derive(Debug, Serialize)]
