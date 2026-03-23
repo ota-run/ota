@@ -637,6 +637,7 @@ pub fn workspace_up(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    stream: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -647,6 +648,33 @@ pub fn workspace_up(
             vec![
                 String::from("DEBUG command=workspace.up"),
                 String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+    if stream && matches!(format, OutputFormat::Json) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for text output"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.up"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if stream && jobs != 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` currently requires `--jobs 1`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.up"),
+                format!("DEBUG jobs={jobs}"),
+                String::from("DEBUG stream=true"),
             ],
         );
     }
@@ -666,11 +694,16 @@ pub fn workspace_up(
         String::from("DEBUG command=workspace.up"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG stream={stream}"),
     ];
 
     finalize_debug(
-        match load_and_run_workspace_up(&resolved_path, jobs, matches!(format, OutputFormat::Text))
-        {
+        match load_and_run_workspace_up(
+            &resolved_path,
+            jobs,
+            matches!(format, OutputFormat::Text),
+            stream,
+        ) {
             Ok(report) => render_workspace_up(&path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
@@ -785,12 +818,12 @@ fn render_init(
     write: bool,
     format: OutputFormat,
 ) -> CommandOutput {
-    let yaml =
-        serde_yaml::to_string(&report.contract).expect("serializing init contract should not fail");
     let mode = init_mode(&report);
     let path_display = contract_path.display().to_string();
+    let review_yaml =
+        serde_yaml::to_string(&report.contract).expect("serializing init contract should not fail");
 
-    if let Err(error) = parse_contract_str(contract_path, &yaml)
+    if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
         .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
     {
@@ -806,7 +839,38 @@ fn render_init(
     }
 
     if write {
-        return match fs::write(contract_path, &yaml) {
+        let write_contract = if mode == "detected" {
+            report.high_confidence_contract()
+        } else {
+            report.contract.clone()
+        };
+        let write_yaml = serde_yaml::to_string(&write_contract)
+            .expect("serializing init write contract should not fail");
+
+        if let Err(_) = parse_contract_str(contract_path, &write_yaml)
+            .map_err(|error| error.to_string())
+            .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        {
+            let mut error = String::from(
+                "detected starter includes medium or low confidence fields that are required for a valid contract; review `ota init` output or use `ota detect --dry-run` before writing",
+            );
+            render_inference_section(
+                &mut error,
+                "Excluded from automatic write",
+                excluded_write_inferences(&report),
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                })),
+            };
+        }
+
+        return match fs::write(contract_path, &write_yaml) {
             Ok(()) => match format {
                 OutputFormat::Text => {
                     let mut stdout = format!(
@@ -819,6 +883,15 @@ fn render_init(
                         stdout.push_str(
                             "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
                         );
+                    } else {
+                        stdout.push_str(
+                            "\nWrite policy: detected mode writes only high-confidence fields automatically",
+                        );
+                        render_inference_section(
+                            &mut stdout,
+                            "Excluded from automatic write",
+                            excluded_write_inferences(&report),
+                        );
                     }
                     render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
                     CommandOutput::success(stdout)
@@ -828,7 +901,7 @@ fn render_init(
                     path: &path_display,
                     written: true,
                     mode,
-                    config: &report.contract,
+                    config: &write_contract,
                     inferred: &report.inferences,
                 })),
             },
@@ -853,7 +926,7 @@ fn render_init(
                 "INIT {}\nMode: {mode}\nNext: review this starter contract, edit it if needed, then run `ota init --write {}`\n---\n{}",
                 report.root.display(),
                 report.root.display(),
-                yaml.trim_end()
+                review_yaml.trim_end()
             );
             if mode == "blank" {
                 stdout.push_str(
@@ -1535,10 +1608,15 @@ fn load_and_run_workspace_up(
     path: &Path,
     jobs: usize,
     emit_progress: bool,
+    stream: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    if stream {
+        return run_workspace_up_streaming(repo_refs, emit_progress);
+    }
 
     let mut repos = BTreeMap::new();
     let mut ok = true;
@@ -1612,7 +1690,7 @@ fn load_and_run_workspace_up(
                 }
                 let tx = tx.clone();
                 thread::spawn(move || {
-                    let report = run_workspace_repo_up(repo);
+                    let report = run_workspace_repo_up(repo, RepoExecutionMode::Capture);
                     let _ = tx.send((order, report));
                 })
             })
@@ -1650,61 +1728,112 @@ fn load_and_run_workspace_up(
     })
 }
 
-fn run_workspace_repo_up(repo: WorkspaceRepoRef) -> WorkspaceRepoUpReport {
+fn run_workspace_up_streaming(
+    repo_refs: Vec<WorkspaceRepoRef>,
+    emit_progress: bool,
+) -> Result<WorkspaceUpReport, WorkspaceProblem> {
+    let mut repos = Vec::new();
+    let mut ok = true;
+    let mut repo_results = BTreeMap::new();
+
+    for repo in repo_refs {
+        let blocked_dependency = repo
+            .depends_on
+            .iter()
+            .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+            .cloned();
+        let report = match blocked_dependency {
+            Some(dependency) => {
+                let report = blocked_workspace_repo_up(repo, dependency.clone());
+                if emit_progress {
+                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                }
+                report
+            }
+            None => {
+                if emit_progress {
+                    eprintln!("WORKSPACE RUN {}", repo.name);
+                }
+                let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream);
+                if emit_progress {
+                    eprintln!("WORKSPACE {} {}", report.status, report.name);
+                }
+                report
+            }
+        };
+        if report.required && !report.ok {
+            ok = false;
+        }
+        repo_results.insert(report.name.clone(), report.ok);
+        repos.push(report);
+    }
+
+    Ok(WorkspaceUpReport { ok, repos })
+}
+
+fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> WorkspaceRepoUpReport {
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
     match load_and_validate(&repo.contract_path) {
-        Ok(contract) => {
-            match execute_repo_up(&contract, &repo.contract_path, RepoExecutionMode::Capture) {
-                Ok(result) => WorkspaceRepoUpReport {
-                    name: repo.name,
-                    path: path_display,
-                    contract_path: contract_path_display,
-                    required: repo.required,
-                    ok: if repo.required { result.ok } else { true },
-                    status: if repo.required || result.ok {
-                        result.status.to_string()
+        Ok(contract) => match execute_repo_up(&contract, &repo.contract_path, mode) {
+            Ok(result) => WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: if repo.required { result.ok } else { true },
+                status: if repo.required || result.ok {
+                    result.status.to_string()
+                } else {
+                    String::from("WARN")
+                },
+                phase: result.phase.to_string(),
+                findings: adjust_workspace_up_findings(result.report.findings, repo.required),
+                service: result.service,
+                task: result.task,
+                exit_code: result.exit_code,
+                stdout: match mode {
+                    RepoExecutionMode::Capture => {
+                        (!result.stdout.is_empty()).then_some(result.stdout)
+                    }
+                    RepoExecutionMode::Stream => None,
+                },
+                stderr: match mode {
+                    RepoExecutionMode::Capture => {
+                        (!result.stderr.is_empty()).then_some(result.stderr)
+                    }
+                    RepoExecutionMode::Stream => None,
+                },
+            },
+            Err(error) => WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
+                phase: "setup".to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
                     } else {
-                        String::from("WARN")
+                        FindingSeverity::Warn
                     },
-                    phase: result.phase.to_string(),
-                    findings: adjust_workspace_up_findings(result.report.findings, repo.required),
-                    service: result.service,
-                    task: result.task,
-                    exit_code: result.exit_code,
-                    stdout: (!result.stdout.is_empty()).then_some(result.stdout),
-                    stderr: (!result.stderr.is_empty()).then_some(result.stderr),
-                },
-                Err(error) => WorkspaceRepoUpReport {
-                    name: repo.name,
-                    path: path_display,
-                    contract_path: contract_path_display,
-                    required: repo.required,
-                    ok: !repo.required,
-                    status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
-                    phase: "setup".to_string(),
-                    findings: vec![Finding {
-                        severity: if repo.required {
-                            FindingSeverity::Error
-                        } else {
-                            FindingSeverity::Warn
-                        },
-                        summary: format!("Repo up failed: {}", repo_name),
-                        why: error,
-                        next: format!(
-                            "repair `{}` and re-run `ota workspace up`",
-                            repo.contract_path.display()
-                        ),
-                    }],
-                    service: None,
-                    task: None,
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                },
-            }
-        }
+                    summary: format!("Repo up failed: {}", repo_name),
+                    why: error,
+                    next: format!(
+                        "repair `{}` and re-run `ota workspace up`",
+                        repo.contract_path.display()
+                    ),
+                }],
+                service: None,
+                task: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+            },
+        },
         Err(error) => WorkspaceRepoUpReport {
             name: repo.name,
             path: path_display,

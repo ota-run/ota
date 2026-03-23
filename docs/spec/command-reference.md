@@ -222,6 +222,8 @@ Current behavior:
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
+- in `detected` mode, write behavior is conservative and writes only the `high` confidence projection when it is sufficient
+- in `detected` mode, write fails rather than silently writing an invalid contract when medium/low confidence fields would be required
 
 Modes:
 
@@ -235,6 +237,7 @@ Text output:
 - includes `Mode: blank` or `Mode: detected`
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
+- `detected` mode write output explicitly calls out the conservative write policy and any excluded fields
 - includes inferred-field annotations with source and confidence
 
 JSON output:
@@ -329,7 +332,12 @@ Current detect sources:
 - `.tool-versions`
 - `pyproject.toml`
 - `.python-version`
+- `.java-version`
+- `.sdkmanrc`
 - `go.mod`
+- `Cargo.toml`
+- `rust-toolchain.toml`
+- `rust-toolchain`
 - `settings.gradle(.kts)`
 - `build.gradle(.kts)`
 - `gradle/wrapper/gradle-wrapper.properties`
@@ -369,7 +377,7 @@ Current precedence is conservative:
 - when confidence is equal, more repo-specific runtime sources win before generic version-manager aggregation
 - when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
 - when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
-- for example, `.nvmrc`, `.node-version`, `.python-version`, and `go.mod` win over conflicting `.tool-versions` runtime values
+- for example, `.nvmrc`, `.node-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `go.mod`, `rust-toolchain.toml`, and `rust-toolchain` win over conflicting `.tool-versions` runtime values
 
 Write behavior:
 
@@ -448,6 +456,7 @@ Prepare every repo in an Ota workspace contract.
 ota workspace up [PATH]
 ota workspace up --json [PATH]
 ota workspace up --jobs 4 [PATH]
+ota workspace up --stream [PATH]
 ```
 
 Current behavior:
@@ -463,6 +472,8 @@ Current behavior:
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`
+- `--stream` opts into raw live child process output instead of buffered per-repo output
+- `--stream` is text-only and currently requires `--jobs 1`
 
 Text output:
 

@@ -57,6 +57,14 @@ cargo run -- workspace up
 
 Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.
 
+If you want raw live child logs during workspace setup, opt in explicitly:
+
+```bash
+cargo run -- workspace up --stream
+```
+
+`--stream` is currently text-only and requires sequential execution.
+
 ## Detect a starting contract
 
 Review first:
@@ -72,6 +80,7 @@ cargo run -- detect --dry-run /path/to/repo
 - write it only when ready
 - run `ota validate` and `ota doctor` after writing
 - treat `Mode: blank` as minimal coverage, not a complete contract
+- in `Mode: detected`, automatic write is conservative and only persists `high` confidence fields when that is enough for a valid contract
 
 Write only if the `high` confidence projection is sufficient:
 
@@ -88,7 +97,12 @@ Current detect sources:
 - `.tool-versions`
 - `pyproject.toml`
 - `.python-version`
+- `.java-version`
+- `.sdkmanrc`
 - `go.mod`
+- `Cargo.toml`
+- `rust-toolchain.toml`
+- `rust-toolchain`
 - `settings.gradle(.kts)`
 - `build.gradle(.kts)`
 - `gradle/wrapper/gradle-wrapper.properties`

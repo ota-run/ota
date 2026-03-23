@@ -78,6 +78,52 @@ fn copy_fixture_to_temp(name: &str) -> TempDir {
 
 #[cfg(unix)]
 #[test]
+fn workspace_up_stream_includes_live_child_output() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let repo_dir = temp.path().join("apps").join("web");
+    fs::create_dir_all(&repo_dir).unwrap();
+    fs::write(
+        repo_dir.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    script: |
+      printf stream-out
+      printf stream-err >&2
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        r#"
+version: 1
+workspace:
+  name: ota-stream
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&["workspace", "up", "--stream", temp.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+    assert!(stdout.contains("stream-out"));
+    assert!(stdout.contains("WORKSPACE UP"));
+    assert!(stderr.contains("stream-err"));
+    assert!(stderr.contains("WORKSPACE RUN web"));
+    assert!(stderr.contains("WORKSPACE READY web"));
+}
+
+#[cfg(unix)]
+#[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {
     let fixture = real_fixture_path("task-variant-app");
     let nested = fixture.join("apps").join("web");
