@@ -87,12 +87,13 @@ Implemented so far:
 - root-level `ota doctor` summary for monorepo roots
 - member-aware `check`
 - root-level `ota check` summary for monorepo roots
+- member-aware `up`
+- root-level `ota up` summary for monorepo roots
+- first real container-backed `ota run`
+- `execution.lifecycle` enforcement for container-backed `ota run`
 
 Still to do in V3:
 
-- broader root-level inspection beyond `ota tasks`, `ota doctor`, and `ota check`
-- real container backend execution
-- explicit `execution.lifecycle` enforcement for isolated backends
 - command-time `--lifecycle` and backend override support
 - cleanup / teardown semantics
 - remote backend execution

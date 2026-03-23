@@ -23,9 +23,10 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 use crate::output::{CommandOutput, OutputFormat};
+use crate::runner::ExecutionOverrides;
 
 mod commands;
 
@@ -71,6 +72,12 @@ enum Commands {
     Run {
         /// Task name to execute.
         task: String,
+        /// Override the execution backend for this invocation.
+        #[arg(long, value_enum)]
+        backend: Option<RunBackend>,
+        /// Override the execution lifecycle for this invocation.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -115,9 +122,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Run the command against one monorepo member declared by the root contract.
+        /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
-        member: Option<String>,
+        member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -140,6 +147,38 @@ enum Commands {
         #[command(subcommand)]
         command: WorkspaceCommands,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RunBackend {
+    Native,
+    Container,
+    Remote,
+}
+
+impl From<RunBackend> for crate::schema::Backend {
+    fn from(value: RunBackend) -> Self {
+        match value {
+            RunBackend::Native => crate::schema::Backend::Native,
+            RunBackend::Container => crate::schema::Backend::Container,
+            RunBackend::Remote => crate::schema::Backend::Remote,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RunLifecycle {
+    Persistent,
+    Ephemeral,
+}
+
+impl From<RunLifecycle> for crate::schema::Lifecycle {
+    fn from(value: RunLifecycle) -> Self {
+        match value {
+            RunLifecycle::Persistent => crate::schema::Lifecycle::Persistent,
+            RunLifecycle::Ephemeral => crate::schema::Lifecycle::Ephemeral,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -224,10 +263,20 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Run { task, member, path } => commands::run_command(
+        Commands::Run {
+            task,
+            backend,
+            lifecycle,
+            member,
+            path,
+        } => commands::run_command(
             task.as_str(),
             path.as_deref(),
             file.as_deref(),
+            ExecutionOverrides {
+                backend: backend.map(Into::into),
+                lifecycle: lifecycle.map(Into::into),
+            },
             &member,
             debug,
         ),
@@ -248,7 +297,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Up { json, member, path } => commands::up(
             path.as_deref(),
             file.as_deref(),
-            member.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -1225,6 +1274,137 @@ project:
         assert_eq!(json["status"], "READY");
         assert!(fixture.dir.path().join("api").join("ready.txt").is_file());
         assert!(!fixture.dir.path().join("ready.txt").is_file());
+    }
+
+    #[test]
+    fn up_json_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf ready > ready.txt
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["status"], "READY");
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[0]["ok"], true);
+        assert_eq!(members[0]["status"], "READY");
+        assert!(fixture.dir.path().join("ready.txt").is_file());
+        assert!(fixture.dir.path().join("api").join("ready.txt").is_file());
+    }
+
+    #[test]
+    fn up_text_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stdout
+                .contains(&format!("UP {}", fixture.file_path().display()))
+        );
+        assert!(output.stdout.contains(&format!(
+            "UP {} [member api]",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(
+            output
+                .stdout
+                .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
+        );
+        assert!(output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn up_rejects_duplicate_monorepo_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "up",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("`--member api` was provided more than once")
+        );
     }
 
     #[test]

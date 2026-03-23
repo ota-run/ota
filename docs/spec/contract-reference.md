@@ -143,6 +143,9 @@ execution:
   supported:
     - native
     - container
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
 ```
 
 Supported backend values:
@@ -159,18 +162,26 @@ Supported lifecycle values:
 Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
+- `execution.preferred: container` requires `execution.backends.container.image`
+- `execution.preferred: remote` requires `execution.backends.remote.provider`
 
-Current implementation only executes tasks natively.
+Current implementation:
+
+- `ota run` now supports `execution.preferred: container` when `execution.backends.container.image` is configured
+- the first container path uses the local `docker` CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
+- `remote` is still declared-only and is not yet a real execution path
+- `ota up` remains shell-native today
 
 Current lifecycle meaning:
 
-- `persistent`: current default behavior
-- `ephemeral`: advisory only in V1; Ota still executes in the current shell environment and does not provide isolated temporary environments or automatic cleanup
+- `persistent`: when `execution.preferred: container` is configured, `ota run` reuses a persistent named container for the effective contract directory
+- `ephemeral`: when `execution.preferred: container` is configured, `ota run` uses a fresh `docker run --rm` container for each invocation
+- outside the container-backed `ota run` path, lifecycle remains advisory today
 
 Current command behavior:
 
-- `ota doctor` warns when `ephemeral` is declared
-- `ota run` prints an advisory lifecycle note on stderr
+- `ota doctor` warns when `ephemeral` is declared, and clarifies that container-backed isolation currently applies to `ota run` but not `ota up`
+- `ota run` prints a lifecycle note on stderr and can execute via the configured container backend
 - `ota up` remains shell-native and does not provide isolation
 
 ## `services`

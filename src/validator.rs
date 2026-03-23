@@ -149,6 +149,60 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             format_backend(preferred)
         )));
     }
+
+    if let Some(container) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref())
+        && container.image.trim().is_empty()
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.container.image` must not be empty",
+        ));
+    }
+
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote.provider.trim().is_empty()
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.provider` must not be empty",
+        ));
+    }
+
+    if execution.preferred == Some(crate::schema::Backend::Container)
+        && execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.container.as_ref())
+            .is_none()
+    {
+        errors.push(ValidationError::new(
+            "`execution.preferred: container` requires `execution.backends.container.image`",
+        ));
+    }
+
+    if execution.preferred == Some(crate::schema::Backend::Container)
+        && execution.lifecycle.is_none()
+    {
+        errors.push(ValidationError::new(
+            "`execution.preferred: container` requires an explicit `execution.lifecycle`",
+        ));
+    }
+
+    if execution.preferred == Some(crate::schema::Backend::Remote)
+        && execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            .is_none()
+    {
+        errors.push(ValidationError::new(
+            "`execution.preferred: remote` requires `execution.backends.remote.provider`",
+        ));
+    }
 }
 
 fn validate_named_versions<T>(
@@ -870,6 +924,60 @@ services:
         assert_eq!(
             errors.errors()[0].to_string(),
             "service dependency cycle detected: api -> postgres -> api"
+        );
+    }
+
+    #[test]
+    fn rejects_container_preferred_without_container_image() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: container` requires `execution.backends.container.image`"
+        );
+    }
+
+    #[test]
+    fn rejects_container_preferred_without_explicit_lifecycle() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: container` requires an explicit `execution.lifecycle`"
         );
     }
 }

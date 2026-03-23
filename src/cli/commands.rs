@@ -45,7 +45,10 @@ use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
     parse_contract_str,
 };
-use crate::runner::{RunError, run_task, run_task_captured, run_task_with_progress};
+use crate::runner::{
+    ExecutionOverrides, RunError, effective_execution, run_task, run_task_captured,
+    run_task_with_overrides, run_task_with_progress,
+};
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -417,6 +420,7 @@ pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
     file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
     members: &[String],
     debug: bool,
 ) -> CommandOutput {
@@ -453,12 +457,18 @@ pub fn run_command(
         format!("DEBUG task={task_name}"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if let Some(backend) = overrides.backend {
+        debug_lines.push(format!("DEBUG backend_override={}", format_backend(backend)));
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        debug_lines.push(format!("DEBUG lifecycle_override={}", format_lifecycle(lifecycle)));
+    }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
     finalize_debug(
-        match run_contract_targets(task_name, &resolved_path, members) {
+        match run_contract_targets(task_name, &resolved_path, overrides, members) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
                 stderr,
@@ -1101,10 +1111,21 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 pub fn up(
     path: Option<&Path>,
     file_override: Option<&Path>,
-    member: Option<&str>,
+    members: &[String],
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=up")],
+        );
+    }
+
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -1116,27 +1137,173 @@ pub fn up(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let text_path_display = display_contract_target(&path_display, member);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=up"),
         format!("DEBUG contract_path={path_display}"),
     ];
-    if let Some(member) = member {
+    for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
     finalize_debug(
-        match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => {
-                match execute_repo_up(
-                    &target.contract,
-                    &target.contract_path,
-                    RepoExecutionMode::Stream,
-                ) {
-                    Ok(result) => {
-                        render_up_result(&path_display, &text_path_display, result, format)
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) if members.is_empty() || members.len() == 1 => {
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let root_result = match execute_repo_up(
+                        &target.contract,
+                        &target.contract_path,
+                        RepoExecutionMode::Stream,
+                    ) {
+                        Ok(result) => result,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                    let mut overall_ok = root_result.ok;
+                    let mut text_sections =
+                        vec![render_up_section(&text_path_display, &root_result)];
+                    let mut member_results = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return CommandOutput::failure(errors.to_string());
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return CommandOutput::failure(error.to_string());
+                                    }
+                                };
+                            let member_result = match execute_repo_up(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                                RepoExecutionMode::Stream,
+                            ) {
+                                Ok(result) => result,
+                                Err(error) => return CommandOutput::failure(error),
+                            };
+                            if !member_result.ok {
+                                overall_ok = false;
+                            }
+                            text_sections.push(render_up_section(
+                                &display_contract_target(&path_display, Some(member.as_str())),
+                                &member_result,
+                            ));
+                            member_results.push(json!({
+                                "member": member,
+                                "ok": member_result.ok,
+                                "status": member_result.status,
+                                "phase": member_result.phase,
+                                "findings": member_result.report.findings,
+                                "service": member_result.service,
+                                "task": member_result.task,
+                                "exit_code": member_result.exit_code,
+                            }));
+                        }
                     }
-                    Err(error) => CommandOutput::failure(error),
+
+                    match format {
+                        OutputFormat::Text => CommandOutput {
+                            stdout: text_sections.join("\n---\n"),
+                            stderr: None,
+                            exit_code: if overall_ok { 0 } else { 1 },
+                        },
+                        OutputFormat::Json => CommandOutput {
+                            stdout: to_json_value(json!({
+                                "ok": overall_ok,
+                                "path": path_display,
+                                "status": root_result.status,
+                                "phase": root_result.phase,
+                                "findings": root_result.report.findings,
+                                "service": root_result.service,
+                                "task": root_result.task,
+                                "exit_code": root_result.exit_code,
+                                "members": member_results,
+                            })),
+                            stderr: None,
+                            exit_code: if overall_ok { 0 } else { 1 },
+                        },
+                    }
+                } else {
+                    match execute_repo_up(
+                        &target.contract,
+                        &target.contract_path,
+                        RepoExecutionMode::Stream,
+                    ) {
+                        Ok(result) => {
+                            render_up_result(&path_display, &text_path_display, result, format)
+                        }
+                        Err(error) => CommandOutput::failure(error),
+                    }
+                }
+            }
+            Ok(_) => {
+                let mut overall_ok = true;
+                let mut text_sections = Vec::new();
+                let mut member_results = Vec::new();
+                for member in members {
+                    let target =
+                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                            Ok(target) => target,
+                            Err(ContractProblem::Validation(errors)) => {
+                                return CommandOutput::failure(errors.to_string());
+                            }
+                            Err(ContractProblem::Load(error)) => {
+                                return CommandOutput::failure(error.to_string());
+                            }
+                        };
+                    let result = match execute_repo_up(
+                        &target.contract,
+                        &target.contract_path,
+                        RepoExecutionMode::Stream,
+                    ) {
+                        Ok(result) => result,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                    if !result.ok {
+                        overall_ok = false;
+                    }
+                    text_sections.push(render_up_section(
+                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &result,
+                    ));
+                    member_results.push(json!({
+                        "member": member,
+                        "ok": result.ok,
+                        "status": result.status,
+                        "phase": result.phase,
+                        "findings": result.report.findings,
+                        "service": result.service,
+                        "task": result.task,
+                        "exit_code": result.exit_code,
+                    }));
+                }
+
+                match format {
+                    OutputFormat::Text => CommandOutput {
+                        stdout: text_sections.join("\n---\n"),
+                        stderr: None,
+                        exit_code: if overall_ok { 0 } else { 1 },
+                    },
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json_value(json!({
+                            "ok": overall_ok,
+                            "path": path_display,
+                            "members": member_results,
+                            "status": "MULTI",
+                            "phase": "aggregate",
+                            "findings": Vec::<JsonValue>::new(),
+                        })),
+                        stderr: None,
+                        exit_code: if overall_ok { 0 } else { 1 },
+                    },
                 }
             }
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
@@ -2372,20 +2539,24 @@ fn render_up_result(
     result: RepoUpResult,
     format: OutputFormat,
 ) -> CommandOutput {
-    render_up(
-        match format {
-            OutputFormat::Text => text_path,
-            OutputFormat::Json => path,
+    match format {
+        OutputFormat::Text => CommandOutput {
+            stdout: render_up_section(text_path, &result),
+            stderr: None,
+            exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
         },
-        result.status,
-        result.phase,
-        result.report,
-        result.ok,
-        result.service.as_deref(),
-        result.task.as_deref(),
-        result.exit_code,
-        format,
-    )
+        OutputFormat::Json => render_up(
+            path,
+            result.status,
+            result.phase,
+            result.report,
+            result.ok,
+            result.service.as_deref(),
+            result.task.as_deref(),
+            result.exit_code,
+            format,
+        ),
+    }
 }
 
 fn display_contract_target(path: &str, member: Option<&str>) -> String {
@@ -2408,12 +2579,13 @@ fn duplicate_member<'a>(members: &'a [String]) -> Option<&'a str> {
 fn run_contract_targets(
     task_name: &str,
     resolved_path: &Path,
+    overrides: ExecutionOverrides,
     members: &[String],
 ) -> Result<Option<String>, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None)
             .map_err(render_contract_problem_failure)?;
-        return run_single_contract_target(task_name, None, target);
+        return run_single_contract_target(task_name, overrides, None, target);
     }
 
     let mut stderr_sections = Vec::new();
@@ -2421,7 +2593,8 @@ fn run_contract_targets(
         eprintln!("MEMBER {member}");
         let target = load_and_validate_target(resolved_path, Some(member.as_str()))
             .map_err(render_contract_problem_failure)?;
-        if let Some(stderr) = run_single_contract_target(task_name, Some(member.as_str()), target)?
+        if let Some(stderr) =
+            run_single_contract_target(task_name, overrides, Some(member.as_str()), target)?
         {
             stderr_sections.push(stderr);
         }
@@ -2436,12 +2609,13 @@ fn run_contract_targets(
 
 fn run_single_contract_target(
     task_name: &str,
+    overrides: ExecutionOverrides,
     member: Option<&str>,
     target: LoadedContractTarget,
 ) -> Result<Option<String>, RunCommandFailure> {
-    match run_task(&target.contract, &target.contract_path, task_name) {
+    match run_task_with_overrides(&target.contract, &target.contract_path, task_name, overrides) {
         Ok(outcome) if outcome.exit_code == 0 => {
-            Ok(lifecycle_notice_with_member(&target.contract, member))
+            Ok(lifecycle_notice_with_member(&target.contract, overrides, member))
         }
         Ok(outcome) => Err(RunCommandFailure {
             message: format!(
@@ -2457,8 +2631,12 @@ fn run_single_contract_target(
     }
 }
 
-fn lifecycle_notice_with_member(contract: &Contract, member: Option<&str>) -> Option<String> {
-    lifecycle_notice(contract).map(|notice| match member {
+fn lifecycle_notice_with_member(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+) -> Option<String> {
+    lifecycle_notice(contract, overrides).map(|notice| match member {
         Some(member) => format!("[member {member}] {notice}"),
         None => notice,
     })
@@ -2512,6 +2690,37 @@ fn render_up_text(
     task: Option<&str>,
     exit_code: Option<i32>,
 ) -> CommandOutput {
+    let stdout =
+        render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
+    }
+}
+
+fn render_up_section(path: &str, result: &RepoUpResult) -> String {
+    render_up_section_from_parts(
+        path,
+        result.status,
+        result.phase,
+        &result.report,
+        result.service.as_deref(),
+        result.task.as_deref(),
+        result.exit_code,
+    )
+}
+
+fn render_up_section_from_parts(
+    path: &str,
+    status: &str,
+    phase: &str,
+    report: &DoctorReport,
+    service: Option<&str>,
+    task: Option<&str>,
+    exit_code: Option<i32>,
+) -> String {
     let mut stdout = format!("UP {path}\n{status}\nPhase: {phase}");
 
     if let Some(service) = service {
@@ -2545,11 +2754,7 @@ fn render_up_text(
         ));
     }
 
-    CommandOutput {
-        stdout,
-        stderr: None,
-        exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
-    }
+    stdout
 }
 
 fn render_up_json(
@@ -3595,19 +3800,18 @@ fn run_shell_command(
     }
 }
 
-fn lifecycle_notice(contract: &Contract) -> Option<String> {
-    if matches!(
-        contract
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.lifecycle),
-        Some(Lifecycle::Ephemeral)
-    ) {
-        Some(String::from(
+fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Option<String> {
+    match effective_execution(contract, overrides) {
+        (crate::schema::Backend::Container, Some(Lifecycle::Ephemeral)) => Some(String::from(
+            "Lifecycle note: running task in an ephemeral container backend",
+        )),
+        (crate::schema::Backend::Container, Some(Lifecycle::Persistent)) => Some(String::from(
+            "Lifecycle note: reusing persistent container backend",
+        )),
+        (_, Some(Lifecycle::Ephemeral)) => Some(String::from(
             "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment",
-        ))
-    } else {
-        None
+        )),
+        _ => None,
     }
 }
 
@@ -3685,6 +3889,21 @@ fn render_confidence(confidence: Confidence) -> &'static str {
         Confidence::High => "high",
         Confidence::Medium => "medium",
         Confidence::Low => "low",
+    }
+}
+
+fn format_backend(backend: crate::schema::Backend) -> &'static str {
+    match backend {
+        crate::schema::Backend::Native => "native",
+        crate::schema::Backend::Container => "container",
+        crate::schema::Backend::Remote => "remote",
+    }
+}
+
+fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Persistent => "persistent",
+        Lifecycle::Ephemeral => "ephemeral",
     }
 }
 
