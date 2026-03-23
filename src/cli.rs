@@ -1596,6 +1596,80 @@ project:
     }
 
     #[test]
+    fn detect_merge_json_reports_written_when_additions_are_applied() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], true);
+        assert_eq!(json["comparison"]["existing_contract"], true);
+        assert!(
+            json["comparison"]["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| change["field"] == "tools.pnpm" && change["status"] == "add")
+        );
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+    }
+
+    #[test]
+    fn detect_merge_json_reports_written_false_when_nothing_is_addable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  pnpm: 10.1.0
+tasks:
+  dev:
+    run: pnpm dev
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], false);
+        assert_eq!(json["comparison"]["existing_contract"], true);
+        assert!(
+            json["comparison"]["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|change| change["status"] != "add")
+        );
+    }
+
+    #[test]
     fn detect_writes_high_confidence_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
