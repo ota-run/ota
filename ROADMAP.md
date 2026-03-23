@@ -27,7 +27,7 @@
 ## Current state
 
 V1 is complete and frozen.
-V2 planning is now the active track.
+V2 trust and adoption work is now the active track.
 
 ## V1 archive
 
@@ -39,7 +39,7 @@ V2 planning is now the active track.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- begin V2 planning without weakening V1 contracts
+- keep shipping narrow V2 slices without weakening V1 contracts
 
 ## V2 planning
 
@@ -54,10 +54,19 @@ V2 planning is now the active track.
 
 ## Near-term next steps
 
-- tighten V2 around trust, adoption, real-repo handling, and stronger agent usefulness
+- keep tightening V2 around trust, adoption, real-repo handling, and stronger agent usefulness
 - keep extending fixtures only when they expose real gaps
 - avoid V2 scope that weakens V1 trust or determinism
 - keep exports optional unless one exact target proves real duplicated-truth pain
+
+## Current V2 shape
+
+Shipped V2 work so far is still intentionally narrow:
+
+- better real-repo detect coverage for common Node and Python repo shapes
+- conservative existing-contract comparison and additive merge for `ota detect`
+- stronger real-fixture coverage for mixed, legacy, and conflicting repo shapes
+- agent guidance surfaced on existing machine-readable and human-readable command paths
 
 ## Product direction
 

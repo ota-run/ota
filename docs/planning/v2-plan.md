@@ -24,7 +24,7 @@
 
 # V2 Plan
 
-Status: active planning.
+Status: active implementation.
 
 V2 should expand Ota only after preserving the shipped V1 trust model.
 
@@ -36,6 +36,13 @@ The point of V2 is to make Ota:
 - easier to adopt
 - better at handling messy repo reality
 - more useful to agents without introducing parallel truth
+
+Current V2 slices already in motion include:
+
+- better detect coverage for common Node and Python repo shapes
+- conservative existing-contract comparison and additive merge for `ota detect`
+- more real-fixture pressure on mixed, conflicting, and legacy repo shapes
+- agent guidance surfaced through existing text and JSON command paths
 
 ## Priorities
 
@@ -66,7 +73,7 @@ The point of V2 is to make Ota:
 - reduce the cost of getting a real repo into Ota
 - improve import and migration paths without weakening trust-sensitive writes
 - prioritize work that helps one repo or one team adopt Ota faster
-- define merge/update behavior explicitly before any detect merge write path exists
+- keep detect merge/update review-first and additive-only unless broader write behavior earns trust through real fixtures
 
 ### Track 3: Better Real-Repo Handling
 

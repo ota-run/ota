@@ -183,6 +183,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_pyproject(&root, &mut builder)?;
     detect_pipfile(&root, &mut builder)?;
     detect_uv_lock(&root, &mut builder)?;
+    detect_requirements_txt(&root, &mut builder)?;
+    detect_setup_cfg(&root, &mut builder)?;
     detect_cargo_toml(&root, &mut builder)?;
     detect_gradle(&root, &mut builder)?;
     detect_pom_xml(&root, &mut builder)?;
@@ -584,6 +586,71 @@ fn detect_uv_lock(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
         "uv.lock".to_string(),
         Confidence::Medium,
     );
+
+    Ok(())
+}
+
+fn detect_requirements_txt(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("requirements.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let _ = read_file(&path)?;
+    builder.set_tool(
+        "pip".to_string(),
+        "*".to_string(),
+        "requirements.txt".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_setup_cfg(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("setup.cfg");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let mut section = "";
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            continue;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = &trimmed[1..trimmed.len() - 1];
+            continue;
+        }
+
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+
+        match (section, key) {
+            ("metadata", "name") => builder.set_project_name(
+                value.to_string(),
+                "setup.cfg#metadata.name".to_string(),
+                Confidence::High,
+            ),
+            ("options", "python_requires") => builder.set_runtime(
+                "python".to_string(),
+                value.to_string(),
+                "setup.cfg#options.python_requires".to_string(),
+                Confidence::Medium,
+            ),
+            _ => {}
+        }
+    }
 
     Ok(())
 }
@@ -1295,6 +1362,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "settings.gradle#rootProject.name" => 4,
             "Cargo.toml#package.name" => 4,
             "pyproject.toml#project.name" => 4,
+            "setup.cfg#metadata.name" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
             "go.mod#module" => 2,
@@ -1312,6 +1380,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".python-version" => 4,
             ".tool-versions" => 3,
             "pyproject.toml#project.requires-python" => 2,
+            "setup.cfg#options.python_requires" => 2,
             "pyproject.toml#tool.poetry.dependencies.python" => 1,
             "Pipfile#requires.python_full_version" => 1,
             "Pipfile#requires.python_version" => 1,
@@ -1354,6 +1423,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "npm-shrinkwrap.json" => 2,
             "uv.lock" => 2,
             "Cargo.toml" => 2,
+            "requirements.txt" => 1,
             "pom.xml" => 1,
             ".tool-versions" => 1,
             _ => 0,

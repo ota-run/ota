@@ -27,7 +27,8 @@
         "ok": { "const": false },
         "path": { "type": "string" },
         "written": { "const": false },
-        "error": { "type": "string" }
+        "error": { "type": "string" },
+        "next": { "type": "string" }
       }
     }
   ]

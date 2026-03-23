@@ -31,6 +31,7 @@ From a repo with `ota.yaml`:
 ```bash
 cargo run -- validate
 cargo run -- tasks
+cargo run -- tasks --json
 cargo run -- doctor
 cargo run -- up
 ```
@@ -44,6 +45,10 @@ cargo run -- run test
 Tasks can use either a single-command `run` or an inline multiline `script`.
 
 Tasks can also declare OS-specific variants while keeping one stable task name.
+
+If the contract declares an `agent` section, `ota tasks --json` and `ota doctor --json` surface
+the current entrypoint, safe task set, verification tasks, and writable paths without creating a
+separate agent-only config path.
 
 ## Validate a workspace
 
@@ -95,13 +100,37 @@ cargo run -- init --write
 cargo run -- detect /path/to/repo
 ```
 
+If `ota.yaml` already exists, review or conservatively merge instead of overwriting:
+
+```bash
+cargo run -- detect --merge --dry-run /path/to/repo
+cargo run -- detect --merge /path/to/repo
+```
+
+Current merge behavior:
+
+- `ota detect --merge --dry-run` is the review path for existing contracts
+- `ota detect --merge` applies only additive `high` confidence missing fields
+- conflicting or lower-confidence changes stay review-only
+- when nothing eligible can be added, merge returns success with `written: false`
+
 Current detect sources:
 
 - `package.json`
+- `pnpm-workspace.yaml`
+- `pnpm-lock.yaml`
+- `yarn.lock`
+- `bun.lock` / `bun.lockb`
+- `package-lock.json`
+- `npm-shrinkwrap.json`
 - `.nvmrc`
 - `.node-version`
 - `.tool-versions`
 - `pyproject.toml`
+- `Pipfile`
+- `uv.lock`
+- `requirements.txt`
+- `setup.cfg`
 - `.python-version`
 - `.java-version`
 - `.sdkmanrc`

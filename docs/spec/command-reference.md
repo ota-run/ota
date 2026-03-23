@@ -252,6 +252,7 @@ JSON output:
 - `mode`
 - `config`
 - `inferred`
+- failure responses can include `next` when Ota can point to one safe follow-up command
 
 ## `ota check`
 
@@ -345,6 +346,8 @@ Current detect sources:
 - `pyproject.toml`
 - `Pipfile`
 - `uv.lock`
+- `requirements.txt`
+- `setup.cfg`
 - `.python-version`
 - `.java-version`
 - `.sdkmanrc`
@@ -389,6 +392,8 @@ Current merge-write behavior:
 - it does not overwrite conflicting existing values
 - it validates the merged contract before writing
 - it is additive only in the current implementation
+- on mixed repos, lower-confidence fields can still appear in `comparison` without being written
+- if nothing eligible can be added, it returns success with `written: false` and leaves `ota.yaml` unchanged
 
 Example dry-run annotations for detected Compose services:
 
@@ -410,6 +415,8 @@ Current precedence is conservative:
 - when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
+- `requirements.txt` can contribute `pip` tool inference conservatively
+- `setup.cfg` can contribute project name and `python` runtime inference conservatively
 - for example, `.nvmrc`, `.node-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `go.mod`, `rust-toolchain.toml`, and `rust-toolchain` win over conflicting `.tool-versions` runtime values
 
 Write behavior:
@@ -419,6 +426,7 @@ Write behavior:
 - refuses to overwrite an existing `ota.yaml`
 - when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run`
 - fails if the high-confidence projection is not sufficient
+- JSON failure responses can include `next` when Ota can point to one safe follow-up command
 
 This is intentionally conservative. Review mode comes first, write mode second.
 

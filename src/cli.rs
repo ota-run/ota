@@ -839,6 +839,31 @@ project:
     }
 
     #[test]
+    fn init_json_refuses_to_overwrite_existing_contract_with_next() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+
+        let output = run_with(["ota", "init", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert_eq!(
+            json["next"],
+            format!(
+                "ota detect --merge --dry-run {}",
+                fixture.file_path().display()
+            )
+        );
+    }
+
+    #[test]
     fn run_executes_script_tasks() {
         let fixture = ContractFixture::new(
             r#"
@@ -1543,6 +1568,19 @@ project:
     }
 
     #[test]
+    fn detect_merge_json_requires_existing_contract_with_next() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "detect", "--merge", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["next"], format!("ota detect {}", fixture.path()));
+    }
+
+    #[test]
     fn detect_merge_dry_run_requires_existing_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -1729,6 +1767,28 @@ project:
     }
 
     #[test]
+    fn detect_json_refuses_to_overwrite_existing_contract_with_next() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert_eq!(
+            json["next"],
+            format!("ota detect --merge --dry-run {}", fixture.path())
+        );
+    }
+
+    #[test]
     fn detect_refuses_to_write_when_high_confidence_fields_are_insufficient() {
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
@@ -1759,6 +1819,20 @@ project:
                 .contains("project.name: go-service <- from go.mod#module [medium]")
         );
         assert!(!fixture.file_path().exists());
+    }
+
+    #[test]
+    fn detect_json_reports_next_when_high_confidence_fields_are_insufficient() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
+
+        let output = run_with(["ota", "detect", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["next"], "ota detect --dry-run");
     }
 
     #[test]

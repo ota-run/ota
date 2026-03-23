@@ -105,6 +105,8 @@ pub struct InitFailure<'a> {
     pub path: &'a str,
     pub written: bool,
     pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +126,8 @@ pub struct DetectFailure<'a> {
     pub path: &'a str,
     pub written: bool,
     pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
 }
 
 #[derive(Debug, Serialize)]
