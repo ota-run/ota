@@ -119,7 +119,9 @@ The long-term aim is:
 
 ## Current status
 
-The repository already contains a working core for the v1 path:
+V1 is complete and the release gate is green.
+
+The current shipped foundation includes:
 
 - contract validation
 - task listing
@@ -130,6 +132,12 @@ The repository already contains a working core for the v1 path:
 - separate workspace contract validation, diagnosis, and bootstrap
 - generic git-based workspace acquisition for missing repos
 - fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, and ugly/polyglot mixed-reality repo shapes
+
+Current planning state:
+
+- V1 archive: [docs/planning/v1/phases.md](docs/planning/v1/phases.md)
+- V1 release gate: [docs/planning/v1/release-gate.md](docs/planning/v1/release-gate.md)
+- V2 plan: [docs/planning/v2-plan.md](docs/planning/v2-plan.md)
 
 ## Quickstart
 
@@ -186,8 +194,9 @@ Example contracts:
 - [Detect write gate](docs/design/detect-write-gate.md)
 
 ### Planning and roadmap
-- [V1 phases](docs/planning/v1-phases.md)
-- [V1 release gate](docs/planning/v1-release-gate.md)
+- [V1 phases](docs/planning/v1/phases.md)
+- [V1 release gate](docs/planning/v1/release-gate.md)
+- [V2 plan](docs/planning/v2-plan.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)
 - [Roadmap](ROADMAP.md)
 

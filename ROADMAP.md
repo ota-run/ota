@@ -1,54 +1,68 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
 # Roadmap
 
-## Current build path
+## Current state
 
-Ota is being built in phased V1 delivery rather than by cutting V1 scope.
+V1 is complete and frozen.
+V2 planning is now the active track.
 
-Current phase map:
+## V1 archive
 
-1. `V1a` Contract Core
-2. `V1b` Read Path
-3. `V1c` Execution Core
-4. `V1d` Diagnosis Core
-5. `V1e` Onboarding Path
-6. `V1f` Detection
-7. `V1g` Agent Surface and Polish
-
-The detailed implementation plan is in [docs/planning/v1-phases.md](docs/planning/v1-phases.md).
-The detect write threshold is documented in [docs/design/detect-write-gate.md](docs/design/detect-write-gate.md).
-Future task executor expansion is tracked in the product spec.
-The next execution plan is in [docs/planning/v1-next-plan.md](docs/planning/v1-next-plan.md).
-The binding V1 closeout bar is in [docs/planning/v1-release-gate.md](docs/planning/v1-release-gate.md).
-
-## Implemented so far
-
-- `ota validate`
-- `ota tasks`
-- `ota run`
-- `ota doctor`
-- `ota init`
-- `ota check`
-- `ota up`
-- `ota detect --dry-run`
-- conservative `ota detect` write mode
+- [V1 phases](docs/planning/v1/phases.md)
+- [V1 next plan](docs/planning/v1/next-plan.md)
+- [V1 release gate](docs/planning/v1/release-gate.md)
 
 ## Current focus
 
-- binding the current implementation to the V1 release gate
-- keeping the public spec and docs aligned with shipped behavior
+- keep the V1 release gate green
+- keep public docs aligned with shipped behavior
+- begin V2 planning without weakening V1 contracts
+
+## V2 planning
+
+- [V2 plan](docs/planning/v2-plan.md)
+
+## Implemented foundation
+
+- repo contract validation and execution
+- repo diagnosis and onboarding
+- conservative detection and init
+- workspace validation, diagnosis, bootstrap, and git-based acquisition
 
 ## Near-term next steps
 
-- keep the fixture matrix as the source of truth for V1 closeout
-- expand fixtures only when they expose real gaps
-- avoid post-V1 scope until the release gate is satisfied
+- define the first bounded V2 track
+- keep extending fixtures only when they expose real gaps
+- avoid V2 scope that weakens V1 trust or determinism
 
 ## Product direction
 
-Longer-term work is expected to include:
+Planned V2 themes include:
 
 - broader interop coverage
-- richer repo examples
 - stronger agent-facing contract guidance
-- more spec/documentation polish for external adoption
-- a possible post-V1 execution model beyond shell-native `run` and `script`
+- richer workspace ergonomics
+- a possible post-V1 execution model expansion beyond the current shell-native contract
