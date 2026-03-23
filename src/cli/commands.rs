@@ -85,15 +85,32 @@ pub fn validate(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(contract) => {
-                let _ = contract;
-                match format {
-                    OutputFormat::Text => {
-                        CommandOutput::success(format!("VALID {text_path_display}"))
-                    }
-                    OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
-                        ok: true,
-                        path: &path_display,
-                    })),
+                match validate_declared_monorepo_members(&resolved_path, &contract.contract) {
+                    Ok(()) => match format {
+                        OutputFormat::Text => {
+                            CommandOutput::success(format!("VALID {text_path_display}"))
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
+                            ok: true,
+                            path: &path_display,
+                        })),
+                    },
+                    Err(errors) => match format {
+                        OutputFormat::Text => {
+                            let mut stderr = String::from("INVALID ota.yaml");
+                            for error in errors {
+                                stderr.push_str("\n- ");
+                                stderr.push_str(&error);
+                            }
+                            CommandOutput::failure(stderr)
+                        }
+                        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                            ok: false,
+                            path: &path_display,
+                            errors,
+                            error: None,
+                        })),
+                    },
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
@@ -204,9 +221,23 @@ pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
     file_override: Option<&Path>,
-    member: Option<&str>,
+    members: &[String],
     debug: bool,
 ) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=run"),
+                format!("DEBUG task={task_name}"),
+            ],
+        );
+    }
+
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -226,22 +257,22 @@ pub fn run_command(
         format!("DEBUG task={task_name}"),
         format!("DEBUG contract_path={path_display}"),
     ];
-    if let Some(member) = member {
+    for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
     finalize_debug(
-        match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => match run_task(&target.contract, &target.contract_path, task_name) {
-                Ok(outcome) => CommandOutput {
-                    stdout: String::new(),
-                    stderr: lifecycle_notice(&target.contract),
-                    exit_code: outcome.exit_code,
-                },
-                Err(error) => CommandOutput::failure(render_run_error(error)),
+        match run_contract_targets(task_name, &resolved_path, members) {
+            Ok(stderr) => CommandOutput {
+                stdout: String::new(),
+                stderr,
+                exit_code: 0,
             },
-            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
-            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+            Err(error) => CommandOutput {
+                stdout: String::new(),
+                stderr: Some(error.message),
+                exit_code: error.exit_code,
+            },
         },
         debug,
         debug_lines,
@@ -1735,6 +1766,113 @@ fn display_contract_target(path: &str, member: Option<&str>) -> String {
     match member {
         Some(member) => format!("{path} [member {member}]"),
         None => path.to_string(),
+    }
+}
+
+fn duplicate_member<'a>(members: &'a [String]) -> Option<&'a str> {
+    let mut seen = BTreeSet::new();
+    for member in members {
+        if !seen.insert(member.as_str()) {
+            return Some(member);
+        }
+    }
+    None
+}
+
+fn run_contract_targets(
+    task_name: &str,
+    resolved_path: &Path,
+    members: &[String],
+) -> Result<Option<String>, RunCommandFailure> {
+    if members.is_empty() {
+        let target = load_and_validate_target(resolved_path, None)
+            .map_err(render_contract_problem_failure)?;
+        return run_single_contract_target(task_name, None, target);
+    }
+
+    let mut stderr_sections = Vec::new();
+    for member in members {
+        eprintln!("MEMBER {member}");
+        let target = load_and_validate_target(resolved_path, Some(member.as_str()))
+            .map_err(render_contract_problem_failure)?;
+        if let Some(stderr) = run_single_contract_target(task_name, Some(member.as_str()), target)?
+        {
+            stderr_sections.push(stderr);
+        }
+    }
+
+    if stderr_sections.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(stderr_sections.join("\n")))
+    }
+}
+
+fn run_single_contract_target(
+    task_name: &str,
+    member: Option<&str>,
+    target: LoadedContractTarget,
+) -> Result<Option<String>, RunCommandFailure> {
+    match run_task(&target.contract, &target.contract_path, task_name) {
+        Ok(outcome) if outcome.exit_code == 0 => {
+            Ok(lifecycle_notice_with_member(&target.contract, member))
+        }
+        Ok(outcome) => Err(RunCommandFailure {
+            message: format!(
+                "task `{task_name}` failed with exit code {}",
+                outcome.exit_code
+            ),
+            exit_code: outcome.exit_code,
+        }),
+        Err(error) => Err(RunCommandFailure {
+            message: render_run_error(error),
+            exit_code: 1,
+        }),
+    }
+}
+
+fn lifecycle_notice_with_member(contract: &Contract, member: Option<&str>) -> Option<String> {
+    lifecycle_notice(contract).map(|notice| match member {
+        Some(member) => format!("[member {member}] {notice}"),
+        None => notice,
+    })
+}
+
+struct RunCommandFailure {
+    message: String,
+    exit_code: i32,
+}
+
+fn render_contract_problem_failure(error: ContractProblem) -> RunCommandFailure {
+    RunCommandFailure {
+        message: render_contract_problem(&error),
+        exit_code: 1,
+    }
+}
+
+fn validate_declared_monorepo_members(path: &Path, contract: &Contract) -> Result<(), Vec<String>> {
+    let Some(workspace) = contract.workspace.as_ref() else {
+        return Ok(());
+    };
+
+    let mut errors = Vec::new();
+    for member in &workspace.members {
+        match load_contract_for_member(path, member) {
+            Ok((contract, _)) => {
+                if let Err(validation_errors) = validate_contract(&contract) {
+                    for error in validation_errors.errors() {
+                        errors.push(format!("monorepo member `{member}`: {error}"));
+                    }
+                }
+            }
+            Err(error) => errors.push(format!("monorepo member `{member}`: {error}")),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
