@@ -89,6 +89,7 @@ Implemented so far:
 - root-level `ota check` summary for monorepo roots
 - member-aware `up`
 - root-level `ota up` summary for monorepo roots
+- `ota workspace tasks` task-graph summary in dependency order
 - first real container-backed `ota run`
 - `execution.lifecycle` enforcement for container-backed `ota run`
 - command-time `ota run --backend` / `--lifecycle` and `ota up --backend` / `--lifecycle` overrides

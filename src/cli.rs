@@ -136,9 +136,9 @@ enum Commands {
     },
     /// Clean persistent execution state for a repo.
     Clean {
-        /// Run the command against one monorepo member declared by the root contract.
+        /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
-        member: Option<String>,
+        member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -205,6 +205,14 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// List workspace repo tasks in dependency order.
+    Tasks {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Diagnose workspace repo readiness from an ota.workspace.yaml contract.
     Doctor {
         /// Print machine-readable JSON output.
@@ -222,6 +230,22 @@ enum WorkspaceCommands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Maximum number of independent repos to prepare at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Stream raw child process output live instead of buffering it into the final report.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Run a task across workspace repos.
+    Run {
+        /// Task name to execute.
+        task: String,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Maximum number of independent repos to run at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
         /// Stream raw child process output live instead of buffering it into the final report.
@@ -326,7 +350,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             debug,
         ),
         Commands::Clean { member, path } => {
-            commands::clean(path.as_deref(), file.as_deref(), member.as_deref(), debug)
+            commands::clean(path.as_deref(), file.as_deref(), &member, debug)
         }
         Commands::Init { write, json, path } => {
             if file.is_some() {
@@ -368,6 +392,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
+            WorkspaceCommands::Tasks { json, path } => commands::workspace_tasks(
+                path.as_deref(),
+                file.as_deref(),
+                format_from_json(json),
+                debug,
+            ),
             WorkspaceCommands::Doctor { json, jobs, path } => commands::workspace_doctor(
                 path.as_deref(),
                 file.as_deref(),
@@ -381,6 +411,21 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 stream,
                 path,
             } => commands::workspace_up(
+                path.as_deref(),
+                file.as_deref(),
+                jobs,
+                stream,
+                format_from_json(json),
+                debug,
+            ),
+            WorkspaceCommands::Run {
+                task,
+                json,
+                jobs,
+                stream,
+                path,
+            } => commands::workspace_run(
+                task.as_str(),
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
@@ -1666,7 +1711,115 @@ tasks:
             output.stdout,
             format!("CLEANED {}", fixture.file_path().display())
         );
-        assert!(bin_dir.join("docker-log.txt").exists());
+        assert!(fixture.dir.path().join("docker-log.txt").exists());
+    }
+
+    #[test]
+    fn clean_reports_no_cleanup_needed_for_remote_backend() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  setup:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "clean", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("NO CLEANUP NEEDED {}", fixture.file_path().display())
+        );
+    }
+
+    #[test]
+    fn clean_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with(["ota", "clean", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains(&format!(
+            "NO CLEANUP NEEDED {}",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains(&format!(
+            "NO CLEANUP NEEDED {} [member api]",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn clean_rejects_duplicate_monorepo_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "clean",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("`--member api` was provided more than once")
+        );
     }
 
     #[cfg(unix)]
@@ -3937,6 +4090,71 @@ tasks:
     }
 
     #[test]
+    fn workspace_tasks_json_reports_dependency_order_and_tasks() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["repos"][0]["name"], "db");
+        assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
+        assert_eq!(json["repos"][1]["name"], "api");
+        assert_eq!(json["repos"][1]["depends_on"][0], "db");
+    }
+
+    #[test]
+    fn workspace_tasks_reports_not_acquired_repo() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  git_base: https://github.com/ota
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      repo: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "tasks",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["acquired"], false);
+        assert!(json["repos"][0]["tasks"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn workspace_tasks_discovers_workspace_from_nested_directory() {
+        let fixture = WorkspaceFixture::new();
+        let nested = fixture.dir.path().join("apps").join("web").join("src");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with(["ota", "workspace", "tasks", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains(&format!(
+            "WORKSPACE TASKS {}",
+            fixture.workspace_file().display()
+        )));
+    }
+
+    #[test]
     fn workspace_validate_discovers_workspace_from_nested_directory() {
         let fixture = WorkspaceFixture::new();
         let nested = fixture.dir.path().join("apps").join("web").join("src");
@@ -4497,6 +4715,205 @@ repos:
         assert_eq!(json["repos"][1]["name"], "two");
         assert_eq!(json["repos"][1]["stdout"], "two-out");
         assert_eq!(json["repos"][1]["stderr"], "two-err");
+    }
+
+    #[test]
+    fn workspace_run_json_reports_required_repo_failure() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: exit 9
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["task"], "setup");
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["status"], "TASK FAILED");
+        assert_eq!(json["repos"][0]["task"], "setup");
+        assert_eq!(json["repos"][0]["exit_code"], 9);
+    }
+
+    #[test]
+    fn workspace_run_ignores_optional_repo_failure_in_aggregate_status() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: exit 7
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("web [optional] (WARN)"));
+        assert!(output.stdout.contains("Task: setup"));
+        assert!(output.stdout.contains("Exit code: 7"));
+    }
+
+    #[test]
+    fn workspace_run_respects_repo_dependency_order() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let marker = fs::read_to_string(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("workspace-order.txt"),
+        )
+        .unwrap();
+        assert_eq!(marker, "db\napi\n");
+    }
+
+    #[test]
+    fn workspace_run_blocks_dependent_repo_when_dependency_fails() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    run: exit 5
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "db");
+        assert_eq!(json["repos"][0]["status"], "TASK FAILED");
+        assert_eq!(json["repos"][1]["name"], "api");
+        assert_eq!(json["repos"][1]["status"], "BLOCKED");
+        assert_eq!(json["repos"][1]["task"], "setup");
+        assert_eq!(
+            json["repos"][1]["findings"][0]["summary"],
+            "Blocked by failed dependency: db"
+        );
+    }
+
+    #[test]
+    fn workspace_run_rejects_zero_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--jobs",
+            "0",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--jobs` must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn workspace_run_rejects_stream_with_json() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--json",
+            "--stream",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` is only supported for text output")
+        );
+    }
+
+    #[test]
+    fn workspace_run_rejects_stream_with_parallel_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--stream",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` currently requires `--jobs 1`")
+        );
     }
 
     struct ContractFixture {

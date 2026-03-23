@@ -39,7 +39,8 @@ use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
     TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
-    WorkspaceRepoUpReport, WorkspaceUpSuccess,
+    WorkspaceRepoRunReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1357,9 +1358,20 @@ pub fn up(
 pub fn clean(
     path: Option<&Path>,
     file_override: Option<&Path>,
-    member: Option<&str>,
+    members: &[String],
     debug: bool,
 ) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=clean")],
+        );
+    }
+
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -1371,30 +1383,131 @@ pub fn clean(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let text_path_display = display_contract_target(&path_display, member);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=clean"),
         format!("DEBUG contract_path={path_display}"),
     ];
-    if let Some(member) = member {
+    for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
     finalize_debug(
-        match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => match clean_execution(&target.contract, &target.contract_path) {
-                Ok(true) => CommandOutput::success(format!("CLEANED {text_path_display}")),
-                Ok(false) => {
-                    CommandOutput::success(format!("NO CLEANUP NEEDED {text_path_display}"))
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) if members.is_empty() => {
+                if let Some(workspace) = target.contract.workspace.as_ref() {
+                    let mut sections = match render_clean_text(
+                        &text_path_display,
+                        clean_execution(&target.contract, &target.contract_path),
+                    ) {
+                        Ok(section) => vec![section],
+                        Err(error) => {
+                            return finalize_debug(
+                                CommandOutput::failure(error),
+                                debug,
+                                debug_lines,
+                            );
+                        }
+                    };
+
+                    for member in &workspace.members {
+                        let member_target =
+                            match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                                Ok(target) => target,
+                                Err(ContractProblem::Validation(errors)) => {
+                                    return finalize_debug(
+                                        CommandOutput::failure(errors.to_string()),
+                                        debug,
+                                        debug_lines,
+                                    );
+                                }
+                                Err(ContractProblem::Load(error)) => {
+                                    return finalize_debug(
+                                        CommandOutput::failure(error.to_string()),
+                                        debug,
+                                        debug_lines,
+                                    );
+                                }
+                            };
+                        match render_clean_text(
+                            &display_contract_target(&path_display, Some(member.as_str())),
+                            clean_execution(&member_target.contract, &member_target.contract_path),
+                        ) {
+                            Ok(section) => sections.push(section),
+                            Err(error) => {
+                                return finalize_debug(
+                                    CommandOutput::failure(error),
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        }
+                    }
+
+                    CommandOutput::success(sections.join("\n---\n"))
+                } else {
+                    match render_clean_text(
+                        &text_path_display,
+                        clean_execution(&target.contract, &target.contract_path),
+                    ) {
+                        Ok(text) => CommandOutput::success(text),
+                        Err(error) => CommandOutput::failure(error),
+                    }
                 }
-                Err(error) => CommandOutput::failure(error.to_string()),
-            },
+            }
+            Ok(_) => {
+                let mut sections = Vec::new();
+                for member in members {
+                    let target =
+                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                            Ok(target) => target,
+                            Err(ContractProblem::Validation(errors)) => {
+                                return finalize_debug(
+                                    CommandOutput::failure(errors.to_string()),
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                            Err(ContractProblem::Load(error)) => {
+                                return finalize_debug(
+                                    CommandOutput::failure(error.to_string()),
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                    match render_clean_text(
+                        &display_contract_target(&path_display, Some(member.as_str())),
+                        clean_execution(&target.contract, &target.contract_path),
+                    ) {
+                        Ok(section) => sections.push(section),
+                        Err(error) => {
+                            return finalize_debug(
+                                CommandOutput::failure(error),
+                                debug,
+                                debug_lines,
+                            );
+                        }
+                    }
+                }
+
+                CommandOutput::success(sections.join("\n---\n"))
+            }
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
             Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
         },
         debug,
         debug_lines,
     )
+}
+
+fn render_clean_text<E: ToString>(path: &str, result: Result<bool, E>) -> Result<String, String> {
+    match result {
+        Ok(true) => Ok(format!("CLEANED {path}")),
+        Ok(false) => Ok(format!("NO CLEANUP NEEDED {path}")),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 pub fn detect(
@@ -1557,6 +1670,167 @@ pub fn workspace_validate(
     )
 }
 
+pub fn workspace_tasks(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.tasks")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.tasks"),
+        format!("DEBUG workspace_path={path_display}"),
+    ];
+
+    finalize_debug(
+        match load_workspace_contract(&resolved_path) {
+            Ok(workspace) => {
+                if let Err(errors) = validate_workspace_contract(&resolved_path, &workspace) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                            ok: false,
+                            path: &path_display,
+                            errors: errors.errors().iter().map(ToString::to_string).collect(),
+                            error: None,
+                        })),
+                    };
+                }
+
+                let repo_refs = match ordered_workspace_repo_refs(&resolved_path, &workspace) {
+                    Ok(repo_refs) => repo_refs,
+                    Err(errors) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect(),
+                                    error: None,
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                let mut repos = Vec::with_capacity(repo_refs.len());
+                for repo in repo_refs {
+                    if !repo.present {
+                        repos.push(WorkspaceRepoTasksReport {
+                            name: repo.name,
+                            path: repo.path.display().to_string(),
+                            contract_path: repo.contract_path.display().to_string(),
+                            required: repo.required,
+                            acquired: false,
+                            depends_on: repo.depends_on,
+                            tasks: Vec::new(),
+                        });
+                        continue;
+                    }
+
+                    let contract = match load_contract(&repo.contract_path) {
+                        Ok(contract) => contract,
+                        Err(error) => {
+                            return match format {
+                                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json(&ValidateFailure {
+                                        ok: false,
+                                        path: &path_display,
+                                        errors: Vec::new(),
+                                        error: Some(error.to_string()),
+                                    }))
+                                }
+                            };
+                        }
+                    };
+
+                    if let Err(errors) = validate_contract(&contract) {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect(),
+                                    error: None,
+                                }))
+                            }
+                        };
+                    }
+
+                    let tasks = contract
+                        .tasks
+                        .iter()
+                        .map(|(name, task)| {
+                            let execution = task.resolved_execution(current_os()).expect(
+                                "validated task must resolve to a default or variant execution",
+                            );
+                            WorkspaceTaskSummary {
+                                name: name.clone(),
+                                kind: execution.kind.to_string(),
+                                run: (execution.kind == "run").then(|| execution.body.to_string()),
+                                script: (execution.kind == "script")
+                                    .then(|| execution.body.to_string()),
+                                depends_on: task.depends_on.clone(),
+                            }
+                        })
+                        .collect();
+
+                    repos.push(WorkspaceRepoTasksReport {
+                        name: repo.name,
+                        path: repo.path.display().to_string(),
+                        contract_path: repo.contract_path.display().to_string(),
+                        required: repo.required,
+                        acquired: true,
+                        depends_on: repo.depends_on,
+                        tasks,
+                    });
+                }
+
+                match format {
+                    OutputFormat::Text => render_workspace_tasks_text(&path_display, &repos),
+                    OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
+                        ok: true,
+                        path: &path_display,
+                        repos: &repos,
+                    })),
+                }
+            }
+            Err(error) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn workspace_doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -1702,6 +1976,105 @@ pub fn workspace_up(
             stream,
         ) {
             Ok(report) => render_workspace_up(&path_display, &report, format),
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_run(
+    task: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    stream: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.run"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+    if stream && matches!(format, OutputFormat::Json) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for text output"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.run"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if stream && jobs != 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` currently requires `--jobs 1`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.run"),
+                format!("DEBUG jobs={jobs}"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.run")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.run"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG task={task}"),
+        format!("DEBUG jobs={jobs}"),
+        format!("DEBUG stream={stream}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_task(
+            task,
+            &resolved_path,
+            jobs,
+            matches!(format, OutputFormat::Text),
+            stream,
+        ) {
+            Ok(report) => render_workspace_run(task, &path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -2959,6 +3332,113 @@ fn render_workspace_up(
     }
 }
 
+fn render_workspace_run(
+    task: &str,
+    path: &str,
+    report: &WorkspaceRunReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "WORKSPACE RUN {task} {path}\n{}",
+                if report.ok { "READY" } else { "NOT READY" }
+            );
+
+            for repo in &report.repos {
+                stdout.push_str(&format!(
+                    "\n- {} [{}] ({})",
+                    repo.name,
+                    if repo.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    repo.status
+                ));
+                stdout.push_str(&format!("\n  Path: {}", repo.path));
+                stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+                stdout.push_str(&format!("\n  Task: {}", repo.task));
+                if let Some(exit_code) = repo.exit_code {
+                    stdout.push_str(&format!("\n  Exit code: {exit_code}"));
+                }
+                for finding in &repo.findings {
+                    stdout.push_str(&format!(
+                        "\n  {}  {}\n  Why: {}\n  Next: {}",
+                        render_severity(finding.severity),
+                        finding.summary,
+                        finding.why,
+                        finding.next
+                    ));
+                }
+                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
+                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
+            }
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if report.ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&WorkspaceRunSuccess {
+                ok: report.ok,
+                path,
+                task,
+                repos: &report.repos,
+            }),
+            stderr: None,
+            exit_code: if report.ok { 0 } else { 1 },
+        },
+    }
+}
+
+fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
+    let mut stdout = format!("WORKSPACE TASKS {path}\nREADY");
+
+    for repo in repos {
+        stdout.push_str(&format!(
+            "\n- {} [{}] ({})",
+            repo.name,
+            if repo.required {
+                "required"
+            } else {
+                "optional"
+            },
+            if repo.acquired {
+                "acquired"
+            } else {
+                "not acquired"
+            }
+        ));
+        stdout.push_str(&format!("\n  Path: {}", repo.path));
+        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+        if !repo.depends_on.is_empty() {
+            stdout.push_str(&format!("\n  Depends on: {}", repo.depends_on.join(", ")));
+        }
+
+        if !repo.acquired {
+            stdout.push_str("\n  Tasks: repo not acquired");
+            continue;
+        }
+
+        if repo.tasks.is_empty() {
+            stdout.push_str("\n  Tasks: none");
+            continue;
+        }
+
+        for task in &repo.tasks {
+            stdout.push_str(&format!("\n  - {} ({})", task.name, task.kind));
+            if !task.depends_on.is_empty() {
+                stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
+            }
+        }
+    }
+
+    CommandOutput::success(stdout)
+}
+
 fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>) {
     let Some(contents) = contents.map(str::trim_end) else {
         return;
@@ -3158,6 +3638,11 @@ struct RepoUpResult {
 struct WorkspaceUpReport {
     ok: bool,
     repos: Vec<WorkspaceRepoUpReport>,
+}
+
+struct WorkspaceRunReport {
+    ok: bool,
+    repos: Vec<WorkspaceRepoRunReport>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -3559,6 +4044,187 @@ fn load_and_run_workspace_up(
     })
 }
 
+fn load_and_run_workspace_task(
+    task: &str,
+    path: &Path,
+    jobs: usize,
+    emit_progress: bool,
+    stream: bool,
+) -> Result<WorkspaceRunReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    if stream {
+        return run_workspace_task_streaming(task, repo_refs, emit_progress);
+    }
+
+    let mut repos = BTreeMap::new();
+    let mut ok = true;
+    let mut repo_results = BTreeMap::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, repo))| {
+                repo.depends_on
+                    .iter()
+                    .all(|dependency| repo_results.contains_key(dependency))
+            })
+            .map(|(pending_index, _)| pending_index)
+            .collect::<Vec<_>>();
+
+        let mut selected = Vec::new();
+        let mut blocked = Vec::new();
+
+        for pending_index in ready {
+            let (_, repo) = &pending[pending_index];
+            let blocked_dependency = repo
+                .depends_on
+                .iter()
+                .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+                .cloned();
+            if let Some(dependency) = blocked_dependency {
+                blocked.push((pending_index, dependency));
+            } else if selected.len() < jobs {
+                selected.push(pending_index);
+            }
+        }
+
+        let mut removals = blocked
+            .iter()
+            .map(|(pending_index, _)| *pending_index)
+            .chain(selected.iter().copied())
+            .collect::<Vec<_>>();
+        removals.sort_unstable();
+        removals.dedup();
+
+        let mut runnable = Vec::new();
+        let mut blocked_reports = Vec::new();
+        for pending_index in removals.into_iter().rev() {
+            let (order, repo) = pending.remove(pending_index);
+            if let Some((_, dependency)) = blocked
+                .iter()
+                .find(|(blocked_index, _)| *blocked_index == pending_index)
+            {
+                let report = blocked_workspace_repo_run(repo, task, dependency.clone());
+                if emit_progress {
+                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                }
+                blocked_reports.push((order, report));
+            } else {
+                runnable.push((order, repo));
+            }
+        }
+
+        runnable.reverse();
+        blocked_reports.reverse();
+
+        let (tx, rx) = mpsc::channel();
+        let task_name = task.to_string();
+        let handles = runnable
+            .into_iter()
+            .map(|(order, repo)| {
+                if emit_progress && workspace_repo_needs_acquisition(&repo) {
+                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                }
+                if emit_progress {
+                    eprintln!("WORKSPACE RUN {} {}", repo.name, task_name);
+                }
+                let tx = tx.clone();
+                let task = task_name.clone();
+                thread::spawn(move || {
+                    let report = run_workspace_repo_task(repo, &task, RepoExecutionMode::Capture);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for (order, report) in blocked_reports {
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace run worker should send a report");
+            if emit_progress {
+                eprintln!("WORKSPACE {} {}", report.status, report.name);
+            }
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace run thread should not panic");
+        }
+    }
+
+    Ok(WorkspaceRunReport {
+        ok,
+        repos: repos.into_values().collect(),
+    })
+}
+
+fn run_workspace_task_streaming(
+    task: &str,
+    repo_refs: Vec<WorkspaceRepoRef>,
+    emit_progress: bool,
+) -> Result<WorkspaceRunReport, WorkspaceProblem> {
+    let mut repos = Vec::new();
+    let mut ok = true;
+    let mut repo_results = BTreeMap::new();
+
+    for repo in repo_refs {
+        let blocked_dependency = repo
+            .depends_on
+            .iter()
+            .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+            .cloned();
+        let report = match blocked_dependency {
+            Some(dependency) => {
+                let report = blocked_workspace_repo_run(repo, task, dependency.clone());
+                if emit_progress {
+                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                }
+                report
+            }
+            None => {
+                if emit_progress && workspace_repo_needs_acquisition(&repo) {
+                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                }
+                if emit_progress {
+                    eprintln!("WORKSPACE RUN {} {}", repo.name, task);
+                }
+                let report = run_workspace_repo_task(repo, task, RepoExecutionMode::Stream);
+                if emit_progress {
+                    eprintln!("WORKSPACE {} {}", report.status, report.name);
+                }
+                report
+            }
+        };
+        if report.required && !report.ok {
+            ok = false;
+        }
+        repo_results.insert(report.name.clone(), report.ok);
+        repos.push(report);
+    }
+
+    Ok(WorkspaceRunReport { ok, repos })
+}
+
 fn run_workspace_up_streaming(
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
@@ -3813,6 +4479,319 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         exit_code: None,
         stdout: None,
         stderr: None,
+    }
+}
+
+fn blocked_workspace_repo_run(
+    repo: WorkspaceRepoRef,
+    task: &str,
+    dependency: String,
+) -> WorkspaceRepoRunReport {
+    let repo_name = repo.name.clone();
+    WorkspaceRepoRunReport {
+        name: repo.name,
+        path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(),
+        required: repo.required,
+        ok: !repo.required,
+        status: if repo.required { "BLOCKED" } else { "WARN" }.to_string(),
+        task: task.to_string(),
+        findings: vec![Finding {
+            severity: if repo.required {
+                FindingSeverity::Error
+            } else {
+                FindingSeverity::Warn
+            },
+            summary: format!("Blocked by failed dependency: {dependency}"),
+            why: format!(
+                "workspace repo `{}` depends on `{dependency}`, which did not complete successfully",
+                repo_name
+            ),
+            next: format!("repair `{dependency}` first, then re-run `ota workspace run {task}`"),
+        }],
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+    }
+}
+
+fn run_workspace_repo_task(
+    repo: WorkspaceRepoRef,
+    task: &str,
+    mode: RepoExecutionMode,
+) -> WorkspaceRepoRunReport {
+    let repo_name = repo.name.clone();
+    let contract_path_display = repo.contract_path.display().to_string();
+    let path_display = repo.path.display().to_string();
+
+    match acquire_workspace_repo(&repo, mode) {
+        Ok(acquisition) if acquisition.exit_code != 0 => {
+            return WorkspaceRepoRunReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required {
+                    "ACQUIRE FAILED"
+                } else {
+                    "WARN"
+                }
+                .to_string(),
+                task: task.to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo acquisition failed: {}", repo_name),
+                    why: match repo.source_url.as_deref() {
+                        Some(source_url) => format!(
+                            "workspace repo `{}` could not be cloned from `{}`",
+                            repo_name, source_url
+                        ),
+                        None => format!("workspace repo `{}` could not be acquired", repo_name),
+                    },
+                    next: format!(
+                        "check repo source access and credentials, then re-run `ota workspace run {task}`"
+                    ),
+                }],
+                exit_code: Some(acquisition.exit_code),
+                stdout: match mode {
+                    RepoExecutionMode::Capture => Some(acquisition.stdout),
+                    RepoExecutionMode::Stream => None,
+                },
+                stderr: match mode {
+                    RepoExecutionMode::Capture => Some(acquisition.stderr),
+                    RepoExecutionMode::Stream => None,
+                },
+            };
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return WorkspaceRepoRunReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required {
+                    "ACQUIRE FAILED"
+                } else {
+                    "WARN"
+                }
+                .to_string(),
+                task: task.to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo acquisition failed: {}", repo_name),
+                    why: format!(
+                        "workspace repo `{}` could not be acquired: {}",
+                        repo_name, error
+                    ),
+                    next: format!(
+                        "check repo source access and credentials, then re-run `ota workspace run {task}`"
+                    ),
+                }],
+                exit_code: Some(1),
+                stdout: None,
+                stderr: None,
+            };
+        }
+    }
+
+    match load_contract(&repo.contract_path) {
+        Ok(contract) => {
+            if let Err(error) = validate_contract(&contract) {
+                return WorkspaceRepoRunReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display.clone(),
+                    required: repo.required,
+                    ok: !repo.required,
+                    status: if repo.required {
+                        "INVALID CONTRACT"
+                    } else {
+                        "WARN"
+                    }
+                    .to_string(),
+                    task: task.to_string(),
+                    findings: error
+                        .errors()
+                        .iter()
+                        .map(|validation_error| Finding {
+                            severity: if repo.required {
+                                FindingSeverity::Error
+                            } else {
+                                FindingSeverity::Warn
+                            },
+                            summary: format!("Invalid repo contract: {}", repo_name),
+                            why: format!(
+                                "repo contract `{}` is invalid: {}",
+                                contract_path_display, validation_error
+                            ),
+                            next: format!(
+                                "fix `{}` and re-run `ota workspace run {task}`",
+                                contract_path_display
+                            ),
+                        })
+                        .collect(),
+                    exit_code: Some(1),
+                    stdout: None,
+                    stderr: None,
+                };
+            }
+
+            let run_result = match mode {
+                RepoExecutionMode::Capture => run_task_captured_with_overrides(
+                    &contract,
+                    &repo.contract_path,
+                    task,
+                    ExecutionOverrides::default(),
+                )
+                .map(|result| CommandRunResult {
+                    exit_code: result.exit_code,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                }),
+                RepoExecutionMode::Stream => run_task_with_progress_and_overrides(
+                    &contract,
+                    &repo.contract_path,
+                    task,
+                    false,
+                    ExecutionOverrides::default(),
+                )
+                .map(|result| CommandRunResult {
+                    exit_code: result.exit_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }),
+            };
+
+            match run_result {
+                Ok(result) if result.exit_code == 0 => WorkspaceRepoRunReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: true,
+                    status: String::from("READY"),
+                    task: task.to_string(),
+                    findings: Vec::new(),
+                    exit_code: None,
+                    stdout: match mode {
+                        RepoExecutionMode::Capture => Some(result.stdout),
+                        RepoExecutionMode::Stream => None,
+                    },
+                    stderr: match mode {
+                        RepoExecutionMode::Capture => Some(result.stderr),
+                        RepoExecutionMode::Stream => None,
+                    },
+                },
+                Ok(result) => WorkspaceRepoRunReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: !repo.required,
+                    status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
+                    task: task.to_string(),
+                    findings: vec![Finding {
+                        severity: if repo.required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("Task failed: {}", task),
+                        why: format!(
+                            "workspace repo `{}` task `{}` exited with code {}",
+                            repo_name, task, result.exit_code
+                        ),
+                        next: format!(
+                            "inspect repo `{}` task `{}` output and repair the failure",
+                            repo_name, task
+                        ),
+                    }],
+                    exit_code: Some(result.exit_code),
+                    stdout: match mode {
+                        RepoExecutionMode::Capture => Some(result.stdout),
+                        RepoExecutionMode::Stream => None,
+                    },
+                    stderr: match mode {
+                        RepoExecutionMode::Capture => Some(result.stderr),
+                        RepoExecutionMode::Stream => None,
+                    },
+                },
+                Err(error) => WorkspaceRepoRunReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: !repo.required,
+                    status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
+                    task: task.to_string(),
+                    findings: vec![Finding {
+                        severity: if repo.required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("Task execution failed: {}", task),
+                        why: format!(
+                            "workspace repo `{}` task `{}` could not be executed: {}",
+                            repo_name,
+                            task,
+                            render_run_error(error)
+                        ),
+                        next: format!(
+                            "repair repo `{}` task `{}` and re-run `ota workspace run {}`",
+                            repo_name, task, task
+                        ),
+                    }],
+                    exit_code: Some(1),
+                    stdout: None,
+                    stderr: None,
+                },
+            }
+        }
+        Err(error) => WorkspaceRepoRunReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display.clone(),
+            required: repo.required,
+            ok: !repo.required,
+            status: if repo.required {
+                "INVALID CONTRACT"
+            } else {
+                "WARN"
+            }
+            .to_string(),
+            task: task.to_string(),
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Unreadable repo contract: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` contract `{}` could not be loaded: {}",
+                    repo_name, contract_path_display, error
+                ),
+                next: format!(
+                    "repair `{}` and re-run `ota workspace run {}`",
+                    contract_path_display, task
+                ),
+            }],
+            exit_code: Some(1),
+            stdout: None,
+            stderr: None,
+        },
     }
 }
 

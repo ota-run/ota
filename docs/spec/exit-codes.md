@@ -72,6 +72,24 @@ This document records the current command exit-code contract for the shipped Ota
 - `0` on valid workspace contract
 - `1` on load or validation failure
 
+## `ota workspace tasks`
+
+- `0` on successful workspace task listing
+- `1` on load or validation failure
+
+## `ota workspace run`
+
+- `0` when all required repos complete the requested task
+- `1` when any required repo task fails, acquisition fails, or is blocked by dependency failure
+- `1` on load or validation failure
+
+## `ota clean`
+
+- `0` when persistent execution state is removed
+- `0` when there is no cleanup action to perform
+- `1` on load or validation failure
+- `1` when persistent cleanup fails before Ota can report success
+
 ## `ota workspace doctor`
 
 - `0` when all required repos are ready or warning-only
