@@ -1,6 +1,6 @@
 # Ota Exit Codes
 
-This document records the current command exit-code contract for the shipped V1 surface.
+This document records the current command exit-code contract for the shipped Ota surface.
 
 ## Global registry
 
@@ -24,6 +24,8 @@ This document records the current command exit-code contract for the shipped V1 
 
 - `0` on successful task execution
 - child task exit code on task failure
+- child task exit code is preserved for native, container, and current remote execution paths
+- `1` when backend configuration is invalid or the requested backend/provider is unsupported
 - `1` on load/validation failure or runner failure before the child exit code is available
 
 ## `ota doctor`
@@ -50,6 +52,7 @@ This document records the current command exit-code contract for the shipped V1 
 - `0` when the repo reaches `READY`
 - service-start child exit code when a required service `start` command fails
 - setup task child exit code when `setup` fails
+- setup task child exit code is preserved when `setup` runs through native, container, or current remote backend paths
 - `1` when preconditions fail
 - `1` when required-service readiness fails in the `services` phase
 - `1` when post-setup diagnosis is still not ready

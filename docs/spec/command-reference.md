@@ -193,7 +193,8 @@ Current behavior:
 - executes either `run` or `script`
 - when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the local `docker` CLI
 - when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
-- supports a first remote backend path for `execution.backends.remote.provider: daytona` when `execution.backends.remote.target` is configured
+- supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
+- current shipped remote providers are `daytona` and `ssh`
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values
@@ -351,6 +352,7 @@ Current behavior:
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
 - can override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
+- the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
 - re-runs readiness diagnosis
 - still runs service start commands, service healthchecks, and diagnosis on the host today

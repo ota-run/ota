@@ -557,6 +557,24 @@ exit 1
         .unwrap();
     }
 
+    #[cfg(unix)]
+    fn install_fake_ssh(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
+exec sh -lc "$1"
+"#,
+        )
+        .unwrap();
+    }
+
     #[test]
     fn validate_json_reports_success() {
         let fixture = ContractFixture::new(
@@ -1725,6 +1743,91 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn up_runs_setup_in_ssh_remote_backend() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let log_path = fixture.dir.path().join("ssh-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&ssh_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn up_overrides_native_contract_to_use_ephemeral_container_backend() {
         let fixture = ContractFixture::new(
             r#"
@@ -1872,6 +1975,182 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("daytona-log.txt"))
                 .unwrap()
                 .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_uses_ssh_remote_backend() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        let log_path = fixture.dir.path().join("ssh-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&ssh_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_SSH_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_SSH_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_remote_failure_preserves_child_exit_code() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: daytona
+      target: sandbox-dev
+      cwd: {}
+tasks:
+  fail:
+    run: exit 7
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let daytona_path = bin_dir.join("daytona");
+        install_fake_daytona(&daytona_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&daytona_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&daytona_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "run", "fail", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 7);
+    }
+
+    #[test]
+    fn run_with_unsupported_remote_provider_fails_cleanly() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: unknown
+      target: sandbox-dev
+tasks:
+  setup:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("unsupported remote provider `unknown`")
         );
     }
 
