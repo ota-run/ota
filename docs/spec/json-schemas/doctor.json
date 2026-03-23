@@ -8,6 +8,27 @@
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entrypoint": { "type": "string" },
+        "default_task": { "type": "string" },
+        "safe_tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "verify_after_changes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "writable_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": { "type": "string" }
+      }
+    },
     "findings": {
       "type": "array",
       "items": {

@@ -66,6 +66,7 @@ The point of V2 is to make Ota:
 - reduce the cost of getting a real repo into Ota
 - improve import and migration paths without weakening trust-sensitive writes
 - prioritize work that helps one repo or one team adopt Ota faster
+- define merge/update behavior explicitly before any detect merge write path exists
 
 ### Track 3: Better Real-Repo Handling
 
