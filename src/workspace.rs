@@ -47,6 +47,8 @@ pub struct WorkspaceInfo {
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub github_base: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +61,19 @@ pub struct WorkspaceRepoSpec {
     pub required: bool,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub source: Option<WorkspaceRepoSourceSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRepoSourceSpec {
+    #[serde(default)]
+    pub git: Option<String>,
+    #[serde(default)]
+    pub github: Option<String>,
+    #[serde(rename = "ref", default)]
+    pub git_ref: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +83,9 @@ pub struct WorkspaceRepoRef {
     pub contract_path: PathBuf,
     pub required: bool,
     pub depends_on: Vec<String>,
+    pub present: bool,
+    pub source_url: Option<String>,
+    pub source_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,6 +180,10 @@ pub fn validate_workspace_contract(
     let mut errors = Vec::new();
 
     for repo in repo_refs {
+        if !repo.present {
+            continue;
+        }
+
         match load_contract(&repo.contract_path) {
             Ok(repo_contract) => {
                 if let Err(error) = validate_contract(&repo_contract) {
@@ -276,13 +298,39 @@ pub fn validate_workspace_shape(
             )));
         }
 
-        if !repo_root.is_dir() {
-            errors.push(WorkspaceValidationError::new(format!(
-                "workspace repo `{name}` path does not exist or is not a directory: {}",
-                repo_root.display()
-            )));
-            continue;
-        }
+        let source_url = resolve_workspace_repo_source(contract, name, repo, &mut errors);
+        let present = match fs::metadata(&repo_root) {
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    true
+                } else {
+                    errors.push(WorkspaceValidationError::new(format!(
+                        "workspace repo `{name}` path does not exist or is not a directory: {}",
+                        repo_root.display()
+                    )));
+                    continue;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if source_url.is_some() || repo.source.is_some() {
+                    false
+                } else {
+                    errors.push(WorkspaceValidationError::new(format!(
+                        "workspace repo `{name}` path does not exist or is not a directory: {}",
+                        repo_root.display()
+                    )));
+                    continue;
+                }
+            }
+            Err(error) => {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{name}` path `{}` could not be read: {}",
+                    repo_root.display(),
+                    error
+                )));
+                continue;
+            }
+        };
 
         let contract_path = match repo.contract.as_deref() {
             Some(contract_path) if contract_path.trim().is_empty() => {
@@ -301,6 +349,13 @@ pub fn validate_workspace_shape(
             contract_path,
             required: repo.required,
             depends_on: repo.depends_on.clone(),
+            present,
+            source_url,
+            source_ref: repo
+                .source
+                .as_ref()
+                .and_then(|source| source.git_ref.as_ref())
+                .map(|git_ref| git_ref.trim().to_string()),
         });
 
         for dependency in &repo.depends_on {
@@ -403,6 +458,37 @@ fn take_ready_workspace_repo_batch(
 }
 
 fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
+    if !repo.present {
+        let findings = vec![repo_finding(
+            repo.required,
+            format!("Repo not acquired: {}", repo.name),
+            format!(
+                "workspace repo `{}` has not been acquired into `{}` yet",
+                repo.name,
+                repo.path.display()
+            ),
+            match repo.source_url.as_deref() {
+                Some(source_url) => format!(
+                    "run `ota workspace up` to acquire `{}` from `{}`",
+                    repo.name, source_url
+                ),
+                None => format!(
+                    "create `{}` and re-run `ota workspace doctor`",
+                    repo.path.display()
+                ),
+            },
+        )];
+
+        return WorkspaceRepoDoctorReport {
+            name: repo.name,
+            path: repo.path.display().to_string(),
+            contract_path: repo.contract_path.display().to_string(),
+            required: repo.required,
+            ok: !repo.required,
+            findings,
+        };
+    }
+
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
@@ -473,6 +559,99 @@ fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport 
         required: repo.required,
         ok,
         findings,
+    }
+}
+
+fn resolve_workspace_repo_source(
+    contract: &WorkspaceContract,
+    repo_name: &str,
+    repo: &WorkspaceRepoSpec,
+    errors: &mut Vec<WorkspaceValidationError>,
+) -> Option<String> {
+    let Some(source) = repo.source.as_ref() else {
+        return None;
+    };
+
+    let git = source
+        .git
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let github = source
+        .github
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if source
+        .git
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(WorkspaceValidationError::new(format!(
+            "workspace repo `{repo_name}` must not declare an empty `source.git`"
+        )));
+    }
+
+    if source
+        .github
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(WorkspaceValidationError::new(format!(
+            "workspace repo `{repo_name}` must not declare an empty `source.github`"
+        )));
+    }
+
+    if source
+        .git_ref
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(WorkspaceValidationError::new(format!(
+            "workspace repo `{repo_name}` must not declare an empty `source.ref`"
+        )));
+    }
+
+    match (git, github) {
+        (Some(_), Some(_)) => {
+            errors.push(WorkspaceValidationError::new(format!(
+                "workspace repo `{repo_name}` must declare only one acquisition source"
+            )));
+            None
+        }
+        (None, None) => {
+            errors.push(WorkspaceValidationError::new(format!(
+                "workspace repo `{repo_name}` must declare `source.git` or `source.github`"
+            )));
+            None
+        }
+        (Some(url), None) => Some(url.to_string()),
+        (None, Some(project)) => {
+            let Some(base) = contract.workspace.github_base.as_deref().map(str::trim) else {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{repo_name}` uses `source.github` but `workspace.github_base` is not set"
+                )));
+                return None;
+            };
+
+            if base.is_empty() {
+                errors.push(WorkspaceValidationError::new(
+                    "workspace `github_base` must not be empty",
+                ));
+                return None;
+            }
+
+            let mut url = format!(
+                "{}/{}",
+                base.trim_end_matches('/'),
+                project.trim_start_matches('/')
+            );
+            if !url.ends_with(".git") {
+                url.push_str(".git");
+            }
+            Some(url)
+        }
     }
 }
 
@@ -660,6 +839,59 @@ repos:
             errors.errors()[0]
                 .to_string()
                 .contains("workspace repo `web` contract was not found")
+        );
+    }
+
+    #[test]
+    fn validates_workspace_with_acquirable_repo_without_local_path() {
+        let fixture = TempDir::new().unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  github_base: https://github.com/ota
+repos:
+  web:
+    path: apps/web
+    source:
+      github: web
+"#,
+        )
+        .unwrap();
+
+        validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract).unwrap();
+    }
+
+    #[test]
+    fn rejects_github_source_without_workspace_github_base() {
+        let fixture = TempDir::new().unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    source:
+      github: web
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "workspace repo `web` uses `source.github` but `workspace.github_base` is not set"
         );
     }
 

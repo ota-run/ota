@@ -38,9 +38,12 @@ It is separate from `ota.yaml`, which remains the canonical repo readiness contr
 version: 1
 workspace:
   name: ota-dev
+  github_base: https://github.com/ota
 repos:
   web:
     path: apps/web
+    source:
+      github: web
 ```
 
 ## Top-level fields
@@ -61,6 +64,7 @@ Fields:
 
 - `name`: required, non-empty string
 - `description`: optional string
+- `github_base`: optional GitHub clone base used by `repos.<name>.source.github`
 
 ## `repos`
 
@@ -68,12 +72,17 @@ Fields:
 repos:
   web:
     path: apps/web
+    source:
+      github: web
   api:
     path: services/api
     contract: services/api/ota.yaml
     required: true
     depends_on:
       - web
+    source:
+      git: https://github.com/ota/api.git
+      ref: main
 ```
 
 Fields:
@@ -82,18 +91,27 @@ Fields:
 - `contract`: optional explicit repo contract path, relative to `ota.workspace.yaml`
 - `required`: optional boolean
 - `depends_on`: optional list of workspace repo names
+- `source`: optional acquisition source for repos that are not present yet
+
+`source` fields:
+
+- `git`: explicit clone URL or git-accepted clone source
+- `github`: repo name or slug resolved against `workspace.github_base`
+- `ref`: optional branch, tag, or ref to checkout after clone
 
 Current validation behavior:
 
 - repo names must not be empty
 - workspace must declare at least one repo
 - repo `path` must be non-empty
-- repo `path` must exist and point to a directory
+- repo `path` must exist and point to a directory unless `source` is declared
 - `contract` must be non-empty when present
 - if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
+- `source` must declare exactly one of `git` or `github`
+- `source.github` requires `workspace.github_base`
 - `depends_on` references must resolve to known workspace repos
 - workspace repo dependency cycles are rejected
-- each referenced repo contract must load and pass repo-level validation
+- each present repo contract must load and pass repo-level validation
 
 ## Current scope
 
@@ -104,6 +122,7 @@ The shipped workspace surface is intentionally narrow:
 - repo contract validation through the workspace contract
 - workspace-level diagnosis as orchestration over repo-level `doctor`
 - workspace-level prepare flow as orchestration over repo-level `up`
+- acquisition of missing repos before workspace prepare
 
 Current non-goals:
 
@@ -120,6 +139,7 @@ Current workspace diagnosis behavior:
 - can diagnose independent repos concurrently when `--jobs` is greater than `1`
 - preserves deterministic repo ordering in the final report
 - diagnoses each referenced repo through its own `ota.yaml`
+- reports missing-but-acquirable repos as not yet acquired instead of treating them as unreadable local paths
 - preserves repo-level diagnosis semantics for required repos
 - downgrades optional repo errors to warnings at the workspace layer
 - rejects required repos that depend on optional repos
@@ -131,6 +151,7 @@ This keeps workspace behavior as orchestration over repo readiness, not a parall
 Current workspace prepare behavior:
 
 - validates workspace structure first
+- acquires missing repos declared with `source` before repo-level bootstrap
 - runs repo-level `up` for each referenced repo
 - can prepare independent repos concurrently when `--jobs` is greater than `1`
 - respects declared workspace repo dependency order
@@ -154,3 +175,4 @@ Current non-goals:
 - cross-repo dependency scheduling
 - host or workstation provisioning
 - a workspace-only bootstrap engine that bypasses repo contracts
+- implicit pull, fetch, or update behavior for repos that already exist locally

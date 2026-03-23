@@ -402,7 +402,8 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - parses the workspace contract
 - validates the workspace shape
-- validates each referenced repo contract through the workspace contract
+- validates each present referenced repo contract through the workspace contract
+- allows missing repo paths only when `repos.<name>.source` is declared
 
 Text output:
 
@@ -432,6 +433,7 @@ Current behavior:
 - can diagnose independent repos concurrently when `--jobs` is greater than `1`
 - preserves deterministic repo ordering in text and JSON output even when diagnosis runs concurrently
 - evaluates each referenced repo through its own `ota.yaml`
+- reports missing-but-acquirable repos as not yet acquired
 - keeps workspace logic above repo diagnosis instead of duplicating it
 - downgrades findings for optional repos to warnings
 - rejects required repos that depend on optional repos
@@ -463,6 +465,7 @@ Current behavior:
 
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
+- clones missing repos declared with `repos.<name>.source` before repo-level prepare
 - runs the existing repo-level `up` flow for each referenced repo
 - can prepare independent repos concurrently when `--jobs` is greater than `1`
 - respects declared workspace repo dependency order
@@ -474,6 +477,7 @@ Current behavior:
 - defaults to sequential execution because `--jobs` defaults to `1`
 - `--stream` opts into raw live child process output instead of buffered per-repo output
 - `--stream` is text-only and currently requires `--jobs 1`
+- does not pull or update repos that already exist locally
 
 Text output:
 

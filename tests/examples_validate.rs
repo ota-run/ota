@@ -44,7 +44,10 @@ fn example_paths() -> Vec<PathBuf> {
 
 fn workspace_example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    vec![root.join("workspace-basic").join("ota.workspace.yaml")]
+    vec![
+        root.join("workspace-basic").join("ota.workspace.yaml"),
+        root.join("workspace-github").join("ota.workspace.yaml"),
+    ]
 }
 
 #[test]
