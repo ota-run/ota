@@ -23,7 +23,7 @@
 -->
 
 <div align="center">
-  <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="100" height="100">
+  <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="120" height="120">
 </div>
 
 # `ota`
