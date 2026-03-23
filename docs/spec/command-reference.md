@@ -116,6 +116,7 @@ Current behavior:
 
 - resolves `ota.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - when `--member` is set, loads the root contract, merges the declared member override, and validates the merged contract
+- when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
 - parses the contract
 - applies semantic validation
 - exits `0` on success and non-zero on failure
@@ -170,12 +171,14 @@ Run a validated task.
 ```bash
 ota run <task> [PATH]
 ota run <task> --member api [PATH]
+ota run <task> --member api --member web [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
 - when `--member` is set, resolves the merged member contract from the monorepo root
+- repeated `--member` values run the task across those members in the provided order
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
