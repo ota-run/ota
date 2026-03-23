@@ -438,6 +438,26 @@ fn detect_json_handles_docker_heavy_node_fixture() {
 }
 
 #[test]
+fn init_write_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for docker-heavy fixture");
+
+    assert!(written.contains("name: ota-containerized-web"));
+    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("run: pnpm build"));
+    assert!(written.contains("run: pnpm dev"));
+}
+
+#[test]
 fn detect_json_handles_rust_cargo_fixture() {
     let fixture = real_fixture_path("rust-cargo");
     let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
@@ -459,6 +479,26 @@ fn detect_json_handles_rust_cargo_fixture() {
                     && inference["source"] == "rust-toolchain.toml#toolchain.channel"
             })
     );
+}
+
+#[test]
+fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for docker-heavy fixture");
+
+    assert!(written.contains("name: ota-containerized-web"));
+    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("run: pnpm build"));
+    assert!(written.contains("run: pnpm dev"));
 }
 
 #[cfg(unix)]
@@ -668,6 +708,50 @@ fn detect_json_handles_ugly_polyglot_fixture() {
             && inference["source"] == ".nvmrc"
             && inference["value"] == "22"
     }));
+}
+
+#[test]
+fn init_write_writes_high_confidence_contract_for_polyglot_ops_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for polyglot fixture");
+
+    assert!(written.contains("name: polyglot-ops"));
+    assert!(written.contains("go: 1.24.2"));
+    assert!(written.contains("python: 3.12.6"));
+    assert!(written.contains("app:"));
+    assert!(written.contains("postgres:"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(!written.contains("tools:"));
+    assert!(!written.contains("tasks:"));
+}
+
+#[test]
+fn detect_writes_high_confidence_contract_for_polyglot_ops_fixture() {
+    let fixture = copy_fixture_to_temp("polyglot-ops");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for polyglot fixture");
+
+    assert!(written.contains("name: polyglot-ops"));
+    assert!(written.contains("go: 1.24.2"));
+    assert!(written.contains("python: 3.12.6"));
+    assert!(written.contains("app:"));
+    assert!(written.contains("postgres:"));
+    assert!(written.contains("provider: docker-compose"));
+    assert!(!written.contains("tools:"));
+    assert!(!written.contains("tasks:"));
 }
 
 #[cfg(unix)]

@@ -23,6 +23,8 @@
 version: 1
 project:
   name: basic-java
+  description: Basic Java repo with Maven tasks
+  type: application
 runtimes:
   java: "21"
 tools:

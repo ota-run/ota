@@ -98,6 +98,10 @@ Fields:
 - `description`: optional string
 - `type`: optional string
 
+Use `project` for stable repo identity only. Churn-heavy descriptive fields such as `author`,
+`created_at`, or publishing metadata should live under `metadata` unless Ota grows a dedicated
+package or distribution contract later.
+
 ## `execution`
 
 Optional.
@@ -392,6 +396,8 @@ Optional.
 metadata:
   team: platform
   owner: ota
+  author: Ota Maintainers
+  created_at: 2026-03-23
 ```
 
 This is an open map for extra repo-specific values.
