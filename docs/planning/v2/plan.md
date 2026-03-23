@@ -24,7 +24,7 @@
 
 # V2 Plan
 
-Status: active implementation.
+Status: completed and archived.
 
 V2 should expand Ota only after preserving the shipped V1 trust model.
 

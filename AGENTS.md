@@ -192,7 +192,7 @@ This means:
 
 V1 is the product contract. Phases are the implementation plan.
 
-Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md) when touching V1 behavior, and the active V2 plan in [docs/planning/v2-plan.md](docs/planning/v2-plan.md) for new feature work.
+Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md) and the archived V2 plan in [docs/planning/v2/plan.md](docs/planning/v2/plan.md) when touching shipped behavior, and the active V3 plan in [docs/planning/v3/plan.md](docs/planning/v3/plan.md) for new feature work.
 
 Required discipline:
 

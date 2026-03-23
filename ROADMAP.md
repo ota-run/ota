@@ -27,23 +27,25 @@
 ## Current state
 
 V1 is complete and frozen.
-V2 trust and adoption work is now the active track.
+V2 is complete enough to archive as the current trust/adoption foundation.
+V3 planning is now the active track.
 
 ## V1 archive
 
 - [V1 phases](docs/planning/v1/phases.md)
 - [V1 next plan](docs/planning/v1/next-plan.md)
 - [V1 release gate](docs/planning/v1/release-gate.md)
+- [V2 plan](docs/planning/v2/plan.md)
 
 ## Current focus
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- keep shipping narrow V2 slices without weakening V1 contracts
+- start V3 from the now-proven V1 and V2 core instead of broadening V2 indefinitely
 
-## V2 planning
+## V3 planning
 
-- [V2 plan](docs/planning/v2-plan.md)
+- [V3 plan](docs/planning/v3/plan.md)
 
 ## Implemented foundation
 
@@ -54,12 +56,12 @@ V2 trust and adoption work is now the active track.
 
 ## Near-term next steps
 
-- keep tightening V2 around trust, adoption, real-repo handling, and stronger agent usefulness
+- keep the V2 trust/adoption baseline stable
 - keep extending fixtures only when they expose real gaps
-- avoid V2 scope that weakens V1 trust or determinism
+- avoid V3 scope that weakens V1 or V2 trust or determinism
 - keep exports optional unless one exact target proves real duplicated-truth pain
 
-## Current V2 shape
+## Archived V2 shape
 
 Shipped V2 work so far is still intentionally narrow:
 
@@ -70,9 +72,9 @@ Shipped V2 work so far is still intentionally narrow:
 
 ## Product direction
 
-Planned V2 themes include:
+Planned V3 themes should build on that foundation with:
 
-- stronger trust on real repos
-- lower adoption cost
-- better mixed and messy repo handling
-- stronger agent usefulness without parallel truth
+- narrow interoperability where Ota remains canonical
+- team and workspace leverage without a second bootstrap engine
+- stronger machine integration without hidden mutation
+- no broad exports or provider-specific platform logic by default

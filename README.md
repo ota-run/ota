@@ -144,7 +144,8 @@ Current planning state:
 
 - V1 archive: [docs/planning/v1/phases.md](docs/planning/v1/phases.md)
 - V1 release gate: [docs/planning/v1/release-gate.md](docs/planning/v1/release-gate.md)
-- V2 plan: [docs/planning/v2-plan.md](docs/planning/v2-plan.md)
+- V2 archive: [docs/planning/v2/plan.md](docs/planning/v2/plan.md)
+- V3 plan: [docs/planning/v3/plan.md](docs/planning/v3/plan.md)
 
 ## Quickstart
 
@@ -215,7 +216,8 @@ Example contracts:
 ### Planning and roadmap
 - [V1 phases](docs/planning/v1/phases.md)
 - [V1 release gate](docs/planning/v1/release-gate.md)
-- [V2 plan](docs/planning/v2-plan.md)
+- [V2 plan](docs/planning/v2/plan.md)
+- [V3 plan](docs/planning/v3/plan.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)
 - [Roadmap](ROADMAP.md)
 
