@@ -187,6 +187,8 @@ Current behavior:
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
+- when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the local `docker` CLI
+- when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
 - runs in the effective target contract directory
 - applies configured environment values
 - prints task progress and advisory notes on stderr
@@ -216,7 +218,7 @@ Current behavior:
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
-- warns when `execution.lifecycle: ephemeral` is declared, because V1 does not provide isolated temporary execution
+- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run`, not `ota up`
 - runs configured checks
 - orders findings by severity
 - includes an `agent` summary when the contract declares one
@@ -325,17 +327,16 @@ Prepare a repo for use with minimal prior knowledge.
 ota up [PATH]
 ota up --json [PATH]
 ota up --member api [PATH]
+ota up --member api --member web [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota up` prepares the root contract and grouped member summaries for each declared member
 - when `--member` is set, prepares the merged member contract
+- repeated `--member` values prepare those members in the provided order
 - runs inherited or overridden setup in the effective member directory
-
-Current behavior:
-
-- validates the contract first
 - runs blocking precondition checks
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order
@@ -361,6 +362,7 @@ JSON output:
 - `service` when a service-start failure occurs
 - `task` when a task failure occurs
 - `exit_code` when a child command failure occurs
+- monorepo root and repeated `--member` summaries include grouped per-member results in `members`
 
 ## `ota detect`
 

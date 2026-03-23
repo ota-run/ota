@@ -20,11 +20,13 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::schema::{Contract, TaskSpec};
+use crate::schema::{Backend, Contract, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -52,6 +54,12 @@ pub enum RunError {
         #[source]
         source: std::io::Error,
     },
+    #[error("task `{task}` requires `execution.backends.container.image` for container execution")]
+    MissingContainerImage { task: String },
+    #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]
+    MissingContainerLifecycle { task: String },
+    #[error("task `{task}` cannot use unsupported backend `{backend}` yet")]
+    UnsupportedBackend { task: String, backend: &'static str },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,6 +79,12 @@ pub struct CapturedRunOutcome {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExecutionOverrides {
+    pub backend: Option<Backend>,
+    pub lifecycle: Option<Lifecycle>,
 }
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
@@ -126,7 +140,16 @@ pub fn run_task(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<RunOutcome, RunError> {
-    run_task_with_progress(contract, contract_path, task_name, true)
+    run_task_with_overrides(contract, contract_path, task_name, ExecutionOverrides::default())
+}
+
+pub fn run_task_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<RunOutcome, RunError> {
+    run_task_with_progress_and_overrides(contract, contract_path, task_name, true, overrides)
 }
 
 pub fn run_task_with_progress(
@@ -135,10 +158,27 @@ pub fn run_task_with_progress(
     task_name: &str,
     emit_progress: bool,
 ) -> Result<RunOutcome, RunError> {
+    run_task_with_progress_and_overrides(
+        contract,
+        contract_path,
+        task_name,
+        emit_progress,
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn run_task_with_progress_and_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    emit_progress: bool,
+    overrides: ExecutionOverrides,
+) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
         contract,
         contract_path,
         task_name,
+        overrides,
         TaskExecutionMode::Stream { emit_progress },
     )?;
 
@@ -157,6 +197,7 @@ pub fn run_task_captured(
         contract,
         contract_path,
         task_name,
+        ExecutionOverrides::default(),
         TaskExecutionMode::Capture,
     )
 }
@@ -174,15 +215,23 @@ struct TaskCommandOutput {
     stderr: String,
 }
 
+#[derive(Debug, Clone)]
+enum ResolvedExecutionBackend {
+    Native,
+    Container { image: String, lifecycle: Lifecycle },
+}
+
 fn run_task_internal(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    overrides: ExecutionOverrides,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
     let env_overrides = resolve_task_env(contract)?;
     let working_dir = contract_working_dir(contract_path);
+    let backend = resolve_execution_backend(contract, task_name, overrides)?;
     let mut executed_tasks = Vec::new();
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -214,8 +263,14 @@ fn run_task_internal(
             eprintln!("RUN {task_name}");
         }
 
-        let command_output =
-            execute_task_command(task_name, command, working_dir, &env_overrides, mode)?;
+        let command_output = execute_task_command(
+            task_name,
+            command,
+            working_dir,
+            &env_overrides,
+            &backend,
+            mode,
+        )?;
         stdout.push_str(&command_output.stdout);
         stderr.push_str(&command_output.stderr);
 
@@ -244,13 +299,169 @@ fn execute_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    match backend {
+        ResolvedExecutionBackend::Native => match mode {
+            TaskExecutionMode::Stream { .. } => {
+                let status = shell_command(command)
+                    .current_dir(working_dir)
+                    .envs(env_overrides.iter())
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+
+                Ok(TaskCommandOutput {
+                    exit_code: status.code().unwrap_or(1),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            TaskExecutionMode::Capture => {
+                let output = shell_command(command)
+                    .current_dir(working_dir)
+                    .envs(env_overrides.iter())
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .and_then(|child| child.wait_with_output())
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+
+                Ok(TaskCommandOutput {
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                })
+            }
+        },
+        ResolvedExecutionBackend::Container { image, lifecycle } => execute_container_task_command(
+            task_name,
+            command,
+            working_dir,
+            env_overrides,
+            image,
+            *lifecycle,
+            mode,
+        ),
+    }
+}
+
+pub fn effective_execution(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+) -> (Backend, Option<Lifecycle>) {
+    let execution = contract.execution.as_ref();
+    let backend = overrides
+        .backend
+        .or_else(|| execution.and_then(|execution| execution.preferred))
+        .unwrap_or(Backend::Native);
+    let lifecycle = overrides
+        .lifecycle
+        .or_else(|| execution.and_then(|execution| execution.lifecycle));
+
+    (backend, lifecycle)
+}
+
+fn resolve_execution_backend(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<ResolvedExecutionBackend, RunError> {
+    let (preferred, lifecycle) = effective_execution(contract, overrides);
+
+    match preferred {
+        Backend::Native => Ok(ResolvedExecutionBackend::Native),
+        Backend::Container => contract
+            .execution
+            .as_ref()
+            .and_then(|execution| {
+                execution
+                    .backends
+                    .as_ref()
+                    .and_then(|backends| backends.container.as_ref())
+                    .map(|container| (container.image.clone(), lifecycle))
+            })
+            .ok_or_else(|| RunError::MissingContainerImage {
+                task: task_name.to_string(),
+            })
+            .and_then(|(image, lifecycle)| {
+                lifecycle
+                    .map(|lifecycle| ResolvedExecutionBackend::Container { image, lifecycle })
+                    .ok_or_else(|| RunError::MissingContainerLifecycle {
+                        task: task_name.to_string(),
+                    })
+            }),
+        Backend::Remote => Err(RunError::UnsupportedBackend {
+            task: task_name.to_string(),
+            backend: "remote",
+        }),
+    }
+}
+
+fn execute_container_task_command(
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    image: &str,
+    lifecycle: Lifecycle,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    match lifecycle {
+        Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
+            task_name,
+            command,
+            working_dir,
+            env_overrides,
+            image,
+            mode,
+        ),
+        Lifecycle::Persistent => execute_persistent_container_task_command(
+            task_name,
+            command,
+            working_dir,
+            env_overrides,
+            image,
+            mode,
+        ),
+    }
+}
+
+fn execute_ephemeral_container_task_command(
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    image: &str,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let mut docker = Command::new("docker");
+    docker
+        .arg("run")
+        .arg("--rm")
+        .arg("-i")
+        .arg("-v")
+        .arg(format!("{}:/workspace", working_dir.display()))
+        .arg("-w")
+        .arg("/workspace");
+    for (name, value) in env_overrides {
+        docker.arg("--env").arg(format!("{name}={value}"));
+    }
+    docker.arg(image).arg("sh").arg("-lc").arg(command);
+
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let status = shell_command(command)
-                .current_dir(working_dir)
-                .envs(env_overrides.iter())
+            let status = docker
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
@@ -267,9 +478,7 @@ fn execute_task_command(
             })
         }
         TaskExecutionMode::Capture => {
-            let output = shell_command(command)
-                .current_dir(working_dir)
-                .envs(env_overrides.iter())
+            let output = docker
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -287,6 +496,129 @@ fn execute_task_command(
             })
         }
     }
+}
+
+fn execute_persistent_container_task_command(
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    image: &str,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let container_name = persistent_container_name(working_dir, image);
+
+    let inspect_exit_code =
+        docker_command_exit_code(&["inspect", &container_name], None, task_name)?;
+    if inspect_exit_code != 0 {
+        let status = docker_command_exit_code(
+            &[
+                "run",
+                "-d",
+                "--name",
+                &container_name,
+                "-v",
+                &format!("{}:/workspace", working_dir.display()),
+                "-w",
+                "/workspace",
+                image,
+                "sh",
+                "-lc",
+                "while true; do sleep 3600; done",
+            ],
+            None,
+            task_name,
+        )?;
+        if status != 0 {
+            return Ok(TaskCommandOutput {
+                exit_code: status,
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+    } else {
+        let status = docker_command_exit_code(&["start", &container_name], None, task_name)?;
+        if status != 0 {
+            return Ok(TaskCommandOutput {
+                exit_code: status,
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+    }
+
+    let mut docker = Command::new("docker");
+    docker.arg("exec").arg("-i");
+    for (name, value) in env_overrides {
+        docker.arg("--env").arg(format!("{name}={value}"));
+    }
+    docker
+        .arg(&container_name)
+        .arg("sh")
+        .arg("-lc")
+        .arg(command);
+
+    match mode {
+        TaskExecutionMode::Stream { .. } => {
+            let status = docker
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: status.code().unwrap_or(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        TaskExecutionMode::Capture => {
+            let output = docker
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .and_then(|child| child.wait_with_output())
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+    }
+}
+
+fn docker_command_exit_code(
+    args: &[&str],
+    working_dir: Option<&Path>,
+    task_name: &str,
+) -> Result<i32, RunError> {
+    let mut docker = Command::new("docker");
+    docker.args(args);
+    if let Some(working_dir) = working_dir {
+        docker.current_dir(working_dir);
+    }
+    let status = docker.status().map_err(|source| RunError::SpawnFailed {
+        task: task_name.to_string(),
+        source,
+    })?;
+    Ok(status.code().unwrap_or(1))
+}
+
+fn persistent_container_name(working_dir: &Path, image: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    working_dir.display().to_string().hash(&mut hasher);
+    image.hash(&mut hasher);
+    format!("ota-{:x}", hasher.finish())
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -341,8 +673,10 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::fs;
     use std::path::Path;
+    use std::sync::Mutex;
 
     use tempfile::TempDir;
 
@@ -352,6 +686,8 @@ mod tests {
         CapturedRunOutcome, RunError, plan_task_execution, resolve_task_env, run_task,
         run_task_captured, run_task_with_progress,
     };
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
@@ -593,6 +929,247 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("variant-output.txt")).unwrap(),
             expected
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_tasks_in_configured_container_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+env:
+  OTA_CONTAINER_FLAG:
+    default: from-container
+tasks:
+  setup:
+    script: |
+      printf "$OTA_CONTAINER_FLAG" > env.txt
+      printf ready > prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.executed_tasks, vec!["setup"]);
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-image.txt")).unwrap(),
+            "ghcr.io/ota/test:latest"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("env.txt")).unwrap(),
+            "from-container"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("run-ephemeral")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reuses_persistent_container_backend_across_runs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    script: |
+      printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    fn install_fake_docker(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+state_dir="$(dirname "$0")/docker-state"
+mkdir -p "$state_dir"
+
+command="$1"
+shift
+
+case "$command" in
+  inspect)
+    name="$1"
+    [ -f "$state_dir/$name.path" ]
+    exit $?
+    ;;
+  start)
+    name="$1"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    host_dir=$(cat "$state_dir/$name.path")
+    printf "start\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
+  exec)
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -i)
+          shift
+          ;;
+        --env)
+          export "$2"
+          shift 2
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir=$(cat "$state_dir/$name.path")
+    printf "exec\n" >> "$host_dir/docker-log.txt"
+    cd "$host_dir" || exit 1
+    exec sh -lc "$3"
+    ;;
+  run)
+    detached=0
+    mount=""
+    name=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -d)
+          detached=1
+          shift
+          ;;
+        --rm|-i)
+          shift
+          ;;
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        -v)
+          mount="$2"
+          shift 2
+          ;;
+        -w)
+          shift 2
+          ;;
+        --env)
+          export "$2"
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir="${mount%%:*}"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ "$detached" = "1" ]; then
+      printf "%s" "$host_dir" > "$state_dir/$name.path"
+      printf "run-persistent\n" >> "$host_dir/docker-log.txt"
+      exit 0
+    fi
+    printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
+    cd "$host_dir" || exit 1
+    exec sh -lc "$3"
+    ;;
+esac
+
+exit 1
+"#,
+        )
+        .unwrap();
     }
 
     struct ContractFixture {

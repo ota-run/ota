@@ -88,6 +88,29 @@ pub struct Execution {
     pub supported: Vec<Backend>,
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    pub backends: Option<ExecutionBackends>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionBackends {
+    #[serde(default)]
+    pub container: Option<ContainerBackend>,
+    #[serde(default)]
+    pub remote: Option<RemoteBackend>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerBackend {
+    pub image: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteBackend {
+    pub provider: String,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
