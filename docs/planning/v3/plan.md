@@ -82,11 +82,13 @@ Implemented so far:
 - root validation that proves declared members exist and validate as merged contracts
 - selective multi-member execution for `ota run`
 - selective multi-member inspection for `ota tasks`
+- member-aware `doctor`
+- root-level `ota tasks` summary for monorepo roots
+- root-level `ota doctor` summary for monorepo roots
 
 Still to do in V3:
 
-- member-aware `doctor` and broader root-level inspection
-- first honest root task graph summary
+- broader root-level inspection beyond `ota tasks` and `ota doctor`
 - real container backend execution
 - explicit `execution.lifecycle` enforcement for isolated backends
 - command-time `--lifecycle` and backend override support

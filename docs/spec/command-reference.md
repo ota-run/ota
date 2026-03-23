@@ -145,6 +145,7 @@ ota tasks --member api --member web --json [PATH]
 Current behavior:
 
 - validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota tasks` lists root tasks and grouped summaries for each declared member
 - when `--member` is set, lists tasks from the merged member contract
 - repeated `--member` values list tasks for those members in the provided order
 - prints tasks in deterministic order
@@ -163,6 +164,7 @@ JSON output:
 
 - success: `ok`, `path`, `tasks`
 - `agent` is included when the contract declares agent guidance
+- monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
 - failure: `ok`, `path`, and either `errors` or `error`
@@ -206,6 +208,7 @@ ota doctor --member api --member web --json [PATH]
 Current behavior:
 
 - validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
 - checks configured env requirements
@@ -230,6 +233,7 @@ JSON output:
 - `path`
 - `agent` when the contract declares agent guidance
 - `findings`
+- monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 
 Warnings can still produce `READY`. Errors produce `NOT READY`.

@@ -167,10 +167,8 @@ pub fn tasks(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let text_path_display = display_contract_target(
-        &path_display,
-        (members.len() == 1).then_some(members[0].as_str()),
-    );
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=tasks"),
         format!("DEBUG contract_path={path_display}"),
@@ -180,10 +178,7 @@ pub fn tasks(
     }
 
     finalize_debug(
-        match load_and_validate_target(
-            &resolved_path,
-            (members.len() == 1).then_some(members[0].as_str()),
-        ) {
+        match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
                 let agent_summary = target
                     .contract
@@ -197,19 +192,118 @@ pub fn tasks(
                     .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
                     .collect::<Vec<_>>();
 
-                match format {
-                    OutputFormat::Text => CommandOutput::success(render_tasks_text(
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let mut text_sections = vec![render_tasks_text(
                         &text_path_display,
                         agent_summary.as_ref(),
                         &task_summaries,
-                    )),
-                    OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
-                        ok: true,
-                        path: &path_display,
-                        agent: agent_summary,
-                        members: Vec::new(),
-                        tasks: task_summaries,
-                    })),
+                    )];
+                    let mut member_results = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => {
+                                                    CommandOutput::failure(to_json(&TasksFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }))
+                                                }
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => {
+                                                    CommandOutput::failure(to_json(&TasksFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                    }))
+                                                }
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            let member_agent = member_target
+                                .contract
+                                .agent
+                                .as_ref()
+                                .and_then(AgentSummary::from_config);
+                            let member_tasks = member_target
+                                .contract
+                                .tasks
+                                .iter()
+                                .map(|(name, task)| {
+                                    TaskSummary::from_spec(name, task, current_os())
+                                })
+                                .collect::<Vec<_>>();
+                            text_sections.push(render_tasks_text(
+                                &display_contract_target(&path_display, Some(member.as_str())),
+                                member_agent.as_ref(),
+                                &member_tasks,
+                            ));
+                            member_results.push(json!({
+                                "member": member,
+                                "agent": member_agent,
+                                "tasks": member_tasks,
+                            }));
+                        }
+                    }
+
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n---\n")),
+                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                            "ok": true,
+                            "path": path_display,
+                            "agent": agent_summary,
+                            "members": member_results,
+                            "tasks": task_summaries,
+                        }))),
+                    }
+                } else {
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_tasks_text(
+                            &text_path_display,
+                            agent_summary.as_ref(),
+                            &task_summaries,
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&TasksSuccess {
+                            ok: true,
+                            path: &path_display,
+                            agent: agent_summary,
+                            members: Vec::new(),
+                            tasks: task_summaries,
+                        })),
+                    }
                 }
             }
             Ok(_) => {
@@ -410,10 +504,8 @@ pub fn doctor(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let text_path_display = display_contract_target(
-        &path_display,
-        (members.len() == 1).then_some(members[0].as_str()),
-    );
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=doctor"),
         format!("DEBUG contract_path={path_display}"),
@@ -423,10 +515,7 @@ pub fn doctor(
     }
 
     finalize_debug(
-        match load_and_validate_target(
-            &resolved_path,
-            (members.len() == 1).then_some(members[0].as_str()),
-        ) {
+        match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
                 let report = diagnose_contract(&target.contract, &target.contract_path);
                 let agent_summary = target
@@ -434,21 +523,129 @@ pub fn doctor(
                     .agent
                     .as_ref()
                     .and_then(AgentSummary::from_config);
-                match format {
-                    OutputFormat::Text => {
-                        render_doctor_text(&text_path_display, agent_summary.as_ref(), report)
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let mut overall_ok = report.ok;
+                    let mut text_sections = vec![render_doctor_section(
+                        &text_path_display,
+                        agent_summary.as_ref(),
+                        &report,
+                    )];
+                    let mut member_results = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            let member_report = diagnose_contract(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                            );
+                            if !member_report.ok {
+                                overall_ok = false;
+                            }
+                            let member_agent = member_target
+                                .contract
+                                .agent
+                                .as_ref()
+                                .and_then(AgentSummary::from_config);
+                            text_sections.push(render_doctor_section(
+                                &display_contract_target(&path_display, Some(member.as_str())),
+                                member_agent.as_ref(),
+                                &member_report,
+                            ));
+                            member_results.push(json!({
+                                "member": member,
+                                "ok": member_report.ok,
+                                "agent": member_agent,
+                                "findings": member_report.findings,
+                            }));
+                        }
                     }
-                    OutputFormat::Json => {
-                        let exit_code = if report.ok { 0 } else { 1 };
-                        CommandOutput {
-                            stdout: to_json(&DoctorSuccess {
-                                ok: report.ok,
-                                path: &path_display,
-                                agent: agent_summary,
-                                findings: &report.findings,
-                            }),
+
+                    match format {
+                        OutputFormat::Text => CommandOutput {
+                            stdout: text_sections.join("\n---\n"),
                             stderr: None,
-                            exit_code,
+                            exit_code: if overall_ok { 0 } else { 1 },
+                        },
+                        OutputFormat::Json => CommandOutput {
+                            stdout: to_json_value(json!({
+                                "ok": overall_ok,
+                                "path": path_display,
+                                "agent": agent_summary,
+                                "findings": report.findings,
+                                "members": member_results,
+                            })),
+                            stderr: None,
+                            exit_code: if overall_ok { 0 } else { 1 },
+                        },
+                    }
+                } else {
+                    match format {
+                        OutputFormat::Text => {
+                            render_doctor_text(&text_path_display, agent_summary.as_ref(), report)
+                        }
+                        OutputFormat::Json => {
+                            let exit_code = if report.ok { 0 } else { 1 };
+                            CommandOutput {
+                                stdout: to_json(&DoctorSuccess {
+                                    ok: report.ok,
+                                    path: &path_display,
+                                    agent: agent_summary,
+                                    findings: &report.findings,
+                                }),
+                                stderr: None,
+                                exit_code,
+                            }
                         }
                     }
                 }

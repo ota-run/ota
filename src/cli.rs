@@ -657,6 +657,122 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  setup:
+    run: printf root
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+tasks:
+  lint:
+    run: printf web
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["name"] == "setup")
+        );
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[1]["member"], "web");
+        assert!(
+            members[0]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["name"] == "test")
+        );
+        assert!(
+            members[1]["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["name"] == "lint")
+        );
+    }
+
+    #[test]
+    fn tasks_text_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf root
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            output
+                .stdout
+                .contains(&format!("TASKS {}", fixture.file_path().display()))
+        );
+        assert!(output.stdout.contains(&format!(
+            "TASKS {} [member api]",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains("- setup"));
+        assert!(output.stdout.contains("- test"));
+        assert!(output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
     fn tasks_rejects_duplicate_monorepo_members() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -941,6 +1057,95 @@ project:
             members[0]["findings"][0]["summary"],
             "Missing environment variable: OTA_MEMBER_REQUIRED"
         );
+    }
+
+    #[test]
+    fn doctor_json_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[0]["ok"], false);
+        assert_eq!(
+            members[0]["findings"][0]["summary"],
+            "Missing environment variable: OTA_MEMBER_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn doctor_text_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stdout
+                .contains(&format!("DOCTOR {}", fixture.file_path().display()))
+        );
+        assert!(output.stdout.contains(&format!(
+            "DOCTOR {} [member api]",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(
+            output
+                .stdout
+                .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
+        );
+        assert!(output.stdout.contains("\n---\n"));
     }
 
     #[test]
