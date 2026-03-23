@@ -126,6 +126,92 @@ repos:
     assert!(stderr.contains("WORKSPACE READY web"));
 }
 
+#[test]
+fn workspace_doctor_json_reports_repo_findings_on_real_command_path() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let repo_dir = temp.path().join("apps").join("web");
+    fs::create_dir_all(&repo_dir).unwrap();
+    fs::write(
+        repo_dir.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+env:
+  OTA_WORKSPACE_REQUIRED:
+    required: true
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        r#"
+version: 1
+workspace:
+  name: ota-json
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&[
+        "workspace",
+        "doctor",
+        "--json",
+        temp.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["repos"][0]["name"], "web");
+    assert_eq!(json["repos"][0]["ok"], false);
+    assert_eq!(
+        json["repos"][0]["findings"][0]["summary"],
+        "Missing environment variable: OTA_WORKSPACE_REQUIRED"
+    );
+}
+
+#[test]
+fn workspace_up_json_reports_ready_repo_on_real_command_path() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let repo_dir = temp.path().join("apps").join("web");
+    fs::create_dir_all(&repo_dir).unwrap();
+    fs::write(
+        repo_dir.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+"#,
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        r#"
+version: 1
+workspace:
+  name: ota-json
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&["workspace", "up", "--json", temp.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["repos"][0]["name"], "web");
+    assert_eq!(json["repos"][0]["ok"], true);
+    assert_eq!(json["repos"][0]["status"], "READY");
+    assert_eq!(json["repos"][0]["phase"], "post-setup diagnosis");
+}
+
 #[cfg(unix)]
 #[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {
