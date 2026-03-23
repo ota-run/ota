@@ -292,16 +292,15 @@ Run configured checks from a validated contract.
 ota check [PATH]
 ota check --json [PATH]
 ota check --member api [PATH]
+ota check --member api --member web --json [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota check` runs root checks and grouped check summaries for each declared member
 - when `--member` is set, runs checks from the merged member contract only
-
-Current behavior:
-
-- validates the contract first
+- repeated `--member` values run checks for those members in the provided order
 - runs configured checks only
 - does not perform runtime, tool, or env diagnosis
 - does not execute tasks
@@ -316,6 +315,7 @@ JSON output:
 - `ok`
 - `path`
 - `findings`
+- monorepo root summaries include grouped per-member results in `members`
 
 ## `ota up`
 
