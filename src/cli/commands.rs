@@ -41,7 +41,8 @@ use crate::output::{
     WorkspaceRepoUpReport, WorkspaceUpSuccess,
 };
 use crate::parser::{
-    LoadContractError, load_contract, load_contract_for_member, parse_contract_str,
+    LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
+    parse_contract_str,
 };
 use crate::runner::{RunError, run_task, run_task_captured, run_task_with_progress};
 use crate::schema::{Contract, Lifecycle};
@@ -2883,10 +2884,7 @@ fn load_and_validate_target(
 ) -> Result<LoadedContractTarget, ContractProblem> {
     let (contract, contract_path) = match member {
         Some(member) => load_contract_for_member(path, member).map_err(ContractProblem::Load)?,
-        None => (
-            load_contract(path).map_err(ContractProblem::Load)?,
-            path.to_path_buf(),
-        ),
+        None => load_contract_auto(path).map_err(ContractProblem::Load)?,
     };
     validate_contract(&contract).map_err(ContractProblem::Validation)?;
     Ok(LoadedContractTarget {

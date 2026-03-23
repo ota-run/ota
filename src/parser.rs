@@ -56,6 +56,14 @@ pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
     parse_contract_str(path, &contents)
 }
 
+pub fn load_contract_auto(path: &Path) -> Result<(Contract, PathBuf), LoadContractError> {
+    if let Some((root_path, member)) = find_monorepo_root_for_member(path)? {
+        return load_contract_for_member(&root_path, &member);
+    }
+
+    Ok((load_contract(path)?, path.to_path_buf()))
+}
+
 pub fn load_contract_for_member(
     path: &Path,
     member: &str,
@@ -125,6 +133,30 @@ fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContra
     })
 }
 
+fn find_monorepo_root_for_member(
+    path: &Path,
+) -> Result<Option<(PathBuf, String)>, LoadContractError> {
+    let member_dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut current = member_dir.parent();
+
+    while let Some(dir) = current {
+        let candidate = dir.join("ota.yaml");
+        if candidate.is_file() {
+            let contract = load_contract(&candidate)?;
+            if let Some(workspace) = contract.workspace {
+                for member in workspace.members {
+                    if dir.join(&member).join("ota.yaml") == path {
+                        return Ok(Some((candidate, member)));
+                    }
+                }
+            }
+        }
+        current = dir.parent();
+    }
+
+    Ok(None)
+}
+
 fn member_declares_workspace(value: &Value) -> bool {
     value
         .as_mapping()
@@ -161,8 +193,8 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::load_contract_for_member;
     use super::parse_contract_str;
+    use super::{load_contract_auto, load_contract_for_member};
 
     #[test]
     fn rejects_unknown_top_level_keys() {
@@ -256,5 +288,42 @@ workspace:
                 .to_string()
                 .contains("must not declare a top-level `workspace`")
         );
+    }
+
+    #[test]
+    fn auto_loads_member_contract_from_direct_member_path() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf root
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+
+        let (contract, effective_path) =
+            load_contract_auto(&fixture.path().join("api").join("ota.yaml")).unwrap();
+
+        assert_eq!(effective_path, fixture.path().join("api").join("ota.yaml"));
+        assert_eq!(contract.project.name, "api");
+        assert!(contract.tasks.contains_key("setup"));
     }
 }

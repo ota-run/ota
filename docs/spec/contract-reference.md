@@ -128,6 +128,7 @@ Current behavior:
 - member contracts inherit the root contract and override only what they declare
 - member contracts must not declare a top-level `workspace` block
 - repo commands can target a member with `--member <name>`
+- repo commands run from inside a member directory automatically load the merged member contract
 - current member targeting expects the named member to be declared in `workspace.members`
 
 ## `execution`

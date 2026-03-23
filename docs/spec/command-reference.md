@@ -77,6 +77,9 @@ For commands that read an existing contract, Ota now resolves in this order:
 - upward discovery from the provided directory `PATH`
 - upward discovery from the current directory
 
+When the discovered `ota.yaml` is a declared monorepo member contract, Ota now loads the merged
+member contract automatically from that member path.
+
 `ota detect` is different. Its `PATH` is a repo root to inspect.
 
 ## Current exit semantics
