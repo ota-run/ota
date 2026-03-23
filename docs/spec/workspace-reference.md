@@ -38,12 +38,12 @@ It is separate from `ota.yaml`, which remains the canonical repo readiness contr
 version: 1
 workspace:
   name: ota-dev
-  github_base: https://github.com/ota
+  git_base: https://github.com/ota
 repos:
   web:
     path: apps/web
     source:
-      github: web
+      repo: web
 ```
 
 ## Top-level fields
@@ -64,7 +64,7 @@ Fields:
 
 - `name`: required, non-empty string
 - `description`: optional string
-- `github_base`: optional GitHub clone base used by `repos.<name>.source.github`
+- `git_base`: optional clone base used by `repos.<name>.source.repo`
 
 ## `repos`
 
@@ -73,7 +73,7 @@ repos:
   web:
     path: apps/web
     source:
-      github: web
+      repo: web
   api:
     path: services/api
     contract: services/api/ota.yaml
@@ -96,7 +96,7 @@ Fields:
 `source` fields:
 
 - `git`: explicit clone URL or git-accepted clone source
-- `github`: repo name or slug resolved against `workspace.github_base`
+- `repo`: repo path or slug resolved against `workspace.git_base`
 - `ref`: optional branch, tag, or ref to checkout after clone
 
 Current validation behavior:
@@ -107,8 +107,8 @@ Current validation behavior:
 - repo `path` must exist and point to a directory unless `source` is declared
 - `contract` must be non-empty when present
 - if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
-- `source` must declare exactly one of `git` or `github`
-- `source.github` requires `workspace.github_base`
+- `source` must declare exactly one of `git` or `repo`
+- `source.repo` requires `workspace.git_base`
 - `depends_on` references must resolve to known workspace repos
 - workspace repo dependency cycles are rejected
 - each present repo contract must load and pass repo-level validation
@@ -129,6 +129,8 @@ Current non-goals:
 - workspace task orchestration
 - workspace-wide environment mutation
 - hidden repo bootstrap behavior
+- passing a repo URL directly on the CLI without a workspace contract
+- GitHub API integration or non-git acquisition modes
 
 ## `ota workspace doctor`
 
@@ -173,6 +175,8 @@ Current execution policy:
 Current non-goals:
 
 - cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
 - host or workstation provisioning
 - a workspace-only bootstrap engine that bypasses repo contracts
 - implicit pull, fetch, or update behavior for repos that already exist locally
+- GitHub API integration or non-git acquisition modes

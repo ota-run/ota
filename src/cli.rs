@@ -1614,12 +1614,12 @@ env:
 version: 1
 workspace:
   name: ota-dev
-  github_base: https://github.com/ota
+  git_base: https://github.com/ota
 repos:
   web:
     path: apps/web
     source:
-      github: web
+      repo: web
 "#,
         )
         .unwrap();
@@ -1650,13 +1650,13 @@ repos:
 version: 1
 workspace:
   name: ota-dev
-  github_base: https://github.com/ota
+  git_base: https://github.com/ota
 repos:
   web:
     path: apps/web
     required: true
     source:
-      github: web
+      repo: web
 "#,
         )
         .unwrap();

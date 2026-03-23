@@ -450,6 +450,10 @@ JSON output:
 - `path`
 - `repos`
 
+Current non-goals:
+
+- passing a repo URL directly on the CLI without a workspace contract
+
 ## `ota workspace up`
 
 Prepare every repo in an Ota workspace contract.
@@ -490,3 +494,9 @@ JSON output:
 - `ok`
 - `path`
 - `repos`
+
+Current non-goals:
+
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning beyond workspace bootstrap plus repo readiness
+- GitHub API integration or non-git acquisition modes

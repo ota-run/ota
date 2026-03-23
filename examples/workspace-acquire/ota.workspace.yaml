@@ -22,15 +22,15 @@
 
 version: 1
 workspace:
-  name: ota-github-workspace
-  description: Example workspace that acquires repos from GitHub before bootstrap
-  github_base: https://github.com/ota
+  name: ota-acquire-workspace
+  description: Example workspace that acquires repos from git before bootstrap
+  git_base: https://github.com/ota
 repos:
   web:
     path: repos/web
     required: true
     source:
-      github: web
+      repo: web
   api:
     path: repos/api
     required: true

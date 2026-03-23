@@ -130,5 +130,5 @@ Examples:
 - [../spec/command-reference.md](../spec/command-reference.md)
 - [../spec/contract-reference.md](../spec/contract-reference.md)
 - [../spec/workspace-reference.md](../spec/workspace-reference.md)
-- [../../examples/workspace-github/ota.workspace.yaml](../../examples/workspace-github/ota.workspace.yaml)
+- [../../examples/workspace-acquire/ota.workspace.yaml](../../examples/workspace-acquire/ota.workspace.yaml)
 - [philosophy.md](philosophy.md)
