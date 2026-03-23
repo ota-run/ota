@@ -15,6 +15,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/detect.json](json-schemas/detect.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
 - [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
+- [json-schemas/workspace-check.json](json-schemas/workspace-check.json)
 - [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 
@@ -240,6 +241,32 @@ Optional per-repo fields:
 - `exit_code`
 - `stdout`
 - `stderr`
+
+## `ota workspace check --json`
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": false,
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Check failed: health-check",
+          "why": "...",
+          "next": "..."
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## `ota init --json`
 

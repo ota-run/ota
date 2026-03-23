@@ -1904,6 +1904,79 @@ pub fn workspace_doctor(
     )
 }
 
+pub fn workspace_check(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.check"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.check")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.check"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+    ];
+
+    finalize_debug(
+        match load_and_check_workspace(&resolved_path, jobs) {
+            Ok(report) => match format {
+                OutputFormat::Text => render_workspace_check_text(&path_display, &report),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&WorkspaceDoctorSuccess {
+                        ok: report.ok,
+                        path: &path_display,
+                        repos: &report.repos,
+                    }),
+                    stderr: None,
+                    exit_code: if report.ok { 0 } else { 1 },
+                },
+            },
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn workspace_up(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -2862,6 +2935,47 @@ fn render_workspace_doctor_text(
 ) -> CommandOutput {
     let mut stdout = format!(
         "WORKSPACE DOCTOR {path}\n{}",
+        if report.ok { "READY" } else { "NOT READY" }
+    );
+
+    for repo in &report.repos {
+        stdout.push_str(&format!(
+            "\n- {} [{}] ({})",
+            repo.name,
+            if repo.required {
+                "required"
+            } else {
+                "optional"
+            },
+            if repo.ok { "READY" } else { "NOT READY" }
+        ));
+        stdout.push_str(&format!("\n  Path: {}", repo.path));
+        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+
+        for finding in &repo.findings {
+            stdout.push_str(&format!(
+                "\n  {}  {}\n  Why: {}\n  Next: {}",
+                render_severity(finding.severity),
+                finding.summary,
+                finding.why,
+                finding.next
+            ));
+        }
+    }
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: if report.ok { 0 } else { 1 },
+    }
+}
+
+fn render_workspace_check_text(
+    path: &str,
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> CommandOutput {
+    let mut stdout = format!(
+        "WORKSPACE CHECK {path}\n{}",
         if report.ok { "READY" } else { "NOT READY" }
     );
 
@@ -4805,6 +4919,191 @@ fn adjust_workspace_up_findings(mut findings: Vec<Finding>, required: bool) -> V
         }
     }
     findings
+}
+
+fn load_and_check_workspace(
+    path: &Path,
+    jobs: usize,
+) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    let mut repos = BTreeMap::new();
+    let mut completed = BTreeSet::new();
+    let mut ok = true;
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, repo))| {
+                repo.depends_on
+                    .iter()
+                    .all(|dependency| completed.contains(dependency))
+            })
+            .map(|(pending_index, _)| pending_index)
+            .take(jobs)
+            .collect::<Vec<_>>();
+
+        debug_assert!(
+            !ready.is_empty(),
+            "validated workspace repos should remain schedulable"
+        );
+
+        let mut batch = Vec::new();
+        for pending_index in ready.into_iter().rev() {
+            batch.push(pending.remove(pending_index));
+        }
+        batch.reverse();
+
+        let (tx, rx) = mpsc::channel();
+        let handles = batch
+            .into_iter()
+            .map(|(order, repo)| {
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let report = check_workspace_repo(repo);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace check worker should send a report");
+            if report.required && !report.ok {
+                ok = false;
+            }
+            completed.insert(report.name.clone());
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace check thread should not panic");
+        }
+    }
+
+    Ok(crate::workspace::WorkspaceDoctorReport {
+        ok,
+        repos: repos.into_values().collect(),
+    })
+}
+
+fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRepoDoctorReport {
+    let repo_name = repo.name.clone();
+    let contract_path_display = repo.contract_path.display().to_string();
+
+    if !repo.present {
+        return crate::workspace::WorkspaceRepoDoctorReport {
+            name: repo.name,
+            path: repo.path.display().to_string(),
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: !repo.required,
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo not acquired: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` has not been acquired into `{}` yet",
+                    repo_name,
+                    repo.path.display()
+                ),
+                next: match repo.source_url.as_deref() {
+                    Some(source_url) => format!(
+                        "run `ota workspace up` to acquire `{}` from `{}`",
+                        repo_name, source_url
+                    ),
+                    None => {
+                        format!(
+                            "create `{}` and re-run `ota workspace check`",
+                            repo.path.display()
+                        )
+                    }
+                },
+            }],
+        };
+    }
+
+    match load_contract(&repo.contract_path) {
+        Ok(contract) => {
+            if let Err(error) = validate_contract(&contract) {
+                return crate::workspace::WorkspaceRepoDoctorReport {
+                    name: repo.name,
+                    path: repo.path.display().to_string(),
+                    contract_path: contract_path_display.clone(),
+                    required: repo.required,
+                    ok: !repo.required,
+                    findings: error
+                        .errors()
+                        .iter()
+                        .map(|validation_error| Finding {
+                            severity: if repo.required {
+                                FindingSeverity::Error
+                            } else {
+                                FindingSeverity::Warn
+                            },
+                            summary: format!("Invalid repo contract: {}", repo_name),
+                            why: format!(
+                                "repo contract `{}` is invalid: {}",
+                                contract_path_display, validation_error
+                            ),
+                            next: format!(
+                                "fix `{}` and re-run `ota workspace check`",
+                                contract_path_display
+                            ),
+                        })
+                        .collect(),
+                };
+            }
+
+            let report = diagnose_checks_only(&contract, &repo.contract_path);
+            let findings = adjust_workspace_up_findings(report.findings, repo.required);
+
+            crate::workspace::WorkspaceRepoDoctorReport {
+                name: repo.name,
+                path: repo.path.display().to_string(),
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !findings
+                    .iter()
+                    .any(|finding| finding.severity == FindingSeverity::Error),
+                findings,
+            }
+        }
+        Err(error) => crate::workspace::WorkspaceRepoDoctorReport {
+            name: repo.name,
+            path: repo.path.display().to_string(),
+            contract_path: contract_path_display.clone(),
+            required: repo.required,
+            ok: !repo.required,
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Unreadable repo contract: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` contract `{}` could not be loaded: {}",
+                    repo_name, contract_path_display, error
+                ),
+                next: format!(
+                    "repair `{}` and re-run `ota workspace check`",
+                    contract_path_display
+                ),
+            }],
+        },
+    }
 }
 
 fn render_contract_problem(error: &ContractProblem) -> String {

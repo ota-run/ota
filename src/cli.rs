@@ -224,6 +224,17 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Run configured checks across workspace repos.
+    Check {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Maximum number of independent repos to check at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Prepare every repo in an ota.workspace.yaml contract.
     Up {
         /// Print machine-readable JSON output.
@@ -399,6 +410,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
             ),
             WorkspaceCommands::Doctor { json, jobs, path } => commands::workspace_doctor(
+                path.as_deref(),
+                file.as_deref(),
+                jobs,
+                format_from_json(json),
+                debug,
+            ),
+            WorkspaceCommands::Check { json, jobs, path } => commands::workspace_check(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
@@ -4090,6 +4108,98 @@ tasks:
     }
 
     #[test]
+    fn workspace_commands_json_success_contract_is_stable() {
+        let single_repo = WorkspaceFixture::new();
+        let multi_repo = WorkspaceFixture::new_multi_repo();
+
+        let validate = run_with(["ota", "workspace", "validate", "--json", single_repo.path()]);
+        assert_eq!(validate.exit_code, 0);
+        assert_json_top_level_keys(&validate, &["ok", "path"]);
+
+        let tasks = run_with(["ota", "workspace", "tasks", "--json", single_repo.path()]);
+        assert_eq!(tasks.exit_code, 0);
+        assert_json_top_level_keys(&tasks, &["ok", "path", "repos"]);
+
+        let run = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--json",
+            multi_repo.path(),
+        ]);
+        assert_eq!(run.exit_code, 0);
+        assert_json_top_level_keys(&run, &["ok", "path", "repos", "task"]);
+
+        let check = run_with(["ota", "workspace", "check", "--json", single_repo.path()]);
+        assert_eq!(check.exit_code, 0);
+        assert_json_top_level_keys(&check, &["ok", "path", "repos"]);
+
+        let doctor = run_with(["ota", "workspace", "doctor", "--json", single_repo.path()]);
+        assert_eq!(doctor.exit_code, 0);
+        assert_json_top_level_keys(&doctor, &["ok", "path", "repos"]);
+
+        let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
+        assert_eq!(up.exit_code, 0);
+        assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+    }
+
+    #[test]
+    fn workspace_commands_json_validation_failure_contract_is_stable() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let validate = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
+        assert_eq!(validate.exit_code, 1);
+        assert_json_top_level_keys(&validate, &["errors", "ok", "path"]);
+
+        let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 1);
+        assert_json_top_level_keys(&tasks, &["errors", "ok", "path"]);
+
+        let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
+        assert_eq!(run.exit_code, 1);
+        assert_json_top_level_keys(&run, &["ok", "path", "repos", "task"]);
+
+        let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
+        assert_eq!(check.exit_code, 1);
+        assert_json_top_level_keys(&check, &["ok", "path", "repos"]);
+
+        let doctor = run_with(["ota", "workspace", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        assert_json_top_level_keys(&doctor, &["ok", "path", "repos"]);
+
+        let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
+        assert_eq!(up.exit_code, 1);
+        assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+    }
+
+    #[test]
     fn workspace_tasks_json_reports_dependency_order_and_tasks() {
         let fixture = WorkspaceFixture::new_multi_repo();
 
@@ -4380,6 +4490,102 @@ repos:
         let fixture = WorkspaceFixture::new();
 
         let output = run_with(["ota", "workspace", "doctor", "--jobs", "0", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--jobs` must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn workspace_check_json_reports_repo_findings() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["ok"], false);
+        assert_eq!(
+            json["repos"][0]["findings"][0]["summary"],
+            "Check failed: health-check"
+        );
+    }
+
+    #[test]
+    fn workspace_check_downgrades_optional_repo_errors_to_warnings() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("web [optional] (READY)"));
+        assert!(output.stdout.contains("WARN  Check failed: health-check"));
+    }
+
+    #[test]
+    fn workspace_check_rejects_zero_jobs() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "check", "--jobs", "0", fixture.path()]);
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
@@ -5173,5 +5379,27 @@ repos:
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn assert_json_top_level_keys(output: &super::CommandOutput, expected: &[&str]) {
+        let json = parse_json_from_output(output);
+        let object = json.as_object().expect("json output should be an object");
+        let mut actual = object.keys().cloned().collect::<Vec<_>>();
+        actual.sort();
+        let mut expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    fn parse_json_from_output(output: &super::CommandOutput) -> Value {
+        let payload = if output.stdout.trim().is_empty() {
+            output
+                .stderr
+                .as_deref()
+                .expect("json payload should be present in stderr when stdout is empty")
+        } else {
+            output.stdout.as_str()
+        };
+        serde_json::from_str(payload).expect("output should be valid json")
     }
 }
