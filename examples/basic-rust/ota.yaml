@@ -23,6 +23,8 @@
 version: 1
 project:
   name: basic-rust
+  description: Basic Rust repo with Cargo tasks
+  type: application
 runtimes:
   rust: "1.85"
 tools:
