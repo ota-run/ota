@@ -57,6 +57,9 @@ cargo run -- workspace up
 
 Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.
 
+If a workspace repo is missing locally but declares `repos.<name>.source`, `ota workspace up`
+can acquire it first and then reuse the existing repo-level bootstrap flow.
+
 If you want raw live child logs during workspace setup, opt in explicitly:
 
 ```bash
@@ -127,4 +130,5 @@ Examples:
 - [../spec/command-reference.md](../spec/command-reference.md)
 - [../spec/contract-reference.md](../spec/contract-reference.md)
 - [../spec/workspace-reference.md](../spec/workspace-reference.md)
+- [../../examples/workspace-github/ota.workspace.yaml](../../examples/workspace-github/ota.workspace.yaml)
 - [philosophy.md](philosophy.md)

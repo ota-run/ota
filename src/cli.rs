@@ -291,6 +291,8 @@ fn format_from_json(json: bool) -> OutputFormat {
 mod tests {
     use std::fs;
     #[cfg(unix)]
+    use std::process::Command;
+    #[cfg(unix)]
     use std::time::{Duration, Instant};
 
     use serde_json::Value;
@@ -1604,6 +1606,80 @@ env:
     }
 
     #[test]
+    fn workspace_validate_allows_missing_repo_path_with_source() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  github_base: https://github.com/ota
+repos:
+  web:
+    path: apps/web
+    source:
+      github: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "validate",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!(
+                "VALID WORKSPACE {}",
+                fixture.path().join("ota.workspace.yaml").display()
+            )
+        );
+    }
+
+    #[test]
+    fn workspace_doctor_reports_not_acquired_repo_with_source() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  github_base: https://github.com/ota
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      github: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["ok"], false);
+        assert_eq!(
+            json["repos"][0]["findings"][0]["summary"],
+            "Repo not acquired: web"
+        );
+    }
+
+    #[test]
     fn workspace_doctor_jobs_preserves_dependency_order_in_output() {
         let fixture = WorkspaceFixture::new_multi_repo();
 
@@ -1821,6 +1897,60 @@ tasks:
         assert_eq!(
             output.stderr.as_deref(),
             Some("`--stream` currently requires `--jobs 1`")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_up_acquires_missing_repo_from_git_source() {
+        let fixture = TempDir::new().unwrap();
+        let origin = init_git_repo(
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        );
+
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            format!(
+                r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      git: {}
+"#,
+                origin.path().display()
+            ),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["status"], "READY");
+        assert!(
+            fixture
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml")
+                .is_file()
         );
     }
 
@@ -2061,5 +2191,32 @@ repos:
                 workspace_file,
             }
         }
+    }
+
+    #[cfg(unix)]
+    fn init_git_repo(contract: &str) -> TempDir {
+        let dir = TempDir::new().unwrap();
+        run_git(dir.path(), &["init"]);
+        run_git(dir.path(), &["config", "user.email", "ota@example.com"]);
+        run_git(dir.path(), &["config", "user.name", "Ota Tests"]);
+        fs::write(dir.path().join("ota.yaml"), contract.trim_start()).unwrap();
+        run_git(dir.path(), &["add", "ota.yaml"]);
+        run_git(dir.path(), &["commit", "-m", "initial"]);
+        dir
+    }
+
+    #[cfg(unix)]
+    fn run_git(cwd: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git command failed: git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

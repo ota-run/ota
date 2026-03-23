@@ -1455,6 +1455,113 @@ struct CommandRunResult {
     stderr: String,
 }
 
+fn workspace_repo_needs_acquisition(repo: &WorkspaceRepoRef) -> bool {
+    !repo.present && repo.source_url.is_some() && !repo.path.is_dir()
+}
+
+fn acquire_workspace_repo(
+    repo: &WorkspaceRepoRef,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    if !workspace_repo_needs_acquisition(repo) {
+        return Ok(CommandRunResult {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+    }
+
+    let source_url = repo
+        .source_url
+        .as_deref()
+        .ok_or_else(|| format!("workspace repo `{}` has no acquisition source", repo.name))?;
+
+    if let Some(parent) = repo.path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create parent directory `{}`: {}",
+                parent.display(),
+                error
+            )
+        })?;
+    }
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    let clone = run_git_command(
+        &["clone", "--", source_url, &repo.path.display().to_string()],
+        None,
+        mode,
+    )
+    .map_err(|error| format!("failed to start git clone for `{}`: {}", repo.name, error))?;
+    stdout.push_str(&clone.stdout);
+    stderr.push_str(&clone.stderr);
+    if clone.exit_code != 0 {
+        return Ok(CommandRunResult {
+            exit_code: clone.exit_code,
+            stdout,
+            stderr,
+        });
+    }
+
+    if let Some(git_ref) = repo.source_ref.as_deref() {
+        let checkout =
+            run_git_command(&["checkout", git_ref], Some(&repo.path), mode).map_err(|error| {
+                format!(
+                    "failed to start git checkout for `{}`: {}",
+                    repo.name, error
+                )
+            })?;
+        stdout.push_str(&checkout.stdout);
+        stderr.push_str(&checkout.stderr);
+        if checkout.exit_code != 0 {
+            return Ok(CommandRunResult {
+                exit_code: checkout.exit_code,
+                stdout,
+                stderr,
+            });
+        }
+    }
+
+    Ok(CommandRunResult {
+        exit_code: 0,
+        stdout,
+        stderr,
+    })
+}
+
+fn run_git_command(
+    args: &[&str],
+    cwd: Option<&Path>,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, std::io::Error> {
+    let mut command = Command::new("git");
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    match mode {
+        RepoExecutionMode::Capture => {
+            let output = command.output()?;
+            Ok(CommandRunResult {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+        RepoExecutionMode::Stream => {
+            let status = command.status()?;
+            Ok(CommandRunResult {
+                exit_code: status.code().unwrap_or(1),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -1685,6 +1792,9 @@ fn load_and_run_workspace_up(
         let handles = runnable
             .into_iter()
             .map(|(order, repo)| {
+                if emit_progress && workspace_repo_needs_acquisition(&repo) {
+                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                }
                 if emit_progress {
                     eprintln!("WORKSPACE RUN {}", repo.name);
                 }
@@ -1751,6 +1861,9 @@ fn run_workspace_up_streaming(
                 report
             }
             None => {
+                if emit_progress && workspace_repo_needs_acquisition(&repo) {
+                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                }
                 if emit_progress {
                     eprintln!("WORKSPACE RUN {}", repo.name);
                 }
@@ -1775,6 +1888,92 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
+    match acquire_workspace_repo(&repo, mode) {
+        Ok(acquisition) if acquisition.exit_code != 0 => {
+            return WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required {
+                    "ACQUIRE FAILED"
+                } else {
+                    "WARN"
+                }
+                .to_string(),
+                phase: "acquisition".to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo acquisition failed: {}", repo_name),
+                    why: match repo.source_url.as_deref() {
+                        Some(source_url) => format!(
+                            "workspace repo `{}` could not be cloned from `{}`",
+                            repo_name, source_url
+                        ),
+                        None => format!("workspace repo `{}` could not be acquired", repo_name),
+                    },
+                    next: String::from(
+                        "check repo source access and credentials, then re-run `ota workspace up`",
+                    ),
+                }],
+                service: None,
+                task: None,
+                exit_code: Some(acquisition.exit_code),
+                stdout: match mode {
+                    RepoExecutionMode::Capture => {
+                        (!acquisition.stdout.is_empty()).then_some(acquisition.stdout)
+                    }
+                    RepoExecutionMode::Stream => None,
+                },
+                stderr: match mode {
+                    RepoExecutionMode::Capture => {
+                        (!acquisition.stderr.is_empty()).then_some(acquisition.stderr)
+                    }
+                    RepoExecutionMode::Stream => None,
+                },
+            };
+        }
+        Ok(_) => {}
+        Err(error) => {
+            return WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required {
+                    "ACQUIRE FAILED"
+                } else {
+                    "WARN"
+                }
+                .to_string(),
+                phase: "acquisition".to_string(),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo acquisition failed: {}", repo_name),
+                    why: error,
+                    next: String::from(
+                        "check repo source access and credentials, then re-run `ota workspace up`",
+                    ),
+                }],
+                service: None,
+                task: None,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+            };
+        }
+    }
+
     match load_and_validate(&repo.contract_path) {
         Ok(contract) => match execute_repo_up(&contract, &repo.contract_path, mode) {
             Ok(result) => WorkspaceRepoUpReport {
