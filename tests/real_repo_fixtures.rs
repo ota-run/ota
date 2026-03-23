@@ -282,6 +282,32 @@ fn init_json_reports_detected_mode_for_java_maven_fixture() {
 
 #[cfg(unix)]
 #[test]
+fn init_write_writes_high_confidence_contract_for_java_maven_fixture() {
+    let fixture = copy_fixture_to_temp("java-maven");
+
+    let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for java maven fixture");
+
+    assert!(written.contains("name: ota-maven-service"));
+    assert!(written.contains("java: '21'"));
+    assert!(!written.contains("tools:"));
+    assert!(!written.contains("tasks:"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn init_json_prefers_maven_wrapper_on_real_fixture() {
     let fixture = copy_fixture_to_temp("java-maven");
     fs::write(fixture.path().join("mvnw"), "#!/bin/sh\n")
@@ -452,6 +478,25 @@ fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
     assert!(written.contains("java: '21'"));
     assert!(written.contains("gradle: 8.10.2"));
     assert!(written.contains("run: ./gradlew build"));
+}
+
+#[cfg(unix)]
+#[test]
+fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
+    let fixture = copy_fixture_to_temp("java-maven");
+
+    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for java maven fixture");
+
+    assert!(written.contains("name: ota-maven-service"));
+    assert!(written.contains("java: '21'"));
+    assert!(!written.contains("tools:"));
+    assert!(!written.contains("tasks:"));
 }
 
 #[cfg(unix)]
