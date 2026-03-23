@@ -104,9 +104,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Run the command against one monorepo member declared by the root contract.
+        /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
-        member: Option<String>,
+        member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -241,7 +241,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Check { json, member, path } => commands::check(
             path.as_deref(),
             file.as_deref(),
-            member.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -1941,6 +1941,143 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["findings"][0]["summary"], "Check failed: health-check");
+    }
+
+    #[test]
+    fn check_json_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+checks:
+  - name: root-health
+    kind: health
+    severity: warn
+    run: exit 1
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+checks:
+  - name: api-health
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        );
+
+        let output = run_with(["ota", "check", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["findings"][0]["summary"], "Check failed: root-health");
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[0]["ok"], false);
+        assert_eq!(
+            members[0]["findings"][0]["summary"],
+            "Check failed: api-health"
+        );
+    }
+
+    #[test]
+    fn check_text_reports_root_monorepo_summary_with_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+checks:
+  - name: api-health
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stdout
+                .contains(&format!("CHECK {}", fixture.file_path().display()))
+        );
+        assert!(output.stdout.contains(&format!(
+            "CHECK {} [member api]",
+            fixture.file_path().display()
+        )));
+        assert!(output.stdout.contains("READY"));
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("Check failed: api-health"));
+        assert!(output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn check_rejects_duplicate_monorepo_members() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "check",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("`--member api` was provided more than once")
+        );
     }
 
     #[test]
