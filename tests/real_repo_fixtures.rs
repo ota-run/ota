@@ -323,6 +323,22 @@ fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
 }
 
 #[test]
+fn init_json_reports_detected_mode_for_rust_cargo_fixture() {
+    let fixture = real_fixture_path("rust-cargo");
+    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["mode"], "detected");
+    assert_eq!(json["config"]["project"]["name"], "ota-rust-real");
+    assert_eq!(json["config"]["runtimes"]["rust"], "1.85.0");
+    assert_eq!(json["config"]["tools"]["cargo"], "*");
+    assert_eq!(json["config"]["tasks"]["build"]["run"], "cargo build");
+    assert_eq!(json["config"]["tasks"]["test"]["run"], "cargo test");
+}
+
+#[test]
 fn detect_json_handles_docker_heavy_node_fixture() {
     let fixture = real_fixture_path("docker-heavy-node");
     let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
@@ -342,6 +358,30 @@ fn detect_json_handles_docker_heavy_node_fixture() {
         "docker compose stop web"
     );
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+}
+
+#[test]
+fn detect_json_handles_rust_cargo_fixture() {
+    let fixture = real_fixture_path("rust-cargo");
+    let output = run_ota(&["detect", "--json", "--dry-run", fixture.to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["written"], false);
+    assert_eq!(json["config"]["project"]["name"], "ota-rust-real");
+    assert_eq!(json["config"]["runtimes"]["rust"], "1.85.0");
+    assert_eq!(json["config"]["tools"]["cargo"], "*");
+    assert_eq!(json["config"]["tasks"]["test"]["run"], "cargo test");
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "runtimes.rust"
+                    && inference["source"] == "rust-toolchain.toml#toolchain.channel"
+            })
+    );
 }
 
 #[cfg(unix)]
