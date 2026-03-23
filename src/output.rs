@@ -61,6 +61,35 @@ pub struct WorkspaceDoctorSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceTaskSummary {
+    pub name: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    pub depends_on: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceRepoTasksReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub acquired: bool,
+    pub depends_on: Vec<String>,
+    pub tasks: Vec<WorkspaceTaskSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceTasksSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub repos: &'a [WorkspaceRepoTasksReport],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoUpReport {
     pub name: String,
     pub path: String,
@@ -87,6 +116,32 @@ pub struct WorkspaceUpSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub repos: &'a [WorkspaceRepoUpReport],
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceRepoRunReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub ok: bool,
+    pub status: String,
+    pub task: String,
+    pub findings: Vec<Finding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceRunSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub task: &'a str,
+    pub repos: &'a [WorkspaceRepoRunReport],
 }
 
 #[derive(Debug, Serialize)]

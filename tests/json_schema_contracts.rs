@@ -90,6 +90,33 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
 }
 
 #[test]
+fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-tasks.json");
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let task = &repo["tasks"]["items"]["properties"];
+
+    assert!(repo.get("acquired").is_some());
+    assert!(repo.get("depends_on").is_some());
+    assert!(repo.get("tasks").is_some());
+    assert!(task.get("name").is_some());
+    assert!(task.get("kind").is_some());
+    assert!(task.get("depends_on").is_some());
+}
+
+#[test]
+fn workspace_run_schema_exists_and_covers_repo_run_reports() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-run.json");
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+
+    assert!(repo.get("status").is_some());
+    assert!(repo.get("task").is_some());
+    assert!(repo.get("findings").is_some());
+    assert!(repo.get("exit_code").is_some());
+    assert!(repo.get("stdout").is_some());
+    assert!(repo.get("stderr").is_some());
+}
+
+#[test]
 fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
     let repo = &schema["properties"]["repos"]["items"]["properties"];

@@ -13,6 +13,8 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
+- [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
+- [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
 - [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 
@@ -181,6 +183,63 @@ Failure:
   ]
 }
 ```
+
+## `ota workspace tasks --json`
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "api",
+      "path": "/abs/path/to/services/api",
+      "contract_path": "/abs/path/to/services/api/ota.yaml",
+      "required": true,
+      "acquired": true,
+      "depends_on": ["db"],
+      "tasks": [
+        {
+          "name": "setup",
+          "kind": "run",
+          "run": "pnpm install",
+          "depends_on": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+Non-acquired repos keep `acquired: false` and `tasks: []`.
+
+## `ota workspace run --json`
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "task": "setup",
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": true,
+      "status": "READY",
+      "task": "setup",
+      "findings": []
+    }
+  ]
+}
+```
+
+Optional per-repo fields:
+
+- `exit_code`
+- `stdout`
+- `stderr`
 
 ## `ota init --json`
 

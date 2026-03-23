@@ -67,6 +67,8 @@ ota detect
 ota detect --merge --dry-run
 ota detect --merge
 ota workspace validate
+ota workspace tasks
+ota workspace run <task>
 ota workspace doctor
 ota workspace up
 ```
@@ -93,6 +95,8 @@ Current behavior:
 - `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
+- `ota workspace tasks` lists workspace repo tasks in dependency order without executing them
+- `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
 - `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
 

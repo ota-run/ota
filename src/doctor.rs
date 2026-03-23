@@ -102,6 +102,7 @@ fn diagnose_contract_with_scope(
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
+        diagnose_execution_backend(contract, &mut findings);
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
@@ -156,6 +157,53 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
                 "treat `ephemeral` as a portability hint for now; do not rely on isolation or automatic cleanup in V1",
             ),
         });
+    }
+}
+
+fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) {
+    let Some(execution) = contract.execution.as_ref() else {
+        return;
+    };
+
+    match execution.preferred {
+        Some(Backend::Container) => {
+            diagnose_backend_cli("docker", "container execution backend", findings)
+        }
+        Some(Backend::Remote) => {
+            let Some(remote) = execution
+                .backends
+                .as_ref()
+                .and_then(|backends| backends.remote.as_ref())
+            else {
+                return;
+            };
+
+            let provider = remote.provider.trim();
+            let cli = match provider {
+                "daytona" => "daytona",
+                "ssh" => "ssh",
+                other => {
+                    findings.push(Finding {
+                        severity: FindingSeverity::Error,
+                        summary: format!("Unsupported remote execution backend provider: {other}"),
+                        why: format!(
+                            "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports `daytona` and `ssh`"
+                        ),
+                        next: String::from(
+                            "change `execution.backends.remote.provider` to `daytona` or `ssh`",
+                        ),
+                    });
+                    return;
+                }
+            };
+
+            diagnose_backend_cli(
+                cli,
+                &format!("remote execution backend provider `{provider}`"),
+                findings,
+            );
+        }
+        _ => {}
     }
 }
 
@@ -317,6 +365,19 @@ fn diagnose_command_version(
     });
 }
 
+fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) {
+    if command_available(name) {
+        return;
+    }
+
+    findings.push(Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Missing execution backend CLI: {name}"),
+        why: format!("{backend} requires `{name}` to be available on PATH"),
+        next: format!("install {name} and make it available on PATH"),
+    });
+}
+
 fn diagnose_checks(
     contract: &Contract,
     contract_path: &Path,
@@ -420,6 +481,10 @@ fn command_version(name: &str) -> Option<String> {
     );
 
     extract_version_token(&combined)
+}
+
+fn command_available(name: &str) -> bool {
+    Command::new(name).arg("--version").output().is_ok()
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -554,7 +619,9 @@ fn shell_command(command: &str) -> Command {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::path::Path;
+    use std::sync::Mutex;
 
     use crate::parser::parse_contract_str;
 
@@ -562,6 +629,8 @@ mod tests {
         FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
         version_matches,
     };
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
@@ -652,6 +721,129 @@ tasks:
         assert_eq!(
             report.findings[0].summary,
             "Ephemeral lifecycle is only enforced for backend-backed task execution"
+        );
+    }
+
+    #[test]
+    fn reports_missing_container_backend_cli() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "/definitely-not-a-real-bin");
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing execution backend CLI: docker")
+        );
+    }
+
+    #[test]
+    fn reports_missing_remote_backend_cli() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "/definitely-not-a-real-bin");
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing execution backend CLI: ssh")
+        );
+    }
+
+    #[test]
+    fn reports_unsupported_remote_backend_provider() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: unknown
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        assert!(!report.ok);
+        assert_eq!(
+            report.findings[0].summary,
+            "Unsupported remote execution backend provider: unknown"
         );
     }
 

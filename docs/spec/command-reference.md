@@ -59,6 +59,8 @@ Ota currently ships these commands:
 - `ota up`
 - `ota detect`
 - `ota workspace validate`
+- `ota workspace tasks`
+- `ota workspace run <task>`
 - `ota workspace doctor`
 - `ota workspace up`
 
@@ -221,6 +223,7 @@ Current behavior:
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
 - checks configured env requirements
+- checks preferred execution backend prerequisites such as `docker`, `daytona`, or `ssh` when backend-backed execution is configured
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
@@ -382,13 +385,16 @@ Clean persistent execution state for a repo.
 ```bash
 ota clean [PATH]
 ota clean --member api [PATH]
+ota clean --member api --member web [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
-- when `--member` is set, targets the merged member contract
+- when a root contract declares `workspace.type: monorepo`, plain `ota clean` reports the root cleanup result and grouped member cleanup results
+- when `--member` is set, targets those merged member contracts in the provided order
 - when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
+- remote backends do not currently define cleanup semantics; they report `NO CLEANUP NEEDED`
 - reports `NO CLEANUP NEEDED` when there is no persistent container state to remove
 - does not stop services or perform workspace-wide cleanup
 
@@ -529,6 +535,73 @@ JSON output:
 
 - success: `ok`, `path`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota workspace tasks`
+
+List workspace repo tasks in dependency order.
+
+```bash
+ota workspace tasks [PATH]
+ota workspace tasks --json [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace shape and present repo contracts
+- preserves workspace dependency order in output
+- lists task declarations for each acquired repo contract
+- reports non-acquired repos with `acquired: false` and empty task lists
+- does not execute tasks
+
+Text output:
+
+- header: `WORKSPACE TASKS <path>`
+- each repo includes required/optional status, acquisition status, dependency list, and task summaries
+
+JSON output:
+
+- `ok`
+- `path`
+- `repos`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
+
+## `ota workspace run`
+
+Run one task across workspace repos in dependency order.
+
+```bash
+ota workspace run <task> [PATH]
+ota workspace run <task> --json [PATH]
+ota workspace run <task> --jobs 4 [PATH]
+ota workspace run <task> --stream [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure and repo contracts
+- acquires missing repos declared with `repos.<name>.source` before execution
+- executes the task for each repo in workspace dependency order
+- can run independent repos concurrently when `--jobs` is greater than `1`
+- blocks downstream repos when a dependency repo did not complete successfully
+- captures per-repo stdout/stderr in default mode
+- `--stream` opts into raw child output (text only, currently requires `--jobs 1`)
+- optional repo task failures do not fail the overall workspace status
+
+Text output:
+
+- header: `WORKSPACE RUN <task> <path>`
+- status line: `READY` or `NOT READY`
+- per-repo status includes `required/optional`, task name, findings, and optional exit details
+
+JSON output:
+
+- `ok`
+- `path`
+- `task`
+- `repos`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, and optional `exit_code`/`stdout`/`stderr`
 
 ## `ota workspace doctor`
 

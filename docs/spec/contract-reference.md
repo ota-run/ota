@@ -196,6 +196,8 @@ Current command behavior:
 - `ota up` can also override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`
+- `ota clean` currently has no remote cleanup action; remote-backed repos report `NO CLEANUP NEEDED` today
+- `ota doctor` checks the required backend CLI for the preferred execution backend and reports unsupported shipped remote providers early
 - `ota up` still runs service start commands, service healthchecks, and diagnosis on the host today
 
 ## `services`
