@@ -135,12 +135,14 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
     if execution.preferred == Some(Backend::Container) {
         findings.push(Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from("Ephemeral lifecycle is only enforced for `ota run`"),
+            summary: String::from(
+                "Ephemeral lifecycle is only enforced for backend-backed task execution",
+            ),
             why: String::from(
-                "the contract requests `execution.lifecycle: ephemeral`; `ota run` now uses fresh container execution, but `ota up` and other flows still do not provide isolated temporary environments or automatic cleanup",
+                "the contract requests `execution.lifecycle: ephemeral`; Ota now uses fresh container execution for `ota run` and the `setup` task inside `ota up`, but service commands, healthchecks, diagnosis, and full repo teardown still do not run in isolated temporary environments",
             ),
             next: String::from(
-                "use `ota run` for isolated task execution; do not rely on `ota up` for ephemeral cleanup yet",
+                "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
             ),
         });
     } else {
@@ -649,7 +651,7 @@ tasks:
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(
             report.findings[0].summary,
-            "Ephemeral lifecycle is only enforced for `ota run`"
+            "Ephemeral lifecycle is only enforced for backend-backed task execution"
         );
     }
 

@@ -42,6 +42,53 @@
           "next": { "type": "string" }
         }
       }
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member", "ok", "findings"],
+        "properties": {
+          "member": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "agent": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "entrypoint": { "type": "string" },
+              "default_task": { "type": "string" },
+              "safe_tasks": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "verify_after_changes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "writable_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "notes": { "type": "string" }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["severity", "summary", "why", "next"],
+              "properties": {
+                "severity": { "enum": ["error", "warn", "info"] },
+                "summary": { "type": "string" },
+                "why": { "type": "string" },
+                "next": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

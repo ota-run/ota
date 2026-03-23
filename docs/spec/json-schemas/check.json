@@ -2,7 +2,31 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ota.run/spec/json-schemas/check.json",
   "title": "ota check --json",
-  "allOf": [
-    { "$ref": "./doctor.json" }
-  ]
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "findings"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/finding" }
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["member", "ok", "findings"],
+        "properties": {
+          "member": { "type": "string" },
+          "ok": { "type": "boolean" },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "./shared.json#/$defs/finding" }
+          }
+        }
+      }
+    }
+  }
 }

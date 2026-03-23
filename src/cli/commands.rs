@@ -46,8 +46,9 @@ use crate::parser::{
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, effective_execution, run_task_captured, run_task_with_overrides,
-    run_task_with_progress,
+    ExecutionOverrides, RunError, clean_execution, effective_execution,
+    run_task_captured_with_overrides, run_task_with_overrides,
+    run_task_with_progress_and_overrides,
 };
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
@@ -1117,6 +1118,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 pub fn up(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    overrides: ExecutionOverrides,
     members: &[String],
     format: OutputFormat,
     debug: bool,
@@ -1162,9 +1164,14 @@ pub fn up(
                         workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                     })
                 {
+                    let mut lifecycle_notes =
+                        up_lifecycle_notice_with_member(&target.contract, overrides, None)
+                            .into_iter()
+                            .collect::<Vec<_>>();
                     let root_result = match execute_repo_up(
                         &target.contract,
                         &target.contract_path,
+                        overrides,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -1190,6 +1197,7 @@ pub fn up(
                             let member_result = match execute_repo_up(
                                 &member_target.contract,
                                 &member_target.contract_path,
+                                overrides,
                                 RepoExecutionMode::Stream,
                             ) {
                                 Ok(result) => result,
@@ -1197,6 +1205,13 @@ pub fn up(
                             };
                             if !member_result.ok {
                                 overall_ok = false;
+                            }
+                            if let Some(notice) = up_lifecycle_notice_with_member(
+                                &member_target.contract,
+                                overrides,
+                                Some(member.as_str()),
+                            ) {
+                                lifecycle_notes.push(notice);
                             }
                             text_sections.push(render_up_section(
                                 &display_contract_target(&path_display, Some(member.as_str())),
@@ -1220,7 +1235,8 @@ pub fn up(
                             stdout: text_sections.join("\n---\n"),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
-                        },
+                        }
+                        .with_stderr(join_notices(lifecycle_notes)),
                         OutputFormat::Json => CommandOutput {
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
@@ -1235,16 +1251,23 @@ pub fn up(
                             })),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
-                        },
+                        }
+                        .with_stderr(join_notices(lifecycle_notes)),
                     }
                 } else {
                     match execute_repo_up(
                         &target.contract,
                         &target.contract_path,
+                        overrides,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => {
                             render_up_result(&path_display, &text_path_display, result, format)
+                                .with_stderr(up_lifecycle_notice_with_member(
+                                    &target.contract,
+                                    overrides,
+                                    single_member,
+                                ))
                         }
                         Err(error) => CommandOutput::failure(error),
                     }
@@ -1254,6 +1277,7 @@ pub fn up(
                 let mut overall_ok = true;
                 let mut text_sections = Vec::new();
                 let mut member_results = Vec::new();
+                let mut lifecycle_notes = Vec::new();
                 for member in members {
                     let target =
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
@@ -1268,6 +1292,7 @@ pub fn up(
                     let result = match execute_repo_up(
                         &target.contract,
                         &target.contract_path,
+                        overrides,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -1275,6 +1300,13 @@ pub fn up(
                     };
                     if !result.ok {
                         overall_ok = false;
+                    }
+                    if let Some(notice) = up_lifecycle_notice_with_member(
+                        &target.contract,
+                        overrides,
+                        Some(member.as_str()),
+                    ) {
+                        lifecycle_notes.push(notice);
                     }
                     text_sections.push(render_up_section(
                         &display_contract_target(&path_display, Some(member.as_str())),
@@ -1297,7 +1329,8 @@ pub fn up(
                         stdout: text_sections.join("\n---\n"),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
-                    },
+                    }
+                    .with_stderr(join_notices(lifecycle_notes)),
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json_value(json!({
                             "ok": overall_ok,
@@ -1309,9 +1342,53 @@ pub fn up(
                         })),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
-                    },
+                    }
+                    .with_stderr(join_notices(lifecycle_notes)),
                 }
             }
+            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
+            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn clean(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=clean")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let text_path_display = display_contract_target(&path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=clean"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => match clean_execution(&target.contract, &target.contract_path) {
+                Ok(true) => CommandOutput::success(format!("CLEANED {text_path_display}")),
+                Ok(false) => {
+                    CommandOutput::success(format!("NO CLEANUP NEEDED {text_path_display}"))
+                }
+                Err(error) => CommandOutput::failure(error.to_string()),
+            },
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
             Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
         },
@@ -2655,6 +2732,26 @@ fn lifecycle_notice_with_member(
     })
 }
 
+fn up_lifecycle_notice_with_member(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+) -> Option<String> {
+    if !contract.tasks.contains_key("setup") {
+        return None;
+    }
+
+    lifecycle_notice_with_member(contract, overrides, member)
+}
+
+fn join_notices(notices: Vec<String>) -> Option<String> {
+    if notices.is_empty() {
+        None
+    } else {
+        Some(notices.join("\n"))
+    }
+}
+
 struct RunCommandFailure {
     message: String,
     exit_code: i32,
@@ -3185,6 +3282,7 @@ fn run_git_command(
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
+    overrides: ExecutionOverrides,
     mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
     let preflight = diagnose_preconditions(contract, resolved_path);
@@ -3272,23 +3370,26 @@ fn execute_repo_up(
 
     if contract.tasks.contains_key("setup") {
         match match mode {
-            RepoExecutionMode::Stream => {
-                run_task_with_progress(contract, resolved_path, "setup", true).map(|outcome| {
-                    CommandRunResult {
-                        exit_code: outcome.exit_code,
-                        stdout: String::new(),
-                        stderr: String::new(),
-                    }
-                })
-            }
+            RepoExecutionMode::Stream => run_task_with_progress_and_overrides(
+                contract,
+                resolved_path,
+                "setup",
+                true,
+                overrides,
+            )
+            .map(|outcome| CommandRunResult {
+                exit_code: outcome.exit_code,
+                stdout: String::new(),
+                stderr: String::new(),
+            }),
             RepoExecutionMode::Capture => {
-                run_task_captured(contract, resolved_path, "setup").map(|outcome| {
-                    CommandRunResult {
+                run_task_captured_with_overrides(contract, resolved_path, "setup", overrides).map(
+                    |outcome| CommandRunResult {
                         exit_code: outcome.exit_code,
                         stdout: outcome.stdout,
                         stderr: outcome.stderr,
-                    }
-                })
+                    },
+                )
             }
         } {
             Ok(outcome) if outcome.exit_code != 0 => {
@@ -3595,7 +3696,12 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
     }
 
     match load_and_validate_target(&repo.contract_path, None) {
-        Ok(target) => match execute_repo_up(&target.contract, &target.contract_path, mode) {
+        Ok(target) => match execute_repo_up(
+            &target.contract,
+            &target.contract_path,
+            ExecutionOverrides::default(),
+            mode,
+        ) {
             Ok(result) => WorkspaceRepoUpReport {
                 name: repo.name,
                 path: path_display,

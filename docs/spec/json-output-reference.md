@@ -85,6 +85,30 @@ Success:
 }
 ```
 
+Root monorepo summary output can also include grouped member results:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "tasks": [],
+  "members": [
+    {
+      "member": "api",
+      "tasks": [
+        {
+          "name": "test",
+          "kind": "run",
+          "run": "cargo test",
+          "depends_on": [],
+          "safe_for_agent": false
+        }
+      ]
+    }
+  ]
+}
+```
+
 ## `ota doctor --json`
 
 ```json
@@ -105,6 +129,8 @@ Success:
   ]
 }
 ```
+
+Root monorepo summary output can also include grouped member findings under `members`.
 
 ## `ota workspace validate --json`
 
@@ -210,6 +236,8 @@ optional `agent` summary:
 }
 ```
 
+Root monorepo summary output can also include grouped member findings under `members`.
+
 ## `ota up --json`
 
 ```json
@@ -227,6 +255,7 @@ Optional fields:
 - `service`: present when a required service start command fails
 - `task`: present when a task failure is reported
 - `exit_code`: present when a child command failure is reported
+- `members`: present on monorepo-root aggregate output with grouped member readiness results
 
 Example service-start failure:
 

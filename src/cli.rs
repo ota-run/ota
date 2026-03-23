@@ -122,9 +122,23 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Override the execution backend for this invocation.
+        #[arg(long, value_enum)]
+        backend: Option<RunBackend>,
+        /// Override the execution lifecycle for this invocation.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    /// Clean persistent execution state for a repo.
+    Clean {
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -294,13 +308,26 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Up { json, member, path } => commands::up(
+        Commands::Up {
+            json,
+            backend,
+            lifecycle,
+            member,
+            path,
+        } => commands::up(
             path.as_deref(),
             file.as_deref(),
+            ExecutionOverrides {
+                backend: backend.map(Into::into),
+                lifecycle: lifecycle.map(Into::into),
+            },
             &member,
             format_from_json(json),
             debug,
         ),
+        Commands::Clean { member, path } => {
+            commands::clean(path.as_deref(), file.as_deref(), member.as_deref(), debug)
+        }
         Commands::Init { write, json, path } => {
             if file.is_some() {
                 return CommandOutput::failure_with_code(
@@ -377,6 +404,8 @@ fn format_from_json(json: bool) -> OutputFormat {
 mod tests {
     use std::fs;
     #[cfg(unix)]
+    use std::hash::{Hash, Hasher};
+    #[cfg(unix)]
     use std::process::Command;
     #[cfg(unix)]
     use std::time::{Duration, Instant};
@@ -385,6 +414,148 @@ mod tests {
     use tempfile::TempDir;
 
     use super::run_with;
+
+    #[cfg(unix)]
+    fn install_fake_docker(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+state_dir="$(dirname "$0")/docker-state"
+mkdir -p "$state_dir"
+
+command="$1"
+shift
+
+case "$command" in
+  inspect)
+    name="$1"
+    [ -f "$state_dir/$name.path" ]
+    exit $?
+    ;;
+  start)
+    name="$1"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    host_dir=$(cat "$state_dir/$name.path")
+    printf "start\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
+  exec)
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -i)
+          shift
+          ;;
+        --env)
+          export "$2"
+          shift 2
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir=$(cat "$state_dir/$name.path")
+    printf "exec\n" >> "$host_dir/docker-log.txt"
+    cd "$host_dir" || exit 1
+    exec sh -lc "$3"
+    ;;
+  run)
+    detached=0
+    mount=""
+    name=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -d)
+          detached=1
+          shift
+          ;;
+        --rm|-i)
+          shift
+          ;;
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        -v)
+          mount="$2"
+          shift 2
+          ;;
+        -w)
+          shift 2
+          ;;
+        --env)
+          export "$2"
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir="${mount%%:*}"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ "$detached" = "1" ]; then
+      printf "%s" "$host_dir" > "$state_dir/$name.path"
+      printf "run-persistent\n" >> "$host_dir/docker-log.txt"
+      exit 0
+    fi
+    printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
+    cd "$host_dir" || exit 1
+    exec sh -lc "$3"
+    ;;
+  rm)
+    shift
+    [ "$1" = "-f" ] && shift
+    name="$1"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    host_dir=$(cat "$state_dir/$name.path")
+    rm -f "$state_dir/$name.path"
+    printf "rm\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
+esac
+
+exit 1
+"#,
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn install_fake_daytona(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+command="$1"
+shift
+
+case "$command" in
+  exec)
+    target="$1"
+    shift
+    cwd=""
+    if [ "$1" = "--cwd" ]; then
+      cwd="$2"
+      shift 2
+    fi
+    [ "$1" = "--" ] || exit 1
+    shift
+    [ -n "$cwd" ] || exit 1
+    printf "exec %s\n" "$target" >> "$cwd/daytona-log.txt"
+    cd "$cwd" || exit 1
+    exec sh -lc "$3"
+    ;;
+esac
+
+exit 1
+"#,
+        )
+        .unwrap();
+    }
 
     #[test]
     fn validate_json_reports_success() {
@@ -1404,6 +1575,303 @@ project:
                 .as_deref()
                 .unwrap()
                 .contains("`--member api` was provided more than once")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_reports_persistent_container_cleanup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: exit 0
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).unwrap();
+        }
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        fixture.dir.path().display().to_string().hash(&mut hasher);
+        "ghcr.io/ota/test:latest".hash(&mut hasher);
+        let container_name = format!("ota-{:x}", hasher.finish());
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            format!("CLEANED {}", fixture.file_path().display())
+        );
+        assert!(bin_dir.join("docker-log.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_runs_setup_in_ephemeral_container_backend() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("Lifecycle note: running task in an ephemeral container backend")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("run-ephemeral")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_overrides_native_contract_to_use_ephemeral_container_backend() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with([
+            "ota",
+            "up",
+            "--backend",
+            "container",
+            "--lifecycle",
+            "ephemeral",
+            fixture.path(),
+        ]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("Lifecycle note: running task in an ephemeral container backend")
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("run-ephemeral")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_uses_daytona_remote_backend() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: daytona
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let daytona_path = bin_dir.join("daytona");
+        install_fake_daytona(&daytona_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&daytona_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&daytona_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("daytona-log.txt"))
+                .unwrap()
+                .contains("exec sandbox-dev")
         );
     }
 

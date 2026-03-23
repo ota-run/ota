@@ -111,6 +111,10 @@ pub struct ContainerBackend {
 #[serde(deny_unknown_fields)]
 pub struct RemoteBackend {
     pub provider: String,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -150,6 +154,8 @@ pub struct RuntimeDetail {
     pub version: String,
     #[serde(default)]
     pub provider: Option<String>,
+    #[serde(default)]
+    pub distribution: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
