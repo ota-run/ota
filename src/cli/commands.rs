@@ -46,8 +46,8 @@ use crate::parser::{
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, effective_execution, run_task, run_task_captured,
-    run_task_with_overrides, run_task_with_progress,
+    ExecutionOverrides, RunError, effective_execution, run_task_captured, run_task_with_overrides,
+    run_task_with_progress,
 };
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
@@ -458,10 +458,16 @@ pub fn run_command(
         format!("DEBUG contract_path={path_display}"),
     ];
     if let Some(backend) = overrides.backend {
-        debug_lines.push(format!("DEBUG backend_override={}", format_backend(backend)));
+        debug_lines.push(format!(
+            "DEBUG backend_override={}",
+            format_backend(backend)
+        ));
     }
     if let Some(lifecycle) = overrides.lifecycle {
-        debug_lines.push(format!("DEBUG lifecycle_override={}", format_lifecycle(lifecycle)));
+        debug_lines.push(format!(
+            "DEBUG lifecycle_override={}",
+            format_lifecycle(lifecycle)
+        ));
     }
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
@@ -2613,10 +2619,17 @@ fn run_single_contract_target(
     member: Option<&str>,
     target: LoadedContractTarget,
 ) -> Result<Option<String>, RunCommandFailure> {
-    match run_task_with_overrides(&target.contract, &target.contract_path, task_name, overrides) {
-        Ok(outcome) if outcome.exit_code == 0 => {
-            Ok(lifecycle_notice_with_member(&target.contract, overrides, member))
-        }
+    match run_task_with_overrides(
+        &target.contract,
+        &target.contract_path,
+        task_name,
+        overrides,
+    ) {
+        Ok(outcome) if outcome.exit_code == 0 => Ok(lifecycle_notice_with_member(
+            &target.contract,
+            overrides,
+            member,
+        )),
         Ok(outcome) => Err(RunCommandFailure {
             message: format!(
                 "task `{task_name}` failed with exit code {}",

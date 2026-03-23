@@ -2032,6 +2032,31 @@ tasks:
     }
 
     #[test]
+    fn run_backend_override_native_bypasses_container_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", "--backend", "native", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
     fn run_preserves_child_exit_code() {
         let fixture = ContractFixture::new(
             r#"

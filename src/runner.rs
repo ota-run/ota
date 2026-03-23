@@ -140,7 +140,12 @@ pub fn run_task(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<RunOutcome, RunError> {
-    run_task_with_overrides(contract, contract_path, task_name, ExecutionOverrides::default())
+    run_task_with_overrides(
+        contract,
+        contract_path,
+        task_name,
+        ExecutionOverrides::default(),
+    )
 }
 
 pub fn run_task_with_overrides(
@@ -683,8 +688,8 @@ mod tests {
     use crate::parser::parse_contract_str;
 
     use super::{
-        CapturedRunOutcome, RunError, plan_task_execution, resolve_task_env, run_task,
-        run_task_captured, run_task_with_progress,
+        CapturedRunOutcome, ExecutionOverrides, RunError, plan_task_execution, resolve_task_env,
+        run_task, run_task_captured, run_task_with_overrides, run_task_with_progress,
     };
 
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
@@ -1070,6 +1075,77 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overrides_native_contract_to_use_container_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            ExecutionOverrides {
+                backend: Some(crate::schema::Backend::Container),
+                lifecycle: Some(crate::schema::Lifecycle::Ephemeral),
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("run-ephemeral")
+        );
     }
 
     #[cfg(unix)]

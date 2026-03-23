@@ -91,10 +91,10 @@ Implemented so far:
 - root-level `ota up` summary for monorepo roots
 - first real container-backed `ota run`
 - `execution.lifecycle` enforcement for container-backed `ota run`
+- command-time `ota run --backend` and `--lifecycle` overrides
 
 Still to do in V3:
 
-- command-time `--lifecycle` and backend override support
 - cleanup / teardown semantics
 - remote backend execution
 - runtime distribution support such as `runtimes.java.distribution`
