@@ -28,43 +28,83 @@ Status: active planning.
 
 V2 should expand Ota only after preserving the shipped V1 trust model.
 
+The point of V2 is not broader surface area for its own sake.
+
+The point of V2 is to make Ota:
+
+- more trustworthy on real repos
+- easier to adopt
+- better at handling messy repo reality
+- more useful to agents without introducing parallel truth
+
 ## Priorities
 
-1. Interop and export surfaces
-2. Stronger agent-facing contract guidance
-3. Broader workspace ergonomics above the current bootstrap layer
-4. Post-V1 execution model expansion only where it improves determinism and clarity
+1. Trust
+2. Adoption
+3. Better real-repo handling
+4. Stronger agent usefulness
 
 ## Rules
 
 - preserve the V1 repo and workspace contract boundaries
 - preserve doctor-first and trust-sensitive detection/init behavior
-- do not weaken deterministic shell-native execution without an explicit replacement model
+- preserve deterministic shell-native execution unless an explicit replacement model is justified
 - keep new abstractions justified by real fixture or integration pressure
+- do not create parallel truth outside `ota.yaml` and `ota.workspace.yaml`
+- do not build broad feature families before one narrow slice proves clear value
 
 ## First candidate tracks
 
-### Track 1: Interop
+### Track 1: Trust
 
-- export Ota contract data into other ecosystem surfaces where it reduces duplication
-- keep Ota as the source of truth instead of generating parallel handwritten config
+- keep `ota doctor`, `ota detect`, and `ota init` sharp on real repos
+- preserve conservative write behavior and provenance-first inference
+- tighten edge cases only where they improve correctness or user trust
 
-### Track 2: Agent Contract
+### Track 2: Adoption
 
-- tighten the `agent` section into a clearer, more useful operational surface
-- improve verification defaults and writable-path guidance
+- reduce the cost of getting a real repo into Ota
+- improve import and migration paths without weakening trust-sensitive writes
+- prioritize work that helps one repo or one team adopt Ota faster
 
-### Track 3: Workspace UX
+### Track 3: Better Real-Repo Handling
 
-- consider richer workspace-level status and orchestration only when it composes repo truth cleanly
-- keep acquisition and bootstrap explicit and inspectable
+- improve mixed-reality, conflicting-signal, and partial-repo handling
+- expand fixture pressure only where it exposes real product gaps
+- prefer better precedence and conflict handling over broader speculative coverage
 
-### Track 4: Execution Model
+### Track 4: Stronger Agent Usefulness
 
-- evaluate post-V1 task execution expansion only if it remains deterministic, debuggable, and contract-first
+- make the `agent` section more operationally useful
+- focus on concrete guidance such as:
+  - `safe_tasks`
+  - `verify_after_changes`
+  - `writable_paths`
+- keep agent guidance deterministic, human-readable, and shared with humans where possible
+
+## Optional Later Tracks
+
+These are not core V2 pillars.
+
+### Narrow Export
+
+- consider export only if one exact target proves real duplicated-truth pain
+- Ota must remain the source of truth and exports must remain derived artifacts
+- do not start a broad export program
+
+### Workspace UX Extensions
+
+- consider workspace improvements only when they compose existing repo truth cleanly
+- do not invent a second bootstrap engine or duplicate repo readiness semantics
+
+### Execution Model Expansion
+
+- consider post-V1 execution model work only if it preserves determinism, debuggability, and contract clarity
 
 ## Non-goals
 
 - replacing `ota.yaml` as the repo source of truth
 - turning Ota into a hidden workstation manager
-- adding host-specific magic or provider-specific GitHub behavior into the core model
+- adding provider-specific GitHub, GitLab, or Bitbucket behavior into the core model
+- building a broad export matrix before a single target proves clear value
+- introducing a second execution truth outside the contract
