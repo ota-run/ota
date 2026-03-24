@@ -3930,6 +3930,25 @@ project:
     }
 
     #[test]
+    fn doctor_text_format_uses_spaced_sections_without_rule_separator() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("🦦  DOCTOR "));
+        assert!(output.stdout.contains("\n\n◉ NOT READY"));
+        assert!(output.stdout.contains("◉ ERROR  No tasks defined in contract"));
+        assert!(!output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
     fn doctor_missing_explicit_path_includes_contract_creation_next_steps() {
         let fixture = TempDir::new().unwrap();
         let missing = fixture.path().join("ota.yaml");
@@ -4584,6 +4603,31 @@ checks:
         assert!(output.stdout.contains("name: ota-web"));
         assert!(output.stdout.contains("runtimes.node"));
         assert!(output.stdout.contains("tasks.dev.run"));
+    }
+
+    #[test]
+    fn detect_dry_run_text_format_uses_spaced_sections_without_rule_separator() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota"
+version = "0.1.0"
+edition = "2024"
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("🦦  DETECT PREVIEW "));
+        assert!(output.stdout.contains("\n\nMode: dry-run (no write)"));
+        assert!(output.stdout.contains("\n\nContract:\nversion: 1"));
+        assert!(output.stdout.contains("\n\nAnnotations:\n✦  Field: "));
+        assert!(output.stdout.contains("\n   Value: "));
+        assert!(output.stdout.contains("\n   Source: "));
+        assert!(output.stdout.contains("\n   Confidence: "));
+        assert!(!output.stdout.contains("\n---\n"));
     }
 
     #[test]
