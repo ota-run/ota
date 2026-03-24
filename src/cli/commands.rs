@@ -2003,11 +2003,22 @@ fn render_workspace_validate_failure(
 
     match load_error {
         Some(error) => {
+            let compact_error = compact_backticked_paths(error);
             out.push_str(&format!(
                 "\n{} {}",
                 paint_key("Why:"),
-                compact_backticked_paths(error)
+                compact_error
             ));
+            if compact_error.starts_with("no `ota.workspace.yaml` found from `")
+                && compact_error.ends_with("` upward")
+            {
+                out.push_str(&format!("\n\n{}", paint_next_header()));
+                out.push_str(&format!(
+                    "\n{}  setup workspace with {}",
+                    next_bullet(),
+                    paint_code("`ota workspace init`")
+                ));
+            }
         }
         None if errors.is_empty() => {
             out.push_str(&format!(
