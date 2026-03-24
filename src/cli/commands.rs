@@ -20,8 +20,8 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -65,10 +65,15 @@ use crate::workspace::{
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
+    static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
 pub fn set_plain_mode(enabled: bool) {
     PLAIN_MODE.with(|value| value.set(enabled));
+}
+
+pub fn set_concise_mode(enabled: bool) {
+    CONCISE_MODE.with(|value| value.set(enabled));
 }
 
 pub fn validate(
@@ -1112,7 +1117,9 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
                 format!("review the existing contract with `{highlighted_validate}`"),
                 format!("review the existing contract with `{highlighted_doctor}`"),
                 format!("compare detected repo signals with `{highlighted_detect_merge_dry}`"),
-                format!("apply detected add-only high-confidence fields now with `{highlighted_detect_merge}`"),
+                format!(
+                    "apply detected add-only high-confidence fields now with `{highlighted_detect_merge}`"
+                ),
             ]),
         );
         return finalize_debug(
@@ -1373,9 +1380,7 @@ pub fn up(
                             }
                             Err(ContractProblem::Load(error)) => {
                                 return match format {
-                                    OutputFormat::Text => {
-                                        CommandOutput::failure(error.to_string())
-                                    }
+                                    OutputFormat::Text => CommandOutput::failure(error.to_string()),
                                     OutputFormat::Json => {
                                         CommandOutput::failure(to_json(&ValidateFailure {
                                             ok: false,
@@ -1545,10 +1550,7 @@ pub fn clean(
                                 }
                             };
                         match render_clean_text(
-                            &display_contract_target(
-                                &compact_path_display,
-                                Some(member.as_str()),
-                            ),
+                            &display_contract_target(&compact_path_display, Some(member.as_str())),
                             clean_execution(&member_target.contract, &member_target.contract_path),
                         ) {
                             Ok(section) => sections.push(section),
@@ -1694,17 +1696,11 @@ pub fn detect(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = if merge {
-                            format_command_header(
-                                "DETECT MERGE PREVIEW",
-                                &compact_root_display,
-                            )
+                            format_command_header("DETECT MERGE PREVIEW", &compact_root_display)
                         } else {
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
-                        stdout.push_str(&format!(
-                            "\n\n{}",
-                            format_mode_line("dry-run (no write)")
-                        ));
+                        stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --merge {}` to apply add-only high-confidence fields",
@@ -1966,12 +1962,11 @@ pub fn workspace_init(
                                 ));
                             }
                         };
-                    let mut stdout =
-                            format_command_header(&format!("WORKSPACE {command_label} MERGE PREVIEW"), &compact_root_display);
-                        stdout.push_str(&format!(
-                            "\n\n{}",
-                            format_mode_line("dry-run (no write)")
-                        ));
+                        let mut stdout = format_command_header(
+                            &format!("WORKSPACE {command_label} MERGE PREVIEW"),
+                            &compact_root_display,
+                        );
+                        stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
                         stdout.push_str(&format_next_timeline(&[format!(
                             "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
@@ -2021,8 +2016,10 @@ pub fn workspace_init(
                 if comparison.additions.is_empty() {
                     return match format {
                         OutputFormat::Text => {
-                            let mut stdout =
-                                format_command_header(&format!("WORKSPACE {command_label} NO CHANGES"), &compact_workspace_path(&workspace_path));
+                            let mut stdout = format_command_header(
+                                &format!("WORKSPACE {command_label} NO CHANGES"),
+                                &compact_workspace_path(&workspace_path),
+                            );
                             render_workspace_init_merge_section(
                                 &mut stdout,
                                 "Additive merge preview",
@@ -2045,8 +2042,10 @@ pub fn workspace_init(
 
                 match format {
                     OutputFormat::Text => {
-                        let mut stdout =
-                            format_command_header(&format!("WORKSPACE {command_label} MERGED"), &compact_workspace_path(&workspace_path));
+                        let mut stdout = format_command_header(
+                            &format!("WORKSPACE {command_label} MERGED"),
+                            &compact_workspace_path(&workspace_path),
+                        );
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Applied additions",
@@ -2082,8 +2081,12 @@ pub fn workspace_init(
                             "`{}` already exists; refusing to overwrite an existing workspace contract{}\n{}",
                             compact_workspace_path(&workspace_path),
                             format_next_timeline(&[
-                                format!("review the existing workspace contract with `{next_validate}`"),
-                                format!("diagnose current workspace readiness with `{next_doctor}`"),
+                                format!(
+                                    "review the existing workspace contract with `{next_validate}`"
+                                ),
+                                format!(
+                                    "diagnose current workspace readiness with `{next_doctor}`"
+                                ),
                             ]),
                             ""
                         )
@@ -2093,8 +2096,12 @@ pub fn workspace_init(
                             "`{}` already exists; `{command_name} --write` only writes first contracts{}\n{}",
                             compact_workspace_path(&workspace_path),
                             format_next_timeline(&[
-                                format!("use `{command_name} --merge --dry-run {compact_root_display}` to review additive merge changes"),
-                                format!("use `{command_name} --merge {compact_root_display}` to apply additive repo entries"),
+                                format!(
+                                    "use `{command_name} --merge --dry-run {compact_root_display}` to review additive merge changes"
+                                ),
+                                format!(
+                                    "use `{command_name} --merge {compact_root_display}` to apply additive repo entries"
+                                ),
                             ]),
                             ""
                         )
@@ -2123,13 +2130,15 @@ pub fn workspace_init(
                         return finalize_debug(
                             match format {
                                 OutputFormat::Text => CommandOutput::failure(error),
-                                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
-                                    "ok": false,
-                                    "path": path_display,
-                                    "written": false,
-                                    "mode": "scaffold",
-                                    "error": error,
-                                }))),
+                                OutputFormat::Json => {
+                                    CommandOutput::failure(to_json_value(json!({
+                                        "ok": false,
+                                        "path": path_display,
+                                        "written": false,
+                                        "mode": "scaffold",
+                                        "error": error,
+                                    })))
+                                }
                             },
                             debug,
                             debug_lines,
@@ -2164,8 +2173,10 @@ pub fn workspace_init(
                             command_for_workspace("ota workspace validate", &workspace_path);
                         let next_doctor =
                             command_for_workspace("ota workspace doctor", &workspace_path);
-                        let mut stdout =
-                            format_command_header(&format!("WORKSPACE {command_label} WRITE"), &compact_root_display);
+                        let mut stdout = format_command_header(
+                            &format!("WORKSPACE {command_label} WRITE"),
+                            &compact_root_display,
+                        );
                         stdout.push_str(&format!(
                             "\n\n{}",
                             format_result_line(&format!(
@@ -2208,12 +2219,11 @@ pub fn workspace_init(
                         }
                     };
 
-                    let mut stdout =
-                        format_command_header(&format!("WORKSPACE {command_label} PREVIEW"), &compact_root_display);
-                    stdout.push_str(&format!(
-                        "\n\n{}",
-                        format_mode_line("dry-run (no write)")
-                    ));
+                    let mut stdout = format_command_header(
+                        &format!("WORKSPACE {command_label} PREVIEW"),
+                        &compact_root_display,
+                    );
+                    stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
                     let write_command = match surface {
                         WorkspaceScaffoldSurface::Init => {
                             format!("{command_name} {compact_root_display}")
@@ -2400,7 +2410,9 @@ pub fn workspace_tasks(
                 }
 
                 match format {
-                    OutputFormat::Text => render_workspace_tasks_text(&compact_path_display, &repos),
+                    OutputFormat::Text => {
+                        render_workspace_tasks_text(&compact_path_display, &repos)
+                    }
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
                         path: &path_display,
@@ -2783,9 +2795,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         let error = format!(
             "`{}` already exists; refusing to overwrite an existing contract{}",
             highlighted_path,
-            format_next_timeline(&[format!(
-                "review detected changes with `{highlighted_next}`",
-            )]),
+            format_next_timeline(&[format!("review detected changes with `{highlighted_next}`",)]),
         );
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -2962,8 +2972,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         Err(error) => {
             let error = format!(
                 "failed to parse existing contract `{}` for merge: {}",
-                compact_path_display,
-                error
+                compact_path_display, error
             );
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
@@ -2995,8 +3004,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         Err(error) => {
             let error = format!(
                 "failed to serialize merged contract `{}`: {}",
-                compact_path_display,
-                error
+                compact_path_display, error
             );
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
@@ -3559,7 +3567,10 @@ fn render_tasks_text(
         let command_preview = task
             .run
             .map(str::to_string)
-            .or_else(|| task.script.map(|script| script.lines().next().unwrap_or(script).trim().to_string()))
+            .or_else(|| {
+                task.script
+                    .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
+            })
             .unwrap_or_else(|| String::from("-"));
 
         output.push_str(&format!("\n{} {}", list_bullet(), paint(task.name, "1")));
@@ -4119,11 +4130,10 @@ fn apply_workspace_init_merge(
         if repos.contains_key(&repo_key) {
             continue;
         }
-        let spec = draft
-            .contract
-            .repos
-            .get(&repo.name)
-            .ok_or_else(|| format!("internal merge error: missing repo spec `{}`", repo.name))?;
+        let spec =
+            draft.contract.repos.get(&repo.name).ok_or_else(|| {
+                format!("internal merge error: missing repo spec `{}`", repo.name)
+            })?;
         let mut spec_map = Mapping::new();
         spec_map.insert(
             YamlValue::String(String::from("path")),
@@ -4143,8 +4153,8 @@ fn apply_workspace_init_merge(
             compact_workspace_path(workspace_path)
         )
     })?;
-    let contract = parse_workspace_contract_str(workspace_path, &yaml)
-        .map_err(|error| error.to_string())?;
+    let contract =
+        parse_workspace_contract_str(workspace_path, &yaml).map_err(|error| error.to_string())?;
     validate_workspace_contract(workspace_path, &contract).map_err(|error| error.to_string())?;
     fs::write(workspace_path, yaml).map_err(|error| {
         format!(
@@ -4159,9 +4169,7 @@ fn apply_workspace_init_merge(
     })
 }
 
-fn resolve_workspace_init_target(
-    path: Option<&Path>,
-) -> Result<(PathBuf, PathBuf), String> {
+fn resolve_workspace_init_target(path: Option<&Path>) -> Result<(PathBuf, PathBuf), String> {
     match path {
         Some(path)
             if path
@@ -4297,8 +4305,8 @@ fn collect_child_repo_dirs(
     let entries = fs::read_dir(parent)
         .map_err(|error| format!("failed to inspect `{}`: {error}", parent.display()))?;
     for entry in entries {
-        let entry = entry
-            .map_err(|error| format!("failed to inspect `{}`: {error}", parent.display()))?;
+        let entry =
+            entry.map_err(|error| format!("failed to inspect `{}`: {error}", parent.display()))?;
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -4834,7 +4842,12 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
         }
 
         for task in &repo.tasks {
-            stdout.push_str(&format!("\n{} {} ({})", list_bullet(), task.name, task.kind));
+            stdout.push_str(&format!(
+                "\n{} {} ({})",
+                list_bullet(),
+                task.name,
+                task.kind
+            ));
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
@@ -4947,11 +4960,17 @@ fn append_markdown_table(
             if compact_repo_row { " " } else { "  " }
         ));
         if compact_repo_row {
-            output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
+            output.push_str(&paint(
+                &render_table_cell(row.first().map_or("-", String::as_str)),
+                "1",
+            ));
         } else {
             output.push_str(&paint_key(first_header));
             output.push_str(": ");
-            output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
+            output.push_str(&paint(
+                &render_table_cell(row.first().map_or("-", String::as_str)),
+                "1",
+            ));
         }
 
         for (idx, header) in headers.iter().enumerate().skip(1) {
@@ -5048,6 +5067,11 @@ fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
 
 fn plain_mode() -> bool {
     PLAIN_MODE.with(Cell::get)
+}
+
+#[allow(dead_code)]
+fn concise_mode() -> bool {
+    CONCISE_MODE.with(Cell::get)
 }
 
 fn format_command_header(command: &str, target: &str) -> String {
@@ -5147,7 +5171,12 @@ fn format_result_line(value: &str) -> String {
 }
 
 fn format_mode_line(value: &str) -> String {
-    format!("{} {} {}", mode_icon(), paint_key("Mode:"), paint_mode_value(value))
+    format!(
+        "{} {} {}",
+        mode_icon(),
+        paint_key("Mode:"),
+        paint_mode_value(value)
+    )
 }
 
 fn format_next_timeline(items: &[String]) -> String {
@@ -6795,7 +6824,11 @@ fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Optio
     }
 }
 
-fn finalize_debug(mut output: CommandOutput, debug: bool, debug_lines: Vec<String>) -> CommandOutput {
+fn finalize_debug(
+    mut output: CommandOutput,
+    debug: bool,
+    debug_lines: Vec<String>,
+) -> CommandOutput {
     if !looks_like_json(&output.stdout) {
         output.stdout = stylize_inline_code(&output.stdout);
     }
@@ -6995,11 +7028,7 @@ fn render_inference_section<'a>(
             paint_key("Field:"),
             inference.field
         ));
-        output.push_str(&format!(
-            "\n   {} {}",
-            paint_key("Value:"),
-            inference.value
-        ));
+        output.push_str(&format!("\n   {} {}", paint_key("Value:"), inference.value));
         output.push_str(&format!(
             "\n   {} {}",
             paint_key("Source:"),

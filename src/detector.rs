@@ -1391,10 +1391,11 @@ fn detect_pubspec_yaml(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     }
 
     let contents = read_file(&path)?;
-    let pubspec: YamlValue = serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
-        path: path.display().to_string(),
-        message: source.to_string(),
-    })?;
+    let pubspec: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
 
     if let Some(name) = yaml_key_str(&pubspec, "name")
         && !name.trim().is_empty()
@@ -1482,11 +1483,7 @@ fn detect_cmake(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectEr
     );
 
     if let Some(name) = extract_cmake_project_name(&contents) {
-        builder.set_project_name(
-            name,
-            "CMakeLists.txt#project".to_string(),
-            Confidence::High,
-        );
+        builder.set_project_name(name, "CMakeLists.txt#project".to_string(), Confidence::High);
     }
     if let Some(version) = extract_cmake_standard(&contents, "CMAKE_C_STANDARD") {
         builder.set_runtime(
@@ -1739,7 +1736,11 @@ fn detect_julia_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
     if let Some(name) = document.get("name").and_then(TomlValue::as_str)
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name.trim().to_string(), "Project.toml#name".to_string(), Confidence::High);
+        builder.set_project_name(
+            name.trim().to_string(),
+            "Project.toml#name".to_string(),
+            Confidence::High,
+        );
     }
     if let Some(version) = document
         .get("compat")
@@ -1788,7 +1789,11 @@ fn detect_r_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), Dete
     if let Some(name) = extract_dcf_value(&contents, "Package")
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name.trim().to_string(), "DESCRIPTION#Package".to_string(), Confidence::High);
+        builder.set_project_name(
+            name.trim().to_string(),
+            "DESCRIPTION#Package".to_string(),
+            Confidence::High,
+        );
     }
     if let Some(depends) = extract_dcf_value(&contents, "Depends")
         && let Some(version) = extract_r_depends_version(&depends)
@@ -1896,7 +1901,11 @@ fn detect_nim_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), De
     if let Some(name) = path.file_stem().and_then(|stem| stem.to_str())
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name.trim().to_string(), "nimble-file".to_string(), Confidence::High);
+        builder.set_project_name(
+            name.trim().to_string(),
+            "nimble-file".to_string(),
+            Confidence::High,
+        );
     }
 
     let contents = read_file(&path)?;
@@ -2131,10 +2140,11 @@ fn detect_crystal_markers(root: &Path, builder: &mut DetectBuilder) -> Result<()
     }
 
     let contents = read_file(&path)?;
-    let shard: YamlValue = serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
-        path: path.display().to_string(),
-        message: source.to_string(),
-    })?;
+    let shard: YamlValue =
+        serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
 
     builder.set_tool(
         "crystal".to_string(),
@@ -2295,7 +2305,11 @@ fn detect_haxe_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     if let Some(name) = hxml.file_stem().and_then(|stem| stem.to_str())
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name.trim().to_string(), "hxml".to_string(), Confidence::Medium);
+        builder.set_project_name(
+            name.trim().to_string(),
+            "hxml".to_string(),
+            Confidence::Medium,
+        );
         builder.set_task(
             "build".to_string(),
             format!("haxe {}.hxml", name.trim()),
@@ -2691,8 +2705,10 @@ fn detect_bash_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     } else if root.join("run.sh").exists() {
         Some("run.sh".to_string())
     } else {
-        find_extension_file(root, "sh")?
-            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+        find_extension_file(root, "sh")?.and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().to_string())
+        })
     };
 
     let Some(script) = script else {
@@ -2731,9 +2747,10 @@ fn detect_bash_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
 }
 
 fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
-    let Some(script) = find_extension_file(root, "ps1")?
-        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
-    else {
+    let Some(script) = find_extension_file(root, "ps1")?.and_then(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+    }) else {
         return Ok(());
     };
 
@@ -3216,7 +3233,8 @@ fn extract_dcf_value(contents: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}:");
     contents.lines().find_map(|line| {
         let line = line.trim();
-        line.strip_prefix(&prefix).map(|value| value.trim().to_string())
+        line.strip_prefix(&prefix)
+            .map(|value| value.trim().to_string())
     })
 }
 
@@ -3472,15 +3490,13 @@ impl DetectBuilder {
     fn set_task(&mut self, name: String, run: String, source: String, confidence: Confidence) {
         let field = format!("tasks.{name}.run");
         if self.should_replace(&field, &source, confidence) {
-            self.contract
-                .tasks
-                .insert(
-                    name.clone(),
-                    DetectTask {
-                        run: run.clone(),
-                        safe_for_agent: false,
-                    },
-                );
+            self.contract.tasks.insert(
+                name.clone(),
+                DetectTask {
+                    run: run.clone(),
+                    safe_for_agent: false,
+                },
+            );
             self.record(field, run, source.clone(), confidence);
             if is_verifier_task_name(&name) {
                 self.set_task_safe_for_agent(name, source, confidence);
@@ -3961,7 +3977,10 @@ requires-python = ">=3.12"
             report.contract.runtimes.get("php"),
             Some(&"^8.2".to_string())
         );
-        assert_eq!(report.contract.tools.get("composer"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.tools.get("composer"),
+            Some(&"*".to_string())
+        );
         assert_eq!(
             report
                 .contract
@@ -4342,7 +4361,10 @@ version = "1.0.0-1"
                 .map(|project| project.name.as_str()),
             Some("qredex-lua-1.0.0-1")
         );
-        assert_eq!(report.contract.tools.get("luarocks"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.tools.get("luarocks"),
+            Some(&"*".to_string())
+        );
         assert_eq!(
             report
                 .contract
@@ -4410,7 +4432,10 @@ Depends: R (>= 4.3.0)
                 .map(|project| project.name.as_str()),
             Some("qredexr")
         );
-        assert_eq!(report.contract.runtimes.get("r"), Some(&">= 4.3.0".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("r"),
+            Some(&">= 4.3.0".to_string())
+        );
         assert_eq!(report.contract.tools.get("r"), Some(&"*".to_string()));
         assert_eq!(
             report
@@ -4496,7 +4521,10 @@ requires "nim >= 2.0"
     #[test]
     fn detects_erlang_rebar_signals() {
         let fixture = Fixture::new();
-        fixture.write("rebar.config", "{erl_opts, [debug_info]}.\n{app, qredex_erlang}.\n");
+        fixture.write(
+            "rebar.config",
+            "{erl_opts, [debug_info]}.\n{app, qredex_erlang}.\n",
+        );
 
         let report = detect_repo(fixture.path()).unwrap();
 
@@ -4860,7 +4888,11 @@ solc_version = "0.8.25"
             Some("app")
         );
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("kotlin app.kts")
         );
     }
@@ -4879,7 +4911,10 @@ solc_version = "0.8.25"
 
         let report = detect_repo(fixture.path()).unwrap();
         assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
-        assert_eq!(report.contract.runtimes.get("fsharp"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("fsharp"),
+            Some(&"*".to_string())
+        );
         assert_eq!(
             report
                 .contract
@@ -4898,7 +4933,11 @@ solc_version = "0.8.25"
         let report = detect_repo(fixture.path()).unwrap();
         assert_eq!(report.contract.tools.get("tclsh"), Some(&"*".to_string()));
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("tclsh tclapp.tcl")
         );
     }
@@ -4912,11 +4951,19 @@ solc_version = "0.8.25"
         let report = detect_repo(fixture.path()).unwrap();
         assert_eq!(report.contract.tools.get("racket"), Some(&"*".to_string()));
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("racket main.rkt")
         );
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("raco test .")
         );
     }
@@ -4941,7 +4988,11 @@ solc_version = "0.8.25"
             Some("main")
         );
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("bash main.sh")
         );
     }
@@ -4966,7 +5017,11 @@ solc_version = "0.8.25"
             Some("bootstrap")
         );
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("pwsh -File bootstrap.ps1")
         );
     }
@@ -4982,19 +5037,35 @@ solc_version = "0.8.25"
         assert_eq!(report.contract.tools.get("deno"), Some(&"*".to_string()));
         assert_eq!(report.contract.runtimes.get("deno"), Some(&"*".to_string()));
         assert_eq!(
-            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
             Some("deno run main.ts")
         );
         assert_eq!(
-            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
             Some("deno test")
         );
         assert_eq!(
-            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.run.as_str()),
             Some("deno lint")
         );
         assert_eq!(
-            report.contract.tasks.get("lint").map(|task| task.safe_for_agent),
+            report
+                .contract
+                .tasks
+                .get("lint")
+                .map(|task| task.safe_for_agent),
             Some(true)
         );
     }
@@ -5672,11 +5743,17 @@ name = "ota-api"
             Some("npm run start")
         );
         assert_eq!(
-            contract.tasks.get("typecheck").map(|task| task.run.as_str()),
+            contract
+                .tasks
+                .get("typecheck")
+                .map(|task| task.run.as_str()),
             Some("npm run typecheck")
         );
         assert_eq!(
-            contract.tasks.get("typecheck").map(|task| task.safe_for_agent),
+            contract
+                .tasks
+                .get("typecheck")
+                .map(|task| task.safe_for_agent),
             Some(true)
         );
         assert_eq!(

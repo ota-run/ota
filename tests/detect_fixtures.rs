@@ -467,7 +467,10 @@ fn detects_php_composer_fixture() {
         report.contract.runtimes.get("php"),
         Some(&"^8.2".to_string())
     );
-    assert_eq!(report.contract.tools.get("composer"), Some(&"*".to_string()));
+    assert_eq!(
+        report.contract.tools.get("composer"),
+        Some(&"*".to_string())
+    );
     assert_eq!(
         report
             .contract
@@ -564,7 +567,10 @@ fn detects_lua_rockspec_fixture() {
             .map(|project| project.name.as_str()),
         Some("qredex-lua-1.0.0-1")
     );
-    assert_eq!(report.contract.tools.get("luarocks"), Some(&"*".to_string()));
+    assert_eq!(
+        report.contract.tools.get("luarocks"),
+        Some(&"*".to_string())
+    );
     assert_eq!(
         report
             .contract

@@ -44,6 +44,22 @@ pub struct Cli {
     /// Emit plain text output (no icons, no ANSI styling, ASCII list markers).
     #[arg(long, global = true, action = ArgAction::SetTrue)]
     plain: bool,
+    /// Reduce non-essential spacing in text output.
+    #[arg(
+        long,
+        global = true,
+        action = ArgAction::SetTrue,
+        conflicts_with = "verbose"
+    )]
+    concise: bool,
+    /// Keep full text output detail (default behavior).
+    #[arg(
+        long,
+        global = true,
+        action = ArgAction::SetTrue,
+        conflicts_with = "concise"
+    )]
+    verbose: bool,
     /// Use an explicit ota.yaml file instead of path discovery.
     #[arg(long, global = true)]
     file: Option<PathBuf>,
@@ -51,7 +67,7 @@ pub struct Cli {
     command: Commands,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum Commands {
     /// Validate an Ota contract.
     Validate {
@@ -211,7 +227,7 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
     }
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 enum WorkspaceCommands {
     /// Create a starter ota.workspace.yaml from local repo structure.
     Init {
@@ -369,9 +385,11 @@ fn is_version_request(args: &[OsString]) -> bool {
 
 fn dispatch(cli: Cli) -> CommandOutput {
     commands::set_plain_mode(cli.plain);
+    commands::set_concise_mode(cli.concise);
     let debug = cli.debug;
     let file = cli.file;
-    match cli.command {
+    let command_for_footer = cli.command.clone();
+    let output = match cli.command {
         Commands::Validate { json, member, path } => commands::validate(
             path.as_deref(),
             file.as_deref(),
@@ -608,7 +626,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
             ),
         },
-    }
+    };
+
+    finalize_cli_output(output, cli.concise, &command_for_footer)
 }
 
 fn format_from_json(json: bool) -> OutputFormat {
@@ -617,6 +637,74 @@ fn format_from_json(json: bool) -> OutputFormat {
     } else {
         OutputFormat::Text
     }
+}
+
+fn finalize_cli_output(
+    mut output: CommandOutput,
+    concise: bool,
+    command: &Commands,
+) -> CommandOutput {
+    if output.exit_code != 0 {
+        if let Some(stderr) = output.stderr.take() {
+            output.stderr = Some(append_try_footer(stderr, command));
+        }
+    }
+
+    if concise {
+        output.stdout = collapse_blank_lines(output.stdout);
+        if let Some(stderr) = output.stderr.take() {
+            output.stderr = Some(collapse_blank_lines(stderr));
+        }
+    }
+
+    output
+}
+
+fn append_try_footer(stderr: String, command: &Commands) -> String {
+    if stderr.contains("\nTry: ") || stderr.contains("\nNext:") {
+        return stderr;
+    }
+
+    let suggestion = match command {
+        Commands::Validate { .. } => "ota init",
+        Commands::Tasks { .. } => "ota tasks",
+        Commands::Run { .. } => "ota tasks --use",
+        Commands::Doctor { .. } => "ota doctor",
+        Commands::Init { .. } => "ota init --dry-run",
+        Commands::Check { .. } => "ota check",
+        Commands::Up { .. } => "ota doctor",
+        Commands::Clean { .. } => "ota clean --help",
+        Commands::Detect { .. } => "ota detect --dry-run",
+        Commands::Workspace { command } => match command {
+            WorkspaceCommands::Init { .. } => "ota workspace init --help",
+            WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
+            WorkspaceCommands::Validate { .. } => "ota workspace validate",
+            WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
+            WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
+            WorkspaceCommands::Check { .. } => "ota workspace check",
+            WorkspaceCommands::Up { .. } => "ota workspace up",
+            WorkspaceCommands::Run { .. } => "ota workspace tasks",
+        },
+    };
+
+    format!("{stderr}\n\nTry: `{suggestion}`")
+}
+
+fn collapse_blank_lines(text: String) -> String {
+    let mut out = String::new();
+    let mut previous_blank = false;
+    for line in text.lines() {
+        let blank = line.trim().is_empty();
+        if blank && previous_blank {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(line);
+        previous_blank = blank;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -636,7 +724,7 @@ mod tests {
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
 
-    use super::run_with;
+    use super::{collapse_blank_lines, run_with};
 
     #[cfg(unix)]
     fn install_fake_docker(path: &std::path::Path) {
@@ -1698,11 +1786,10 @@ env:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stdout
-                .contains(&format!("DOCTOR {}", compact_contract(&fixture.file_path())))
-        );
+        assert!(output.stdout.contains(&format!(
+            "DOCTOR {}",
+            compact_contract(&fixture.file_path())
+        )));
         assert!(output.stdout.contains(&format!(
             "DOCTOR {} [member api]",
             compact_contract(&fixture.file_path())
@@ -2025,7 +2112,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("NO CLEANUP NEEDED {}", compact_contract(&fixture.file_path()))
+            format!(
+                "NO CLEANUP NEEDED {}",
+                compact_contract(&fixture.file_path())
+            )
         );
     }
 
@@ -3074,6 +3164,46 @@ tasks:
     }
 
     #[test]
+    fn root_help_lists_concise_and_verbose_flags() {
+        let output = run_with(["ota", "--help"]);
+
+        assert_eq!(output.exit_code, 2);
+        let help = output
+            .stderr
+            .as_deref()
+            .expect("help text should be present in stderr");
+        assert!(help.contains("--concise"));
+        assert!(help.contains("--verbose"));
+    }
+
+    #[test]
+    fn failure_adds_try_footer_when_next_is_not_present() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+
+        let output = run_with(["ota", "run", "missing", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap();
+        assert!(stderr.contains("Try: `ota tasks --use`"));
+    }
+
+    #[test]
+    fn collapse_blank_lines_reduces_consecutive_empty_lines() {
+        let input = "a\n\n\nb\n\n\n\nc\n";
+        let output = collapse_blank_lines(input.to_string());
+        assert_eq!(output, "a\n\nb\n\nc");
+    }
+
+    #[test]
     fn validate_rejects_unknown_top_level_keys() {
         let fixture = ContractFixture::new(
             r#"
@@ -3434,7 +3564,11 @@ tasks:
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
-        assert!(detect.stdout.contains("\nNext:\n-  run `ota detect --write"));
+        assert!(
+            detect
+                .stdout
+                .contains("\nNext:\n-  run `ota detect --write")
+        );
         assert!(!detect.stdout.contains("🦦 "));
         assert!(!detect.stdout.contains("▸"));
     }
@@ -4127,7 +4261,11 @@ project:
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("🦦  DOCTOR "));
         assert!(output.stdout.contains("\n\n◉ NOT READY"));
-        assert!(output.stdout.contains("◉ ERROR  No tasks defined in contract"));
+        assert!(
+            output
+                .stdout
+                .contains("◉ ERROR  No tasks defined in contract")
+        );
         assert!(!output.stdout.contains("\n---\n"));
     }
 
@@ -4930,7 +5068,10 @@ project:
         let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["written"], false);
-        assert_eq!(json["next"], format!("ota detect --write {}", fixture.path()));
+        assert_eq!(
+            json["next"],
+            format!("ota detect --write {}", fixture.path())
+        );
     }
 
     #[test]
@@ -5371,7 +5512,10 @@ tasks:
         let init_fixture = ContractFixture::new_dir();
         let init = run_with(["ota", "init", "--json", init_fixture.path()]);
         assert_eq!(init.exit_code, 0);
-        assert_json_top_level_keys(&init, &["config", "inferred", "mode", "ok", "path", "written"]);
+        assert_json_top_level_keys(
+            &init,
+            &["config", "inferred", "mode", "ok", "path", "written"],
+        );
     }
 
     #[test]
@@ -5540,10 +5684,7 @@ tasks:
         let up = run_with(["ota", "up", fixture.path()]);
         let up_stdout = strip_ansi(&up.stdout);
         assert_eq!(up.exit_code, 0);
-        assert!(up_stdout.contains(&format!(
-            "UP {}",
-            compact_contract(&fixture.file_path())
-        )));
+        assert!(up_stdout.contains(&format!("UP {}", compact_contract(&fixture.file_path()))));
         assert!(up_stdout.contains("READY"));
         assert!(up_stdout.contains("Phase: post-setup diagnosis"));
         assert!(!up_stdout.contains("\n---\n"));
@@ -5764,8 +5905,16 @@ project:
         let api_dir = fixture.path().join("services").join("api");
         fs::create_dir_all(&web_dir).unwrap();
         fs::create_dir_all(&api_dir).unwrap();
-        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
-        fs::write(api_dir.join("ota.yaml"), "version: 1\nproject:\n  name: api\n").unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: api\n",
+        )
+        .unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
             r#"
@@ -5824,12 +5973,7 @@ repos:
         )
         .unwrap();
 
-        let output = run_with([
-            "ota",
-            "workspace",
-            "init",
-            fixture.path().to_str().unwrap(),
-        ]);
+        let output = run_with(["ota", "workspace", "init", fixture.path().to_str().unwrap()]);
         let body = format!(
             "{}\n{}",
             strip_ansi(&output.stdout),
@@ -5837,7 +5981,9 @@ repos:
         );
 
         assert_eq!(output.exit_code, 1);
-        assert!(body.contains("already exists; refusing to overwrite an existing workspace contract"));
+        assert!(
+            body.contains("already exists; refusing to overwrite an existing workspace contract")
+        );
         assert!(body.contains("ota workspace validate"));
         assert!(body.contains("ota workspace doctor"));
     }
@@ -5882,8 +6028,16 @@ project:
         let api_dir = fixture.path().join("services").join("api");
         fs::create_dir_all(&web_dir).unwrap();
         fs::create_dir_all(&api_dir).unwrap();
-        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
-        fs::write(api_dir.join("ota.yaml"), "version: 1\nproject:\n  name: api\n").unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: api\n",
+        )
+        .unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
             r#"
@@ -5922,8 +6076,16 @@ repos:
         let api_dir = fixture.path().join("services").join("api");
         fs::create_dir_all(&web_dir).unwrap();
         fs::create_dir_all(&api_dir).unwrap();
-        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
-        fs::write(api_dir.join("ota.yaml"), "version: 1\nproject:\n  name: api\n").unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: api\n",
+        )
+        .unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
             r#"
@@ -6035,8 +6197,7 @@ repos:
 "#,
         )
         .unwrap();
-        let validate_invalid =
-            run_with(["ota", "workspace", "validate", invalid_fixture.path()]);
+        let validate_invalid = run_with(["ota", "workspace", "validate", invalid_fixture.path()]);
         assert_eq!(validate_invalid.exit_code, 1);
 
         let failing_up = WorkspaceFixture::new();
@@ -6054,7 +6215,12 @@ repos:
         )
         .unwrap();
         fs::write(
-            failing_up.dir.path().join("apps").join("web").join("ota.yaml"),
+            failing_up
+                .dir
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml"),
             r#"
 version: 1
 project:
@@ -6174,7 +6340,10 @@ tasks:
             fixture.path(),
         ]);
         assert_eq!(up.exit_code, 0);
-        assert_json_top_level_keys(&up, &["findings", "members", "ok", "path", "phase", "status"]);
+        assert_json_top_level_keys(
+            &up,
+            &["findings", "members", "ok", "path", "phase", "status"],
+        );
     }
 
     #[test]
