@@ -302,7 +302,7 @@ pub fn tasks(
                     }
 
                     match format {
-                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n---\n")),
+                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
                         OutputFormat::Json => CommandOutput::success(to_json_value(json!({
                             "ok": true,
                             "path": path_display,
@@ -404,7 +404,7 @@ pub fn tasks(
                 }
 
                 match format {
-                    OutputFormat::Text => CommandOutput::success(text_sections.join("\n---\n")),
+                    OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
                     OutputFormat::Json => CommandOutput::success(to_json_value(json!({
                         "ok": true,
                         "path": path_display,
@@ -654,7 +654,7 @@ pub fn doctor(
 
                     match format {
                         OutputFormat::Text => CommandOutput {
-                            stdout: text_sections.join("\n---\n"),
+                            stdout: text_sections.join("\n\n"),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
@@ -766,7 +766,7 @@ pub fn doctor(
 
                 match format {
                     OutputFormat::Text => CommandOutput {
-                        stdout: text_sections.join("\n---\n"),
+                        stdout: text_sections.join("\n\n"),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
                     },
@@ -939,7 +939,7 @@ pub fn check(
 
                     match format {
                         OutputFormat::Text => CommandOutput {
-                            stdout: text_sections.join("\n---\n"),
+                            stdout: text_sections.join("\n\n"),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
@@ -1045,7 +1045,7 @@ pub fn check(
 
                 match format {
                     OutputFormat::Text => CommandOutput {
-                        stdout: text_sections.join("\n---\n"),
+                        stdout: text_sections.join("\n\n"),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
                     },
@@ -1273,7 +1273,7 @@ pub fn up(
 
                     match format {
                         OutputFormat::Text => CommandOutput {
-                            stdout: text_sections.join("\n---\n"),
+                            stdout: text_sections.join("\n\n"),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         }
@@ -1367,7 +1367,7 @@ pub fn up(
 
                 match format {
                     OutputFormat::Text => CommandOutput {
-                        stdout: text_sections.join("\n---\n"),
+                        stdout: text_sections.join("\n\n"),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
                     }
@@ -1489,7 +1489,7 @@ pub fn clean(
                         }
                     }
 
-                    CommandOutput::success(sections.join("\n---\n"))
+                    CommandOutput::success(sections.join("\n\n"))
                 } else {
                     match render_clean_text(
                         &text_path_display,
@@ -1536,7 +1536,7 @@ pub fn clean(
                     }
                 }
 
-                CommandOutput::success(sections.join("\n---\n"))
+                CommandOutput::success(sections.join("\n\n"))
             }
             Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
             Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
@@ -1640,7 +1640,7 @@ pub fn detect(
                                 compact_root_display
                             )]));
                         }
-                        stdout.push_str("\nContract:\n---\n");
+                        stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
                         stdout.push_str(yaml.trim_end());
                         render_inference_section(
                             &mut stdout,
@@ -2673,11 +2673,12 @@ fn render_init(
         OutputFormat::Text => {
             let highlighted_init = paint_code(&format!("ota init {}", compact_root_display));
             let mut stdout = format!(
-                "{}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`\nContract:\n---\n{}",
+                "{}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`",
                 format_command_header("INIT PREVIEW", &compact_root_display),
                 highlighted_init,
-                review_yaml.trim_end()
             );
+            stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+            stdout.push_str(review_yaml.trim_end());
             if mode == "blank" {
                 stdout.push_str(
                     "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -3022,7 +3023,7 @@ fn render_tasks_text(
         }
     }
 
-    output.push_str("\n---");
+    output.push('\n');
     if tasks.is_empty() {
         output.push_str(&format!("\n{} none", list_bullet()));
         return output;
@@ -3079,7 +3080,7 @@ fn render_tasks_text(
 
 fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format_command_header("TASKS", path);
-    output.push_str("\n---");
+    output.push('\n');
     if tasks.is_empty() {
         output.push_str(&format!("\n{} none", info_bullet()));
         return output;
@@ -4077,7 +4078,7 @@ fn append_markdown_table(
 ) {
     let rows = rows.into_iter().collect::<Vec<_>>();
 
-    output.push_str(&format!("\n---\n{}:", paint_section_title(title)));
+    output.push_str(&format!("\n\n{}:", paint_section_title(title)));
 
     if rows.is_empty() {
         output.push_str(&format!("\n{} none", list_bullet()));
@@ -6012,19 +6013,39 @@ fn render_inference_section<'a>(
     title: &str,
     inferences: impl IntoIterator<Item = &'a Inference>,
 ) {
-    append_markdown_table(
-        output,
-        title,
-        &["Field", "Value", "Source", "Confidence"],
-        inferences.into_iter().map(|inference| {
-            vec![
-                inference.field.clone(),
-                inference.value.clone(),
-                inference.source.clone(),
-                render_confidence(inference.confidence).to_string(),
-            ]
-        }),
-    );
+    let rows = inferences.into_iter().collect::<Vec<_>>();
+    output.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    if rows.is_empty() {
+        output.push_str(&format!("\n{}  none", info_bullet()));
+        return;
+    }
+
+    for (index, inference) in rows.into_iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        output.push_str(&format!(
+            "\n{}  {} {}",
+            info_bullet(),
+            paint_key("Field:"),
+            inference.field
+        ));
+        output.push_str(&format!(
+            "\n   {} {}",
+            paint_key("Value:"),
+            inference.value
+        ));
+        output.push_str(&format!(
+            "\n   {} {}",
+            paint_key("Source:"),
+            inference.source
+        ));
+        output.push_str(&format!(
+            "\n   {} {}",
+            paint_key("Confidence:"),
+            render_confidence(inference.confidence)
+        ));
+    }
 }
 
 fn render_table_cell(value: &str) -> String {
