@@ -988,7 +988,7 @@ workspace:
     - api
 tasks:
   setup:
-    run: printf root
+    run: 'true'
 "#,
         );
         fixture.write(
@@ -998,7 +998,7 @@ project:
   name: api
 tasks:
   test:
-    run: printf api
+    run: 'true'
 "#,
         );
 
@@ -1047,7 +1047,7 @@ project:
   name: web
 tasks:
   lint:
-    run: printf web
+    run: 'true'
 "#,
         );
 
@@ -2982,6 +2982,37 @@ extensions:
         let stderr = output.stderr.as_deref().unwrap();
         assert!(stderr.contains("extensions"));
         assert!(stderr.contains("unknown field"));
+    }
+
+    #[test]
+    fn extensions_top_level_is_rejected_consistently_across_repo_commands_until_v6() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: check_provider
+    command: ota-ext-demo
+    api_version: 1
+"#,
+        );
+
+        for args in [
+            vec!["ota", "validate", fixture.path()],
+            vec!["ota", "tasks", fixture.path()],
+            vec!["ota", "doctor", fixture.path()],
+            vec!["ota", "check", fixture.path()],
+            vec!["ota", "up", fixture.path()],
+            vec!["ota", "run", "setup", fixture.path()],
+        ] {
+            let output = run_with(args);
+            assert_eq!(output.exit_code, 1);
+            let stderr = output.stderr.as_deref().unwrap_or("");
+            assert!(stderr.contains("extensions"));
+            assert!(stderr.contains("unknown field"));
+        }
     }
 
     #[test]
@@ -5271,6 +5302,165 @@ tasks:
     }
 
     #[test]
+    fn repo_commands_exit_code_contract_is_stable() {
+        let usage = run_with(["ota", "validate", "--unknown-flag"]);
+        assert_eq!(usage.exit_code, 2);
+
+        let invalid = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    depends_on:
+      - setup
+"#,
+        );
+        let validate_invalid = run_with(["ota", "validate", invalid.path()]);
+        assert_eq!(validate_invalid.exit_code, 1);
+
+        let warning_only = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
+    required: false
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        let doctor_warning_only = run_with(["ota", "doctor", warning_only.path()]);
+        assert_eq!(doctor_warning_only.exit_code, 0);
+
+        let no_tasks = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let doctor_not_ready = run_with(["ota", "doctor", no_tasks.path()]);
+        assert_eq!(doctor_not_ready.exit_code, 1);
+
+        let run_failure = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: exit 17
+"#,
+        );
+        let run = run_with(["ota", "run", "setup", run_failure.path()]);
+        assert_eq!(run.exit_code, 17);
+
+        let up_failure = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: exit 7
+"#,
+        );
+        let up = run_with(["ota", "up", up_failure.path()]);
+        assert_eq!(up.exit_code, 7);
+    }
+
+    #[test]
+    fn repo_commands_text_status_contract_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let validate = run_with(["ota", "validate", fixture.path()]);
+        assert_eq!(validate.exit_code, 0);
+        assert_eq!(
+            validate.stdout,
+            format!(
+                "🦦  VALIDATE {}\n\n✓ VALID",
+                compact_contract(&fixture.file_path())
+            )
+        );
+        assert!(!validate.stdout.contains("\n---\n"));
+
+        let doctor = run_with(["ota", "doctor", fixture.path()]);
+        assert_eq!(doctor.exit_code, 0);
+        assert!(doctor.stdout.contains(&format!(
+            "🦦  DOCTOR {}",
+            compact_contract(&fixture.file_path())
+        )));
+        assert!(doctor.stdout.contains("\n\n✓ READY"));
+        assert!(!doctor.stdout.contains("\n---\n"));
+
+        let up = run_with(["ota", "up", fixture.path()]);
+        assert_eq!(up.exit_code, 0);
+        assert!(up.stdout.contains(&format!(
+            "🦦  UP {}",
+            compact_contract(&fixture.file_path())
+        )));
+        assert!(up.stdout.contains("\n\n✓ READY"));
+        assert!(up.stdout.contains("Phase: post-setup diagnosis"));
+        assert!(!up.stdout.contains("\n---\n"));
+
+        let detect_fixture = ContractFixture::new_dir();
+        detect_fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota"
+version = "0.1.0"
+edition = "2024"
+"#,
+        );
+        let detect = run_with(["ota", "detect", "--dry-run", detect_fixture.path()]);
+        assert_eq!(detect.exit_code, 0);
+        assert!(detect.stdout.contains(&format!(
+            "🦦  DETECT PREVIEW {}",
+            compact_path(detect_fixture.dir.path(), ".")
+        )));
+        assert!(detect.stdout.contains("Mode: dry-run (no write)"));
+        assert!(detect.stdout.contains("Contract:"));
+        assert!(detect.stdout.contains("Annotations:"));
+        assert!(!detect.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn doctor_not_ready_text_status_contract_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains(&format!(
+            "🦦  DOCTOR {}",
+            compact_contract(&fixture.file_path())
+        )));
+        assert!(output.stdout.contains("\n\n◉ NOT READY"));
+        assert!(output.stdout.contains("◉ ERROR  No tasks defined in contract"));
+        assert!(!output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
     fn workspace_commands_json_success_contract_is_stable() {
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
@@ -5360,6 +5550,258 @@ tasks:
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
         assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+    }
+
+    #[test]
+    fn workspace_commands_exit_code_contract_is_stable() {
+        let usage_fixture = WorkspaceFixture::new();
+        let usage = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--jobs",
+            "0",
+            usage_fixture.path(),
+        ]);
+        assert_eq!(usage.exit_code, 2);
+
+        let invalid_fixture = WorkspaceFixture::new();
+        fs::write(
+            invalid_fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    required: true
+"#,
+        )
+        .unwrap();
+        let validate_invalid =
+            run_with(["ota", "workspace", "validate", invalid_fixture.path()]);
+        assert_eq!(validate_invalid.exit_code, 1);
+
+        let failing_up = WorkspaceFixture::new();
+        fs::write(
+            failing_up.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            failing_up.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: exit 9
+"#,
+        )
+        .unwrap();
+        let up_failure = run_with(["ota", "workspace", "up", failing_up.path()]);
+        assert_eq!(up_failure.exit_code, 1);
+
+        let success_up = WorkspaceFixture::new_multi_repo();
+        let up_success = run_with(["ota", "workspace", "up", success_up.path()]);
+        assert_eq!(up_success.exit_code, 0);
+    }
+
+    #[test]
+    fn monorepo_member_json_contract_is_stable() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+tasks:
+  setup:
+    run: printf root
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+tasks:
+  lint:
+    run: printf web
+"#,
+        );
+
+        let validate = run_with([
+            "ota",
+            "validate",
+            "--member",
+            "api",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(validate.exit_code, 0);
+        assert_json_top_level_keys(&validate, &["ok", "path"]);
+
+        let tasks = run_with([
+            "ota",
+            "tasks",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(tasks.exit_code, 0);
+        assert_json_top_level_keys(&tasks, &["members", "ok", "path", "tasks"]);
+
+        let doctor = run_with([
+            "ota",
+            "doctor",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(doctor.exit_code, 0);
+        assert_json_top_level_keys(&doctor, &["findings", "members", "ok", "path"]);
+
+        let check = run_with([
+            "ota",
+            "check",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(check.exit_code, 0);
+        assert_json_top_level_keys(&check, &["findings", "members", "ok", "path"]);
+
+        let up = run_with([
+            "ota",
+            "up",
+            "--member",
+            "api",
+            "--member",
+            "web",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(up.exit_code, 0);
+        assert_json_top_level_keys(&up, &["findings", "members", "ok", "path", "phase", "status"]);
+    }
+
+    #[test]
+    fn monorepo_member_text_status_contract_is_stable() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+tasks:
+  test:
+    run: printf api
+"#,
+        );
+
+        let doctor = run_with(["ota", "doctor", "--member", "api", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        assert!(doctor.stdout.contains(&format!(
+            "🦦  DOCTOR {} [member api]",
+            compact_contract(&fixture.file_path())
+        )));
+        assert!(doctor.stdout.contains("◉ NOT READY"));
+        assert!(doctor.stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
+        assert!(!doctor.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn monorepo_member_exit_code_contract_is_stable() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  test:
+    run: 'true'
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  test:
+    run: 'true'
+"#,
+        );
+
+        let duplicate = run_with([
+            "ota",
+            "tasks",
+            "--member",
+            "api",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+        assert_eq!(duplicate.exit_code, 2);
+
+        let run_ok = run_with(["ota", "run", "test", "--member", "api", fixture.path()]);
+        assert_eq!(run_ok.exit_code, 0);
     }
 
     #[test]
@@ -5472,6 +5914,51 @@ tasks:
                 .unwrap()
                 .contains("workspace repo `web` contract")
         );
+    }
+
+    #[test]
+    fn workspace_doctor_text_status_contract_is_stable() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains(&format!(
+            "🦦  WORKSPACE DOCTOR {}",
+            compact_workspace(&fixture.workspace_file())
+        )));
+        assert!(output.stdout.contains("◉ NOT READY"));
+        assert!(output.stdout.contains("No tasks defined in contract"));
+        assert!(!output.stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn workspace_up_text_status_contract_is_stable() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains(&format!(
+            "🦦  WORKSPACE UP {}",
+            compact_workspace(&fixture.workspace_file())
+        )));
+        assert!(output.stdout.contains("✓ READY"));
+        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
+        assert!(!output.stdout.contains("\n---\n"));
     }
 
     #[test]

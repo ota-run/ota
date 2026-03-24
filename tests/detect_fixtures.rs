@@ -452,6 +452,130 @@ fn detects_rust_toolchain_file_fixture() {
 }
 
 #[test]
+fn detects_php_composer_fixture() {
+    let report = assert_detected_contract_valid("php-composer");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("qredex/php-app")
+    );
+    assert_eq!(
+        report.contract.runtimes.get("php"),
+        Some(&"^8.2".to_string())
+    );
+    assert_eq!(report.contract.tools.get("composer"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("test")
+            .map(|task| task.run.as_str()),
+        Some("composer run test")
+    );
+}
+
+#[test]
+fn detects_cmake_cpp_fixture() {
+    let report = assert_detected_contract_valid("cmake-cpp");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("qredex-cpp")
+    );
+    assert_eq!(report.contract.tools.get("cmake"), Some(&"*".to_string()));
+    assert_eq!(report.contract.runtimes.get("cpp"), Some(&"20".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("build")
+            .map(|task| task.run.as_str()),
+        Some("cmake -S . -B build && cmake --build build")
+    );
+}
+
+#[test]
+fn detects_clojure_project_fixture() {
+    let report = assert_detected_contract_valid("clojure-project");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("qredex-clj")
+    );
+    assert_eq!(
+        report.contract.tools.get("leiningen"),
+        Some(&"*".to_string())
+    );
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("test")
+            .map(|task| task.run.as_str()),
+        Some("lein test")
+    );
+}
+
+#[test]
+fn detects_haskell_stack_cabal_fixture() {
+    let report = assert_detected_contract_valid("haskell-stack-cabal");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("qredex-hs")
+    );
+    assert_eq!(report.contract.tools.get("stack"), Some(&"*".to_string()));
+    assert_eq!(report.contract.tools.get("cabal"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("build")
+            .map(|task| task.run.as_str()),
+        Some("stack build")
+    );
+}
+
+#[test]
+fn detects_lua_rockspec_fixture() {
+    let report = assert_detected_contract_valid("lua-rockspec");
+
+    assert_eq!(
+        report
+            .contract
+            .project
+            .as_ref()
+            .map(|project| project.name.as_str()),
+        Some("qredex-lua-1.0.0-1")
+    );
+    assert_eq!(report.contract.tools.get("luarocks"), Some(&"*".to_string()));
+    assert_eq!(
+        report
+            .contract
+            .tasks
+            .get("build")
+            .map(|task| task.run.as_str()),
+        Some("luarocks make")
+    );
+}
+
+#[test]
 fn detects_mixed_node_python_fixture() {
     let report = assert_detected_contract_valid("mixed-node-python");
 

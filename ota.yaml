@@ -11,3 +11,6 @@ tasks:
   test:
     run: cargo test
     safe_for_agent: true
+  compat:
+    run: ./scripts/test-compat.sh
+    safe_for_agent: true

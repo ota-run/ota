@@ -10,7 +10,21 @@
         "severity": { "enum": ["error", "warn", "info"] },
         "summary": { "type": "string" },
         "why": { "type": "string" },
-        "next": { "type": "string" }
+        "next": { "type": "string" },
+        "policy_outcome": {
+          "enum": [
+            "satisfied",
+            "installable",
+            "blocked_by_policy",
+            "blocked_by_source_unavailable",
+            "blocked_by_integrity_policy",
+            "unsupported_resolution_path"
+          ]
+        },
+        "policy_reason": { "type": "string" },
+        "policy_source": { "enum": ["repo", "local", "org", "dashboard"] },
+        "install_scope": { "enum": ["host", "repo_local", "container", "remote"] },
+        "mutation_allowed": { "type": "boolean" }
       }
     },
     "inference": {

@@ -35,6 +35,12 @@ cargo fmt
 cargo test
 ```
 
+Run the V4 compatibility gate when changing command behavior, JSON contracts, or output semantics:
+
+```bash
+./scripts/test-compat.sh
+```
+
 Run the CLI during development:
 
 ```bash

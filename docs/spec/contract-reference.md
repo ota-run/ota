@@ -73,6 +73,10 @@ metadata:
   team: platform
 ```
 
+Top-level `extensions` is intentionally not accepted in the shipped V4 parser/validator yet.
+For the staged execution boundary and V6 target contract, see
+[extension-execution-boundary.md](extension-execution-boundary.md).
+
 ## `version`
 
 ```yaml

@@ -83,11 +83,25 @@ Completed:
 
 - slice 1: compatibility surface inventory added in `docs/spec/compatibility-surface.md`
 - slice 2 baseline: consolidated repo JSON contract-stability tests added for success/failure paths
+- slice 2 baseline: consolidated repo text status-contract tests added for `validate`, `doctor`, `up`, and `detect --dry-run` header/status spacing semantics
+- slice 2 baseline: workspace text status-contract tests added for `workspace doctor` and `workspace up` header/status spacing semantics
+- slice 2 baseline: consolidated repo exit-code contract test added for usage (`2`), validation/readiness blockers (`1`), warning-only doctor (`0`), and child-process pass-through (`run`/`up`)
+- slice 2 baseline: consolidated workspace exit-code contract test added for usage (`2`), workspace-validation failure (`1`), required-repo-up failure (`1`), and healthy workspace up (`0`)
+- slice 2 baseline: compatibility lock subset smoke (`cargo test contract_is_stable`) is green with repo/workspace JSON/text/exit contract tests
+- slice 2 baseline: monorepo member-targeting compatibility tests added for JSON shape, text/status rendering, and exit-code behavior
+- slice 5 sync: compatibility inventory now includes a documented fast gate (`cargo test contract_is_stable`) plus schema/fixture companion gates
+- slice 5 sync: scripted compatibility gate added at `scripts/test-compat.sh` and referenced in contributor guidance
+- slice 5 sync: release gate CI now runs the compatibility script explicitly (`.github/workflows/v1-release-gate.yml`)
 - workspace JSON contract-stability tests validated against the new baseline
 - `ota up --json` validation/load failure paths aligned to return JSON errors consistently
 - slice 3 guardrails started: extension execution boundary documented in `docs/spec/extension-execution-boundary.md`
 - slice 3 guardrails started: validation test locks rejection of top-level `extensions` until V6
+- slice 3 guardrails strengthened: regression test locks top-level `extensions` rejection across `validate`, `tasks`, `doctor`, `check`, `up`, and `run`
 - slice 4 prep: policy-aware diagnosis machine-shape draft added in `docs/spec/policy-aware-diagnosis-shape.md`
+- slice 4 prep: shared JSON finding schema now includes optional policy context keys (`policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, `mutation_allowed`) with regression coverage
+- slice 5 sync: command and JSON docs now explicitly document `ota up --json` dual failure envelopes (`UpStatus` vs `ValidateFailure`)
+- slice 5 sync: `docs/spec/json-schemas/up.json` now accepts both runtime up status and validate-style preflight failure shape
+- compatibility fixture expansion: added detect fixtures for PHP (Composer), C++ (CMake), Clojure (`project.clj`), Haskell (`stack` + `cabal`), and Lua (`.rockspec`)
 
 ## Acceptance criteria
 
