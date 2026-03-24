@@ -279,6 +279,26 @@ Failure shape can also include:
 
 Non-acquired repos keep `acquired: false` and `tasks: []`.
 
+## `ota workspace list --json`
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "repos": [
+    {
+      "name": "api",
+      "path": "/abs/path/to/services/api",
+      "contract_path": "/abs/path/to/services/api/ota.yaml",
+      "contract_present": true,
+      "required": true,
+      "acquired": true,
+      "depends_on": ["db"]
+    }
+  ]
+}
+```
+
 ## `ota workspace run --json`
 
 ```json

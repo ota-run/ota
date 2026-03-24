@@ -42,6 +42,7 @@ Repo commands:
 Workspace commands:
 - `ota workspace validate`
 - `ota workspace tasks`
+- `ota workspace list`
 - `ota workspace doctor`
 - `ota workspace check`
 - `ota workspace run`

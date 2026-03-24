@@ -77,6 +77,11 @@ This document records the current command exit-code contract for the shipped Ota
 - `0` on successful workspace task listing
 - `1` on load or validation failure
 
+## `ota workspace list`
+
+- `0` on successful workspace repo inventory output
+- `1` on load or validation failure
+
 ## `ota workspace run`
 
 - `0` when all required repos complete the requested task

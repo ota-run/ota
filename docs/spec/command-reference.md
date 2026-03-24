@@ -67,6 +67,7 @@ Ota currently ships these commands:
 - `ota workspace detect`
 - `ota workspace validate`
 - `ota workspace tasks`
+- `ota workspace list`
 - `ota workspace run <task>`
 - `ota workspace check`
 - `ota workspace doctor`
@@ -662,6 +663,37 @@ JSON output:
 - `path`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
+
+## `ota workspace list`
+
+List workspace repos and contract presence without running readiness diagnosis.
+
+```bash
+ota workspace list [PATH]
+ota workspace list --repo <name> [PATH]
+ota workspace list --json [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace shape for deterministic repo ordering
+- lists all declared repos (or one repo with `--repo`)
+- reports acquisition state per repo (`ACQUIRED` vs `NOT ACQUIRED`)
+- reports contract presence per repo (`contract_present`)
+- for missing contracts in text output, embeds a repo-specific setup hint using `ota init <repo-path>`
+
+Text output:
+
+- header: `WORKSPACE LIST <path>`
+- each repo includes required/optional status, acquisition status, path, contract path state, and dependencies
+
+JSON output:
+
+- `ok`
+- `path`
+- `repos`
+- each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `depends_on`
 
 ## `ota workspace run`
 
