@@ -235,6 +235,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_fsharp_markers(&root, &mut builder)?;
     detect_tcl_markers(&root, &mut builder)?;
     detect_racket_markers(&root, &mut builder)?;
+    detect_bash_markers(&root, &mut builder)?;
+    detect_powershell_markers(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -2646,6 +2648,89 @@ fn detect_racket_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(),
     Ok(())
 }
 
+fn detect_bash_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let script = if root.join("main.sh").exists() {
+        Some("main.sh".to_string())
+    } else if root.join("run.sh").exists() {
+        Some("run.sh".to_string())
+    } else {
+        find_extension_file(root, "sh")?
+            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+    };
+
+    let Some(script) = script else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "bash".to_string(),
+        "*".to_string(),
+        "bash-script".to_string(),
+        Confidence::High,
+    );
+    builder.set_runtime(
+        "shell".to_string(),
+        "*".to_string(),
+        "bash-script".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_project_name(
+        Path::new(&script)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("shell-app")
+            .to_string(),
+        "bash-script".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "run".to_string(),
+        format!("bash {script}"),
+        "bash-script".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let Some(script) = find_extension_file(root, "ps1")?
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+    else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "pwsh".to_string(),
+        "*".to_string(),
+        "powershell-script".to_string(),
+        Confidence::High,
+    );
+    builder.set_runtime(
+        "powershell".to_string(),
+        "*".to_string(),
+        "powershell-script".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_project_name(
+        Path::new(&script)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("powershell-app")
+            .to_string(),
+        "powershell-script".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "run".to_string(),
+        format!("pwsh -File {script}"),
+        "powershell-script".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
 fn extract_ruby_gemfile_version(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -3437,10 +3522,12 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "v.mod#name" => 3,
             "alire.toml#project.name" => 3,
             "fsharp-project" => 3,
+            "powershell-script" => 3,
             "dotnet-project" => 2,
             "go.mod#module" => 2,
             "hxml" => 2,
             "kotlin-script" => 2,
+            "bash-script" => 2,
             "directory-name" => 1,
             _ => 0,
         },
@@ -3551,6 +3638,14 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "pom.xml#kotlin.version" => 2,
             _ => 0,
         },
+        "runtimes.shell" => match source {
+            "bash-script" => 2,
+            _ => 0,
+        },
+        "runtimes.powershell" => match source {
+            "powershell-script" => 2,
+            _ => 0,
+        },
         "runtimes.c" => match source {
             "CMakeLists.txt#CMAKE_C_STANDARD" => 2,
             _ => 0,
@@ -3598,6 +3693,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "foundry.toml" => 2,
             "fsharp-project" => 2,
             "kotlin-script" => 2,
+            "bash-script" => 2,
+            "powershell-script" => 2,
             "tclapp.tcl" => 2,
             "pkgIndex.tcl" => 2,
             "info.rkt" => 2,
@@ -4715,6 +4812,56 @@ solc_version = "0.8.25"
         assert_eq!(
             report.contract.tasks.get("test").map(|task| task.run.as_str()),
             Some("raco test .")
+        );
+    }
+
+    #[test]
+    fn detects_bash_script_signals() {
+        let fixture = Fixture::new();
+        fixture.write("main.sh", "#!/usr/bin/env bash\necho \"hello\"\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("bash"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("shell"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("main")
+        );
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("bash main.sh")
+        );
+    }
+
+    #[test]
+    fn detects_powershell_script_signals() {
+        let fixture = Fixture::new();
+        fixture.write("bootstrap.ps1", "Write-Host \"ready\"\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("pwsh"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("powershell"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("bootstrap")
+        );
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("pwsh -File bootstrap.ps1")
         );
     }
 
