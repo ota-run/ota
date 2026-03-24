@@ -5353,20 +5353,26 @@ fn render_inference_section<'a>(
     output.push_str(&format!("\n---\n{title}:"));
 
     let mut wrote_any = false;
+    output.push_str("\n| Field | Value | Source | Confidence |");
+    output.push_str("\n| --- | --- | --- | --- |");
     for inference in inferences {
         wrote_any = true;
         output.push_str(&format!(
-            "\n- {}: {} <- from {} [{}]",
-            inference.field,
-            inference.value,
-            inference.source,
+            "\n| {} | {} | {} | {} |",
+            render_table_cell(&inference.field),
+            render_table_cell(&inference.value),
+            render_table_cell(&inference.source),
             render_confidence(inference.confidence)
         ));
     }
 
     if !wrote_any {
-        output.push_str("\n- none");
+        output.push_str("\n| none | - | - | - |");
     }
+}
+
+fn render_table_cell(value: &str) -> String {
+    value.replace('\n', " ").replace('|', "\\|")
 }
 
 enum ContractProblem {

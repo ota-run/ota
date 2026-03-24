@@ -1008,7 +1008,7 @@ fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
 
 #[cfg(unix)]
 #[test]
-fn detect_merge_json_reports_noop_for_java_maven_fixture_when_only_conflicts_remain() {
+fn detect_merge_json_applies_high_confidence_additions_for_java_maven_fixture() {
     let fixture = copy_fixture_to_temp("java-maven");
     fs::write(
         fixture.path().join("ota.yaml"),
@@ -1030,7 +1030,7 @@ runtimes:
     ]);
     let json = stdout_json(&output);
 
-    assert_eq!(json["written"], false);
+    assert_eq!(json["written"], true);
     assert_eq!(json["comparison"]["existing_contract"], true);
     assert!(
         json["comparison"]["changes"]
@@ -1048,12 +1048,13 @@ runtimes:
     );
 
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
-        .expect("ota.yaml should remain unchanged for java maven merge fixture");
+        .expect("ota.yaml should be merged for java maven fixture");
 
     assert!(written.contains("name: existing"));
-    assert!(written.contains("java: \"21\""));
-    assert!(!written.contains("maven:"));
-    assert!(!written.contains("mvn package"));
+    assert!(written.contains("java:"));
+    assert!(written.contains("maven: '*'"));
+    assert!(written.contains("mvn package"));
+    assert!(written.contains("mvn test"));
     assert!(!written.contains("name: ota-maven-service"));
 }
 
