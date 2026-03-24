@@ -45,7 +45,7 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@v20
         with:
           globs: |
-            docs/**/*.md
+            docs/site/src/**/*.md
 
   link-check:
     runs-on: ubuntu-latest
@@ -59,7 +59,6 @@ jobs:
           args: >-
             --no-progress
             --verbose
-            docs/**/*.md
+            docs/site/src/**/*.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
