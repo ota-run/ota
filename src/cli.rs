@@ -692,17 +692,14 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
 
 fn collapse_blank_lines(text: String) -> String {
     let mut out = String::new();
-    let mut previous_blank = false;
     for line in text.lines() {
-        let blank = line.trim().is_empty();
-        if blank && previous_blank {
+        if line.trim().is_empty() {
             continue;
         }
         if !out.is_empty() {
             out.push('\n');
         }
         out.push_str(line);
-        previous_blank = blank;
     }
     out
 }
@@ -3200,7 +3197,7 @@ tasks:
     fn collapse_blank_lines_reduces_consecutive_empty_lines() {
         let input = "a\n\n\nb\n\n\n\nc\n";
         let output = collapse_blank_lines(input.to_string());
-        assert_eq!(output, "a\n\nb\n\nc");
+        assert_eq!(output, "a\nb\nc");
     }
 
     #[test]
