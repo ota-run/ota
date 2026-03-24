@@ -4160,7 +4160,7 @@ fn info_bullet() -> String {
     if plain_mode() {
         return String::from("-");
     }
-    paint("◦", "38;2;102;217;255")
+    paint("✦", "38;2;102;217;255")
 }
 
 fn next_bullet() -> String {

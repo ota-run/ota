@@ -3193,9 +3193,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(normalized.starts_with("🦦  TASKS "));
-        assert!(normalized.contains("/ota.yaml\n---\n◦ build"));
-        assert!(normalized.contains("\n◦ build"));
-        assert!(normalized.contains("\n◦ dev"));
+        assert!(normalized.contains("/ota.yaml\n---\n✦ build"));
+        assert!(normalized.contains("\n✦ build"));
+        assert!(normalized.contains("\n✦ dev"));
         assert!(!normalized.contains("- Task:"));
     }
 
