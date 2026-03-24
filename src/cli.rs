@@ -747,9 +747,6 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     if matches!(
         command,
         Commands::Validate { .. }
-            | Commands::Workspace {
-                command: WorkspaceCommands::Validate { .. }
-            }
     ) {
         return stderr;
     }
@@ -767,7 +764,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => "ota workspace init --help",
             WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
-            WorkspaceCommands::Validate { .. } => "ota workspace doctor",
+            WorkspaceCommands::Validate { .. } => "setup workspace with `ota workspace init`",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
             WorkspaceCommands::List { .. } => "setup workspace with `ota workspace init`",
             WorkspaceCommands::Doctor { .. } => "setup workspace with `ota workspace init`",
@@ -6138,6 +6135,20 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap_or_default();
         assert!(!stderr.contains("\nTry: `ota workspace validate`"));
+    }
+
+    #[test]
+    fn workspace_validate_not_found_includes_workspace_setup_next() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "workspace", "validate", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("setup workspace with `ota workspace init`"));
     }
 
     #[test]

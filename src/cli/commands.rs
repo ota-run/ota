@@ -159,10 +159,9 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         && compact_message.ends_with("` upward")
     {
         out.push_str(&format!("\n{} {}", paint_key("Why:"), compact_message));
-        out.push_str(&format!("\n\n{}", paint_next_header()));
         out.push_str(&format!(
-            "\n{}  setup workspace with {}",
-            next_bullet(),
+            "\n{} setup workspace with {}",
+            paint_next_label(),
             paint_code("`ota workspace init`")
         ));
         return out;
@@ -2009,13 +2008,12 @@ fn render_workspace_validate_failure(
                 paint_key("Why:"),
                 compact_error
             ));
-            if compact_error.starts_with("no `ota.workspace.yaml` found from `")
-                && compact_error.ends_with("` upward")
+            if compact_error.contains("no `ota.workspace.yaml` found")
+                && compact_error.contains(" upward")
             {
-                out.push_str(&format!("\n\n{}", paint_next_header()));
                 out.push_str(&format!(
-                    "\n{}  setup workspace with {}",
-                    next_bullet(),
+                    "\n{} setup workspace with {}",
+                    paint_next_label(),
                     paint_code("`ota workspace init`")
                 ));
             }
