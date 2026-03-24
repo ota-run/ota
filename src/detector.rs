@@ -175,8 +175,10 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_composer_json(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
+    detect_ruby_version_file(&root, &mut builder)?;
     detect_python_version_file(&root, &mut builder)?;
     detect_java_version_file(&root, &mut builder)?;
+    detect_global_json(&root, &mut builder)?;
     detect_sdkmanrc(&root, &mut builder)?;
     detect_go_mod(&root, &mut builder)?;
     detect_rust_toolchain_files(&root, &mut builder)?;
@@ -189,6 +191,9 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_cargo_toml(&root, &mut builder)?;
     detect_gradle(&root, &mut builder)?;
     detect_pom_xml(&root, &mut builder)?;
+    detect_ruby_markers(&root, &mut builder)?;
+    detect_dotnet_markers(&root, &mut builder)?;
+    detect_mix_exs(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -398,6 +403,25 @@ fn detect_node_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<
     Ok(())
 }
 
+fn detect_ruby_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join(".ruby-version");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let version = read_file(&path)?.trim().to_string();
+    if !version.is_empty() {
+        builder.set_runtime(
+            "ruby".to_string(),
+            version,
+            ".ruby-version".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
 fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
     let path = root.join(".tool-versions");
     if !path.exists() {
@@ -456,6 +480,24 @@ fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
                 ".tool-versions".to_string(),
                 Confidence::High,
             ),
+            "ruby" => builder.set_runtime(
+                "ruby".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
+            "dotnet" => builder.set_runtime(
+                "dotnet".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
+            "elixir" => builder.set_runtime(
+                "elixir".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
             "pnpm" | "npm" | "yarn" | "bun" => builder.set_tool(
                 tool.to_string(),
                 version.to_string(),
@@ -500,6 +542,36 @@ fn detect_java_version_file(root: &Path, builder: &mut DetectBuilder) -> Result<
             "java".to_string(),
             version,
             ".java-version".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_global_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("global.json");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let global: JsonValue =
+        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
+
+    if let Some(version) = global
+        .get("sdk")
+        .and_then(|sdk| sdk.get("version"))
+        .and_then(JsonValue::as_str)
+        && !version.trim().is_empty()
+    {
+        builder.set_runtime(
+            "dotnet".to_string(),
+            version.trim().to_string(),
+            "global.json#sdk.version".to_string(),
             Confidence::High,
         );
     }
@@ -1018,6 +1090,198 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
     Ok(())
 }
 
+fn detect_ruby_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let gemfile = root.join("Gemfile");
+    if !gemfile.exists() {
+        return Ok(());
+    }
+
+    builder.set_tool(
+        "bundler".to_string(),
+        "*".to_string(),
+        "Gemfile".to_string(),
+        Confidence::High,
+    );
+
+    let contents = read_file(&gemfile)?;
+    if let Some(version) = extract_ruby_gemfile_version(&contents) {
+        builder.set_runtime(
+            "ruby".to_string(),
+            version,
+            "Gemfile#ruby".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_dotnet_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let mut has_dotnet = false;
+    let mut project_name = None;
+
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+
+        if name.ends_with(".sln") || name.ends_with(".csproj") || name.ends_with(".fsproj") {
+            has_dotnet = true;
+            if project_name.is_none() {
+                project_name = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(ToString::to_string);
+            }
+        }
+    }
+
+    if !has_dotnet {
+        return Ok(());
+    }
+
+    builder.set_tool(
+        "dotnet".to_string(),
+        "*".to_string(),
+        "dotnet-project".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = project_name
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name, "dotnet-project".to_string(), Confidence::Medium);
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "dotnet build".to_string(),
+        "dotnet-project".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "dotnet test".to_string(),
+        "dotnet-project".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_mix_exs(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("mix.exs");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "mix".to_string(),
+        "*".to_string(),
+        "mix.exs".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "mix test".to_string(),
+        "mix.exs".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(app) = extract_mix_app_name(&contents) {
+        builder.set_project_name(app, "mix.exs#project.app".to_string(), Confidence::High);
+    }
+    if let Some(version) = extract_mix_elixir_version(&contents) {
+        builder.set_runtime(
+            "elixir".to_string(),
+            version,
+            "mix.exs#project.elixir".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
+fn extract_ruby_gemfile_version(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("ruby ") {
+            continue;
+        }
+        let mut quote = None;
+        let mut start = 0usize;
+        for (idx, ch) in trimmed.char_indices() {
+            if ch == '\'' || ch == '"' {
+                quote = Some(ch);
+                start = idx + 1;
+                break;
+            }
+        }
+        let quote = quote?;
+        let rest = &trimmed[start..];
+        let end = rest.find(quote)?;
+        let version = rest[..end].trim();
+        if !version.is_empty() {
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
+fn extract_mix_app_name(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("app:") {
+            continue;
+        }
+        let marker = "app:";
+        let start = trimmed.find(marker)? + marker.len();
+        let rest = trimmed[start..].trim_start();
+        let symbol = rest.strip_prefix(':')?;
+        let end = symbol
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(symbol.len());
+        let name = &symbol[..end];
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+fn extract_mix_elixir_version(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("elixir:") {
+            continue;
+        }
+        let marker = "elixir:";
+        let start = trimmed.find(marker)? + marker.len();
+        let rest = trimmed[start..].trim_start();
+        let quote = rest.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        let rest = &rest[1..];
+        let end = rest.find(quote)?;
+        let version = rest[..end].trim();
+        if !version.is_empty() {
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
 fn detect_maven_wrapper(root: &Path) -> Result<Option<(String, String)>, DetectError> {
     let wrapper_script = root.join("mvnw");
     let wrapper_properties = root
@@ -1440,6 +1704,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
             "composer.json#name" => 3,
+            "mix.exs#project.app" => 3,
+            "dotnet-project" => 2,
             "go.mod#module" => 2,
             "directory-name" => 1,
             _ => 0,
@@ -1491,11 +1757,30 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".tool-versions" => 1,
             _ => 0,
         },
+        "runtimes.ruby" => match source {
+            ".ruby-version" => 3,
+            "Gemfile#ruby" => 2,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
+        "runtimes.dotnet" => match source {
+            "global.json#sdk.version" => 3,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
+        "runtimes.elixir" => match source {
+            "mix.exs#project.elixir" => 2,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
             "composer.json" => 2,
+            "Gemfile" => 2,
+            "dotnet-project" => 2,
+            "mix.exs" => 2,
             "pnpm-workspace.yaml" => 2,
             "pnpm-lock.yaml" => 2,
             "yarn.lock" => 2,
@@ -1686,6 +1971,107 @@ requires-python = ">=3.12"
                 .any(|inference| inference.field == "runtimes.php"
                     && inference.source == "composer.json#config.platform.php"
                     && inference.confidence == Confidence::High)
+        );
+    }
+
+    #[test]
+    fn detects_ruby_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Gemfile",
+            r#"source "https://rubygems.org"
+ruby "3.3.1"
+gem "rails"
+"#,
+        );
+        fixture.write(".ruby-version", "3.3.2\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("ruby"),
+            Some(&"3.3.2".to_string())
+        );
+        assert_eq!(report.contract.tools.get("bundler"), Some(&"*".to_string()));
+    }
+
+    #[test]
+    fn detects_dotnet_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "global.json",
+            r#"{
+  "sdk": {
+    "version": "8.0.203"
+  }
+}"#,
+        );
+        fixture.write(
+            "Qredex.App.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("dotnet"),
+            Some(&"8.0.203".to_string())
+        );
+        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("dotnet build")
+        );
+    }
+
+    #[test]
+    fn detects_elixir_mix_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "mix.exs",
+            r#"defmodule Qredex.MixProject do
+  use Mix.Project
+
+  def project do
+    [
+      app: :qredex,
+      elixir: "~> 1.16"
+    ]
+  end
+end
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("elixir"),
+            Some(&"~> 1.16".to_string())
+        );
+        assert_eq!(report.contract.tools.get("mix"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("mix test")
         );
     }
 
