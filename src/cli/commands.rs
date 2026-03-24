@@ -4047,7 +4047,7 @@ fn render_workspace_init_discovery_sections(
             ));
         }
         stdout.push_str(&format_next_timeline(&[
-            String::from("create missing repo contracts with `ota init --write <repo-path>`"),
+            String::from("create missing repo contracts with `ota init <repo-path>`"),
             String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
         ]));
     }
@@ -5124,8 +5124,37 @@ fn paint(value: &str, code: &str) -> String {
 }
 
 fn paint_code(value: &str) -> String {
-    // Ota accent tone (warm amber) to avoid purple command highlights.
-    paint(value, "38;2;214;161;95")
+    let trimmed = value.trim();
+    if trimmed == "ota" || trimmed.starts_with("ota ") {
+        return paint_ota_command_code(value);
+    }
+    paint(value, "1;37")
+}
+
+fn paint_ota_command_code(value: &str) -> String {
+    let mut out = Vec::new();
+    let mut command_zone = true;
+    for token in value.split_whitespace() {
+        if command_zone && looks_like_path_token(token) {
+            command_zone = false;
+        }
+        if command_zone {
+            out.push(paint(token, "38;2;214;161;95"));
+        } else {
+            out.push(paint(token, "1;37"));
+        }
+    }
+    out.join(" ")
+}
+
+fn looks_like_path_token(token: &str) -> bool {
+    token.starts_with("./")
+        || token.starts_with("../")
+        || token.starts_with('/')
+        || token.starts_with('~')
+        || token.contains('\\')
+        || token.ends_with(".yaml")
+        || token.ends_with(".yml")
 }
 
 fn list_bullet() -> String {
@@ -5155,7 +5184,7 @@ fn paint_next_header() -> String {
 }
 
 fn paint_mode_value(value: &str) -> String {
-    paint(value, "1;38;2;214;161;95")
+    paint(value, "1;37")
 }
 
 fn format_mode_line(value: &str) -> String {
