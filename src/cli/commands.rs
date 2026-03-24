@@ -81,14 +81,21 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return message.to_string();
     }
 
+    let compact_message = compact_backticked_paths(message);
+    let where_value = infer_failure_where(where_label, &compact_message);
+
     let mut out = format!(
         "{}  {}",
         render_severity(FindingSeverity::Error),
         paint("Operation failed", "1;37")
     );
-    out.push_str(&format!("\n{} {}", paint_key("Where:"), paint_code(where_label)));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(&where_value)
+    ));
 
-    let lines = message
+    let lines = compact_message
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -112,6 +119,35 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         out.push_str(&format!("\n{}  {}", info_bullet(), line));
     }
     out
+}
+
+fn infer_failure_where(default: &str, message: &str) -> String {
+    for token in backticked_tokens(message) {
+        if looks_like_path_token(token) {
+            if token.starts_with('/') {
+                return compact_path(Path::new(token), "path");
+            }
+            return token.to_string();
+        }
+    }
+    default.to_string()
+}
+
+fn backticked_tokens(value: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut rest = value;
+    loop {
+        let Some(start) = rest.find('`') else {
+            break;
+        };
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        tokens.push(&after_start[..end]);
+        rest = &after_start[end + 1..];
+    }
+    tokens
 }
 
 pub fn validate(
@@ -1894,9 +1930,17 @@ fn render_workspace_validate_failure(
             ));
         }
         None => {
-            out.push_str(&format!("\n{}", paint_key("Why:")));
-            for error in errors {
-                out.push_str(&format!("\n  {}", compact_backticked_paths(error)));
+            if errors.len() == 1 {
+                out.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Why:"),
+                    compact_backticked_paths(&errors[0])
+                ));
+            } else {
+                out.push_str(&format!("\n{}", paint_key("Why:")));
+                for error in errors {
+                    out.push_str(&format!("\n  {}", compact_backticked_paths(error)));
+                }
             }
         }
     }
@@ -4183,7 +4227,10 @@ fn render_workspace_init_discovery_sections(
             ));
         }
         stdout.push_str(&format_next_timeline(&[
-            String::from("create missing repo contracts with `ota init <repo-path>`"),
+            String::from(
+                "run `ota workspace detect --write` after repo contracts exist to refresh `ota.workspace.yaml`",
+            ),
+            String::from("or create missing repo contracts with `ota init <repo-path>`"),
             String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
         ]));
     }
