@@ -644,13 +644,15 @@ fn finalize_cli_output(
     concise: bool,
     command: &Commands,
 ) -> CommandOutput {
-    if output.exit_code != 0 {
+    let json_requested = command_requests_json(command);
+
+    if output.exit_code != 0 && !json_requested {
         if let Some(stderr) = output.stderr.take() {
             output.stderr = Some(append_try_footer(stderr, command));
         }
     }
 
-    if concise {
+    if concise && !json_requested {
         output.stdout = collapse_blank_lines(output.stdout);
         if let Some(stderr) = output.stderr.take() {
             output.stderr = Some(collapse_blank_lines(stderr));
@@ -702,6 +704,29 @@ fn collapse_blank_lines(text: String) -> String {
         out.push_str(line);
     }
     out
+}
+
+fn command_requests_json(command: &Commands) -> bool {
+    match command {
+        Commands::Validate { json, .. }
+        | Commands::Tasks { json, .. }
+        | Commands::Doctor { json, .. }
+        | Commands::Init { json, .. }
+        | Commands::Check { json, .. }
+        | Commands::Up { json, .. }
+        | Commands::Detect { json, .. } => *json,
+        Commands::Workspace { command } => match command {
+            WorkspaceCommands::Init { json, .. }
+            | WorkspaceCommands::Detect { json, .. }
+            | WorkspaceCommands::Validate { json, .. }
+            | WorkspaceCommands::Tasks { json, .. }
+            | WorkspaceCommands::Doctor { json, .. }
+            | WorkspaceCommands::Check { json, .. }
+            | WorkspaceCommands::Up { json, .. }
+            | WorkspaceCommands::Run { json, .. } => *json,
+        },
+        Commands::Run { .. } | Commands::Clean { .. } => false,
+    }
 }
 
 #[cfg(test)]
@@ -5865,6 +5890,67 @@ tasks:
             compact_path(fixture.path(), ".")
         )));
         assert!(fixture.path().join("ota.workspace.yaml").exists());
+    }
+
+    #[test]
+    fn workspace_detect_merge_write_auto_provisions_missing_repo_contracts() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("package.json"),
+            r#"
+{
+  "name": "api",
+  "scripts": {
+    "build": "npm run build"
+  }
+}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--merge",
+            "--write",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(api_dir.join("ota.yaml").is_file());
+
+        let workspace = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+        assert!(workspace.contains("services/api"));
     }
 
     #[test]

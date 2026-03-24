@@ -1851,6 +1851,11 @@ struct WorkspaceInitDraft {
     missing_contract: Vec<WorkspaceInitRepoSummary>,
 }
 
+struct WorkspaceAutoProvisionResult {
+    provisioned: Vec<WorkspaceInitRepoSummary>,
+    skipped: Vec<(WorkspaceInitRepoSummary, String)>,
+}
+
 pub enum WorkspaceScaffoldSurface {
     Init,
     Detect,
@@ -1997,6 +2002,27 @@ pub fn workspace_init(
                 }
             }
             Ok(draft) if merge => {
+                let mut draft = draft;
+                let mut auto_provision = WorkspaceAutoProvisionResult {
+                    provisioned: Vec::new(),
+                    skipped: Vec::new(),
+                };
+                if write
+                    && matches!(surface, WorkspaceScaffoldSurface::Detect)
+                    && !draft.missing_contract.is_empty()
+                {
+                    auto_provision = auto_provision_workspace_repo_contracts(
+                        &workspace_root,
+                        &draft.missing_contract,
+                    );
+                    if !auto_provision.provisioned.is_empty() {
+                        draft = match build_workspace_init_draft(&workspace_root) {
+                            Ok(updated) => updated,
+                            Err(error) => return CommandOutput::failure(error),
+                        };
+                    }
+                }
+
                 let comparison = match apply_workspace_init_merge(&workspace_path, &draft) {
                     Ok(result) => result,
                     Err(error) => {
@@ -2025,6 +2051,11 @@ pub fn workspace_init(
                                 "Additive merge preview",
                                 &comparison.additions,
                             );
+                            render_workspace_auto_provision_sections(
+                                &mut stdout,
+                                &auto_provision.provisioned,
+                                &auto_provision.skipped,
+                            );
                             CommandOutput::success(stdout)
                         }
                         OutputFormat::Json => CommandOutput::success(to_json_value(json!({
@@ -2050,6 +2081,11 @@ pub fn workspace_init(
                             &mut stdout,
                             "Applied additions",
                             &comparison.additions,
+                        );
+                        render_workspace_auto_provision_sections(
+                            &mut stdout,
+                            &auto_provision.provisioned,
+                            &auto_provision.skipped,
                         );
                         render_workspace_init_discovery_sections(
                             &mut stdout,
@@ -4027,6 +4063,49 @@ fn render_workspace_init_discovery_sections(
     }
 }
 
+fn render_workspace_auto_provision_sections(
+    stdout: &mut String,
+    provisioned: &[WorkspaceInitRepoSummary],
+    skipped: &[(WorkspaceInitRepoSummary, String)],
+) {
+    if provisioned.is_empty() && skipped.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Auto-provisioned repo contracts")
+    ));
+    if provisioned.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+    } else {
+        for repo in provisioned {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+    }
+
+    if !skipped.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}:",
+            paint_section_title("Auto-provision skipped")
+        ));
+        for (repo, reason) in skipped {
+            stdout.push_str(&format!(
+                "\n{}  {} ({}): {}",
+                info_bullet(),
+                repo.name,
+                repo.path,
+                reason
+            ));
+        }
+    }
+}
+
 fn render_workspace_init_merge_section(
     stdout: &mut String,
     title: &str,
@@ -4258,6 +4337,102 @@ fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraf
         included,
         missing_contract,
     })
+}
+
+fn auto_provision_workspace_repo_contracts(
+    workspace_root: &Path,
+    missing_contract: &[WorkspaceInitRepoSummary],
+) -> WorkspaceAutoProvisionResult {
+    let mut result = WorkspaceAutoProvisionResult {
+        provisioned: Vec::new(),
+        skipped: Vec::new(),
+    };
+
+    for repo in missing_contract {
+        let repo_root = workspace_root.join(&repo.path);
+        let contract_path = repo_root.join(DEFAULT_CONTRACT_FILE);
+        if contract_path.is_file() {
+            result.provisioned.push(repo.clone());
+            continue;
+        }
+
+        let report = match detect_repo(&repo_root) {
+            Ok(report) => report,
+            Err(error) => {
+                result
+                    .skipped
+                    .push((repo.clone(), format!("detect failed: {error}")));
+                continue;
+            }
+        };
+
+        let high_confidence = report.high_confidence_contract();
+        let high_confidence_yaml = match serde_yaml::to_string(&high_confidence) {
+            Ok(yaml) => yaml,
+            Err(error) => {
+                result
+                    .skipped
+                    .push((repo.clone(), format!("serialize failed: {error}")));
+                continue;
+            }
+        };
+
+        let yaml_to_write = if contract_yaml_valid(&contract_path, &high_confidence_yaml) {
+            high_confidence_yaml
+        } else {
+            match minimal_repo_contract_yaml(&repo.name) {
+                Ok(yaml) => yaml,
+                Err(error) => {
+                    result.skipped.push((repo.clone(), error));
+                    continue;
+                }
+            }
+        };
+
+        if let Err(error) = fs::write(&contract_path, yaml_to_write) {
+            result
+                .skipped
+                .push((repo.clone(), format!("write failed: {error}")));
+            continue;
+        }
+        result.provisioned.push(repo.clone());
+    }
+
+    result
+}
+
+fn contract_yaml_valid(path: &Path, yaml: &str) -> bool {
+    parse_contract_str(path, yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+        .is_ok()
+}
+
+fn minimal_repo_contract_yaml(project_name: &str) -> Result<String, String> {
+    let mut root = Mapping::new();
+    root.insert(
+        YamlValue::String(String::from("version")),
+        YamlValue::Number(1u64.into()),
+    );
+    let mut project = Mapping::new();
+    project.insert(
+        YamlValue::String(String::from("name")),
+        YamlValue::String(project_name.to_string()),
+    );
+    root.insert(
+        YamlValue::String(String::from("project")),
+        YamlValue::Mapping(project),
+    );
+    let yaml = serde_yaml::to_string(&YamlValue::Mapping(root))
+        .map_err(|error| format!("failed to build minimal contract: {error}"))?;
+
+    if !contract_yaml_valid(Path::new(DEFAULT_CONTRACT_FILE), &yaml) {
+        return Err(String::from(
+            "failed to build a valid minimal contract for auto-provision",
+        ));
+    }
+
+    Ok(yaml)
 }
 
 #[derive(Clone)]
