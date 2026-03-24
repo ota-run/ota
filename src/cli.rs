@@ -683,7 +683,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "ota init",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Run { .. } => "ota tasks --use",
-        Commands::Doctor { .. } => "ota doctor",
+        Commands::Doctor { .. } => "ota init",
         Commands::Init { .. } => "ota init --dry-run",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
