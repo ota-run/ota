@@ -842,6 +842,34 @@ tasks:
     }
 
     #[test]
+    fn rejects_tsh_remote_backend_without_target_with_provider_specific_example() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: remote` with provider `tsh` requires `execution.backends.remote.target` (example: `user@host`)"
+        );
+    }
+
+    #[test]
     fn rejects_kubectl_remote_backend_without_target_with_provider_specific_example() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

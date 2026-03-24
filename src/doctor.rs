@@ -198,12 +198,54 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
                     return;
                 }
             };
+            if let Some(target) = remote.target.as_deref() {
+                diagnose_remote_target_shape(provider, target, findings);
+            }
 
             diagnose_backend_cli(
                 cli,
                 &format!("remote execution backend provider `{provider}`"),
                 findings,
             );
+        }
+        _ => {}
+    }
+}
+
+fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec<Finding>) {
+    let target = target.trim();
+    if target.is_empty() {
+        return;
+    }
+
+    match provider {
+        "ssh" | "tsh" => {
+            if !target.contains('@') {
+                findings.push(Finding {
+                    severity: FindingSeverity::Warn,
+                    summary: format!("Suspicious remote target for {provider}: {target}"),
+                    why: format!(
+                        "remote provider `{provider}` usually expects a `user@host` style target, but current target `{target}` has no `@` separator"
+                    ),
+                    next: format!(
+                        "set `execution.backends.remote.target` to a host target such as `user@host` for provider `{provider}`"
+                    ),
+                });
+            }
+        }
+        "kubectl" => {
+            if !target.starts_with("pod/") {
+                findings.push(Finding {
+                    severity: FindingSeverity::Warn,
+                    summary: format!("Suspicious remote target for kubectl: {target}"),
+                    why: format!(
+                        "remote provider `kubectl` is currently validated for `pod/<name>` style targets, but current target `{target}` does not start with `pod/`"
+                    ),
+                    next: String::from(
+                        "set `execution.backends.remote.target` to a pod target such as `pod/ota-dev`",
+                    ),
+                });
+            }
         }
         _ => {}
     }
@@ -938,6 +980,96 @@ tasks:
         assert_eq!(
             report.findings[0].summary,
             "Unsupported remote execution backend provider: unknown"
+        );
+    }
+
+    #[test]
+    fn warns_for_suspicious_ssh_remote_target_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Suspicious remote target for ssh: sandbox-dev")
+        );
+    }
+
+    #[test]
+    fn warns_for_suspicious_tsh_remote_target_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Suspicious remote target for tsh: sandbox-dev")
+        );
+    }
+
+    #[test]
+    fn warns_for_suspicious_kubectl_remote_target_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: ota-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Suspicious remote target for kubectl: ota-dev")
         );
     }
 

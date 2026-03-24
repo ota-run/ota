@@ -202,6 +202,7 @@ Current command behavior:
 - `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `NO CLEANUP NEEDED` today
 - `ota doctor` checks the required backend CLI for the preferred execution backend and reports unsupported shipped remote providers early
+- `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)
 - `ota up` still runs service start commands, service healthchecks, and diagnosis on the host today
 
 ## `services`
