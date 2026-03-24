@@ -5535,11 +5535,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
 }
 
 fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> CommandOutput {
-    let mut stdout = format!(
-        "{}\n\n{}",
-        format_command_header("WORKSPACE LIST", path),
-        render_readiness_status(true)
-    );
+    let mut stdout = format_command_header("WORKSPACE LIST", path);
 
     if repos.is_empty() {
         stdout.push_str(&format!("\n\n{} none", paint_section_title("Repos:")));
