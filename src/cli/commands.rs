@@ -1078,8 +1078,13 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
             contract_path.display()
         ));
         let error = format!(
-            "`{}` already exists; ota init is only for repos without an Ota contract\nNext:\n- review the existing contract with `{}`\n- review the existing contract with `{}`\n- compare detected repo signals with `{}`",
-            highlighted_path, highlighted_validate, highlighted_doctor, highlighted_detect_merge
+            "`{}` already exists; ota init is only for repos without an Ota contract{}",
+            highlighted_path,
+            format_next_timeline(&[
+                format!("review the existing contract with `{highlighted_validate}`"),
+                format!("review the existing contract with `{highlighted_doctor}`"),
+                format!("compare detected repo signals with `{highlighted_detect_merge}`"),
+            ]),
         );
         return finalize_debug(
             match format {
@@ -1532,12 +1537,19 @@ pub fn detect(
     ];
     if merge && !contract_path.exists() {
         let error = if dry_run {
-            String::from(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\nNext:\n- use `ota detect --dry-run` to review a first contract",
+            format!(
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`{}",
+                format_next_timeline(&[String::from(
+                    "use `ota detect --dry-run` to review a first contract",
+                )]),
             )
         } else {
-            String::from(
-                "`ota detect --merge` requires an existing `ota.yaml`\nNext:\n- use `ota detect` to write a first contract\n- use `ota detect --dry-run` to review one",
+            format!(
+                "`ota detect --merge` requires an existing `ota.yaml`{}",
+                format_next_timeline(&[
+                    String::from("use `ota detect` to write a first contract"),
+                    String::from("use `ota detect --dry-run` to review one"),
+                ]),
             )
         };
         let next = if dry_run {
@@ -1575,15 +1587,15 @@ pub fn detect(
                         };
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
-                            stdout.push_str(&format!(
-                                "\nNext:\n- run `ota detect --merge {}`\n  apply add-only high-confidence fields",
+                            stdout.push_str(&format_next_timeline(&[format!(
+                                "run `ota detect --merge {}` to apply add-only high-confidence fields",
                                 report.root.display()
-                            ));
+                            )]));
                         } else {
-                            stdout.push_str(&format!(
-                                "\nNext:\n- run `ota detect {}`\n  write a high-confidence contract",
+                            stdout.push_str(&format_next_timeline(&[format!(
+                                "run `ota detect {}` to write a high-confidence contract",
                                 report.root.display()
-                            ));
+                            )]));
                         }
                         stdout.push_str("\nContract:\n---\n");
                         stdout.push_str(yaml.trim_end());
@@ -2196,8 +2208,11 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
             report.root.display()
         ));
         let error = format!(
-            "`{}` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `{}`",
-            highlighted_path, highlighted_next
+            "`{}` already exists; refusing to overwrite an existing contract{}",
+            highlighted_path,
+            format_next_timeline(&[format!(
+                "review detected changes with `{highlighted_next}`",
+            )]),
         );
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -2221,8 +2236,11 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     {
         Ok(()) => {}
         Err(_) => {
-            let mut stderr = String::from(
-                "detected high-confidence fields are not sufficient to produce a valid contract\nNext:\n- use `ota detect --dry-run` to review medium and low confidence fields",
+            let mut stderr = format!(
+                "detected high-confidence fields are not sufficient to produce a valid contract{}",
+                format_next_timeline(&[String::from(
+                    "use `ota detect --dry-run` to review medium and low confidence fields",
+                )]),
             );
             render_inference_section(
                 &mut stderr,
@@ -2251,11 +2269,13 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 let highlighted_doctor =
                     paint_code(&format!("ota doctor {}", contract_path.display()));
                 let mut stdout = format!(
-                    "DETECT WRITE {}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically\nNext:\n- run `{}`\n- run `{}`",
+                    "DETECT WRITE {}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
                     report.root.display(),
                     highlighted_written,
-                    highlighted_validate,
-                    highlighted_doctor
+                    format_next_timeline(&[
+                        format!("run `{highlighted_validate}`"),
+                        format!("run `{highlighted_doctor}`"),
+                    ])
                 );
                 render_inference_section(
                     &mut stdout,
@@ -2510,8 +2530,12 @@ fn render_init(
             .map_err(|error| error.to_string())
             .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
         {
-            let mut error = String::from(
-                "detected starter includes medium or low confidence fields that are required for a valid contract\nNext:\n- review `ota init` output\n- use `ota detect --dry-run` before writing",
+            let mut error = format!(
+                "detected starter includes medium or low confidence fields that are required for a valid contract{}",
+                format_next_timeline(&[
+                    String::from("review `ota init` output"),
+                    String::from("use `ota detect --dry-run` before writing"),
+                ]),
             );
             render_inference_section(
                 &mut error,
@@ -2539,11 +2563,13 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&format!("ota doctor {}", contract_path.display()));
                     let mut stdout = format!(
-                        "INIT WRITE {}\nResult: wrote {}\nMode: {mode}\nNext:\n- run `{}`\n- run `{}`",
+                        "INIT WRITE {}\nResult: wrote {}\nMode: {mode}{}",
                         report.root.display(),
                         highlighted_written,
-                        highlighted_validate,
-                        highlighted_doctor
+                        format_next_timeline(&[
+                            format!("run `{highlighted_validate}`"),
+                            format!("run `{highlighted_doctor}`"),
+                        ])
                     );
                     if mode == "blank" {
                         stdout.push_str(
@@ -3949,6 +3975,18 @@ fn paint(value: &str, code: &str) -> String {
 fn paint_code(value: &str) -> String {
     // Ota accent tone (warm amber) to avoid purple command highlights.
     paint(value, "38;2;214;161;95")
+}
+
+fn format_next_timeline(items: &[String]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::from("\n\nNext:");
+    for item in items {
+        output.push_str(&format!("\n- {item}"));
+    }
+    output
 }
 
 fn resolve_contract_path(
