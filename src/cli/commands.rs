@@ -5537,10 +5537,6 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
 
 fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> CommandOutput {
     let mut stdout = format_command_header("WORKSPACE LIST", path);
-    let missing_contracts = repos
-        .iter()
-        .filter(|repo| !repo.contract_present)
-        .collect::<Vec<_>>();
 
     if repos.is_empty() {
         stdout.push_str(&format!("\n\n{} none", info_bullet()));
@@ -5576,10 +5572,13 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
             ));
         } else {
             stdout.push_str(&format!(
-                "\n{} {} ({})",
+                "\n{} {} (setup repo with {})",
                 paint_key("Contract:"),
-                paint("missing", "1;93"),
-                compact_contract_path(Path::new(&repo.contract_path))
+                paint("missing", "1;38;2;255;235;59"),
+                paint_code(&format!(
+                    "`ota init {}`",
+                    compact_repo_path(Path::new(&repo.path))
+                ))
             ));
         }
         if repo.depends_on.is_empty() {
@@ -5589,35 +5588,6 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 "\n{} {}",
                 paint_key("Depends On:"),
                 repo.depends_on.join(", ")
-            ));
-        }
-    }
-
-    if !missing_contracts.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_next_header()));
-        if missing_contracts.len() == 1 {
-            let repo = missing_contracts[0];
-            let repo_path = compact_repo_path(Path::new(&repo.path));
-            stdout.push_str(&format!(
-                "\n{}  create missing repo contract with {}",
-                next_bullet(),
-                paint_code(&format!("`ota init {repo_path}`"))
-            ));
-            stdout.push_str(&format!(
-                "\n{}  or preview it with {}",
-                next_bullet(),
-                paint_code(&format!("`ota init --dry-run {repo_path}`"))
-            ));
-        } else {
-            stdout.push_str(&format!(
-                "\n{}  create missing repo contracts with {}",
-                next_bullet(),
-                paint_code("`ota init <repo-path>`")
-            ));
-            stdout.push_str(&format!(
-                "\n{}  or preview each one with {}",
-                next_bullet(),
-                paint_code("`ota init --dry-run <repo-path>`")
             ));
         }
     }
