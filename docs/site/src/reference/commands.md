@@ -411,6 +411,31 @@ set -euo pipefail
 ota workspace tasks --json > .ota-workspace-tasks.json
 ```
 
+### `ota workspace list`
+
+When to use:
+
+- inventory workspace repos and contract presence without running diagnosis
+
+Why:
+
+- gives a fast, non-readiness view of required/optional repos, acquisition state, and missing contracts
+
+```bash
+ota workspace list
+ota workspace list --repo api
+ota workspace list --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace list --json > .ota-workspace-list.json
+```
+
 ### `ota workspace doctor`
 
 When to use:
