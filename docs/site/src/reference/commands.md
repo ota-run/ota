@@ -169,6 +169,7 @@ Use-case:
 
 ```bash
 ota tasks
+ota tasks --use
 ota tasks --json
 ```
 
@@ -258,7 +259,7 @@ Use-case:
 
 ```bash
 ota detect --dry-run .
-ota detect .
+ota detect --write .
 ota detect --merge --dry-run .
 ota detect --merge .
 ```
@@ -271,7 +272,7 @@ set -euo pipefail
 
 # contract does not exist yet
 ota detect --dry-run .
-ota detect .
+ota detect --write .
 
 # later, add high-confidence missing fields only
 ota detect --merge --dry-run .

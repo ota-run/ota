@@ -78,7 +78,7 @@ Use:
 
 ```bash
 ota detect --dry-run .
-ota detect .
+ota detect --write .
 ota doctor
 ota up
 ```
