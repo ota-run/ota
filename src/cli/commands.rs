@@ -4070,7 +4070,7 @@ fn render_severity(severity: FindingSeverity) -> String {
 }
 
 fn paint_key(key: &str) -> String {
-    paint(key, "38;2;123;208;197")
+    paint(key, "38;2;102;217;255")
 }
 
 fn plain_mode() -> bool {
