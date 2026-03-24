@@ -34,7 +34,7 @@ This document defines the text rendering contract for Ota command output.
 
 ## Text style rules
 
-- rich text mode uses signature headers: `🦦  <COMMAND> <target>`
+- rich text mode uses signature headers: `🦦 <COMMAND> <target>`
 - list bullets use `▸` in rich text mode
 - field labels use one consistent key color in TTY mode
 - command examples use Ota command accent color in TTY mode

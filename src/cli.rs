@@ -35,7 +35,7 @@ mod commands;
 #[command(
     about = "Open repo readiness CLI",
     version = env!("CARGO_PKG_VERSION"),
-    help_template = "🦦  {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
+    help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
     /// Emit command-phase debug tracing to stderr.
@@ -354,7 +354,7 @@ where
 {
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     if is_version_request(&args) {
-        return CommandOutput::success(format!("🦦  v{}", env!("CARGO_PKG_VERSION")));
+        return CommandOutput::success(format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
     }
 
     match Cli::try_parse_from(args) {
@@ -3289,7 +3289,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦  VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n✓ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -3331,7 +3331,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦  VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n✓ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -3511,7 +3511,7 @@ tasks:
         let normalized = output.stdout.clone();
 
         assert_eq!(output.exit_code, 0);
-        assert!(normalized.starts_with("🦦  TASKS "));
+        assert!(normalized.starts_with("🦦 TASKS "));
         assert!(normalized.contains("/ota.yaml\n\n✦ build"));
         assert!(normalized.contains("\n✦ build"));
         assert!(normalized.contains("\n✦ dev"));
@@ -3538,7 +3538,7 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("🦦  TASKS "));
+        assert!(output.stdout.contains("🦦 TASKS "));
         assert!(output.stdout.contains("\n\n✦ dev `ota run dev`"));
         assert!(output.stdout.contains("\n✦ start `ota run start`"));
         assert!(output.stdout.contains("\n✦ typecheck `ota run typecheck`"));
@@ -4256,7 +4256,7 @@ project:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("🦦  DOCTOR "));
+        assert!(output.stdout.contains("🦦 DOCTOR "));
         assert!(output.stdout.contains("\n\n◉ NOT READY"));
         assert!(
             output
@@ -4938,7 +4938,7 @@ edition = "2024"
         let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("🦦  DETECT PREVIEW "));
+        assert!(output.stdout.contains("🦦 DETECT PREVIEW "));
         assert!(output.stdout.contains("\n\nMode: dry-run (no write)"));
         assert!(output.stdout.contains("\n\nContract:\nversion: 1"));
         assert!(output.stdout.contains("\n\nAnnotations:\n✦  Field: "));
@@ -5396,7 +5396,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦  VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n✓ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -6505,7 +6505,7 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦  WORKSPACE VALIDATE {}\n\n✓ VALID",
+                "🦦 WORKSPACE VALIDATE {}\n\n✓ VALID",
                 compact_workspace(&fixture.workspace_file())
             )
         );
@@ -6700,7 +6700,7 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦  WORKSPACE VALIDATE {}\n\n✓ VALID",
+                "🦦 WORKSPACE VALIDATE {}\n\n✓ VALID",
                 compact_workspace(&fixture.path().join("ota.workspace.yaml"))
             )
         );
