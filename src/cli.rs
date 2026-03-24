@@ -6857,6 +6857,25 @@ repos:
     }
 
     #[test]
+    fn workspace_doctor_repo_filter_rejects_unknown_repo() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--repo",
+            "missing-repo",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("unknown workspace repo `missing-repo`"));
+        assert!(stderr.contains("Known repos:"));
+    }
+
+    #[test]
     fn workspace_doctor_text_status_contract_is_stable() {
         let fixture = WorkspaceFixture::new();
         fs::write(
