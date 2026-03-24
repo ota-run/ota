@@ -758,7 +758,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "ota init",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Run { .. } => "ota tasks --use",
-        Commands::Doctor { .. } => "create missing repo contracts with `ota init <repo-path>`",
+        Commands::Doctor { .. } => "ota doctor",
         Commands::Init { .. } => "ota init --dry-run",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
@@ -770,7 +770,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Validate { .. } => "ota workspace doctor",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
             WorkspaceCommands::List { .. } => "setup workspace with `ota workspace init`",
-            WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
+            WorkspaceCommands::Doctor { .. } => "setup workspace with `ota workspace init`",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
             WorkspaceCommands::Run { .. } => "ota workspace tasks",
@@ -6765,6 +6765,54 @@ repos:
         assert!(!stderr.contains("Where: ota workspace list"));
         assert!(stderr.contains("no `ota.workspace.yaml` found"));
         assert!(stderr.contains("Next: setup workspace with `ota workspace init`"));
+    }
+
+    #[test]
+    fn validate_not_found_splits_why_and_next_actions() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "validate", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why: no `ota.yaml` found from"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("setup repo with `ota init`"));
+        assert!(stderr.contains("`ota detect --dry-run`"));
+        assert!(stderr.contains("`ota detect --write`"));
+    }
+
+    #[test]
+    fn doctor_not_found_uses_shared_next_actions() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why: no `ota.yaml` found from"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("setup repo with `ota init`"));
+        assert!(stderr.contains("`ota detect --dry-run`"));
+        assert!(stderr.contains("`ota detect --write`"));
+        assert!(!stderr.contains("create missing repo contracts with `ota init <repo-path>`"));
+    }
+
+    #[test]
+    fn workspace_doctor_not_found_uses_single_workspace_next() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
+        assert_eq!(stderr.matches("Next:").count(), 1);
+        assert!(stderr.contains("setup workspace with `ota workspace init`"));
+        assert!(!stderr.contains("Next: `ota workspace doctor`"));
     }
 
     #[test]

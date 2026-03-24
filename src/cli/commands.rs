@@ -132,6 +132,42 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
+    if compact_message.starts_with("no `ota.yaml` found from `")
+        && compact_message.ends_with("` upward")
+    {
+        out.push_str(&format!("\n{} {}", paint_key("Why:"), compact_message));
+        out.push_str(&format!("\n\n{}", paint_next_header()));
+        out.push_str(&format!(
+            "\n{}  setup repo with {}",
+            next_bullet(),
+            paint_code("`ota init`")
+        ));
+        out.push_str(&format!(
+            "\n{}  or preview inferred fields with {}",
+            next_bullet(),
+            paint_code("`ota detect --dry-run`")
+        ));
+        out.push_str(&format!(
+            "\n{}  or write a detected contract with {}",
+            next_bullet(),
+            paint_code("`ota detect --write`")
+        ));
+        return out;
+    }
+
+    if compact_message.starts_with("no `ota.workspace.yaml` found from `")
+        && compact_message.ends_with("` upward")
+    {
+        out.push_str(&format!("\n{} {}", paint_key("Why:"), compact_message));
+        out.push_str(&format!("\n\n{}", paint_next_header()));
+        out.push_str(&format!(
+            "\n{}  setup workspace with {}",
+            next_bullet(),
+            paint_code("`ota workspace init`")
+        ));
+        return out;
+    }
+
     if lines.len() == 1 {
         out.push_str(&format!("\n{} {}", paint_key("Why:"), lines[0]));
         return out;
@@ -7964,9 +8000,7 @@ enum WorkspaceProblem {
 enum ResolveContractError {
     #[error("failed to read the current directory: {message}")]
     CurrentDirectory { message: String },
-    #[error(
-        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect --write` to create one, or `ota detect --dry-run` to preview detected signals first"
-    )]
+    #[error("no `ota.yaml` found from `{start}` upward")]
     NotFound { start: String },
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
