@@ -1,0 +1,53 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Extension Execution Boundary
+
+This document defines the current implementation boundary for extensions during V4.
+
+## Current boundary (shipped)
+
+- Ota core commands do not execute extension providers at runtime.
+- Top-level `extensions` in `ota.yaml` is not part of the shipped parser/validator contract yet.
+- `ota doctor`, `ota check`, `ota run`, `ota up`, and `ota export` behavior remains core-only.
+
+## Why this boundary exists
+
+- preserve deterministic command behavior while compatibility contracts are locked
+- avoid hidden runtime/plugin drift during V4 standardization work
+- keep machine output and exit behavior stable
+
+## Contract target
+
+The normative extension contract target is:
+
+- [21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
+
+V4 work can prepare compatibility and protocol surfaces, but runtime extension execution is deferred until V6 implementation slices are active.
+
+## Enforcement in this repo
+
+- validation rejects `extensions` today
+- compatibility tests guard current JSON/exit contracts
+- no command path should silently load or execute extension commands
