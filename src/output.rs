@@ -94,6 +94,7 @@ pub struct WorkspaceRepoListReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
+    pub contract_present: bool,
     pub required: bool,
     pub acquired: bool,
     pub depends_on: Vec<String>,
