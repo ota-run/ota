@@ -121,6 +121,10 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     out
 }
 
+pub fn stylize_inline_text(value: &str) -> String {
+    stylize_inline_code(value)
+}
+
 fn infer_failure_where(default: &str, message: &str) -> String {
     for token in backticked_tokens(message) {
         if looks_like_location_token(token) {

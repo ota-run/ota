@@ -701,7 +701,8 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         },
     };
 
-    format!("{stderr}\n\nTry: `{suggestion}`")
+    let next_header = commands::paint_next_label();
+    commands::stylize_inline_text(&format!("{stderr}\n\n{next_header} `{suggestion}`"))
 }
 
 fn collapse_blank_lines(text: String) -> String {
