@@ -135,6 +135,9 @@ Root monorepo summary output can also include grouped member results:
 
 Root monorepo summary output can also include grouped member findings under `members`.
 
+Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious
+`ssh`/`tsh` targets without `user@host` or `kubectl` targets that do not start with `pod/`.
+
 ## `ota workspace validate --json`
 
 `ota workspace validate --json` uses the same success/failure shape as `ota validate --json`,
