@@ -1070,12 +1070,16 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 
     if contract_path.exists() {
         let next = format!("ota detect --merge --dry-run {}", contract_path.display());
-        let error = format!(
-            "`{}` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate {}` or `ota doctor {}`\nNext: if you want to compare detected repo signals against it, run `ota detect --merge --dry-run {}`",
-            contract_path.display(),
-            contract_path.display(),
-            contract_path.display(),
+        let highlighted_path = paint_code(&contract_path.display().to_string());
+        let highlighted_validate = paint_code(&format!("ota validate {}", contract_path.display()));
+        let highlighted_doctor = paint_code(&format!("ota doctor {}", contract_path.display()));
+        let highlighted_detect_merge = paint_code(&format!(
+            "ota detect --merge --dry-run {}",
             contract_path.display()
+        ));
+        let error = format!(
+            "`{}` already exists; ota init is only for repos without an Ota contract\nNext:\n- review the existing contract with `{}`\n- review the existing contract with `{}`\n- compare detected repo signals with `{}`",
+            highlighted_path, highlighted_validate, highlighted_doctor, highlighted_detect_merge
         );
         return finalize_debug(
             match format {
@@ -1529,11 +1533,11 @@ pub fn detect(
     if merge && !contract_path.exists() {
         let error = if dry_run {
             String::from(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract",
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\nNext:\n- use `ota detect --dry-run` to review a first contract",
             )
         } else {
             String::from(
-                "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
+                "`ota detect --merge` requires an existing `ota.yaml`\nNext:\n- use `ota detect` to write a first contract\n- use `ota detect --dry-run` to review one",
             )
         };
         let next = if dry_run {
@@ -1572,12 +1576,12 @@ pub fn detect(
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
                             stdout.push_str(&format!(
-                                "\nNext: run `ota detect --merge {}` to apply add-only high-confidence fields",
+                                "\nNext:\n- run `ota detect --merge {}`\n  apply add-only high-confidence fields",
                                 report.root.display()
                             ));
                         } else {
                             stdout.push_str(&format!(
-                                "\nNext: run `ota detect {}` to write a high-confidence contract",
+                                "\nNext:\n- run `ota detect {}`\n  write a high-confidence contract",
                                 report.root.display()
                             ));
                         }
@@ -2186,10 +2190,14 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     let path_display = contract_path.display().to_string();
     if contract_path.exists() {
         let next = format!("ota detect --merge --dry-run {}", report.root.display());
-        let error = format!(
-            "`{}` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `ota detect --merge --dry-run {}`",
-            contract_path.display(),
+        let highlighted_path = paint_code(&contract_path.display().to_string());
+        let highlighted_next = paint_code(&format!(
+            "ota detect --merge --dry-run {}",
             report.root.display()
+        ));
+        let error = format!(
+            "`{}` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `{}`",
+            highlighted_path, highlighted_next
         );
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -2214,7 +2222,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         Ok(()) => {}
         Err(_) => {
             let mut stderr = String::from(
-                "detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields",
+                "detected high-confidence fields are not sufficient to produce a valid contract\nNext:\n- use `ota detect --dry-run` to review medium and low confidence fields",
             );
             render_inference_section(
                 &mut stderr,
@@ -2237,12 +2245,17 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
+                let highlighted_written = paint_code(&contract_path.display().to_string());
+                let highlighted_validate =
+                    paint_code(&format!("ota validate {}", contract_path.display()));
+                let highlighted_doctor =
+                    paint_code(&format!("ota doctor {}", contract_path.display()));
                 let mut stdout = format!(
-                    "DETECT WRITE {}\nResult: wrote `{}`\nPolicy: only high-confidence fields are written automatically\nNext: run `ota validate {}` and `ota doctor {}`",
+                    "DETECT WRITE {}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically\nNext:\n- run `{}`\n- run `{}`",
                     report.root.display(),
-                    contract_path.display(),
-                    contract_path.display(),
-                    contract_path.display()
+                    highlighted_written,
+                    highlighted_validate,
+                    highlighted_doctor
                 );
                 render_inference_section(
                     &mut stdout,
@@ -2498,7 +2511,7 @@ fn render_init(
             .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
         {
             let mut error = String::from(
-                "detected starter includes medium or low confidence fields that are required for a valid contract; review `ota init` output or use `ota detect --dry-run` before writing",
+                "detected starter includes medium or low confidence fields that are required for a valid contract\nNext:\n- review `ota init` output\n- use `ota detect --dry-run` before writing",
             );
             render_inference_section(
                 &mut error,
@@ -2520,12 +2533,17 @@ fn render_init(
         return match fs::write(contract_path, &write_yaml) {
             Ok(()) => match format {
                 OutputFormat::Text => {
+                    let highlighted_written = paint_code(&contract_path.display().to_string());
+                    let highlighted_validate =
+                        paint_code(&format!("ota validate {}", contract_path.display()));
+                    let highlighted_doctor =
+                        paint_code(&format!("ota doctor {}", contract_path.display()));
                     let mut stdout = format!(
-                        "INIT WRITE {}\nResult: wrote `{}`\nMode: {mode}\nNext: run `ota validate {}` and `ota doctor {}`",
+                        "INIT WRITE {}\nResult: wrote {}\nMode: {mode}\nNext:\n- run `{}`\n- run `{}`",
                         report.root.display(),
-                        contract_path.display(),
-                        contract_path.display(),
-                        contract_path.display()
+                        highlighted_written,
+                        highlighted_validate,
+                        highlighted_doctor
                     );
                     if mode == "blank" {
                         stdout.push_str(
@@ -2571,10 +2589,11 @@ fn render_init(
 
     match format {
         OutputFormat::Text => {
+            let highlighted_init = paint_code(&format!("ota init {}", report.root.display()));
             let mut stdout = format!(
-                "INIT PREVIEW {}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `ota init {}`\nContract:\n---\n{}",
+                "INIT PREVIEW {}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`\nContract:\n---\n{}",
                 report.root.display(),
-                report.root.display(),
+                highlighted_init,
                 review_yaml.trim_end()
             );
             if mode == "blank" {
@@ -2846,7 +2865,7 @@ fn render_tasks_text(
     agent: Option<&AgentSummary<'_>>,
     tasks: &[TaskSummary<'_>],
 ) -> String {
-    let mut output = format!("TASKS {path}");
+    let mut output = format!("{} {path}", paint("TASKS", "1;36"));
 
     if let Some(agent) = agent {
         let mut details = Vec::new();
@@ -2989,8 +3008,13 @@ fn render_workspace_doctor_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "WORKSPACE DOCTOR {path}\n{}",
-        if report.ok { "READY" } else { "NOT READY" }
+        "{} {path}\n{}",
+        paint("WORKSPACE DOCTOR", "1;36"),
+        if report.ok {
+            paint("READY", "1;32")
+        } else {
+            paint("NOT READY", "1;31")
+        }
     );
 
     for repo in &report.repos {
@@ -3061,8 +3085,13 @@ fn render_workspace_check_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "WORKSPACE CHECK {path}\n{}",
-        if report.ok { "READY" } else { "NOT READY" }
+        "{} {path}\n{}",
+        paint("WORKSPACE CHECK", "1;36"),
+        if report.ok {
+            paint("READY", "1;32")
+        } else {
+            paint("NOT READY", "1;31")
+        }
     );
 
     for repo in &report.repos {
@@ -3148,7 +3177,15 @@ fn render_report_section(
     agent: Option<&AgentSummary<'_>>,
     report: &DoctorReport,
 ) -> String {
-    let mut stdout = format!("{command} {path}\n{}", render_doctor_status(&report));
+    let mut stdout = format!(
+        "{} {path}\n{}",
+        paint(command, "1;36"),
+        if report.ok {
+            paint("READY", "1;32")
+        } else {
+            paint("NOT READY", "1;31")
+        }
+    );
 
     if let Some(agent) = agent {
         if let Some(summary) = render_agent_summary_line(agent) {
@@ -3443,7 +3480,7 @@ fn render_up_section_from_parts(
     task: Option<&str>,
     exit_code: Option<i32>,
 ) -> String {
-    let mut stdout = format!("UP {path}\n{status}\nPhase: {phase}");
+    let mut stdout = format!("{} {path}\n{status}\nPhase: {phase}", paint("UP", "1;36"));
 
     if let Some(service) = service {
         stdout.push_str(&format!("\nService: {service}"));
@@ -3515,8 +3552,13 @@ fn render_workspace_up(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "WORKSPACE UP {path}\n{}",
-                if report.ok { "READY" } else { "NOT READY" }
+                "{} {path}\n{}",
+                paint("WORKSPACE UP", "1;36"),
+                if report.ok {
+                    paint("READY", "1;32")
+                } else {
+                    paint("NOT READY", "1;31")
+                }
             );
 
             for repo in &report.repos {
@@ -3621,8 +3663,13 @@ fn render_workspace_run(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "WORKSPACE RUN {task} {path}\n{}",
-                if report.ok { "READY" } else { "NOT READY" }
+                "{} {task} {path}\n{}",
+                paint("WORKSPACE RUN", "1;36"),
+                if report.ok {
+                    paint("READY", "1;32")
+                } else {
+                    paint("NOT READY", "1;31")
+                }
             );
 
             for repo in &report.repos {
@@ -3704,7 +3751,11 @@ fn render_workspace_run(
 }
 
 fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
-    let mut stdout = format!("WORKSPACE TASKS {path}\nREADY");
+    let mut stdout = format!(
+        "{} {path}\n{}",
+        paint("WORKSPACE TASKS", "1;36"),
+        paint("READY", "1;32")
+    );
 
     for repo in repos {
         stdout.push_str(&format!(
@@ -3846,81 +3897,58 @@ fn append_markdown_table(
 ) {
     let rows = rows.into_iter().collect::<Vec<_>>();
 
-    output.push_str(&format!("\n\n{}:", paint(title, "1;36")));
+    output.push_str(&format!("\n---\n{}:", paint(title, "1;34")));
 
     if rows.is_empty() {
-        output.push_str("\n  (none)");
+        output.push_str("\n- none");
         return;
-    }
-
-    let mut widths = headers
-        .iter()
-        .map(|header| header.len())
-        .collect::<Vec<_>>();
-    for row in &rows {
-        for (idx, width) in widths.iter_mut().enumerate() {
-            let value = row.get(idx).map_or("-", String::as_str);
-            *width = (*width).max(render_table_cell(value).len());
-        }
-    }
-
-    output.push('\n');
-    output.push_str("  ");
-    for (idx, header) in headers.iter().enumerate() {
-        if idx > 0 {
-            output.push_str("  ");
-        }
-        output.push_str(&format!(
-            "{:<width$}",
-            paint(header, "1;34"),
-            width = widths[idx]
-        ));
-    }
-
-    output.push('\n');
-    output.push_str("  ");
-    for (idx, width) in widths.iter().enumerate() {
-        if idx > 0 {
-            output.push_str("  ");
-        }
-        output.push_str(&"─".repeat(*width));
     }
 
     for row in rows {
         output.push('\n');
-        output.push_str("  ");
-        for (idx, width) in widths.iter().enumerate() {
-            if idx > 0 {
-                output.push_str("  ");
-            }
+        output.push_str("- ");
+        let first_header = headers.first().copied().unwrap_or("Item");
+        output.push_str(&paint_key(first_header));
+        output.push_str(": ");
+        output.push_str(&render_table_cell(row.first().map_or("-", String::as_str)));
+
+        for (idx, header) in headers.iter().enumerate().skip(1) {
             let value = row.get(idx).map_or("-", String::as_str);
-            output.push_str(&format!(
-                "{:<width$}",
-                render_table_cell(value),
-                width = *width
-            ));
+            output.push_str("\n  ");
+            output.push_str(&paint_key(header));
+            output.push_str(": ");
+            output.push_str(&render_table_cell(value));
         }
+
+        output.push('\n');
     }
 }
 
+fn render_severity(severity: FindingSeverity) -> String {
+    match severity {
+        FindingSeverity::Error => paint("ERROR", "1;31"),
+        FindingSeverity::Warn => paint("WARN", "1;33"),
+        FindingSeverity::Info => paint("INFO", "1;36"),
+    }
+}
+
+fn paint_key(key: &str) -> String {
+    paint(key, "1;36")
+}
+
 fn paint(value: &str, code: &str) -> String {
-    if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+    if (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
+        && std::env::var_os("NO_COLOR").is_none()
+    {
         format!("\x1b[{code}m{value}\x1b[0m")
     } else {
         value.to_string()
     }
 }
 
-fn render_doctor_status(report: &DoctorReport) -> &'static str {
-    if report.ok { "READY" } else { "NOT READY" }
-}
-
-fn render_severity(severity: FindingSeverity) -> &'static str {
-    match severity {
-        FindingSeverity::Error => "ERROR",
-        FindingSeverity::Warn => "WARN",
-        FindingSeverity::Info => "INFO",
-    }
+fn paint_code(value: &str) -> String {
+    // Ota accent tone (warm amber) to avoid purple command highlights.
+    paint(value, "38;2;214;161;95")
 }
 
 fn resolve_contract_path(
@@ -5556,7 +5584,16 @@ fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Optio
     }
 }
 
-fn finalize_debug(output: CommandOutput, debug: bool, debug_lines: Vec<String>) -> CommandOutput {
+fn finalize_debug(mut output: CommandOutput, debug: bool, debug_lines: Vec<String>) -> CommandOutput {
+    if !looks_like_json(&output.stdout) {
+        output.stdout = stylize_inline_code(&output.stdout);
+    }
+    if let Some(stderr) = output.stderr.as_ref() {
+        if !looks_like_json(stderr) {
+            output.stderr = Some(stylize_inline_code(stderr));
+        }
+    }
+
     if !debug {
         return output;
     }
@@ -5584,6 +5621,36 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
 
 fn to_json_value(value: JsonValue) -> String {
     serde_json::to_string_pretty(&value).expect("serializing CLI output should not fail")
+}
+
+fn looks_like_json(value: &str) -> bool {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()) && serde_json::from_str::<JsonValue>(trimmed).is_ok()
+}
+
+fn stylize_inline_code(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+
+    loop {
+        let Some(start) = rest.find('`') else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            output.push_str(&rest[start..]);
+            break;
+        };
+        let code = &after_start[..end];
+        output.push('`');
+        output.push_str(&paint_code(code));
+        output.push('`');
+        rest = &after_start[end + 1..];
+    }
+
+    output
 }
 
 struct LoadedContractTarget {
@@ -5625,11 +5692,11 @@ fn render_run_error(error: RunError) -> String {
     error.to_string()
 }
 
-fn render_confidence(confidence: Confidence) -> &'static str {
+fn render_confidence(confidence: Confidence) -> String {
     match confidence {
-        Confidence::High => "high",
-        Confidence::Medium => "medium",
-        Confidence::Low => "low",
+        Confidence::High => paint("high", "1;32"),
+        Confidence::Medium => paint("medium", "1;33"),
+        Confidence::Low => paint("low", "1;31"),
     }
 }
 
