@@ -237,6 +237,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_racket_markers(&root, &mut builder)?;
     detect_bash_markers(&root, &mut builder)?;
     detect_powershell_markers(&root, &mut builder)?;
+    detect_deno_markers(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -1014,15 +1015,51 @@ fn detect_gradle(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectE
         .find(|path| path.exists());
     if let Some(path) = build_path {
         let contents = read_file(&path)?;
+        let source_file = path.file_name().unwrap().to_string_lossy().to_string();
+
+        builder.set_tool(
+            "gradle".to_string(),
+            "*".to_string(),
+            source_file.clone(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "build".to_string(),
+            "gradle build".to_string(),
+            source_file.clone(),
+            Confidence::Medium,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "gradle test".to_string(),
+            source_file.clone(),
+            Confidence::Medium,
+        );
+
         if let Some(version) = extract_gradle_java_version(&contents) {
             builder.set_runtime(
                 "java".to_string(),
                 version,
-                format!(
-                    "{}#java.toolchain",
-                    path.file_name().unwrap().to_string_lossy()
-                ),
+                format!("{source_file}#java.toolchain"),
                 Confidence::High,
+            );
+        }
+
+        if contents.contains("org.jetbrains.kotlin")
+            || contents.contains("kotlin(\"jvm\")")
+            || contents.contains("id \"org.jetbrains.kotlin.jvm\"")
+        {
+            builder.set_tool(
+                "kotlin".to_string(),
+                "*".to_string(),
+                format!("{source_file}#kotlin.plugin"),
+                Confidence::Medium,
+            );
+            builder.set_runtime(
+                "kotlin".to_string(),
+                "*".to_string(),
+                format!("{source_file}#kotlin.plugin"),
+                Confidence::Medium,
             );
         }
     }
@@ -2731,6 +2768,64 @@ fn detect_powershell_markers(root: &Path, builder: &mut DetectBuilder) -> Result
     Ok(())
 }
 
+fn detect_deno_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let source = if root.join("deno.json").exists() {
+        Some("deno.json")
+    } else if root.join("deno.jsonc").exists() {
+        Some("deno.jsonc")
+    } else {
+        None
+    };
+
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "deno".to_string(),
+        "*".to_string(),
+        source.to_string(),
+        Confidence::High,
+    );
+    builder.set_runtime(
+        "deno".to_string(),
+        "*".to_string(),
+        source.to_string(),
+        Confidence::Medium,
+    );
+
+    builder.set_task(
+        "test".to_string(),
+        "deno test".to_string(),
+        format!("{source}#standard-tasks"),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "lint".to_string(),
+        "deno lint".to_string(),
+        format!("{source}#standard-tasks"),
+        Confidence::Medium,
+    );
+
+    if root.join("main.ts").exists() {
+        builder.set_task(
+            "run".to_string(),
+            "deno run main.ts".to_string(),
+            format!("{source}#standard-tasks"),
+            Confidence::Medium,
+        );
+    } else if root.join("main.js").exists() {
+        builder.set_task(
+            "run".to_string(),
+            "deno run main.js".to_string(),
+            format!("{source}#standard-tasks"),
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
 fn extract_ruby_gemfile_version(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -3636,6 +3731,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         "runtimes.kotlin" => match source {
             "pom.xml#kotlin.version" => 2,
+            "build.gradle.kts#kotlin.plugin" => 1,
+            "build.gradle#kotlin.plugin" => 1,
             _ => 0,
         },
         "runtimes.shell" => match source {
@@ -3644,6 +3741,11 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         "runtimes.powershell" => match source {
             "powershell-script" => 2,
+            _ => 0,
+        },
+        "runtimes.deno" => match source {
+            "deno.json" => 2,
+            "deno.jsonc" => 2,
             _ => 0,
         },
         "runtimes.c" => match source {
@@ -3656,6 +3758,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
+            "build.gradle.kts" => 2,
+            "build.gradle" => 2,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "stack.yaml" => 3,
             "package.json#packageManager" => 2,
@@ -3667,6 +3771,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "Package.swift" => 2,
             "pubspec.yaml" => 2,
             "pubspec.yaml#flutter" => 2,
+            "deno.json" => 2,
+            "deno.jsonc" => 2,
             "CMakeLists.txt" => 2,
             "project.clj" => 2,
             "deps.edn" => 2,
@@ -4866,6 +4972,34 @@ solc_version = "0.8.25"
     }
 
     #[test]
+    fn detects_deno_markers() {
+        let fixture = Fixture::new();
+        fixture.write("deno.json", "{\n  \"lint\": true\n}\n");
+        fixture.write("main.ts", "console.log('ok');\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("deno"), Some(&"*".to_string()));
+        assert_eq!(report.contract.runtimes.get("deno"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("deno run main.ts")
+        );
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("deno test")
+        );
+        assert_eq!(
+            report.contract.tasks.get("lint").map(|task| task.run.as_str()),
+            Some("deno lint")
+        );
+        assert_eq!(
+            report.contract.tasks.get("lint").map(|task| task.safe_for_agent),
+            Some(true)
+        );
+    }
+
+    #[test]
     fn detects_cargo_signals() {
         let fixture = Fixture::new();
         fixture.write(
@@ -4984,6 +5118,63 @@ channel = "1.85.0"
                 .get("build")
                 .map(|task| task.run.as_str()),
             Some("./gradlew build")
+        );
+    }
+
+    #[test]
+    fn detects_gradle_without_wrapper_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "build.gradle",
+            r#"java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("gradle"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"17".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("gradle build")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("gradle test")
+        );
+    }
+
+    #[test]
+    fn detects_gradle_kotlin_plugin_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "build.gradle.kts",
+            r#"plugins {
+    kotlin("jvm") version "2.0.20"
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("gradle"), Some(&"*".to_string()));
+        assert_eq!(report.contract.tools.get("kotlin"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("kotlin"),
+            Some(&"*".to_string())
         );
     }
 
