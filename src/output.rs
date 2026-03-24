@@ -90,6 +90,23 @@ pub struct WorkspaceTasksSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceRepoListReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub acquired: bool,
+    pub depends_on: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceListSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub repos: &'a [WorkspaceRepoListReport],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoUpReport {
     pub name: String,
     pub path: String,
