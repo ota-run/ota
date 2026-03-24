@@ -30,10 +30,10 @@ supports_color() {
 
 ota_header() {
   if supports_color; then
-    printf '\033[1;36m🦦 INSTALL\033[0m\n' >&2
+    printf '\033[1;36m🦦  INSTALL\033[0m\n' >&2
     printf '\033[38;2;180;223;255m◉ doctor first, contract second\033[0m\n' >&2
   else
-    printf 'INSTALL\n' >&2
+    printf ' INSTALL\n' >&2
     printf 'Signature: doctor first, contract second\n' >&2
   fi
 }
