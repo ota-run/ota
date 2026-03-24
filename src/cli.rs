@@ -741,6 +741,11 @@ fn finalize_cli_output(
 
 fn append_try_footer(stderr: String, command: &Commands) -> String {
     const WORKSPACE_SETUP_SUGGESTION: &str = "setup workspace with `ota workspace init`";
+    const WORKSPACE_TASKS_SUGGESTION: &str = "ota workspace tasks";
+    const WORKSPACE_CHECK_SUGGESTION: &str = "ota workspace check";
+    const WORKSPACE_UP_SUGGESTION: &str = "ota workspace up";
+    const WORKSPACE_DETECT_DRY_RUN_SUGGESTION: &str = "ota workspace detect --dry-run";
+    const WORKSPACE_INIT_HELP_SUGGESTION: &str = "ota workspace init --help";
 
     if stderr.contains("Try: ") || stderr.contains("Next:") {
         return stderr;
@@ -764,15 +769,15 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Clean { .. } => "ota clean --help",
         Commands::Detect { .. } => "ota detect --dry-run",
         Commands::Workspace { command } => match command {
-            WorkspaceCommands::Init { .. } => "ota workspace init --help",
-            WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
+            WorkspaceCommands::Init { .. } => WORKSPACE_INIT_HELP_SUGGESTION,
+            WorkspaceCommands::Detect { .. } => WORKSPACE_DETECT_DRY_RUN_SUGGESTION,
             WorkspaceCommands::Validate { .. } => WORKSPACE_SETUP_SUGGESTION,
-            WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
+            WorkspaceCommands::Tasks { .. } => WORKSPACE_TASKS_SUGGESTION,
             WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Doctor { .. } => WORKSPACE_SETUP_SUGGESTION,
-            WorkspaceCommands::Check { .. } => "ota workspace check",
-            WorkspaceCommands::Up { .. } => "ota workspace up",
-            WorkspaceCommands::Run { .. } => "ota workspace tasks",
+            WorkspaceCommands::Check { .. } => WORKSPACE_CHECK_SUGGESTION,
+            WorkspaceCommands::Up { .. } => WORKSPACE_UP_SUGGESTION,
+            WorkspaceCommands::Run { .. } => WORKSPACE_TASKS_SUGGESTION,
         },
     };
 
