@@ -123,7 +123,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
 
 fn infer_failure_where(default: &str, message: &str) -> String {
     for token in backticked_tokens(message) {
-        if looks_like_path_token(token) {
+        if looks_like_location_token(token) {
             if token.starts_with('/') {
                 return compact_path(Path::new(token), "path");
             }
@@ -131,6 +131,15 @@ fn infer_failure_where(default: &str, message: &str) -> String {
         }
     }
     default.to_string()
+}
+
+fn looks_like_location_token(token: &str) -> bool {
+    token.starts_with("./")
+        || token.starts_with("../")
+        || token.starts_with('/')
+        || token.starts_with('~')
+        || token.contains('/')
+        || token.contains('\\')
 }
 
 fn backticked_tokens(value: &str) -> Vec<&str> {
