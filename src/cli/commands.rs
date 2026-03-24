@@ -5825,11 +5825,12 @@ fn load_and_run_workspace_up(
     stream: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_up_streaming(repo_refs, emit_progress);
+        return run_workspace_up_streaming(&workspace_name, repo_refs, emit_progress);
     }
 
     let mut repos = BTreeMap::new();
@@ -5884,7 +5885,16 @@ fn load_and_run_workspace_up(
             {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
                 if emit_progress {
-                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                    eprintln!(
+                        "{}",
+                        workspace_progress_line(
+                            &workspace_name,
+                            "BLOCKED",
+                            &report.name,
+                            Some(&format!("({dependency})"))
+                        )
+                    );
+                    eprintln!();
                 }
                 blocked_reports.push((order, report));
             } else {
@@ -5900,10 +5910,13 @@ fn load_and_run_workspace_up(
             .into_iter()
             .map(|(order, repo)| {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                    eprintln!(
+                        "{}",
+                        workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None)
+                    );
                 }
                 if emit_progress {
-                    eprintln!("WORKSPACE RUN {}", repo.name);
+                    eprintln!("{}", workspace_progress_line(&workspace_name, "RUN", &repo.name, None));
                 }
                 let tx = tx.clone();
                 thread::spawn(move || {
@@ -5925,7 +5938,11 @@ fn load_and_run_workspace_up(
         for _ in 0..handles.len() {
             let (order, report) = rx.recv().expect("workspace up worker should send a report");
             if emit_progress {
-                eprintln!("WORKSPACE {} {}", report.status, report.name);
+                eprintln!(
+                    "{}",
+                    workspace_progress_line(&workspace_name, &report.status, &report.name, None)
+                );
+                eprintln!();
             }
             if report.required && !report.ok {
                 ok = false;
@@ -5953,11 +5970,12 @@ fn load_and_run_workspace_task(
     stream: bool,
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_task_streaming(task, repo_refs, emit_progress);
+        return run_workspace_task_streaming(&workspace_name, task, repo_refs, emit_progress);
     }
 
     let mut repos = BTreeMap::new();
@@ -6012,7 +6030,12 @@ fn load_and_run_workspace_task(
             {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
-                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                    eprintln!(
+                        "{} BLOCKED {} ({})",
+                        workspace_progress_prefix(&workspace_name),
+                        report.name,
+                        dependency
+                    );
                 }
                 blocked_reports.push((order, report));
             } else {
@@ -6029,10 +6052,19 @@ fn load_and_run_workspace_task(
             .into_iter()
             .map(|(order, repo)| {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                    eprintln!(
+                        "{} ACQUIRE {}",
+                        workspace_progress_prefix(&workspace_name),
+                        repo.name
+                    );
                 }
                 if emit_progress {
-                    eprintln!("WORKSPACE RUN {} {}", repo.name, task_name);
+                    eprintln!(
+                        "{} RUN {} {}",
+                        workspace_progress_prefix(&workspace_name),
+                        repo.name,
+                        task_name
+                    );
                 }
                 let tx = tx.clone();
                 let task = task_name.clone();
@@ -6057,7 +6089,12 @@ fn load_and_run_workspace_task(
                 .recv()
                 .expect("workspace run worker should send a report");
             if emit_progress {
-                eprintln!("WORKSPACE {} {}", report.status, report.name);
+                eprintln!(
+                    "{} {} {}",
+                    workspace_progress_prefix(&workspace_name),
+                    report.status,
+                    report.name
+                );
             }
             if report.required && !report.ok {
                 ok = false;
@@ -6080,6 +6117,7 @@ fn load_and_run_workspace_task(
 }
 
 fn run_workspace_task_streaming(
+    workspace_name: &str,
     task: &str,
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
@@ -6098,20 +6136,39 @@ fn run_workspace_task_streaming(
             Some(dependency) => {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
-                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                    eprintln!(
+                        "{} BLOCKED {} ({})",
+                        workspace_progress_prefix(workspace_name),
+                        report.name,
+                        dependency
+                    );
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                    eprintln!(
+                        "{} ACQUIRE {}",
+                        workspace_progress_prefix(workspace_name),
+                        repo.name
+                    );
                 }
                 if emit_progress {
-                    eprintln!("WORKSPACE RUN {} {}", repo.name, task);
+                    eprintln!(
+                        "{} RUN {} {}",
+                        workspace_progress_prefix(workspace_name),
+                        repo.name,
+                        task
+                    );
                 }
                 let report = run_workspace_repo_task(repo, task, RepoExecutionMode::Stream);
                 if emit_progress {
-                    eprintln!("WORKSPACE {} {}", report.status, report.name);
+                    eprintln!(
+                        "{} {} {}",
+                        workspace_progress_prefix(workspace_name),
+                        report.status,
+                        report.name
+                    );
                 }
                 report
             }
@@ -6127,6 +6184,7 @@ fn run_workspace_task_streaming(
 }
 
 fn run_workspace_up_streaming(
+    workspace_name: &str,
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
@@ -6144,20 +6202,38 @@ fn run_workspace_up_streaming(
             Some(dependency) => {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
                 if emit_progress {
-                    eprintln!("WORKSPACE BLOCKED {} ({})", report.name, dependency);
+                    eprintln!(
+                        "{} BLOCKED {} ({})",
+                        workspace_progress_prefix(workspace_name),
+                        report.name,
+                        dependency
+                    );
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!("WORKSPACE ACQUIRE {}", repo.name);
+                    eprintln!(
+                        "{} ACQUIRE {}",
+                        workspace_progress_prefix(workspace_name),
+                        repo.name
+                    );
                 }
                 if emit_progress {
-                    eprintln!("WORKSPACE RUN {}", repo.name);
+                    eprintln!(
+                        "{} RUN {}",
+                        workspace_progress_prefix(workspace_name),
+                        repo.name
+                    );
                 }
                 let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream);
                 if emit_progress {
-                    eprintln!("WORKSPACE {} {}", report.status, report.name);
+                    eprintln!(
+                        "{} {} {}",
+                        workspace_progress_prefix(workspace_name),
+                        report.status,
+                        report.name
+                    );
                 }
                 report
             }
@@ -6170,6 +6246,15 @@ fn run_workspace_up_streaming(
     }
 
     Ok(WorkspaceUpReport { ok, repos })
+}
+
+fn workspace_progress_prefix(workspace_name: &str) -> String {
+    let trimmed = workspace_name.trim();
+    if trimmed.is_empty() {
+        String::from("[workspace]")
+    } else {
+        format!("[{trimmed}]")
+    }
 }
 
 fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> WorkspaceRepoUpReport {

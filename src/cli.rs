@@ -7549,10 +7549,9 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--stream` currently requires `--jobs 1`")
-        );
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.starts_with("`--stream` currently requires `--jobs 1`"));
+        assert!(stderr.contains("Try: `ota workspace tasks`"));
     }
 
     struct ContractFixture {
