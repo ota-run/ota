@@ -3231,7 +3231,7 @@ fn render_report_section(
         ));
     }
 
-    append_findings_table(&mut stdout, "Findings table", &report.findings);
+    append_findings_table(&mut stdout, "Findings", &report.findings);
 
     stdout
 }
@@ -3539,7 +3539,7 @@ fn render_up_section_from_parts(
         ));
     }
 
-    append_findings_table(&mut stdout, "Findings table", &report.findings);
+    append_findings_table(&mut stdout, "Findings", &report.findings);
 
     stdout
 }
@@ -5812,7 +5812,7 @@ enum ResolveContractError {
     #[error("failed to read the current directory: {message}")]
     CurrentDirectory { message: String },
     #[error(
-        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect --dry-run` to create one"
+        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect` to create one, or `ota detect --dry-run` to preview detected signals first"
     )]
     NotFound { start: String },
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
