@@ -526,7 +526,7 @@ Documentation quality rule for OSS adoption:
 - optimize docs for fast first success by humans and agents, not just completeness
 
 CLI output style checklist:
-- keep key command headers in `🦦  <COMMAND> <target>` form in rich mode
+- keep key command headers in `🦦 <COMMAND> <target>` form in rich mode
 - keep one key-label color across output sections
 - keep command examples and recommended commands consistently accent-highlighted
 - preserve `--plain` parity (no emoji/icons/ANSI; semantics unchanged)

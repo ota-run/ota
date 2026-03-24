@@ -3655,7 +3655,7 @@ fn render_workspace_doctor_text(
         stdout.push_str(&format!(
             "\n\n{} {} [{}] ({})",
             list_bullet(),
-            repo.name,
+            paint(&repo.name, "1"),
             if repo.required {
                 "required"
             } else {
@@ -3686,29 +3686,6 @@ fn render_workspace_doctor_text(
             ));
         }
     }
-
-    append_markdown_table(
-        &mut stdout,
-        "Repos",
-        &["Repo", "Required", "Status", "Path", "Contract"],
-        report.repos.iter().map(|repo| {
-            vec![
-                repo.name.clone(),
-                if repo.required {
-                    String::from("required")
-                } else {
-                    String::from("optional")
-                },
-                if repo.ok {
-                    String::from("READY")
-                } else {
-                    String::from("NOT READY")
-                },
-                compact_repo_path(Path::new(&repo.path)),
-                compact_contract_path(Path::new(&repo.contract_path)),
-            ]
-        }),
-    );
 
     CommandOutput {
         stdout,
@@ -3731,7 +3708,7 @@ fn render_workspace_check_text(
         stdout.push_str(&format!(
             "\n\n{} {} [{}] ({})",
             list_bullet(),
-            repo.name,
+            paint(&repo.name, "1"),
             if repo.required {
                 "required"
             } else {
@@ -3762,29 +3739,6 @@ fn render_workspace_check_text(
             ));
         }
     }
-
-    append_markdown_table(
-        &mut stdout,
-        "Repos",
-        &["Repo", "Required", "Status", "Path", "Contract"],
-        report.repos.iter().map(|repo| {
-            vec![
-                repo.name.clone(),
-                if repo.required {
-                    String::from("required")
-                } else {
-                    String::from("optional")
-                },
-                if repo.ok {
-                    String::from("READY")
-                } else {
-                    String::from("NOT READY")
-                },
-                compact_repo_path(Path::new(&repo.path)),
-                compact_contract_path(Path::new(&repo.contract_path)),
-            ]
-        }),
-    );
 
     CommandOutput {
         stdout,
@@ -4685,7 +4639,7 @@ fn render_workspace_up(
                 stdout.push_str(&format!(
                     "\n\n{} {} [{}] ({})",
                     list_bullet(),
-                    repo.name,
+                    paint(&repo.name, "1"),
                     if repo.required {
                         "required"
                     } else {
@@ -4728,37 +4682,6 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
 
-            append_markdown_table(
-                &mut stdout,
-                "Repos",
-                &[
-                    "Repo",
-                    "Required",
-                    "Status",
-                    "Phase",
-                    "Service",
-                    "Task",
-                    "Exit Code",
-                ],
-                report.repos.iter().map(|repo| {
-                    vec![
-                        repo.name.clone(),
-                        if repo.required {
-                            String::from("required")
-                        } else {
-                            String::from("optional")
-                        },
-                        repo.status.clone(),
-                        repo.phase.clone(),
-                        repo.service.clone().unwrap_or_else(|| String::from("-")),
-                        repo.task.clone().unwrap_or_else(|| String::from("-")),
-                        repo.exit_code
-                            .map(|code| code.to_string())
-                            .unwrap_or_else(|| String::from("-")),
-                    ]
-                }),
-            );
-
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -4795,7 +4718,7 @@ fn render_workspace_run(
                 stdout.push_str(&format!(
                     "\n\n{} {} [{}] ({})",
                     list_bullet(),
-                    repo.name,
+                    paint(&repo.name, "1"),
                     if repo.required {
                         "required"
                     } else {
@@ -4832,27 +4755,6 @@ fn render_workspace_run(
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
 
-            append_markdown_table(
-                &mut stdout,
-                "Repos",
-                &["Repo", "Required", "Status", "Task", "Exit Code"],
-                report.repos.iter().map(|repo| {
-                    vec![
-                        repo.name.clone(),
-                        if repo.required {
-                            String::from("required")
-                        } else {
-                            String::from("optional")
-                        },
-                        repo.status.clone(),
-                        repo.task.clone(),
-                        repo.exit_code
-                            .map(|code| code.to_string())
-                            .unwrap_or_else(|| String::from("-")),
-                    ]
-                }),
-            );
-
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -4883,7 +4785,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
         stdout.push_str(&format!(
             "\n\n{} {} [{}] ({})",
             list_bullet(),
-            repo.name,
+            paint(&repo.name, "1"),
             if repo.required {
                 "required"
             } else {

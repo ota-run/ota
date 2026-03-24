@@ -105,7 +105,7 @@ awk -v new_version="$new_version" '
 
 mv "$tmp_file" "$cargo_toml"
 
-printf '🦦  VERSION BUMP\n'
+printf '🦦 VERSION BUMP\n'
 printf 'Updated: Cargo.toml\n'
 printf 'From: %s\n' "$current_version"
 printf 'To:   %s\n' "$new_version"
