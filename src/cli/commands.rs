@@ -2985,7 +2985,7 @@ fn render_tasks_text(
             .or_else(|| task.script.map(|script| script.lines().next().unwrap_or(script).trim().to_string()))
             .unwrap_or_else(|| String::from("-"));
 
-        output.push_str(&format!("\n- {} {}", paint_key("Task:"), task.name));
+        output.push_str(&format!("\n- {}", paint(task.name, "1")));
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
         output.push_str(&format!(
             "\n  {} {}",
