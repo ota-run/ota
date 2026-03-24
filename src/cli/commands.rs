@@ -76,6 +76,44 @@ pub fn set_concise_mode(enabled: bool) {
     CONCISE_MODE.with(|value| value.set(enabled));
 }
 
+pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
+    if message.contains("Where:") || message.contains("Why:") || message.contains("◉ ERROR") {
+        return message.to_string();
+    }
+
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Operation failed", "1;37")
+    );
+    out.push_str(&format!("\n{} {}", paint_key("Where:"), paint_code(where_label)));
+
+    let lines = message
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        out.push_str(&format!(
+            "\n{} command failed with no additional details",
+            paint_key("Why:")
+        ));
+        return out;
+    }
+
+    if lines.len() == 1 {
+        out.push_str(&format!("\n{} {}", paint_key("Why:"), lines[0]));
+        return out;
+    }
+
+    out.push_str(&format!("\n{}", paint_key("Why:")));
+    for line in lines {
+        out.push_str(&format!("\n{}  {}", info_bullet(), line));
+    }
+    out
+}
+
 pub fn validate(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -1843,7 +1881,11 @@ fn render_workspace_validate_failure(
 
     match load_error {
         Some(error) => {
-            out.push_str(&format!("\n{} {}", paint_key("Why:"), error));
+            out.push_str(&format!(
+                "\n{} {}",
+                paint_key("Why:"),
+                compact_backticked_paths(error)
+            ));
         }
         None if errors.is_empty() => {
             out.push_str(&format!(
@@ -1854,7 +1896,7 @@ fn render_workspace_validate_failure(
         None => {
             out.push_str(&format!("\n{}", paint_key("Why:")));
             for error in errors {
-                out.push_str(&format!("\n{}  {}", info_bullet(), error));
+                out.push_str(&format!("\n  {}", compact_backticked_paths(error)));
             }
         }
     }
@@ -1865,6 +1907,36 @@ fn render_workspace_validate_failure(
         paint_code("ota workspace validate")
     ));
     out
+}
+
+fn compact_backticked_paths(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut rest = value;
+
+    loop {
+        let Some(start) = rest.find('`') else {
+            output.push_str(rest);
+            break;
+        };
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            output.push_str(&rest[start..]);
+            break;
+        };
+
+        let token = &after_start[..end];
+        output.push('`');
+        if token.starts_with('/') {
+            output.push_str(&compact_path(Path::new(token), DEFAULT_CONTRACT_FILE));
+        } else {
+            output.push_str(token);
+        }
+        output.push('`');
+        rest = &after_start[end + 1..];
+    }
+
+    output
 }
 
 #[derive(Debug, Serialize)]
