@@ -1790,7 +1790,15 @@ pub fn workspace_validate(
                 })),
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => CommandOutput::failure(render_workspace_validate_failure(
+                    &compact_path_display,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    None,
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
@@ -1799,7 +1807,11 @@ pub fn workspace_validate(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(render_workspace_validate_failure(
+                    &compact_path_display,
+                    &[],
+                    Some(&error.to_string()),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
@@ -1811,6 +1823,48 @@ pub fn workspace_validate(
         debug,
         debug_lines,
     )
+}
+
+fn render_workspace_validate_failure(
+    workspace_path: &str,
+    errors: &[String],
+    load_error: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Workspace validation failed", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(workspace_path)
+    ));
+
+    match load_error {
+        Some(error) => {
+            out.push_str(&format!("\n{} {}", paint_key("Why:"), error));
+        }
+        None if errors.is_empty() => {
+            out.push_str(&format!(
+                "\n{} workspace validation returned an unknown error",
+                paint_key("Why:")
+            ));
+        }
+        None => {
+            out.push_str(&format!("\n{}", paint_key("Why:")));
+            for error in errors {
+                out.push_str(&format!("\n{}  {}", info_bullet(), error));
+            }
+        }
+    }
+
+    out.push_str(&format!(
+        "\n{} repair the listed issue(s), then re-run `{}`",
+        paint_key("Next:"),
+        paint_code("ota workspace validate")
+    ));
+    out
 }
 
 #[derive(Debug, Serialize)]
@@ -5916,7 +5970,10 @@ fn load_and_run_workspace_up(
                     );
                 }
                 if emit_progress {
-                    eprintln!("{}", workspace_progress_line(&workspace_name, "RUN", &repo.name, None));
+                    eprintln!(
+                        "{}",
+                        workspace_progress_line(&workspace_name, "RUN", &repo.name, None)
+                    );
                 }
                 let tx = tx.clone();
                 thread::spawn(move || {
@@ -6031,11 +6088,15 @@ fn load_and_run_workspace_task(
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
                     eprintln!(
-                        "{} BLOCKED {} ({})",
-                        workspace_progress_prefix(&workspace_name),
-                        report.name,
-                        dependency
+                        "{}",
+                        workspace_progress_line(
+                            &workspace_name,
+                            "BLOCKED",
+                            &report.name,
+                            Some(&format!("({dependency})"))
+                        )
                     );
+                    eprintln!();
                 }
                 blocked_reports.push((order, report));
             } else {
@@ -6053,17 +6114,19 @@ fn load_and_run_workspace_task(
             .map(|(order, repo)| {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
                     eprintln!(
-                        "{} ACQUIRE {}",
-                        workspace_progress_prefix(&workspace_name),
-                        repo.name
+                        "{}",
+                        workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None)
                     );
                 }
                 if emit_progress {
                     eprintln!(
-                        "{} RUN {} {}",
-                        workspace_progress_prefix(&workspace_name),
-                        repo.name,
-                        task_name
+                        "{}",
+                        workspace_progress_line(
+                            &workspace_name,
+                            "RUN",
+                            &repo.name,
+                            Some(&task_name)
+                        )
                     );
                 }
                 let tx = tx.clone();
@@ -6090,11 +6153,10 @@ fn load_and_run_workspace_task(
                 .expect("workspace run worker should send a report");
             if emit_progress {
                 eprintln!(
-                    "{} {} {}",
-                    workspace_progress_prefix(&workspace_name),
-                    report.status,
-                    report.name
+                    "{}",
+                    workspace_progress_line(&workspace_name, &report.status, &report.name, None)
                 );
+                eprintln!();
             }
             if report.required && !report.ok {
                 ok = false;
@@ -6137,38 +6199,38 @@ fn run_workspace_task_streaming(
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
                     eprintln!(
-                        "{} BLOCKED {} ({})",
-                        workspace_progress_prefix(workspace_name),
-                        report.name,
-                        dependency
+                        "{}",
+                        workspace_progress_line(
+                            workspace_name,
+                            "BLOCKED",
+                            &report.name,
+                            Some(&format!("({dependency})"))
+                        )
                     );
+                    eprintln!();
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
                     eprintln!(
-                        "{} ACQUIRE {}",
-                        workspace_progress_prefix(workspace_name),
-                        repo.name
+                        "{}",
+                        workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
                     );
                 }
                 if emit_progress {
                     eprintln!(
-                        "{} RUN {} {}",
-                        workspace_progress_prefix(workspace_name),
-                        repo.name,
-                        task
+                        "{}",
+                        workspace_progress_line(workspace_name, "RUN", &repo.name, Some(task))
                     );
                 }
                 let report = run_workspace_repo_task(repo, task, RepoExecutionMode::Stream);
                 if emit_progress {
                     eprintln!(
-                        "{} {} {}",
-                        workspace_progress_prefix(workspace_name),
-                        report.status,
-                        report.name
+                        "{}",
+                        workspace_progress_line(workspace_name, &report.status, &report.name, None)
                     );
+                    eprintln!();
                 }
                 report
             }
@@ -6203,37 +6265,38 @@ fn run_workspace_up_streaming(
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
                 if emit_progress {
                     eprintln!(
-                        "{} BLOCKED {} ({})",
-                        workspace_progress_prefix(workspace_name),
-                        report.name,
-                        dependency
+                        "{}",
+                        workspace_progress_line(
+                            workspace_name,
+                            "BLOCKED",
+                            &report.name,
+                            Some(&format!("({dependency})"))
+                        )
                     );
+                    eprintln!();
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
                     eprintln!(
-                        "{} ACQUIRE {}",
-                        workspace_progress_prefix(workspace_name),
-                        repo.name
+                        "{}",
+                        workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
                     );
                 }
                 if emit_progress {
                     eprintln!(
-                        "{} RUN {}",
-                        workspace_progress_prefix(workspace_name),
-                        repo.name
+                        "{}",
+                        workspace_progress_line(workspace_name, "RUN", &repo.name, None)
                     );
                 }
                 let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream);
                 if emit_progress {
                     eprintln!(
-                        "{} {} {}",
-                        workspace_progress_prefix(workspace_name),
-                        report.status,
-                        report.name
+                        "{}",
+                        workspace_progress_line(workspace_name, &report.status, &report.name, None)
                     );
+                    eprintln!();
                 }
                 report
             }
@@ -6254,6 +6317,67 @@ fn workspace_progress_prefix(workspace_name: &str) -> String {
         String::from("[workspace]")
     } else {
         format!("[{trimmed}]")
+    }
+}
+
+fn workspace_progress_line(
+    workspace_name: &str,
+    status: &str,
+    repo_name: &str,
+    tail: Option<&str>,
+) -> String {
+    if plain_mode() {
+        return match tail {
+            Some(tail) if !tail.trim().is_empty() => format!(
+                "{}  {} {} {}",
+                workspace_progress_prefix(workspace_name),
+                status.trim(),
+                repo_name,
+                tail
+            ),
+            _ => format!(
+                "{}  {} {}",
+                workspace_progress_prefix(workspace_name),
+                status.trim(),
+                repo_name
+            ),
+        };
+    }
+
+    let prefix = paint(&workspace_progress_prefix(workspace_name), "1;36");
+    let icon = workspace_progress_icon(status);
+    let status = workspace_progress_status(status);
+    let repo = paint(repo_name, "1;37");
+
+    match tail {
+        Some(tail) if !tail.trim().is_empty() => {
+            format!("{prefix}  {icon} {status} {repo} {}", paint(tail, "1;37"))
+        }
+        _ => format!("{prefix}  {icon} {status} {repo}"),
+    }
+}
+
+fn workspace_progress_icon(status: &str) -> String {
+    match status.trim() {
+        "RUN" => paint("▶", "1;36"),
+        "READY" => paint("✓", "1;32"),
+        "NOT READY" => paint("◉", "1;93"),
+        "BLOCKED" => paint("◉", "1;93"),
+        "ACQUIRE" => paint("↓", "1;35"),
+        value if value.contains("FAILED") => paint("◉", "1;31"),
+        _ => paint("•", "1;37"),
+    }
+}
+
+fn workspace_progress_status(status: &str) -> String {
+    match status.trim() {
+        "RUN" => paint("RUN", "1;36"),
+        "READY" => paint("READY", "1;32"),
+        "NOT READY" => paint("NOT READY", "1;93"),
+        "BLOCKED" => paint("BLOCKED", "1;93"),
+        "ACQUIRE" => paint("ACQUIRE", "1;35"),
+        value if value.contains("FAILED") => paint(value, "1;31"),
+        value => paint(value, "1;37"),
     }
 }
 

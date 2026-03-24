@@ -667,6 +667,16 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         return stderr;
     }
 
+    if matches!(
+        command,
+        Commands::Validate { .. }
+            | Commands::Workspace {
+                command: WorkspaceCommands::Validate { .. }
+            }
+    ) {
+        return stderr;
+    }
+
     let suggestion = match command {
         Commands::Validate { .. } => "ota init",
         Commands::Tasks { .. } => "ota tasks",
@@ -680,7 +690,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => "ota workspace init --help",
             WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
-            WorkspaceCommands::Validate { .. } => "ota workspace validate",
+            WorkspaceCommands::Validate { .. } => "ota workspace doctor",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
             WorkspaceCommands::Check { .. } => "ota workspace check",
@@ -5982,6 +5992,45 @@ project:
     }
 
     #[test]
+    fn workspace_validate_failure_does_not_append_try_footer() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("repo");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  namex: broken
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  repo:
+    path: repo
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "validate",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(!stderr.contains("\nTry: `ota workspace validate`"));
+    }
+
+    #[test]
     fn workspace_init_merge_alias_routes_to_detect_merge() {
         let fixture = TempDir::new().unwrap();
         let web_dir = fixture.path().join("apps").join("web");
@@ -6617,13 +6666,11 @@ tasks:
         let output = run_with(["ota", "workspace", "validate", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("workspace repo `web` contract")
-        );
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("ERROR"));
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("Why:"));
+        assert!(stderr.contains("workspace repo `web` contract"));
     }
 
     #[test]
