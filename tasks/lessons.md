@@ -11,3 +11,6 @@
 - Pattern: Docs pages that only list commands are low adoption value and create user confusion.
 - Correction: Rewrite command/docs pages to include when-to-use, why, and concrete use-cases with practical command examples.
 - Rule: For OSS-facing docs updates, require adoption-first guidance (when/why/use-case), not enumeration-only content.
+- Pattern: A schema-valid contract can still be operationally incomplete (for example no runnable tasks), which can produce misleading `doctor` readiness.
+- Correction: Add explicit readiness checks for operational surface (at minimum one task for repo execution workflows).
+- Rule: Treat schema validity and operational readiness as separate checks; `doctor` must fail on missing core execution entrypoints.

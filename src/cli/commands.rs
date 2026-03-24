@@ -2761,6 +2761,15 @@ fn collect_detect_changes(
             existing_value,
             Some(task.run.as_str()),
         );
+        if task.safe_for_agent {
+            let existing_safe = existing.tasks.get(name).map(|task| task.safe_for_agent);
+            push_detect_change(
+                &mut changes,
+                &format!("tasks.{name}.safe_for_agent"),
+                existing_safe.map(|value| if value { "true" } else { "false" }),
+                Some("true"),
+            );
+        }
     }
 
     changes
@@ -2859,6 +2868,7 @@ fn apply_detect_addition(document: &mut YamlValue, change: &DetectComparisonChan
         ["runtimes", _] | ["tools", _] => add_string_field(root, &segments, &change.detected),
         ["services", _, _] => add_string_field(root, &segments, &change.detected),
         ["tasks", _, "run"] => add_string_field(root, &segments, &change.detected),
+        ["tasks", _, "safe_for_agent"] => add_bool_field(root, &segments, &change.detected),
         _ => false,
     }
 }
@@ -2886,6 +2896,37 @@ fn add_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool 
     }
 
     current.insert(final_key, YamlValue::String(value.to_string()));
+    true
+}
+
+fn add_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+    if segments.len() < 2 {
+        return false;
+    }
+    let parsed = match value {
+        "true" => true,
+        "false" => false,
+        _ => return false,
+    };
+
+    let mut current = root;
+    for segment in &segments[..segments.len() - 1] {
+        let key = YamlValue::String((*segment).to_string());
+        let entry = current
+            .entry(key)
+            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+        let Some(mapping) = entry.as_mapping_mut() else {
+            return false;
+        };
+        current = mapping;
+    }
+
+    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
+    if current.contains_key(&final_key) {
+        return false;
+    }
+
+    current.insert(final_key, YamlValue::Bool(parsed));
     true
 }
 
@@ -5823,7 +5864,9 @@ enum ResolveContractError {
     NotFound { start: String },
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
-    #[error("contract path does not exist: `{path}`")]
+    #[error(
+        "contract path does not exist: `{path}`\n\nNext:\n- use `ota init` to create a starter contract\n- use `ota detect --dry-run` to preview inferred fields\n- use `ota detect --write` to write a detected contract"
+    )]
     MissingExplicitPath { path: String },
 }
 

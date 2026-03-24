@@ -68,6 +68,8 @@ pub struct DetectProject {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectTask {
     pub run: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub safe_for_agent: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
@@ -140,14 +142,25 @@ impl DetectReport {
             }
 
             if let Some(task_field) = inference.field.strip_prefix("tasks.")
-                && let Some(task_name) = task_field.strip_suffix(".run")
+                && let Some((task_name, field_name)) = task_field.split_once('.')
             {
-                contract.tasks.insert(
-                    task_name.to_string(),
-                    DetectTask {
-                        run: inference.value.clone(),
-                    },
-                );
+                match field_name {
+                    "run" => {
+                        contract.tasks.insert(
+                            task_name.to_string(),
+                            DetectTask {
+                                run: inference.value.clone(),
+                                safe_for_agent: false,
+                            },
+                        );
+                    }
+                    "safe_for_agent" if inference.value == "true" => {
+                        if let Some(task) = contract.tasks.get_mut(task_name) {
+                            task.safe_for_agent = true;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -194,6 +207,9 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_ruby_markers(&root, &mut builder)?;
     detect_dotnet_markers(&root, &mut builder)?;
     detect_mix_exs(&root, &mut builder)?;
+    detect_build_sbt(&root, &mut builder)?;
+    detect_package_swift(&root, &mut builder)?;
+    detect_pubspec_yaml(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -237,14 +253,15 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
                 task_confidence = Confidence::High;
             }
         }
-    } else if let Some((name, source)) = detect_node_package_manager_marker(root) {
+    } else if let Some((name, source, confidence)) = detect_node_package_manager_marker(root) {
         builder.set_tool(
             name.to_string(),
             "*".to_string(),
             source.to_string(),
-            Confidence::Medium,
+            confidence,
         );
         package_manager_name = Some(name.to_string());
+        task_confidence = confidence;
     }
 
     if let Some(node) = package
@@ -351,18 +368,20 @@ fn detect_composer_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
     Ok(())
 }
 
-fn detect_node_package_manager_marker(root: &Path) -> Option<(&'static str, &'static str)> {
+fn detect_node_package_manager_marker(
+    root: &Path,
+) -> Option<(&'static str, &'static str, Confidence)> {
     [
-        ("pnpm", "pnpm-workspace.yaml"),
-        ("pnpm", "pnpm-lock.yaml"),
-        ("yarn", "yarn.lock"),
-        ("bun", "bun.lock"),
-        ("bun", "bun.lockb"),
-        ("npm", "package-lock.json"),
-        ("npm", "npm-shrinkwrap.json"),
+        ("pnpm", "pnpm-workspace.yaml", Confidence::High),
+        ("pnpm", "pnpm-lock.yaml", Confidence::High),
+        ("yarn", "yarn.lock", Confidence::High),
+        ("bun", "bun.lock", Confidence::High),
+        ("bun", "bun.lockb", Confidence::High),
+        ("npm", "package-lock.json", Confidence::High),
+        ("npm", "npm-shrinkwrap.json", Confidence::High),
     ]
     .into_iter()
-    .find(|(_, path)| root.join(path).exists())
+    .find(|(_, path, _)| root.join(path).exists())
 }
 
 fn detect_nvmrc(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -1212,6 +1231,178 @@ fn detect_mix_exs(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
     Ok(())
 }
 
+fn detect_build_sbt(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("build.sbt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "sbt".to_string(),
+        "*".to_string(),
+        "build.sbt".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = extract_sbt_quoted_assignment(&contents, "name") {
+        builder.set_project_name(name, "build.sbt#name".to_string(), Confidence::High);
+    }
+
+    if let Some(version) = extract_sbt_quoted_assignment(&contents, "scalaVersion") {
+        builder.set_runtime(
+            "scala".to_string(),
+            version,
+            "build.sbt#scalaVersion".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "sbt compile".to_string(),
+        "build.sbt#standard-tasks".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "sbt test".to_string(),
+        "build.sbt#standard-tasks".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "run".to_string(),
+        "sbt run".to_string(),
+        "build.sbt#standard-tasks".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_package_swift(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("Package.swift");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "swift".to_string(),
+        "*".to_string(),
+        "Package.swift".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = extract_package_swift_name(&contents) {
+        builder.set_project_name(name, "Package.swift#name".to_string(), Confidence::High);
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "swift build".to_string(),
+        "Package.swift#standard-tasks".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "swift test".to_string(),
+        "Package.swift#standard-tasks".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "run".to_string(),
+        "swift run".to_string(),
+        "Package.swift#standard-tasks".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_pubspec_yaml(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("pubspec.yaml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let pubspec: YamlValue = serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    if let Some(name) = yaml_key_str(&pubspec, "name")
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "pubspec.yaml#name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_tool(
+        "dart".to_string(),
+        "*".to_string(),
+        "pubspec.yaml".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(sdk) = yaml_nested_key_str(&pubspec, &["environment", "sdk"])
+        && !sdk.trim().is_empty()
+    {
+        builder.set_runtime(
+            "dart".to_string(),
+            sdk.trim().to_string(),
+            "pubspec.yaml#environment.sdk".to_string(),
+            Confidence::High,
+        );
+    }
+
+    if yaml_mapping_has_key(&pubspec, "flutter") {
+        builder.set_tool(
+            "flutter".to_string(),
+            "*".to_string(),
+            "pubspec.yaml#flutter".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "build".to_string(),
+            "flutter build".to_string(),
+            "pubspec.yaml#flutter-standard-tasks".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "flutter test".to_string(),
+            "pubspec.yaml#flutter-standard-tasks".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "run".to_string(),
+            "flutter run".to_string(),
+            "pubspec.yaml#flutter-standard-tasks".to_string(),
+            Confidence::High,
+        );
+    } else {
+        builder.set_task(
+            "test".to_string(),
+            "dart test".to_string(),
+            "pubspec.yaml#standard-tasks".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "run".to_string(),
+            "dart run".to_string(),
+            "pubspec.yaml#standard-tasks".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
 fn extract_ruby_gemfile_version(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -1464,6 +1655,58 @@ fn extract_quoted_assignment(contents: &str, prefix: &str) -> Option<String> {
     })
 }
 
+fn extract_sbt_quoted_assignment(contents: &str, key: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let rest = trimmed.strip_prefix(key)?.trim_start();
+        let rest = rest.strip_prefix(":=")?.trim_start();
+        extract_quoted_string(rest)
+    })
+}
+
+fn extract_package_swift_name(contents: &str) -> Option<String> {
+    let mut in_package_decl = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if !in_package_decl && trimmed.contains("let package = Package(") {
+            in_package_decl = true;
+            continue;
+        }
+        if !in_package_decl {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("name:") {
+            return extract_quoted_string(rest.trim_start().trim_end_matches(','));
+        }
+    }
+
+    None
+}
+
+fn yaml_key_str<'a>(value: &'a YamlValue, key: &str) -> Option<&'a str> {
+    value
+        .as_mapping()?
+        .get(&YamlValue::String(key.to_string()))?
+        .as_str()
+}
+
+fn yaml_nested_key_str<'a>(value: &'a YamlValue, keys: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in keys {
+        current = current
+            .as_mapping()?
+            .get(&YamlValue::String((*key).to_string()))?;
+    }
+    current.as_str()
+}
+
+fn yaml_mapping_has_key(value: &YamlValue, key: &str) -> bool {
+    value
+        .as_mapping()
+        .is_some_and(|mapping| mapping.contains_key(&YamlValue::String(key.to_string())))
+}
+
 fn extract_quoted_string(input: &str) -> Option<String> {
     let quote = input.chars().next()?;
     if quote != '"' && quote != '\'' {
@@ -1604,8 +1847,28 @@ impl DetectBuilder {
         if self.should_replace(&field, &source, confidence) {
             self.contract
                 .tasks
-                .insert(name, DetectTask { run: run.clone() });
-            self.record(field, run, source, confidence);
+                .insert(
+                    name.clone(),
+                    DetectTask {
+                        run: run.clone(),
+                        safe_for_agent: false,
+                    },
+                );
+            self.record(field, run, source.clone(), confidence);
+            if is_verifier_task_name(&name) {
+                self.set_task_safe_for_agent(name, source, confidence);
+            }
+        }
+    }
+
+    fn set_task_safe_for_agent(&mut self, name: String, source: String, confidence: Confidence) {
+        let field = format!("tasks.{name}.safe_for_agent");
+        if !self.should_replace(&field, &source, confidence) {
+            return;
+        }
+        if let Some(task) = self.contract.tasks.get_mut(&name) {
+            task.safe_for_agent = true;
+            self.record(field, String::from("true"), source, confidence);
         }
     }
 
@@ -1701,6 +1964,9 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "Cargo.toml#package.name" => 4,
             "pyproject.toml#project.name" => 4,
             "setup.cfg#metadata.name" => 4,
+            "pubspec.yaml#name" => 4,
+            "build.sbt#name" => 4,
+            "Package.swift#name" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
             "composer.json#name" => 3,
@@ -1773,6 +2039,14 @@ fn source_priority(field: &str, source: &str) -> u8 {
             ".tool-versions" => 1,
             _ => 0,
         },
+        "runtimes.scala" => match source {
+            "build.sbt#scalaVersion" => 2,
+            _ => 0,
+        },
+        "runtimes.dart" => match source {
+            "pubspec.yaml#environment.sdk" => 2,
+            _ => 0,
+        },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
@@ -1781,6 +2055,10 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "Gemfile" => 2,
             "dotnet-project" => 2,
             "mix.exs" => 2,
+            "build.sbt" => 2,
+            "Package.swift" => 2,
+            "pubspec.yaml" => 2,
+            "pubspec.yaml#flutter" => 2,
             "pnpm-workspace.yaml" => 2,
             "pnpm-lock.yaml" => 2,
             "yarn.lock" => 2,
@@ -1808,6 +2086,22 @@ fn source_priority(field: &str, source: &str) -> u8 {
         },
         _ => 0,
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn is_verifier_task_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| {
+            matches!(
+                token,
+                "test" | "tests" | "lint" | "typecheck" | "check" | "verify" | "fmt" | "format"
+            )
+        })
 }
 
 #[cfg(test)]
@@ -2072,6 +2366,118 @@ end
                 .get("test")
                 .map(|task| task.run.as_str()),
             Some("mix test")
+        );
+    }
+
+    #[test]
+    fn detects_scala_build_sbt_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "build.sbt",
+            r#"name := "qredex-scala"
+scalaVersion := "2.13.16"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex-scala")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("scala"),
+            Some(&"2.13.16".to_string())
+        );
+        assert_eq!(report.contract.tools.get("sbt"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("sbt compile")
+        );
+    }
+
+    #[test]
+    fn detects_swift_package_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Package.swift",
+            r#"// swift-tools-version: 5.9
+import PackageDescription
+
+let package = Package(
+    name: "QredexSwift",
+    targets: [
+        .executableTarget(name: "QredexSwift")
+    ]
+)
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("QredexSwift")
+        );
+        assert_eq!(report.contract.tools.get("swift"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("swift test")
+        );
+    }
+
+    #[test]
+    fn detects_pubspec_flutter_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pubspec.yaml",
+            r#"name: qredex_flutter
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+flutter:
+  uses-material-design: true
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_flutter")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("dart"),
+            Some(&">=3.3.0 <4.0.0".to_string())
+        );
+        assert_eq!(report.contract.tools.get("dart"), Some(&"*".to_string()));
+        assert_eq!(report.contract.tools.get("flutter"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("run")
+                .map(|task| task.run.as_str()),
+            Some("flutter run")
         );
     }
 
@@ -2654,6 +3060,70 @@ name = "ota-api"
                 .get("dev")
                 .map(|task| task.run.as_str()),
             Some("pnpm dev")
+        );
+    }
+
+    #[test]
+    fn treats_lockfile_package_manager_and_scripts_as_high_confidence() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "@qredex/merchant/app",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"merchant-app\"\n}\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        let contract = report.high_confidence_contract();
+
+        assert_eq!(contract.tools.get("npm"), Some(&"*".to_string()));
+        assert_eq!(
+            contract.tasks.get("build").map(|task| task.run.as_str()),
+            Some("npm run build")
+        );
+        assert_eq!(
+            contract.tasks.get("dev").map(|task| task.run.as_str()),
+            Some("npm run dev")
+        );
+        assert_eq!(
+            contract.tasks.get("start").map(|task| task.run.as_str()),
+            Some("npm run start")
+        );
+        assert_eq!(
+            contract.tasks.get("typecheck").map(|task| task.run.as_str()),
+            Some("npm run typecheck")
+        );
+        assert_eq!(
+            contract.tasks.get("typecheck").map(|task| task.safe_for_agent),
+            Some(true)
+        );
+        assert_eq!(
+            contract.tasks.get("build").map(|task| task.safe_for_agent),
+            Some(false)
+        );
+
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tools.npm"
+                    && inference.source == "package-lock.json"
+                    && inference.confidence == Confidence::High
+            }),
+            "expected npm tool inference from package-lock.json with high confidence"
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tasks.typecheck.safe_for_agent"
+                    && inference.value == "true"
+                    && inference.confidence == Confidence::High
+            }),
+            "expected typecheck verifier tasks to be marked safe_for_agent=true"
         );
     }
 

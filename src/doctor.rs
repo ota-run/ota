@@ -107,6 +107,9 @@ fn diagnose_contract_with_scope(
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
     }
+    if scope == DoctorScope::All {
+        diagnose_tasks_surface(contract, &mut findings);
+    }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
         diagnose_services(contract, contract_path, &mut findings);
     }
@@ -122,6 +125,23 @@ fn diagnose_contract_with_scope(
             .any(|finding| finding.severity == FindingSeverity::Error),
         findings,
     }
+}
+
+fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
+    if !contract.tasks.is_empty() {
+        return;
+    }
+
+    findings.push(Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("No tasks defined in contract"),
+        why: String::from(
+            "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+        ),
+        next: String::from(
+            "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
+        ),
+    });
 }
 
 fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -1202,6 +1222,9 @@ services:
     required: true
     start: docker compose up -d postgres
     healthcheck: exit 1
+tasks:
+  setup:
+    run: printf ready
 "#,
         )
         .unwrap();
@@ -1228,6 +1251,9 @@ services:
   cache:
     required: false
     healthcheck: exit 1
+tasks:
+  setup:
+    run: printf ready
 "#,
         )
         .unwrap();
@@ -1254,6 +1280,9 @@ services:
   postgres:
     required: true
     start: docker compose up -d postgres
+tasks:
+  setup:
+    run: printf ready
 "#,
         )
         .unwrap();
@@ -1269,6 +1298,47 @@ services:
     }
 
     #[test]
+    fn reports_missing_tasks_as_not_ready() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(report.findings[0].summary, "No tasks defined in contract");
+    }
+
+    #[test]
+    fn checks_only_scope_does_not_require_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: formatting
+    kind: health
+    severity: warn
+    run: exit 0
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert!(report.findings.is_empty());
+    }
+
+    #[test]
     fn reports_timed_out_service_healthchecks() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -1281,6 +1351,9 @@ services:
     required: true
     healthcheck: sleep 1
     timeout: 10
+tasks:
+  setup:
+    run: printf ready
 "#,
         )
         .unwrap();
