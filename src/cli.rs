@@ -227,6 +227,42 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorkspaceDoctorStatusArg {
+    All,
+    Ready,
+    NotReady,
+}
+
+impl From<WorkspaceDoctorStatusArg> for commands::WorkspaceDoctorStatusFilter {
+    fn from(value: WorkspaceDoctorStatusArg) -> Self {
+        match value {
+            WorkspaceDoctorStatusArg::All => commands::WorkspaceDoctorStatusFilter::All,
+            WorkspaceDoctorStatusArg::Ready => commands::WorkspaceDoctorStatusFilter::Ready,
+            WorkspaceDoctorStatusArg::NotReady => commands::WorkspaceDoctorStatusFilter::NotReady,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorkspaceDoctorSeverityArg {
+    All,
+    Error,
+    Warn,
+    Info,
+}
+
+impl From<WorkspaceDoctorSeverityArg> for commands::WorkspaceDoctorSeverityFilter {
+    fn from(value: WorkspaceDoctorSeverityArg) -> Self {
+        match value {
+            WorkspaceDoctorSeverityArg::All => commands::WorkspaceDoctorSeverityFilter::All,
+            WorkspaceDoctorSeverityArg::Error => commands::WorkspaceDoctorSeverityFilter::Error,
+            WorkspaceDoctorSeverityArg::Warn => commands::WorkspaceDoctorSeverityFilter::Warn,
+            WorkspaceDoctorSeverityArg::Info => commands::WorkspaceDoctorSeverityFilter::Info,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Subcommand)]
 enum WorkspaceCommands {
     /// Create a starter ota.workspace.yaml from local repo structure.
@@ -287,6 +323,15 @@ enum WorkspaceCommands {
         /// Maximum number of independent repos to diagnose at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
+        /// Filter repos by readiness status.
+        #[arg(long, value_enum, default_value_t = WorkspaceDoctorStatusArg::All)]
+        status: WorkspaceDoctorStatusArg,
+        /// Filter findings by severity.
+        #[arg(long, value_enum, default_value_t = WorkspaceDoctorSeverityArg::All)]
+        severity: WorkspaceDoctorSeverityArg,
+        /// Filter output to one workspace repo by name.
+        #[arg(long)]
+        repo: Option<String>,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -583,10 +628,22 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Doctor { json, jobs, path } => commands::workspace_doctor(
+            WorkspaceCommands::Doctor {
+                json,
+                jobs,
+                status,
+                severity,
+                repo,
+                path,
+            } => commands::workspace_doctor(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                commands::WorkspaceDoctorFilters {
+                    status: status.into(),
+                    severity: severity.into(),
+                    repo,
+                },
                 format_from_json(json),
                 debug,
             ),
@@ -6704,6 +6761,99 @@ tasks:
         assert!(stderr.contains("Why:"));
         assert!(stderr.contains("workspace repo `web` contract"));
         assert!(!stderr.contains("/Users/"));
+    }
+
+    #[test]
+    fn workspace_doctor_status_not_ready_filters_repos() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("good")).unwrap();
+        fs::create_dir_all(fixture.path().join("broken")).unwrap();
+        fs::write(
+            fixture.path().join("good").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: good
+tasks:
+  setup:
+    run: echo ok
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  good:
+    path: good
+    required: true
+  broken:
+    path: broken
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--status",
+            "not-ready",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(!body.contains("good [required]"));
+        assert!(body.contains("broken [required]"));
+    }
+
+    #[test]
+    fn workspace_doctor_repo_filter_scopes_output() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "doctor", "--repo", "db", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("db [required]"));
+        assert!(!body.contains("api [required]"));
+    }
+
+    #[test]
+    fn workspace_doctor_severity_error_filters_findings() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("broken")).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  broken:
+    path: broken
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--severity",
+            "error",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("ERROR  Missing repo contract"));
     }
 
     #[test]

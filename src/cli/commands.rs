@@ -68,6 +68,28 @@ thread_local! {
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum WorkspaceDoctorStatusFilter {
+    All,
+    Ready,
+    NotReady,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WorkspaceDoctorSeverityFilter {
+    All,
+    Error,
+    Warn,
+    Info,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceDoctorFilters {
+    pub status: WorkspaceDoctorStatusFilter,
+    pub severity: WorkspaceDoctorSeverityFilter,
+    pub repo: Option<String>,
+}
+
 pub fn set_plain_mode(enabled: bool) {
     PLAIN_MODE.with(|value| value.set(enabled));
 }
@@ -2658,6 +2680,7 @@ pub fn workspace_doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    filters: WorkspaceDoctorFilters,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -2688,22 +2711,33 @@ pub fn workspace_doctor(
         String::from("DEBUG command=workspace.doctor"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG filter_status={:?}", filters.status),
+        format!("DEBUG filter_severity={:?}", filters.severity),
+        format!(
+            "DEBUG filter_repo={}",
+            filters.repo.as_deref().unwrap_or("-")
+        ),
     ];
 
     finalize_debug(
         match load_and_diagnose_workspace(&resolved_path, jobs) {
-            Ok(report) => match format {
-                OutputFormat::Text => render_workspace_doctor_text(&compact_path_display, &report),
-                OutputFormat::Json => CommandOutput {
-                    stdout: to_json(&WorkspaceDoctorSuccess {
-                        ok: report.ok,
-                        path: &path_display,
-                        repos: &report.repos,
-                    }),
-                    stderr: None,
-                    exit_code: if report.ok { 0 } else { 1 },
-                },
-            },
+            Ok(report) => {
+                let report = apply_workspace_doctor_filters(report, &filters);
+                match format {
+                    OutputFormat::Text => {
+                        render_workspace_doctor_text(&compact_path_display, &report)
+                    }
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&WorkspaceDoctorSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            repos: &report.repos,
+                        }),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                }
+            }
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -3913,14 +3947,16 @@ fn render_workspace_doctor_text(
         ));
 
         for finding in &repo.findings {
+            let why = compact_backticked_paths(&finding.why);
+            let next = compact_backticked_paths(&finding.next);
             stdout.push_str(&format!(
                 "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
                 finding_detail_key(finding.severity, "Why:"),
-                finding.why,
+                why,
                 finding_detail_key(finding.severity, "Next:"),
-                finding.next
+                next
             ));
         }
     }
@@ -3930,6 +3966,55 @@ fn render_workspace_doctor_text(
         stderr: None,
         exit_code: if report.ok { 0 } else { 1 },
     }
+}
+
+fn apply_workspace_doctor_filters(
+    report: crate::workspace::WorkspaceDoctorReport,
+    filters: &WorkspaceDoctorFilters,
+) -> crate::workspace::WorkspaceDoctorReport {
+    let mut repos = Vec::new();
+
+    for mut repo in report.repos {
+        if let Some(target_repo) = filters.repo.as_deref() {
+            if repo.name != target_repo {
+                continue;
+            }
+        }
+
+        match filters.status {
+            WorkspaceDoctorStatusFilter::All => {}
+            WorkspaceDoctorStatusFilter::Ready if !repo.ok => continue,
+            WorkspaceDoctorStatusFilter::NotReady if repo.ok => continue,
+            _ => {}
+        }
+
+        repo.findings = repo
+            .findings
+            .into_iter()
+            .filter(|finding| match filters.severity {
+                WorkspaceDoctorSeverityFilter::All => true,
+                WorkspaceDoctorSeverityFilter::Error => finding.severity == FindingSeverity::Error,
+                WorkspaceDoctorSeverityFilter::Warn => finding.severity == FindingSeverity::Warn,
+                WorkspaceDoctorSeverityFilter::Info => finding.severity == FindingSeverity::Info,
+            })
+            .collect();
+
+        if !matches!(filters.severity, WorkspaceDoctorSeverityFilter::All)
+            && repo.findings.is_empty()
+        {
+            continue;
+        }
+
+        repo.ok = !repo
+            .findings
+            .iter()
+            .any(|finding| finding.severity == FindingSeverity::Error);
+        repos.push(repo);
+    }
+
+    let ok = repos.iter().all(|repo| !repo.required || repo.ok);
+
+    crate::workspace::WorkspaceDoctorReport { ok, repos }
 }
 
 fn render_workspace_check_text(
@@ -3966,14 +4051,16 @@ fn render_workspace_check_text(
         ));
 
         for finding in &repo.findings {
+            let why = compact_backticked_paths(&finding.why);
+            let next = compact_backticked_paths(&finding.next);
             stdout.push_str(&format!(
                 "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
                 finding_detail_key(finding.severity, "Why:"),
-                finding.why,
+                why,
                 finding_detail_key(finding.severity, "Next:"),
-                finding.next
+                next
             ));
         }
     }
@@ -4018,15 +4105,17 @@ fn render_report_section(
     }
 
     for finding in &report.findings {
+        let why = compact_backticked_paths(&finding.why);
+        let next = compact_backticked_paths(&finding.next);
         stdout.push_str("\n\n");
         stdout.push_str(&format!(
             "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
             finding_detail_key(finding.severity, "Why:"),
-            finding.why,
+            why,
             finding_detail_key(finding.severity, "Next:"),
-            finding.next
+            next
         ));
     }
 
@@ -4958,15 +5047,17 @@ fn render_up_section_from_parts(
     }
 
     for finding in &report.findings {
+        let why = compact_backticked_paths(&finding.why);
+        let next = compact_backticked_paths(&finding.next);
         stdout.push_str("\n\n");
         stdout.push_str(&format!(
             "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
             finding_detail_key(finding.severity, "Why:"),
-            finding.why,
+            why,
             finding_detail_key(finding.severity, "Next:"),
-            finding.next
+            next
         ));
     }
 
@@ -5045,14 +5136,16 @@ fn render_workspace_up(
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
+                    let why = compact_backticked_paths(&finding.why);
+                    let next = compact_backticked_paths(&finding.next);
                     stdout.push_str(&format!(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
                         finding_detail_key(finding.severity, "Why:"),
-                        finding.why,
+                        why,
                         finding_detail_key(finding.severity, "Next:"),
-                        finding.next
+                        next
                     ));
                 }
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
@@ -5118,14 +5211,16 @@ fn render_workspace_run(
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
+                    let why = compact_backticked_paths(&finding.why);
+                    let next = compact_backticked_paths(&finding.next);
                     stdout.push_str(&format!(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
                         finding_detail_key(finding.severity, "Why:"),
-                        finding.why,
+                        why,
                         finding_detail_key(finding.severity, "Next:"),
-                        finding.next
+                        next
                     ));
                 }
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
