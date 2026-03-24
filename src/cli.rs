@@ -3512,7 +3512,7 @@ agent:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("WROTE"));
+        assert!(output.stdout.contains("INIT WRITE"));
         assert!(output.stdout.contains(
             "Write policy: detected mode writes only high-confidence fields automatically"
         ));
@@ -4659,7 +4659,7 @@ tasks:
         let output = run_with(["ota", "detect", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("WROTE"));
+        assert!(output.stdout.contains("DETECT WRITE"));
         assert!(output.stdout.contains("Excluded from automatic write:"));
         assert!(
             output

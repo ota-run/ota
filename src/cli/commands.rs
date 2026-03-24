@@ -1564,13 +1564,23 @@ pub fn detect(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = if merge {
-                            format!("DETECT MERGE {}", report.root.display())
+                            format!("DETECT MERGE PREVIEW {}", report.root.display())
                         } else {
-                            format!("DETECT {}", report.root.display())
+                            format!("DETECT PREVIEW {}", report.root.display())
                         };
-                        stdout.push('\n');
-                        stdout.push_str("---");
-                        stdout.push('\n');
+                        stdout.push_str("\nMode: dry-run (no write)");
+                        if merge {
+                            stdout.push_str(&format!(
+                                "\nNext: run `ota detect --merge {}` to apply add-only high-confidence fields",
+                                report.root.display()
+                            ));
+                        } else {
+                            stdout.push_str(&format!(
+                                "\nNext: run `ota detect {}` to write a high-confidence contract",
+                                report.root.display()
+                            ));
+                        }
+                        stdout.push_str("\nContract:\n---\n");
                         stdout.push_str(yaml.trim_end());
                         render_inference_section(
                             &mut stdout,
@@ -2226,7 +2236,13 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let mut stdout = format!("WROTE {}", contract_path.display());
+                let mut stdout = format!(
+                    "DETECT WRITE {}\nResult: wrote `{}`\nPolicy: only high-confidence fields are written automatically\nNext: run `ota validate {}` and `ota doctor {}`",
+                    report.root.display(),
+                    contract_path.display(),
+                    contract_path.display(),
+                    contract_path.display()
+                );
                 render_inference_section(
                     &mut stdout,
                     "Excluded from automatic write",
@@ -2504,7 +2520,8 @@ fn render_init(
             Ok(()) => match format {
                 OutputFormat::Text => {
                     let mut stdout = format!(
-                        "WROTE {}\nMode: {mode}\nNext: run `ota validate {}` and `ota doctor {}`",
+                        "INIT WRITE {}\nResult: wrote `{}`\nMode: {mode}\nNext: run `ota validate {}` and `ota doctor {}`",
+                        report.root.display(),
                         contract_path.display(),
                         contract_path.display(),
                         contract_path.display()
@@ -2554,7 +2571,7 @@ fn render_init(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "INIT {}\nMode: {mode}\nNext: review this starter contract, edit it if needed, then run `ota init {}`\n---\n{}",
+                "INIT PREVIEW {}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `ota init {}`\nContract:\n---\n{}",
                 report.root.display(),
                 report.root.display(),
                 review_yaml.trim_end()

@@ -268,15 +268,15 @@ Create a starter Ota contract for a repo that does not yet have one.
 
 ```bash
 ota init [PATH]
-ota init --write [PATH]
+ota init --dry-run [PATH]
 ota init --json [PATH]
 ```
 
 Current behavior:
 
 - inspects the repo using the detection engine
-- defaults to review mode and does not write
-- writes only when `--write` is provided
+- writes by default
+- supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
