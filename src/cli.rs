@@ -769,7 +769,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
             WorkspaceCommands::Validate { .. } => "ota workspace doctor",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
-            WorkspaceCommands::List { .. } => "ota workspace list",
+            WorkspaceCommands::List { .. } => "setup workspace with `ota workspace init`",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
@@ -6751,6 +6751,35 @@ repos:
         assert!(body.contains("api [required] (ACQUIRED)"));
         assert!(body.contains("Contract: missing (setup repo with"));
         assert!(body.contains("ota init"));
+    }
+
+    #[test]
+    fn workspace_list_not_found_uses_path_where_and_actionable_next() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "workspace", "list", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(!stderr.contains("Where: ota workspace list"));
+        assert!(stderr.contains("no `ota.workspace.yaml` found"));
+        assert!(stderr.contains("Next: setup workspace with `ota workspace init`"));
+    }
+
+    #[test]
+    fn workspace_list_concise_omits_detail_lines() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "--concise", "workspace", "list", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE LIST"));
+        assert!(body.contains("db [required] (ACQUIRED)"));
+        assert!(!body.contains("Path:"));
+        assert!(!body.contains("Contract:"));
+        assert!(!body.contains("Depends On:"));
     }
 
     #[test]

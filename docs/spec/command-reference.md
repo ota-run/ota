@@ -771,6 +771,9 @@ Diagnose workspace repo readiness from an Ota workspace contract.
 ota workspace doctor [PATH]
 ota workspace doctor --json [PATH]
 ota workspace doctor --jobs 4 [PATH]
+ota workspace doctor --repo <name> [PATH]
+ota workspace doctor --status ready|not-ready [PATH]
+ota workspace doctor --severity error|warn|info [PATH]
 ```
 
 Current behavior:
@@ -785,6 +788,7 @@ Current behavior:
 - keeps workspace logic above repo diagnosis instead of duplicating it
 - downgrades findings for optional repos to warnings
 - rejects required repos that depend on optional repos
+- supports repo/status/severity filtering for focused diagnosis views
 
 Text output:
 

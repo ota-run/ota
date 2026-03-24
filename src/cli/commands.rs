@@ -149,6 +149,19 @@ pub fn stylize_inline_text(value: &str) -> String {
 }
 
 fn infer_failure_where(default: &str, message: &str) -> String {
+    if let Some(from_idx) = message.find("from `") {
+        let after_from = &message[from_idx + 6..];
+        if let Some(end_idx) = after_from.find('`') {
+            let candidate = &after_from[..end_idx];
+            if !candidate.trim().is_empty() {
+                if candidate.starts_with('/') {
+                    return compact_path(Path::new(candidate), "path");
+                }
+                return candidate.to_string();
+            }
+        }
+    }
+
     for token in backticked_tokens(message) {
         if looks_like_location_token(token) {
             if token.starts_with('/') {
@@ -161,7 +174,8 @@ fn infer_failure_where(default: &str, message: &str) -> String {
 }
 
 fn looks_like_location_token(token: &str) -> bool {
-    token.starts_with("./")
+    token == "."
+        || token.starts_with("./")
         || token.starts_with("../")
         || token.starts_with('/')
         || token.starts_with('~')
@@ -4374,10 +4388,37 @@ fn compact_workspace_path(path: &Path) -> String {
 }
 
 fn compact_repo_path(path: &Path) -> String {
+    if let Ok(current_dir) = std::env::current_dir() {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        };
+        if let Ok(relative) = absolute.strip_prefix(&current_dir) {
+            if relative.as_os_str().is_empty() {
+                return String::from(".");
+            }
+            return format!("./{}", relative.display());
+        }
+    }
     compact_path(path, ".")
 }
 
 fn compact_path(path: &Path, fallback: &str) -> String {
+    if let Ok(current_dir) = std::env::current_dir() {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        };
+        if let Ok(relative) = absolute.strip_prefix(&current_dir) {
+            if relative.as_os_str().is_empty() {
+                return String::from(".");
+            }
+            return format!("./{}", relative.display());
+        }
+    }
+
     let tail = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -5540,6 +5581,33 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
 
     if repos.is_empty() {
         stdout.push_str(&format!("\n\n{} none", info_bullet()));
+        return CommandOutput::success(stdout);
+    }
+
+    if concise_mode() {
+        for repo in repos {
+            let mut line = format!(
+                "{} {} [{}] ({})",
+                list_bullet(),
+                paint(&repo.name, "1"),
+                if repo.required { "required" } else { "optional" },
+                if repo.acquired {
+                    paint("ACQUIRED", "1;32")
+                } else {
+                    paint("NOT ACQUIRED", "1;93")
+                }
+            );
+            if !repo.contract_present {
+                line.push_str(&format!(
+                    " {}",
+                    paint("(contract: missing)", "1;38;2;255;235;59")
+                ));
+            }
+            if !repo.depends_on.is_empty() {
+                line.push_str(&format!(" depends_on={}", repo.depends_on.join(",")));
+            }
+            stdout.push_str(&format!("\n\n{line}"));
+        }
         return CommandOutput::success(stdout);
     }
 
