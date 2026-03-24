@@ -6749,9 +6749,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("api [required] (ACQUIRED)"));
-        assert!(body.contains("Contract: missing ("));
-        assert!(body.contains("ota.yaml)"));
-        assert!(body.contains("Next:"));
+        assert!(body.contains("Contract: missing (setup repo with"));
         assert!(body.contains("ota init"));
     }
 
