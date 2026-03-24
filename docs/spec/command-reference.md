@@ -198,6 +198,10 @@ Current behavior:
 - when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
 - supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
+- remote target guidance:
+- `daytona`: `sandbox-dev`
+- `ssh` / `tsh`: `user@host`
+- `kubectl`: `pod/ota-dev`
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values

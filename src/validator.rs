@@ -241,9 +241,31 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
             .and_then(|remote| remote.target.as_deref())
             .is_none()
     {
-        errors.push(ValidationError::new(
-            "`execution.preferred: remote` requires `execution.backends.remote.target`",
-        ));
+        let provider = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.remote.as_ref())
+            .map(|remote| remote.provider.trim())
+            .unwrap_or_default();
+        let example = remote_target_example(provider);
+        if provider.is_empty() {
+            errors.push(ValidationError::new(
+                "`execution.preferred: remote` requires `execution.backends.remote.target`",
+            ));
+        } else {
+            errors.push(ValidationError::new(format!(
+                "`execution.preferred: remote` with provider `{provider}` requires `execution.backends.remote.target` (example: `{example}`)"
+            )));
+        }
+    }
+}
+
+fn remote_target_example(provider: &str) -> &'static str {
+    match provider {
+        "daytona" => "sandbox-dev",
+        "ssh" | "tsh" => "user@host",
+        "kubectl" => "pod/ota-dev",
+        _ => "remote-target",
     }
 }
 
@@ -787,7 +809,63 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "`execution.preferred: remote` requires `execution.backends.remote.target`"
+            "`execution.preferred: remote` with provider `daytona` requires `execution.backends.remote.target` (example: `sandbox-dev`)"
+        );
+    }
+
+    #[test]
+    fn rejects_ssh_remote_backend_without_target_with_provider_specific_example() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: remote` with provider `ssh` requires `execution.backends.remote.target` (example: `user@host`)"
+        );
+    }
+
+    #[test]
+    fn rejects_kubectl_remote_backend_without_target_with_provider_specific_example() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.preferred: remote` with provider `kubectl` requires `execution.backends.remote.target` (example: `pod/ota-dev`)"
         );
     }
 
