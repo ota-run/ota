@@ -86,3 +86,15 @@ Optional pinning uses the same env vars:
 ota --version
 ota validate --help
 ```
+
+## Maintainer version bump
+
+Use the dedicated bump scripts to update `Cargo.toml` safely:
+
+```bash
+./scripts/bump-version.sh 0.2.0
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bump-version.ps1 0.2.0
+```
