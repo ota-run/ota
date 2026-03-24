@@ -6727,6 +6727,35 @@ tasks:
     }
 
     #[test]
+    fn workspace_list_marks_missing_contract_explicitly() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "list", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("api [required] (ACQUIRED)"));
+        assert!(body.contains("Contract: missing ("));
+        assert!(body.contains("ota.yaml)"));
+        assert!(body.contains("Next:"));
+        assert!(body.contains("ota init"));
+    }
+
+    #[test]
     fn workspace_tasks_reports_not_acquired_repo() {
         let fixture = TempDir::new().unwrap();
         fs::write(
