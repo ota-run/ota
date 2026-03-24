@@ -1132,8 +1132,8 @@ tasks:
             "TASKS {} [member api]",
             fixture.file_path().display()
         )));
-        assert!(output.stdout.contains("- setup"));
-        assert!(output.stdout.contains("- test"));
+        assert!(output.stdout.contains("Task: setup"));
+        assert!(output.stdout.contains("Task: test"));
         assert!(output.stdout.contains("\n---\n"));
     }
 
@@ -3123,7 +3123,10 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("setup (kind=script)"));
+        assert!(output.stdout.contains("Tasks:"));
+        assert!(output.stdout.contains("Task: setup"));
+        assert!(output.stdout.contains("Kind: script"));
+        assert!(output.stdout.contains("Use: `ota run setup`"));
     }
 
     #[test]
