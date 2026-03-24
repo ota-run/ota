@@ -5538,11 +5538,10 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
     let mut stdout = format_command_header("WORKSPACE LIST", path);
 
     if repos.is_empty() {
-        stdout.push_str(&format!("\n\n{} none", paint_section_title("Repos:")));
+        stdout.push_str(&format!("\n\n{} none", info_bullet()));
         return CommandOutput::success(stdout);
     }
 
-    stdout.push_str(&format!("\n\n{}:", paint_section_title("Repos")));
     for repo in repos {
         stdout.push_str(&format!(
             "\n\n{} {} [{}] ({})",
