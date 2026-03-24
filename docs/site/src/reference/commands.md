@@ -321,8 +321,6 @@ Why:
 
 ```bash
 ota workspace init
-ota workspace init --dry-run
-ota workspace init --merge
 ota workspace init --json
 ```
 
@@ -334,7 +332,35 @@ set -euo pipefail
 
 ota workspace init --json > .ota-workspace-init.json
 ota workspace init
-ota workspace init --merge
+```
+
+### `ota workspace detect`
+
+When to use:
+
+- preview or merge inferred workspace repo entries
+
+Why:
+
+- keeps inferred/merge behavior explicit and reviewable, separate from init write
+
+```bash
+ota workspace detect --dry-run
+ota workspace detect --write
+ota workspace detect --merge --dry-run
+ota workspace detect --merge
+ota workspace detect --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace detect --dry-run > /dev/null
+ota workspace detect --merge --dry-run > /dev/null
+ota workspace detect --merge
 ```
 
 ### `ota workspace validate`
