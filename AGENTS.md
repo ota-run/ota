@@ -525,6 +525,13 @@ Documentation quality rule for OSS adoption:
 - avoid "list-only" command pages that only enumerate commands without operator guidance
 - optimize docs for fast first success by humans and agents, not just completeness
 
+CLI output style checklist:
+- keep key command headers in `🦦  <COMMAND> <target>` form in rich mode
+- keep one key-label color across output sections
+- keep command examples and recommended commands consistently accent-highlighted
+- preserve `--plain` parity (no emoji/icons/ANSI; semantics unchanged)
+- keep key-command signature line consistent: `doctor first, contract second`
+
 The docs are part of the product.
 
 ---

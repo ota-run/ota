@@ -1081,21 +1081,20 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     ];
 
     if contract_path.exists() {
-        let next = format!("ota detect --merge --dry-run {}", contract_path.display());
+        let next = command_for_contract("ota detect --merge --dry-run", &contract_path);
         let highlighted_path = paint_code(&contract_path.display().to_string());
-        let highlighted_validate = paint_code(&format!("ota validate {}", contract_path.display()));
-        let highlighted_doctor = paint_code(&format!("ota doctor {}", contract_path.display()));
-        let highlighted_detect_merge = paint_code(&format!(
-            "ota detect --merge --dry-run {}",
-            contract_path.display()
-        ));
+        let highlighted_validate = paint_code("ota validate");
+        let highlighted_doctor = paint_code("ota doctor");
+        let highlighted_detect_merge_dry = paint_code("ota detect --merge --dry-run");
+        let highlighted_detect_merge = paint_code("ota detect --merge");
         let error = format!(
             "`{}` already exists; ota init is only for repos without an Ota contract{}",
             highlighted_path,
             format_next_timeline(&[
                 format!("review the existing contract with `{highlighted_validate}`"),
                 format!("review the existing contract with `{highlighted_doctor}`"),
-                format!("compare detected repo signals with `{highlighted_detect_merge}`"),
+                format!("compare detected repo signals with `{highlighted_detect_merge_dry}`"),
+                format!("apply detected add-only high-confidence fields now with `{highlighted_detect_merge}`"),
             ]),
         );
         return finalize_debug(
@@ -1606,6 +1605,7 @@ pub fn detect(
                                 &report.root.display().to_string(),
                             )
                         };
+                        append_command_signature(&mut stdout, "DETECT");
                         stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
@@ -2287,9 +2287,9 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&contract_path.display().to_string());
                 let highlighted_validate =
-                    paint_code(&format!("ota validate {}", contract_path.display()));
+                    paint_code(&command_for_contract("ota validate", &contract_path));
                 let highlighted_doctor =
-                    paint_code(&format!("ota doctor {}", contract_path.display()));
+                    paint_code(&command_for_contract("ota doctor", &contract_path));
                 let mut stdout = format!(
                     "{}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
                     format_command_header("DETECT WRITE", &report.root.display().to_string()),
@@ -2299,10 +2299,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                         format!("run `{highlighted_doctor}`"),
                     ])
                 );
-                stdout.insert_str(
-                    format_command_header("DETECT WRITE", &report.root.display().to_string()).len(),
-                    &format!("\n{}", detect_standalone_icon()),
-                );
+                append_command_signature(&mut stdout, "DETECT");
+                stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                 render_inference_section(
                     &mut stdout,
                     "Excluded from automatic write",
@@ -2382,6 +2380,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     format_command_header("NO CHANGES", &contract_path.display().to_string()),
                     detect_standalone_icon()
                 );
+                append_command_signature(&mut stdout, "DETECT");
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
                 CommandOutput::success(stdout)
             }
@@ -2491,6 +2490,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
                     format_command_header("MERGED", &contract_path.display().to_string()),
                     detect_standalone_icon()
                 );
+                append_command_signature(&mut stdout, "DETECT");
                 render_detect_change_section(
                     &mut stdout,
                     "Applied high-confidence additions",
@@ -2593,9 +2593,9 @@ fn render_init(
                 OutputFormat::Text => {
                     let highlighted_written = paint_code(&contract_path.display().to_string());
                     let highlighted_validate =
-                        paint_code(&format!("ota validate {}", contract_path.display()));
+                        paint_code(&command_for_contract("ota validate", &contract_path));
                     let highlighted_doctor =
-                        paint_code(&format!("ota doctor {}", contract_path.display()));
+                        paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
                         "{}\nResult: wrote {}\nMode: {mode}{}",
                         format_command_header("INIT WRITE", &report.root.display().to_string()),
@@ -2605,6 +2605,7 @@ fn render_init(
                             format!("run `{highlighted_doctor}`"),
                         ])
                     );
+                    append_command_signature(&mut stdout, "INIT");
                     if mode == "blank" {
                         stdout.push_str(
                             "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -2656,6 +2657,7 @@ fn render_init(
                 highlighted_init,
                 review_yaml.trim_end()
             );
+            append_command_signature(&mut stdout, "INIT");
             if mode == "blank" {
                 stdout.push_str(
                     "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -3268,6 +3270,7 @@ fn render_report_section(
             paint("NOT READY", "1;31")
         }
     );
+    append_command_signature(&mut stdout, command);
 
     if let Some(agent) = agent {
         if let Some(summary) = render_agent_summary_line(agent) {
@@ -3391,6 +3394,25 @@ fn compact_contract_path(path: &Path) -> String {
     }
 }
 
+fn command_for_contract(command: &str, contract_path: &Path) -> String {
+    if contract_path_matches_current_dir(contract_path) {
+        command.to_string()
+    } else {
+        format!("{command} {}", contract_path.display())
+    }
+}
+
+fn contract_path_matches_current_dir(contract_path: &Path) -> bool {
+    std::env::current_dir().ok().is_some_and(|current_dir| {
+        let target = if contract_path.is_absolute() {
+            contract_path.to_path_buf()
+        } else {
+            current_dir.join(contract_path)
+        };
+        target == current_dir.join(DEFAULT_CONTRACT_FILE)
+    })
+}
+
 fn duplicate_member<'a>(members: &'a [String]) -> Option<&'a str> {
     let mut seen = BTreeSet::new();
     for member in members {
@@ -3451,13 +3473,16 @@ fn run_single_contract_target(
         )),
         Ok(outcome) => Err(RunCommandFailure {
             message: format!(
-                "task `{task_name}` failed with exit code {}",
-                outcome.exit_code
+                "task `{task_name}` failed with exit code {}\nSignature: doctor first, contract second",
+                outcome.exit_code,
             ),
             exit_code: outcome.exit_code,
         }),
         Err(error) => Err(RunCommandFailure {
-            message: render_run_error(error),
+            message: format!(
+                "{}\nSignature: doctor first, contract second",
+                render_run_error(error)
+            ),
             exit_code: 1,
         }),
     }
@@ -3585,6 +3610,7 @@ fn render_up_section_from_parts(
         status,
         paint_key("Phase:")
     );
+    append_command_signature(&mut stdout, "UP");
 
     if let Some(service) = service {
         stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
@@ -4062,11 +4088,20 @@ fn append_markdown_table(
 }
 
 fn render_severity(severity: FindingSeverity) -> String {
-    match severity {
+    if plain_mode() {
+        return match severity {
+            FindingSeverity::Error => String::from("ERROR"),
+            FindingSeverity::Warn => String::from("WARN"),
+            FindingSeverity::Info => String::from("INFO"),
+        };
+    }
+
+    let level = match severity {
         FindingSeverity::Error => paint("ERROR", "1;31"),
         FindingSeverity::Warn => paint("WARN", "1;33"),
         FindingSeverity::Info => paint("INFO", "1;36"),
-    }
+    };
+    format!("{} {}", paint("🦦", "38;2;0;255;255"), level)
 }
 
 fn paint_key(key: &str) -> String {
@@ -4114,6 +4149,31 @@ fn detect_standalone_icon() -> String {
         return String::from("-");
     }
     paint("◉", "38;2;0;255;255")
+}
+
+fn append_command_signature(output: &mut String, command: &str) {
+    if !matches_signature_command(command) {
+        return;
+    }
+
+    if plain_mode() {
+        output.push_str("\nSignature: doctor first, contract second");
+        return;
+    }
+
+    output.push_str(&format!(
+        "\n{} {}",
+        paint("◉", "38;2;0;255;255"),
+        paint("doctor first, contract second", "38;2;180;223;255")
+    ));
+}
+
+fn matches_signature_command(command: &str) -> bool {
+    command == "DOCTOR"
+        || command == "UP"
+        || command == "RUN"
+        || command.starts_with("INIT")
+        || command.starts_with("DETECT")
 }
 
 fn format_next_timeline(items: &[String]) -> String {
@@ -5749,13 +5809,13 @@ fn run_shell_command(
 fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Option<String> {
     match effective_execution(contract, overrides) {
         (crate::schema::Backend::Container, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: running task in an ephemeral container backend",
+            "Lifecycle note: running task in an ephemeral container backend\nSignature: doctor first, contract second",
         )),
         (crate::schema::Backend::Container, Some(Lifecycle::Persistent)) => Some(String::from(
-            "Lifecycle note: reusing persistent container backend",
+            "Lifecycle note: reusing persistent container backend\nSignature: doctor first, contract second",
         )),
         (_, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment",
+            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment\nSignature: doctor first, contract second",
         )),
         _ => None,
     }

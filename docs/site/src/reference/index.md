@@ -30,6 +30,7 @@ This section summarizes the stable surfaces of Ota:
 - repo contract (`ota.yaml`)
 - workspace contract (`ota.workspace.yaml`)
 - machine-readable JSON output
+- output and brand style conventions
 
 Canonical specification files remain under `docs/spec/`.
 

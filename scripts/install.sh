@@ -24,6 +24,28 @@
 
 set -eu
 
+supports_color() {
+  [ -t 2 ] && [ -z "${NO_COLOR-}" ]
+}
+
+ota_header() {
+  if supports_color; then
+    printf '\033[1;36m🦦  INSTALL\033[0m\n' >&2
+    printf '\033[38;2;180;223;255m◉ doctor first, contract second\033[0m\n' >&2
+  else
+    printf 'INSTALL\n' >&2
+    printf 'Signature: doctor first, contract second\n' >&2
+  fi
+}
+
+ota_info() {
+  if supports_color; then
+    printf '\033[38;2;214;161;95m%s\033[0m\n' "$1" >&2
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
 if ! command -v cargo >/dev/null 2>&1; then
   echo "error: cargo is required to install ota" >&2
   exit 1
@@ -38,8 +60,10 @@ if [ -f "./Cargo.toml" ] && grep -q '^name = "ota"$' "./Cargo.toml"; then
   install_from_source=true
 fi
 
+ota_header
+
 if [ "${install_from_source}" = "true" ]; then
-  echo "installing ota from local source (cargo install --path .)..." >&2
+  ota_info "installing ota from local source (cargo install --path .)..."
   cargo install --path . --locked --force
 else
   git_url="${OTA_GIT_URL:-https://github.com/ota-run/ota.git}"
@@ -63,7 +87,7 @@ else
     exit 1
   fi
 
-  echo "installing ota from ${git_url}..." >&2
+  ota_info "installing ota from ${git_url}..."
   if [ -n "${tag}" ]; then
     cargo install --git "${git_url}" --tag "${tag}" ota --locked --force
   elif [ -n "${branch}" ]; then

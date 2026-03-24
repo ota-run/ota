@@ -27,6 +27,7 @@
 :root {
   --ota-accent: #0f766e;
   --ota-accent-soft: #14b8a6;
+  --ota-command: #d6a15f;
   --ota-ink: #0b1728;
   --ota-surface: #f7fafc;
   --ota-card-border: #dce6f0;
@@ -51,7 +52,7 @@
   --searchresults-li-bg: #f8fbff;
   --search-mark-bg: #fff2a9;
   --links: #0f6c9a;
-  --inline-code-color: #0f1f35;
+  --inline-code-color: var(--ota-command);
   --theme-popup-bg: #ffffff;
   --theme-popup-border: #d4dfeb;
   --theme-hover: #f3f7fc;
@@ -84,7 +85,7 @@
   --searchresults-li-bg: #183452;
   --search-mark-bg: #7f5f1d;
   --links: #59c7ff;
-  --inline-code-color: #d9edff;
+  --inline-code-color: var(--ota-command);
   --theme-popup-bg: #10243f;
   --theme-popup-border: #2a4060;
   --theme-hover: #173553;
@@ -180,8 +181,8 @@ body {
 }
 
 .content img[alt="Ota Logo"] {
-  width: 88px;
-  height: 88px;
+  width: 96px;
+  height: 96px;
   display: block;
   margin: 0.4rem 0 1.2rem;
   filter: drop-shadow(0 8px 20px rgba(15, 118, 110, 0.22));

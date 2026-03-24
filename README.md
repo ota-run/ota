@@ -30,6 +30,8 @@
 
 Ota is a readiness contract and CLI for modern repositories. It gives every repo one source of truth for what it needs, how it becomes ready, how tasks run, and how humans and AI agents operate. Run any repo without manual setup guesswork.
 
+Doctor first, contract second.
+
 ## Why Ota exists
 
 Repo setup truth is usually fragmented across:
@@ -78,9 +80,11 @@ Global flag:
 
 ```bash
 ota --debug <command>
+ota --plain <command>
 ```
 
 `--debug` emits command-phase tracing to stderr without changing normal stdout.
+`--plain` emits ASCII-first output without emoji, icons, or ANSI color.
 
 Current behavior:
 
