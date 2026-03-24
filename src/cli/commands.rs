@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::cell::Cell;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,13 @@ use crate::workspace::{
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
+thread_local! {
+    static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub fn set_plain_mode(enabled: bool) {
+    PLAIN_MODE.with(|value| value.set(enabled));
+}
 
 pub fn validate(
     path: Option<&Path>,
@@ -171,8 +179,9 @@ pub fn tasks(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
     let single_member = (members.len() == 1).then(|| members[0].as_str());
-    let text_path_display = display_contract_target(&path_display, single_member);
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=tasks"),
         format!("DEBUG contract_path={path_display}"),
@@ -271,7 +280,10 @@ pub fn tasks(
                                 })
                                 .collect::<Vec<_>>();
                             text_sections.push(render_tasks_text(
-                                &display_contract_target(&path_display, Some(member.as_str())),
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
                                 member_agent.as_ref(),
                                 &member_tasks,
                             ));
@@ -372,7 +384,7 @@ pub fn tasks(
                         .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
                         .collect::<Vec<_>>();
                     text_sections.push(render_tasks_text(
-                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
                         agent.as_ref(),
                         &tasks,
                     ));
@@ -1594,6 +1606,7 @@ pub fn detect(
                                 &report.root.display().to_string(),
                             )
                         };
+                        stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
@@ -2286,6 +2299,10 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                         format!("run `{highlighted_doctor}`"),
                     ])
                 );
+                stdout.insert_str(
+                    format_command_header("DETECT WRITE", &report.root.display().to_string()).len(),
+                    &format!("\n{}", detect_standalone_icon()),
+                );
                 render_inference_section(
                     &mut stdout,
                     "Excluded from automatic write",
@@ -2360,8 +2377,11 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     if addable_fields.is_empty() {
         return match format {
             OutputFormat::Text => {
-                let mut stdout =
-                    format_command_header("NO CHANGES", &contract_path.display().to_string());
+                let mut stdout = format!(
+                    "{}\n{}",
+                    format_command_header("NO CHANGES", &contract_path.display().to_string()),
+                    detect_standalone_icon()
+                );
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
                 CommandOutput::success(stdout)
             }
@@ -2466,7 +2486,11 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let mut stdout = format_command_header("MERGED", &contract_path.display().to_string());
+                let mut stdout = format!(
+                    "{}\n{}",
+                    format_command_header("MERGED", &contract_path.display().to_string()),
+                    detect_standalone_icon()
+                );
                 render_detect_change_section(
                     &mut stdout,
                     "Applied high-confidence additions",
@@ -2976,7 +3000,7 @@ fn render_tasks_text(
         }
     }
 
-    output.push_str("\n---\nTasks:");
+    output.push_str("\n---");
     if tasks.is_empty() {
         output.push_str(&format!("\n{} none", list_bullet()));
         return output;
@@ -3349,6 +3373,21 @@ fn display_contract_target(path: &str, member: Option<&str>) -> String {
     match member {
         Some(member) => format!("{path} [member {member}]"),
         None => path.to_string(),
+    }
+}
+
+fn compact_contract_path(path: &Path) -> String {
+    let file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(DEFAULT_CONTRACT_FILE);
+    match path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+    {
+        Some(parent) => format!("{parent}/{file}"),
+        None => file.to_string(),
     }
 }
 
@@ -4034,32 +4073,21 @@ fn paint_key(key: &str) -> String {
     paint(key, "38;2;123;208;197")
 }
 
-fn command_icon(command: &str) -> &'static str {
-    match command {
-        "VALID" | "VALID WORKSPACE" => "◆",
-        "TASKS" | "WORKSPACE TASKS" => "▣",
-        "DOCTOR" | "WORKSPACE DOCTOR" => "✦",
-        "WORKSPACE CHECK" | "CHECK" => "◈",
-        "UP" | "WORKSPACE UP" => "▲",
-        "RUN" | "WORKSPACE RUN" => "▶",
-        "INIT WRITE" | "INIT PREVIEW" => "◎",
-        "DETECT WRITE" | "DETECT PREVIEW" | "DETECT MERGE PREVIEW" => "◉",
-        "MERGED" => "◍",
-        "CLEANED" | "NO CLEANUP NEEDED" => "◇",
-        _ => "•",
-    }
+fn plain_mode() -> bool {
+    PLAIN_MODE.with(Cell::get)
 }
 
 fn format_command_header(command: &str, target: &str) -> String {
-    format!(
-        "{} {} {} {target}",
-        "🦦",
-        paint(command_icon(command), "1;34"),
-        paint(command, "1;36")
-    )
+    if plain_mode() {
+        return format!("{command} {target}");
+    }
+    format!("{}  {} {target}", "🦦", paint(command, "1;36"))
 }
 
 fn paint(value: &str, code: &str) -> String {
+    if plain_mode() {
+        return value.to_string();
+    }
     if (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
         && std::env::var_os("NO_COLOR").is_none()
     {
@@ -4075,7 +4103,17 @@ fn paint_code(value: &str) -> String {
 }
 
 fn list_bullet() -> String {
-    paint("▸", "38;2;123;208;197")
+    if plain_mode() {
+        return String::from("-");
+    }
+    paint("▸", "38;2;0;255;255")
+}
+
+fn detect_standalone_icon() -> String {
+    if plain_mode() {
+        return String::from("-");
+    }
+    paint("◉", "38;2;0;255;255")
 }
 
 fn format_next_timeline(items: &[String]) -> String {

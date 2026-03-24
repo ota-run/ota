@@ -37,6 +37,9 @@ pub struct Cli {
     /// Emit command-phase debug tracing to stderr.
     #[arg(long, global = true, action = ArgAction::SetTrue)]
     debug: bool,
+    /// Emit plain text output (no icons, no ANSI styling, ASCII list markers).
+    #[arg(long, global = true, action = ArgAction::SetTrue)]
+    plain: bool,
     /// Use an explicit ota.yaml file instead of path discovery.
     #[arg(long, global = true)]
     file: Option<PathBuf>,
@@ -301,6 +304,7 @@ where
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
+    commands::set_plain_mode(cli.plain);
     let debug = cli.debug;
     let file = cli.file;
     match cli.command {
@@ -1123,15 +1127,9 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(
-            output
-                .stdout
-                .contains(&format!("TASKS {}", fixture.file_path().display()))
-        );
-        assert!(output.stdout.contains(&format!(
-            "TASKS {} [member api]",
-            fixture.file_path().display()
-        )));
+        assert!(output.stdout.contains("TASKS "));
+        assert!(output.stdout.contains("/ota.yaml"));
+        assert!(output.stdout.contains("[member api]"));
         assert!(output.stdout.contains("setup"));
         assert!(output.stdout.contains("test"));
         assert!(output.stdout.contains("\n---\n"));
@@ -3123,10 +3121,56 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("Tasks:"));
         assert!(output.stdout.contains("setup"));
         assert!(output.stdout.contains("Kind: script"));
         assert!(output.stdout.contains("Use: `ota run setup`"));
+    }
+
+    #[test]
+    fn tasks_text_style_snapshot_contains_rich_header_and_bullets() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+  dev:
+    run: cargo run
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        let normalized = output.stdout.clone();
+
+        assert_eq!(output.exit_code, 0);
+        assert!(normalized.starts_with("🦦  TASKS "));
+        assert!(normalized.contains("/ota.yaml\n---\n▸ build"));
+        assert!(normalized.contains("\n▸ build"));
+        assert!(normalized.contains("\n▸ dev"));
+        assert!(!normalized.contains("- Task:"));
+    }
+
+    #[test]
+    fn plain_mode_disables_icons_and_uses_ascii_bullets() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let detect = run_with(["ota", "--plain", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(detect.exit_code, 0);
+        assert!(detect.stdout.contains("DETECT PREVIEW "));
+        assert!(detect.stdout.contains("\nNext:\n- run `ota detect --write"));
+        assert!(!detect.stdout.contains("🦦"));
+        assert!(!detect.stdout.contains("▸"));
     }
 
     #[test]
