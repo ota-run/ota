@@ -241,6 +241,7 @@ Current behavior:
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
 - warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run` and the `setup` phase of `ota up`, not the full repo lifecycle
+- reports an error when no `tasks` are declared, because the contract is not operational for `ota run`
 - runs configured checks
 - orders findings by severity
 - includes an `agent` summary when the contract declares one
@@ -519,6 +520,7 @@ Current precedence is conservative:
 - when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
 - when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
 - when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
+- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, `fmt`) are marked with `safe_for_agent: true`; other inferred tasks stay unsafe-by-default
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively

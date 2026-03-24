@@ -487,6 +487,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use serde_json::Value;
+    use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -763,6 +764,9 @@ workspace:
   type: monorepo
   members:
     - api
+tasks:
+  setup:
+    run: printf ready
 "#,
         );
         fixture.write(
@@ -1348,6 +1352,9 @@ project:
 env:
   OTA_MEMBER_REQUIRED:
     required: true
+tasks:
+  test:
+    run: printf ready
 "#,
         );
 
@@ -1376,6 +1383,9 @@ workspace:
   members:
     - api
     - web
+tasks:
+  setup:
+    run: printf ready
 "#,
         );
         fixture.write(
@@ -1386,6 +1396,9 @@ project:
 env:
   OTA_MEMBER_REQUIRED:
     required: true
+tasks:
+  test:
+    run: printf ready
 "#,
         );
         fixture.write(
@@ -1393,6 +1406,9 @@ env:
             r#"
 project:
   name: web
+tasks:
+  test:
+    run: printf ready
 "#,
         );
 
@@ -1433,6 +1449,9 @@ workspace:
   type: monorepo
   members:
     - api
+tasks:
+  setup:
+    run: printf ready
 "#,
         );
         fixture.write(
@@ -1443,6 +1462,9 @@ project:
 env:
   OTA_MEMBER_REQUIRED:
     required: true
+tasks:
+  test:
+    run: printf ready
 "#,
         );
 
@@ -2913,6 +2935,21 @@ project:
     }
 
     #[test]
+    fn validate_missing_explicit_path_includes_contract_creation_next_steps() {
+        let fixture = TempDir::new().unwrap();
+        let missing = fixture.path().join("ota.yaml");
+
+        let output = run_with(["ota", "validate", missing.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap();
+        assert!(stderr.contains("contract path does not exist"));
+        assert!(stderr.contains("use `ota init` to create a starter contract"));
+        assert!(stderr.contains("use `ota detect --dry-run` to preview inferred fields"));
+        assert!(stderr.contains("use `ota detect --write` to write a detected contract"));
+    }
+
+    #[test]
     fn validate_supports_explicit_file_override() {
         let fixture = ContractFixture::new(
             r#"
@@ -3745,6 +3782,38 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
+    }
+
+    #[test]
+    fn doctor_reports_not_ready_when_contract_has_no_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.contains("NOT READY"));
+        assert!(output.stdout.contains("No tasks defined in contract"));
+    }
+
+    #[test]
+    fn doctor_missing_explicit_path_includes_contract_creation_next_steps() {
+        let fixture = TempDir::new().unwrap();
+        let missing = fixture.path().join("ota.yaml");
+
+        let output = run_with(["ota", "doctor", missing.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap();
+        assert!(stderr.contains("contract path does not exist"));
+        assert!(stderr.contains("use `ota init` to create a starter contract"));
+        assert!(stderr.contains("use `ota detect --dry-run` to preview inferred fields"));
+        assert!(stderr.contains("use `ota detect --write` to write a detected contract"));
     }
 
     #[test]
@@ -4663,6 +4732,85 @@ tasks:
     }
 
     #[test]
+    fn detect_write_marks_verifier_tasks_safe_for_agent() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "build": "next build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        let yaml: YamlValue = serde_yaml::from_str(&written).unwrap();
+        let tasks = yaml
+            .get("tasks")
+            .and_then(YamlValue::as_mapping)
+            .expect("tasks must exist");
+        let test_safe = tasks
+            .get(&YamlValue::String(String::from("test")))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(YamlValue::as_bool);
+        let typecheck_safe = tasks
+            .get(&YamlValue::String(String::from("typecheck")))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(YamlValue::as_bool);
+        let build_safe_present = tasks
+            .get(&YamlValue::String(String::from("build")))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .is_some();
+
+        assert_eq!(test_safe, Some(true));
+        assert_eq!(typecheck_safe, Some(true));
+        assert!(!build_safe_present);
+    }
+
+    #[test]
+    fn detect_merge_adds_safe_for_agent_for_added_verifier_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-web
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "npm@10.9.2",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        let yaml: YamlValue = serde_yaml::from_str(&written).unwrap();
+        let safe = yaml
+            .get("tasks")
+            .and_then(YamlValue::as_mapping)
+            .and_then(|tasks| tasks.get(&YamlValue::String(String::from("test"))))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(YamlValue::as_bool);
+        assert_eq!(safe, Some(true));
+    }
+
+    #[test]
     fn detect_defaults_to_preview_when_contract_exists() {
         let fixture = ContractFixture::new(
             r#"
@@ -5556,6 +5704,9 @@ tasks:
 version: 1
 project:
   name: web
+tasks:
+  setup:
+    run: printf ready
 "#,
         );
 
@@ -5613,6 +5764,9 @@ repos:
 version: 1
 project:
   name: web
+tasks:
+  setup:
+    run: printf ready
 "#,
         );
 
