@@ -15,4 +15,3 @@ These are rough V1 targets, not hard guarantees yet.
 - no long-lived background daemons in V1
 - concurrency, when introduced, should be bounded
 - large repositories should degrade gracefully rather than explode in file scanning or process count
-§

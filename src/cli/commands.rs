@@ -3679,9 +3679,9 @@ fn render_workspace_doctor_text(
                 "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
-                paint_key("Why:"),
+                finding_detail_key(finding.severity, "Why:"),
                 finding.why,
-                paint_key("Next:"),
+                finding_detail_key(finding.severity, "Next:"),
                 finding.next
             ));
         }
@@ -3732,9 +3732,9 @@ fn render_workspace_check_text(
                 "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
-                paint_key("Why:"),
+                finding_detail_key(finding.severity, "Why:"),
                 finding.why,
-                paint_key("Next:"),
+                finding_detail_key(finding.severity, "Next:"),
                 finding.next
             ));
         }
@@ -3785,9 +3785,9 @@ fn render_report_section(
             "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
-            paint_key("Why:"),
+            finding_detail_key(finding.severity, "Why:"),
             finding.why,
-            paint_key("Next:"),
+            finding_detail_key(finding.severity, "Next:"),
             finding.next
         ));
     }
@@ -4569,13 +4569,13 @@ fn render_up_section_from_parts(
         if phase == "services" {
             stdout.push_str(&format!(
                 "\n{} inspect `services.{}.start` output and fix the reported issue",
-                paint_key("Next:"),
+                finding_detail_key(FindingSeverity::Error, "Next:"),
                 service.unwrap_or("service")
             ));
         } else if phase == "setup" {
             stdout.push_str(&format!(
                 "\n{} inspect the `setup` task output and fix the reported issue",
-                paint_key("Next:")
+                finding_detail_key(FindingSeverity::Error, "Next:")
             ));
         }
     }
@@ -4586,9 +4586,9 @@ fn render_up_section_from_parts(
             "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
-            paint_key("Why:"),
+            finding_detail_key(finding.severity, "Why:"),
             finding.why,
-            paint_key("Next:"),
+            finding_detail_key(finding.severity, "Next:"),
             finding.next
         ));
     }
@@ -4672,9 +4672,9 @@ fn render_workspace_up(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
-                        paint_key("Why:"),
+                        finding_detail_key(finding.severity, "Why:"),
                         finding.why,
-                        paint_key("Next:"),
+                        finding_detail_key(finding.severity, "Next:"),
                         finding.next
                     ));
                 }
@@ -4745,9 +4745,9 @@ fn render_workspace_run(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
-                        paint_key("Why:"),
+                        finding_detail_key(finding.severity, "Why:"),
                         finding.why,
-                        paint_key("Next:"),
+                        finding_detail_key(finding.severity, "Next:"),
                         finding.next
                     ));
                 }
@@ -5024,6 +5024,20 @@ fn paint_key(key: &str) -> String {
     paint(key, "38;2;102;217;255")
 }
 
+fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
+    if plain_mode() {
+        return key.to_string();
+    }
+    match severity {
+        FindingSeverity::Error => match key {
+            "Why:" => paint(key, "1;38;2;255;150;150"),
+            "Next:" => paint(key, "1;38;2;255;210;120"),
+            _ => paint_key(key),
+        },
+        _ => paint_key(key),
+    }
+}
+
 fn plain_mode() -> bool {
     PLAIN_MODE.with(Cell::get)
 }
@@ -5032,7 +5046,7 @@ fn format_command_header(command: &str, target: &str) -> String {
     if plain_mode() {
         return format!("{command} {target}");
     }
-    format!("{}  {} {target}", "🦦", paint(command, "1;36"))
+    format!("{}  {} {target}", "🦦 ", paint(command, "1;36"))
 }
 
 fn paint(value: &str, code: &str) -> String {
