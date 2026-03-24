@@ -2722,6 +2722,36 @@ tasks:
     }
 
     #[test]
+    fn run_with_kubectl_remote_provider_missing_target_fails_with_guidance() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+tasks:
+  setup:
+    run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("provider `kubectl` requires `execution.backends.remote.target` (example: `pod/ota-dev`)")
+        );
+    }
+
+    #[test]
     fn validate_discovers_member_contract_from_member_directory_without_member_flag() {
         let fixture = ContractFixture::new_dir();
         fixture.write(

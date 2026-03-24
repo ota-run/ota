@@ -60,8 +60,14 @@ pub enum RunError {
     MissingContainerLifecycle { task: String },
     #[error("task `{task}` requires `execution.backends.remote.provider` for remote execution")]
     MissingRemoteProvider { task: String },
-    #[error("task `{task}` requires `execution.backends.remote.target` for remote execution")]
-    MissingRemoteTarget { task: String },
+    #[error(
+        "task `{task}` with remote provider `{provider}` requires `execution.backends.remote.target` (example: `{example_target}`)"
+    )]
+    MissingRemoteTarget {
+        task: String,
+        provider: String,
+        example_target: String,
+    },
     #[error("task `{task}` cannot use unsupported backend `{backend}` yet")]
     UnsupportedBackend { task: String, backend: &'static str },
     #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
@@ -495,6 +501,8 @@ fn resolve_execution_backend(
                     .filter(|target| !target.trim().is_empty())
                     .ok_or_else(|| RunError::MissingRemoteTarget {
                         task: task_name.to_string(),
+                        provider: remote.provider.clone(),
+                        example_target: remote_target_example(&remote.provider).to_string(),
                     })?;
                 Ok(ResolvedExecutionBackend::Remote {
                     provider: remote.provider.clone(),
@@ -502,6 +510,15 @@ fn resolve_execution_backend(
                     cwd: remote.cwd.clone(),
                 })
             }),
+    }
+}
+
+fn remote_target_example(provider: &str) -> &'static str {
+    match provider {
+        "daytona" => "sandbox-dev",
+        "ssh" | "tsh" => "user@host",
+        "kubectl" => "pod/ota-dev",
+        _ => "remote-target",
     }
 }
 
@@ -1730,6 +1747,31 @@ tasks:
                 .unwrap()
                 .contains("exec pod/ota-dev")
         );
+    }
+
+    #[test]
+    fn missing_kubectl_remote_target_reports_provider_specific_example() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let error = run_task(&contract, Path::new("ota.yaml"), "setup").unwrap_err();
+        assert!(error.to_string().contains("provider `kubectl`"));
+        assert!(error.to_string().contains("example: `pod/ota-dev`"));
     }
 
     #[cfg(unix)]

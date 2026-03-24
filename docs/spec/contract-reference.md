@@ -170,6 +170,10 @@ Current validation rule:
 - `execution.preferred: container` requires `execution.backends.container.image`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
 - `execution.preferred: remote` requires `execution.backends.remote.target`
+- remote target guidance by provider:
+- `daytona`: `sandbox-dev`
+- `ssh` / `tsh`: `user@host`
+- `kubectl`: `pod/ota-dev`
 
 Current implementation:
 
