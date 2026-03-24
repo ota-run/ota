@@ -2973,7 +2973,7 @@ fn render_tasks_text(
 
     append_markdown_table(
         &mut output,
-        "Tasks table",
+        "Tasks",
         &[
             "Task",
             "Kind",
@@ -2981,6 +2981,7 @@ fn render_tasks_text(
             "Depends On",
             "Safe For Agent",
             "Command Preview",
+            "Use",
         ],
         tasks.iter().map(|task| {
             let command_preview = task
@@ -3006,6 +3007,7 @@ fn render_tasks_text(
                     String::from("false")
                 },
                 command_preview,
+                format!("`ota run {}`", task.name),
             ]
         }),
     );
@@ -3070,7 +3072,7 @@ fn render_workspace_doctor_text(
 
     append_markdown_table(
         &mut stdout,
-        "Repos table",
+        "Repos",
         &["Repo", "Required", "Status", "Path", "Contract"],
         report.repos.iter().map(|repo| {
             vec![
@@ -3094,7 +3096,7 @@ fn render_workspace_doctor_text(
     for repo in &report.repos {
         append_findings_table(
             &mut stdout,
-            &format!("{} findings table", repo.name),
+            &format!("{} findings", repo.name),
             &repo.findings,
         );
     }
@@ -3147,7 +3149,7 @@ fn render_workspace_check_text(
 
     append_markdown_table(
         &mut stdout,
-        "Repos table",
+        "Repos",
         &["Repo", "Required", "Status", "Path", "Contract"],
         report.repos.iter().map(|repo| {
             vec![
@@ -3171,7 +3173,7 @@ fn render_workspace_check_text(
     for repo in &report.repos {
         append_findings_table(
             &mut stdout,
-            &format!("{} findings table", repo.name),
+            &format!("{} findings", repo.name),
             &repo.findings,
         );
     }
@@ -3625,7 +3627,7 @@ fn render_workspace_up(
 
             append_markdown_table(
                 &mut stdout,
-                "Repos table",
+                "Repos",
                 &[
                     "Repo",
                     "Required",
@@ -3657,7 +3659,7 @@ fn render_workspace_up(
             for repo in &report.repos {
                 append_findings_table(
                     &mut stdout,
-                    &format!("{} findings table", repo.name),
+                    &format!("{} findings", repo.name),
                     &repo.findings,
                 );
             }
@@ -3730,7 +3732,7 @@ fn render_workspace_run(
 
             append_markdown_table(
                 &mut stdout,
-                "Repos table",
+                "Repos",
                 &["Repo", "Required", "Status", "Task", "Exit Code"],
                 report.repos.iter().map(|repo| {
                     vec![
@@ -3752,7 +3754,7 @@ fn render_workspace_run(
             for repo in &report.repos {
                 append_findings_table(
                     &mut stdout,
-                    &format!("{} findings table", repo.name),
+                    &format!("{} findings", repo.name),
                     &repo.findings,
                 );
             }
@@ -3824,7 +3826,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
 
     append_markdown_table(
         &mut stdout,
-        "Repos table",
+        "Repos",
         &[
             "Repo",
             "Required",
@@ -3872,13 +3874,14 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     .clone()
                     .or(task.script.clone())
                     .unwrap_or_else(|| String::from("-")),
+                format!("`ota workspace run {} --repo {}`", task.name, repo.name),
             ]
         })
     });
     append_markdown_table(
         &mut stdout,
-        "Tasks table",
-        &["Repo", "Task", "Kind", "Depends On", "Command"],
+        "Tasks",
+        &["Repo", "Task", "Kind", "Depends On", "Command", "Use"],
         task_rows,
     );
 
