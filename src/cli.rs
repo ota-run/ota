@@ -740,6 +740,8 @@ fn finalize_cli_output(
 }
 
 fn append_try_footer(stderr: String, command: &Commands) -> String {
+    const WORKSPACE_SETUP_SUGGESTION: &str = "setup workspace with `ota workspace init`";
+
     if stderr.contains("Try: ") || stderr.contains("Next:") {
         return stderr;
     }
@@ -764,10 +766,10 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => "ota workspace init --help",
             WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
-            WorkspaceCommands::Validate { .. } => "setup workspace with `ota workspace init`",
+            WorkspaceCommands::Validate { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
-            WorkspaceCommands::List { .. } => "setup workspace with `ota workspace init`",
-            WorkspaceCommands::Doctor { .. } => "setup workspace with `ota workspace init`",
+            WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
+            WorkspaceCommands::Doctor { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
             WorkspaceCommands::Run { .. } => "ota workspace tasks",

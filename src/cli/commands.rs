@@ -132,38 +132,8 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
-    if compact_message.starts_with("no `ota.yaml` found from `")
-        && compact_message.ends_with("` upward")
-    {
-        out.push_str(&format!("\n{} {}", paint_key("Why:"), compact_message));
-        out.push_str(&format!("\n\n{}", paint_next_header()));
-        out.push_str(&format!(
-            "\n{}  setup repo with {}",
-            next_bullet(),
-            paint_code("`ota init`")
-        ));
-        out.push_str(&format!(
-            "\n{}  or preview inferred fields with {}",
-            next_bullet(),
-            paint_code("`ota detect --dry-run`")
-        ));
-        out.push_str(&format!(
-            "\n{}  or write a detected contract with {}",
-            next_bullet(),
-            paint_code("`ota detect --write`")
-        ));
-        return out;
-    }
-
-    if compact_message.starts_with("no `ota.workspace.yaml` found from `")
-        && compact_message.ends_with("` upward")
-    {
-        out.push_str(&format!("\n{} {}", paint_key("Why:"), compact_message));
-        out.push_str(&format!(
-            "\n{} setup workspace with {}",
-            paint_next_label(),
-            paint_code("`ota workspace init`")
-        ));
+    if let Some(missing) = detect_missing_contract_context(&compact_message) {
+        render_missing_contract_guidance(&mut out, &compact_message, missing);
         return out;
     }
 
@@ -177,6 +147,57 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         out.push_str(&format!("\n{}  {}", info_bullet(), line));
     }
     out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MissingContractContext {
+    Repo,
+    Workspace,
+}
+
+fn detect_missing_contract_context(message: &str) -> Option<MissingContractContext> {
+    if message.contains("no `ota.workspace.yaml` found") && message.contains(" upward") {
+        return Some(MissingContractContext::Workspace);
+    }
+    if message.contains("no `ota.yaml` found") && message.contains(" upward") {
+        return Some(MissingContractContext::Repo);
+    }
+    None
+}
+
+fn render_missing_contract_guidance(
+    out: &mut String,
+    message: &str,
+    context: MissingContractContext,
+) {
+    out.push_str(&format!("\n{} {}", paint_key("Why:"), message));
+    match context {
+        MissingContractContext::Repo => {
+            out.push_str(&format!("\n\n{}", paint_next_header()));
+            out.push_str(&format!(
+                "\n{}  setup repo with {}",
+                next_bullet(),
+                paint_code("`ota init`")
+            ));
+            out.push_str(&format!(
+                "\n{}  or preview inferred fields with {}",
+                next_bullet(),
+                paint_code("`ota detect --dry-run`")
+            ));
+            out.push_str(&format!(
+                "\n{}  or write a detected contract with {}",
+                next_bullet(),
+                paint_code("`ota detect --write`")
+            ));
+        }
+        MissingContractContext::Workspace => {
+            out.push_str(&format!(
+                "\n{} setup workspace with {}",
+                paint_next_label(),
+                paint_code("`ota workspace init`")
+            ));
+        }
+    }
 }
 
 pub fn stylize_inline_text(value: &str) -> String {
@@ -2003,18 +2024,13 @@ fn render_workspace_validate_failure(
     match load_error {
         Some(error) => {
             let compact_error = compact_backticked_paths(error);
-            out.push_str(&format!(
-                "\n{} {}",
-                paint_key("Why:"),
-                compact_error
-            ));
-            if compact_error.contains("no `ota.workspace.yaml` found")
-                && compact_error.contains(" upward")
-            {
+            if let Some(missing) = detect_missing_contract_context(&compact_error) {
+                render_missing_contract_guidance(&mut out, &compact_error, missing);
+            } else {
                 out.push_str(&format!(
-                    "\n{} setup workspace with {}",
-                    paint_next_label(),
-                    paint_code("`ota workspace init`")
+                    "\n{} {}",
+                    paint_key("Why:"),
+                    compact_error
                 ));
             }
         }
