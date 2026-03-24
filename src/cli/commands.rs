@@ -2925,6 +2925,45 @@ fn render_tasks_text(
         }
     }
 
+    append_markdown_table(
+        &mut output,
+        "Tasks table",
+        &[
+            "Task",
+            "Kind",
+            "Selected OS",
+            "Depends On",
+            "Safe For Agent",
+            "Command Preview",
+        ],
+        tasks.iter().map(|task| {
+            let command_preview = task
+                .run
+                .map(str::to_string)
+                .or_else(|| {
+                    task.script
+                        .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
+                })
+                .unwrap_or_else(|| String::from("-"));
+            vec![
+                task.name.to_string(),
+                task.kind.to_string(),
+                task.selected_variant_os.unwrap_or("-").to_string(),
+                if task.depends_on.is_empty() {
+                    String::from("-")
+                } else {
+                    task.depends_on.join(",")
+                },
+                if task.safe_for_agent {
+                    String::from("true")
+                } else {
+                    String::from("false")
+                },
+                command_preview,
+            ]
+        }),
+    );
+
     output
 }
 
@@ -2978,6 +3017,37 @@ fn render_workspace_doctor_text(
         }
     }
 
+    append_markdown_table(
+        &mut stdout,
+        "Repos table",
+        &["Repo", "Required", "Status", "Path", "Contract"],
+        report.repos.iter().map(|repo| {
+            vec![
+                repo.name.clone(),
+                if repo.required {
+                    String::from("required")
+                } else {
+                    String::from("optional")
+                },
+                if repo.ok {
+                    String::from("READY")
+                } else {
+                    String::from("NOT READY")
+                },
+                repo.path.clone(),
+                repo.contract_path.clone(),
+            ]
+        }),
+    );
+
+    for repo in &report.repos {
+        append_findings_table(
+            &mut stdout,
+            &format!("{} findings table", repo.name),
+            &repo.findings,
+        );
+    }
+
     CommandOutput {
         stdout,
         stderr: None,
@@ -3017,6 +3087,37 @@ fn render_workspace_check_text(
                 finding.next
             ));
         }
+    }
+
+    append_markdown_table(
+        &mut stdout,
+        "Repos table",
+        &["Repo", "Required", "Status", "Path", "Contract"],
+        report.repos.iter().map(|repo| {
+            vec![
+                repo.name.clone(),
+                if repo.required {
+                    String::from("required")
+                } else {
+                    String::from("optional")
+                },
+                if repo.ok {
+                    String::from("READY")
+                } else {
+                    String::from("NOT READY")
+                },
+                repo.path.clone(),
+                repo.contract_path.clone(),
+            ]
+        }),
+    );
+
+    for repo in &report.repos {
+        append_findings_table(
+            &mut stdout,
+            &format!("{} findings table", repo.name),
+            &repo.findings,
+        );
     }
 
     CommandOutput {
@@ -3065,6 +3166,8 @@ fn render_report_section(
             finding.next
         ));
     }
+
+    append_findings_table(&mut stdout, "Findings table", &report.findings);
 
     stdout
 }
@@ -3372,6 +3475,8 @@ fn render_up_section_from_parts(
         ));
     }
 
+    append_findings_table(&mut stdout, "Findings table", &report.findings);
+
     stdout
 }
 
@@ -3449,6 +3554,45 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
 
+            append_markdown_table(
+                &mut stdout,
+                "Repos table",
+                &[
+                    "Repo",
+                    "Required",
+                    "Status",
+                    "Phase",
+                    "Service",
+                    "Task",
+                    "Exit Code",
+                ],
+                report.repos.iter().map(|repo| {
+                    vec![
+                        repo.name.clone(),
+                        if repo.required {
+                            String::from("required")
+                        } else {
+                            String::from("optional")
+                        },
+                        repo.status.clone(),
+                        repo.phase.clone(),
+                        repo.service.clone().unwrap_or_else(|| String::from("-")),
+                        repo.task.clone().unwrap_or_else(|| String::from("-")),
+                        repo.exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| String::from("-")),
+                    ]
+                }),
+            );
+
+            for repo in &report.repos {
+                append_findings_table(
+                    &mut stdout,
+                    &format!("{} findings table", repo.name),
+                    &repo.findings,
+                );
+            }
+
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -3508,6 +3652,35 @@ fn render_workspace_run(
                 }
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
+            }
+
+            append_markdown_table(
+                &mut stdout,
+                "Repos table",
+                &["Repo", "Required", "Status", "Task", "Exit Code"],
+                report.repos.iter().map(|repo| {
+                    vec![
+                        repo.name.clone(),
+                        if repo.required {
+                            String::from("required")
+                        } else {
+                            String::from("optional")
+                        },
+                        repo.status.clone(),
+                        repo.task.clone(),
+                        repo.exit_code
+                            .map(|code| code.to_string())
+                            .unwrap_or_else(|| String::from("-")),
+                    ]
+                }),
+            );
+
+            for repo in &report.repos {
+                append_findings_table(
+                    &mut stdout,
+                    &format!("{} findings table", repo.name),
+                    &repo.findings,
+                );
             }
 
             CommandOutput {
@@ -3571,6 +3744,66 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
         }
     }
 
+    append_markdown_table(
+        &mut stdout,
+        "Repos table",
+        &[
+            "Repo",
+            "Required",
+            "Acquired",
+            "Path",
+            "Contract",
+            "Depends On",
+        ],
+        repos.iter().map(|repo| {
+            vec![
+                repo.name.clone(),
+                if repo.required {
+                    String::from("required")
+                } else {
+                    String::from("optional")
+                },
+                if repo.acquired {
+                    String::from("acquired")
+                } else {
+                    String::from("not acquired")
+                },
+                repo.path.clone(),
+                repo.contract_path.clone(),
+                if repo.depends_on.is_empty() {
+                    String::from("-")
+                } else {
+                    repo.depends_on.join(", ")
+                },
+            ]
+        }),
+    );
+
+    let task_rows = repos.iter().flat_map(|repo| {
+        repo.tasks.iter().map(|task| {
+            vec![
+                repo.name.clone(),
+                task.name.clone(),
+                task.kind.clone(),
+                if task.depends_on.is_empty() {
+                    String::from("-")
+                } else {
+                    task.depends_on.join(",")
+                },
+                task.run
+                    .clone()
+                    .or(task.script.clone())
+                    .unwrap_or_else(|| String::from("-")),
+            ]
+        })
+    });
+    append_markdown_table(
+        &mut stdout,
+        "Tasks table",
+        &["Repo", "Task", "Kind", "Depends On", "Command"],
+        task_rows,
+    );
+
     CommandOutput::success(stdout)
 }
 
@@ -3585,6 +3818,59 @@ fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>)
     buffer.push_str(&format!("\n  {label}:"));
     for line in contents.lines() {
         buffer.push_str(&format!("\n    {line}"));
+    }
+}
+
+fn append_findings_table(output: &mut String, title: &str, findings: &[Finding]) {
+    append_markdown_table(
+        output,
+        title,
+        &["Severity", "Summary", "Why", "Next"],
+        findings.iter().map(|finding| {
+            vec![
+                render_severity(finding.severity).to_string(),
+                finding.summary.clone(),
+                finding.why.clone(),
+                finding.next.clone(),
+            ]
+        }),
+    );
+}
+
+fn append_markdown_table(
+    output: &mut String,
+    title: &str,
+    headers: &[&str],
+    rows: impl IntoIterator<Item = Vec<String>>,
+) {
+    output.push_str(&format!("\n---\n{title}:"));
+    output.push_str("\n| ");
+    output.push_str(&headers.join(" | "));
+    output.push_str(" |");
+    output.push_str("\n|");
+    for _ in headers {
+        output.push_str(" --- |");
+    }
+
+    let mut wrote_any = false;
+    for row in rows {
+        wrote_any = true;
+        output.push_str("\n| ");
+        let mut rendered = Vec::with_capacity(headers.len());
+        for (idx, _) in headers.iter().enumerate() {
+            let value = row.get(idx).map_or("-", String::as_str);
+            rendered.push(render_table_cell(value));
+        }
+        output.push_str(&rendered.join(" | "));
+        output.push_str(" |");
+    }
+
+    if !wrote_any {
+        output.push_str("\n| none");
+        for _ in 1..headers.len() {
+            output.push_str(" | -");
+        }
+        output.push_str(" |");
     }
 }
 
