@@ -59,7 +59,7 @@ use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceRepoRef, WorkspaceValidationErrors,
     diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
-    validate_workspace_contract,
+    parse_workspace_contract_str, validate_workspace_contract,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -1834,10 +1834,16 @@ struct WorkspaceInitRepoSpec {
     required: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct WorkspaceInitRepoSummary {
     name: String,
     path: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceInitComparison {
+    existing_contract: bool,
+    additions: Vec<WorkspaceInitRepoSummary>,
 }
 
 struct WorkspaceInitDraft {
@@ -1849,6 +1855,7 @@ struct WorkspaceInitDraft {
 pub fn workspace_init(
     path: Option<&Path>,
     write: bool,
+    merge: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -1871,10 +1878,179 @@ pub fn workspace_init(
         format!("DEBUG workspace_root={}", workspace_root.display()),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG write={write}"),
+        format!("DEBUG merge={merge}"),
     ];
+
+    if merge && !workspace_path.exists() {
+        let error = if write {
+            format!(
+                "`ota workspace init --merge` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                format_next_timeline(&[
+                    String::from("use `ota workspace init` to write a first workspace contract"),
+                    String::from("use `ota workspace init --dry-run` to review one"),
+                ]),
+            )
+        } else {
+            format!(
+                "`ota workspace init --merge --dry-run` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                format_next_timeline(&[String::from(
+                    "use `ota workspace init --dry-run` to preview a first workspace contract",
+                )]),
+            )
+        };
+        let next = if write {
+            format!("ota workspace init {}", workspace_root.display())
+        } else {
+            format!("ota workspace init --dry-run {}", workspace_root.display())
+        };
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "error": error,
+                    "next": next,
+                }))),
+            },
+            debug,
+            debug_lines,
+        );
+    }
 
     finalize_debug(
         match build_workspace_init_draft(&workspace_root) {
+            Ok(draft) if merge && !write => {
+                let comparison = match compare_workspace_init_merge(&workspace_path, &draft) {
+                    Ok(comparison) => comparison,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                "ok": false,
+                                "path": path_display,
+                                "written": false,
+                                "mode": "scaffold",
+                                "error": error,
+                            }))),
+                        };
+                    }
+                };
+                match format {
+                    OutputFormat::Text => {
+                        let yaml = match serde_yaml::to_string(&draft.contract) {
+                            Ok(yaml) => yaml,
+                            Err(error) => {
+                                return CommandOutput::failure(format!(
+                                    "failed to serialize workspace contract for `{}`: {error}",
+                                    compact_path_display
+                                ));
+                            }
+                        };
+                        let mut stdout =
+                            format_command_header("WORKSPACE INIT MERGE PREVIEW", &compact_root_display);
+                        stdout.push_str("\n\nMode: dry-run (no write)");
+                        stdout.push_str(&format_next_timeline(&[format!(
+                            "run `ota workspace init --merge {compact_root_display}` to apply additive repo entries",
+                        )]));
+                        stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                        stdout.push_str(yaml.trim_end());
+                        render_workspace_init_merge_section(
+                            &mut stdout,
+                            "Additive merge preview",
+                            &comparison.additions,
+                        );
+                        render_workspace_init_discovery_sections(
+                            &mut stdout,
+                            &draft.included,
+                            &draft.missing_contract,
+                        );
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": false,
+                        "mode": "scaffold",
+                        "config": draft.contract,
+                        "included": draft.included,
+                        "missing_contract": draft.missing_contract,
+                        "comparison": comparison,
+                    }))),
+                }
+            }
+            Ok(draft) if merge => {
+                let comparison = match apply_workspace_init_merge(&workspace_path, &draft) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                "ok": false,
+                                "path": path_display,
+                                "written": false,
+                                "mode": "scaffold",
+                                "error": error,
+                            }))),
+                        };
+                    }
+                };
+
+                if comparison.additions.is_empty() {
+                    return match format {
+                        OutputFormat::Text => {
+                            let mut stdout =
+                                format_command_header("WORKSPACE NO CHANGES", &compact_workspace_path(&workspace_path));
+                            render_workspace_init_merge_section(
+                                &mut stdout,
+                                "Additive merge preview",
+                                &comparison.additions,
+                            );
+                            CommandOutput::success(stdout)
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                            "ok": true,
+                            "path": path_display,
+                            "written": false,
+                            "mode": "scaffold",
+                            "config": draft.contract,
+                            "included": draft.included,
+                            "missing_contract": draft.missing_contract,
+                            "comparison": comparison,
+                        }))),
+                    };
+                }
+
+                match format {
+                    OutputFormat::Text => {
+                        let mut stdout =
+                            format_command_header("WORKSPACE MERGED", &compact_workspace_path(&workspace_path));
+                        render_workspace_init_merge_section(
+                            &mut stdout,
+                            "Applied additions",
+                            &comparison.additions,
+                        );
+                        render_workspace_init_discovery_sections(
+                            &mut stdout,
+                            &draft.included,
+                            &draft.missing_contract,
+                        );
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": true,
+                        "mode": "scaffold",
+                        "config": draft.contract,
+                        "included": draft.included,
+                        "missing_contract": draft.missing_contract,
+                        "comparison": comparison,
+                    }))),
+                }
+            }
             Ok(_draft) if write && workspace_path.exists() => {
                 let next_validate = command_for_workspace("ota workspace validate", &workspace_path);
                 let next_doctor = command_for_workspace("ota workspace doctor", &workspace_path);
@@ -3831,6 +4007,149 @@ fn render_workspace_init_discovery_sections(
             String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
         ]));
     }
+}
+
+fn render_workspace_init_merge_section(
+    stdout: &mut String,
+    title: &str,
+    additions: &[WorkspaceInitRepoSummary],
+) {
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    if additions.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+    } else {
+        for repo in additions {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+    }
+}
+
+fn compare_workspace_init_merge(
+    workspace_path: &Path,
+    draft: &WorkspaceInitDraft,
+) -> Result<WorkspaceInitComparison, String> {
+    let contents = fs::read_to_string(workspace_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+    let document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse existing workspace contract `{}` for merge: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+    let repos = document
+        .as_mapping()
+        .and_then(|root| root.get(YamlValue::String(String::from("repos"))))
+        .and_then(YamlValue::as_mapping)
+        .ok_or_else(|| {
+            format!(
+                "existing workspace contract `{}` must contain a `repos` mapping for merge",
+                compact_workspace_path(workspace_path)
+            )
+        })?;
+
+    let mut additions = Vec::new();
+    for repo in &draft.included {
+        if !repos.contains_key(YamlValue::String(repo.name.clone())) {
+            additions.push(repo.clone());
+        }
+    }
+
+    Ok(WorkspaceInitComparison {
+        existing_contract: true,
+        additions,
+    })
+}
+
+fn apply_workspace_init_merge(
+    workspace_path: &Path,
+    draft: &WorkspaceInitDraft,
+) -> Result<WorkspaceInitComparison, String> {
+    let contents = fs::read_to_string(workspace_path).map_err(|error| {
+        format!(
+            "failed to read `{}`: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+    let mut document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse existing workspace contract `{}` for merge: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+
+    let root = document.as_mapping_mut().ok_or_else(|| {
+        format!(
+            "existing workspace contract `{}` must be a mapping for merge",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+    let repos_key = YamlValue::String(String::from("repos"));
+    if !root.contains_key(&repos_key) {
+        root.insert(repos_key.clone(), YamlValue::Mapping(Mapping::new()));
+    }
+    let repos = root
+        .get_mut(&repos_key)
+        .and_then(YamlValue::as_mapping_mut)
+        .ok_or_else(|| {
+            format!(
+                "existing workspace contract `{}` must contain a `repos` mapping for merge",
+                compact_workspace_path(workspace_path)
+            )
+        })?;
+
+    let mut additions = Vec::new();
+    for repo in &draft.included {
+        let repo_key = YamlValue::String(repo.name.clone());
+        if repos.contains_key(&repo_key) {
+            continue;
+        }
+        let spec = draft
+            .contract
+            .repos
+            .get(&repo.name)
+            .ok_or_else(|| format!("internal merge error: missing repo spec `{}`", repo.name))?;
+        let mut spec_map = Mapping::new();
+        spec_map.insert(
+            YamlValue::String(String::from("path")),
+            YamlValue::String(spec.path.clone()),
+        );
+        spec_map.insert(
+            YamlValue::String(String::from("required")),
+            YamlValue::Bool(spec.required),
+        );
+        repos.insert(repo_key, YamlValue::Mapping(spec_map));
+        additions.push(repo.clone());
+    }
+
+    let yaml = serde_yaml::to_string(&document).map_err(|error| {
+        format!(
+            "failed to serialize merged workspace contract `{}`: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+    let contract = parse_workspace_contract_str(workspace_path, &yaml)
+        .map_err(|error| error.to_string())?;
+    validate_workspace_contract(workspace_path, &contract).map_err(|error| error.to_string())?;
+    fs::write(workspace_path, yaml).map_err(|error| {
+        format!(
+            "failed to write `{}`: {error}",
+            compact_workspace_path(workspace_path)
+        )
+    })?;
+
+    Ok(WorkspaceInitComparison {
+        existing_contract: true,
+        additions,
+    })
 }
 
 fn resolve_workspace_init_target(

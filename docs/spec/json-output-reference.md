@@ -195,7 +195,16 @@ Success:
       "path": "apps/web"
     }
   ],
-  "missing_contract": []
+  "missing_contract": [],
+  "comparison": {
+    "existing_contract": true,
+    "additions": [
+      {
+        "name": "api",
+        "path": "services/api"
+      }
+    ]
+  }
 }
 ```
 

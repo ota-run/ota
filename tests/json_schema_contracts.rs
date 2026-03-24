@@ -113,6 +113,7 @@ fn workspace_init_schema_exists_and_covers_scaffold_fields() {
     assert!(success.get("config").is_some());
     assert!(success.get("included").is_some());
     assert!(success.get("missing_contract").is_some());
+    assert!(success.get("comparison").is_some());
     assert!(config.get("workspace").is_some());
     assert!(config.get("repos").is_some());
     assert!(repo_summary.get("name").is_some());

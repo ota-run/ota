@@ -56,6 +56,18 @@
         "missing_contract": {
           "type": "array",
           "items": { "$ref": "#/$defs/repoSummary" }
+        },
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existing_contract", "additions"],
+          "properties": {
+            "existing_contract": { "type": "boolean" },
+            "additions": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/repoSummary" }
+            }
+          }
         }
       }
     },
