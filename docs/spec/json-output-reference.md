@@ -167,7 +167,7 @@ Failure:
 }
 ```
 
-## `ota workspace init --json`
+## `ota workspace init --json` and `ota workspace detect --json`
 
 Success:
 

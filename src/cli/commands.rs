@@ -1852,10 +1852,16 @@ struct WorkspaceInitDraft {
     missing_contract: Vec<WorkspaceInitRepoSummary>,
 }
 
+pub enum WorkspaceScaffoldSurface {
+    Init,
+    Detect,
+}
+
 pub fn workspace_init(
     path: Option<&Path>,
     write: bool,
     merge: bool,
+    surface: WorkspaceScaffoldSurface,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -1880,28 +1886,36 @@ pub fn workspace_init(
         format!("DEBUG write={write}"),
         format!("DEBUG merge={merge}"),
     ];
+    let command_name = match surface {
+        WorkspaceScaffoldSurface::Init => "ota workspace init",
+        WorkspaceScaffoldSurface::Detect => "ota workspace detect",
+    };
+    let command_label = match surface {
+        WorkspaceScaffoldSurface::Init => "INIT",
+        WorkspaceScaffoldSurface::Detect => "DETECT",
+    };
 
     if merge && !workspace_path.exists() {
         let error = if write {
             format!(
-                "`ota workspace init --merge` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                "`{command_name} --merge` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
                 format_next_timeline(&[
-                    String::from("use `ota workspace init` to write a first workspace contract"),
-                    String::from("use `ota workspace init --dry-run` to review one"),
+                    format!("use `{command_name}` to write a first workspace contract"),
+                    format!("use `{command_name} --dry-run` to review one"),
                 ]),
             )
         } else {
             format!(
-                "`ota workspace init --merge --dry-run` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
-                format_next_timeline(&[String::from(
-                    "use `ota workspace init --dry-run` to preview a first workspace contract",
+                "`{command_name} --merge --dry-run` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                format_next_timeline(&[format!(
+                    "use `{command_name} --dry-run` to preview a first workspace contract",
                 )]),
             )
         };
         let next = if write {
-            format!("ota workspace init {}", workspace_root.display())
+            format!("{command_name} {}", workspace_root.display())
         } else {
-            format!("ota workspace init --dry-run {}", workspace_root.display())
+            format!("{command_name} --dry-run {}", workspace_root.display())
         };
         return finalize_debug(
             match format {
@@ -1949,11 +1963,11 @@ pub fn workspace_init(
                                 ));
                             }
                         };
-                        let mut stdout =
-                            format_command_header("WORKSPACE INIT MERGE PREVIEW", &compact_root_display);
+                    let mut stdout =
+                            format_command_header(&format!("WORKSPACE {command_label} MERGE PREVIEW"), &compact_root_display);
                         stdout.push_str("\n\nMode: dry-run (no write)");
                         stdout.push_str(&format_next_timeline(&[format!(
-                            "run `ota workspace init --merge {compact_root_display}` to apply additive repo entries",
+                            "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
                         stdout.push_str(yaml.trim_end());
@@ -2002,7 +2016,7 @@ pub fn workspace_init(
                     return match format {
                         OutputFormat::Text => {
                             let mut stdout =
-                                format_command_header("WORKSPACE NO CHANGES", &compact_workspace_path(&workspace_path));
+                                format_command_header(&format!("WORKSPACE {command_label} NO CHANGES"), &compact_workspace_path(&workspace_path));
                             render_workspace_init_merge_section(
                                 &mut stdout,
                                 "Additive merge preview",
@@ -2026,7 +2040,7 @@ pub fn workspace_init(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout =
-                            format_command_header("WORKSPACE MERGED", &compact_workspace_path(&workspace_path));
+                            format_command_header(&format!("WORKSPACE {command_label} MERGED"), &compact_workspace_path(&workspace_path));
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Applied additions",
@@ -2052,17 +2066,34 @@ pub fn workspace_init(
                 }
             }
             Ok(_draft) if write && workspace_path.exists() => {
-                let next_validate = command_for_workspace("ota workspace validate", &workspace_path);
-                let next_doctor = command_for_workspace("ota workspace doctor", &workspace_path);
-                let error = format!(
-                    "`{}` already exists; refusing to overwrite an existing workspace contract{}\n{}",
-                    compact_workspace_path(&workspace_path),
-                    format_next_timeline(&[
-                        format!("review the existing workspace contract with `{next_validate}`"),
-                        format!("diagnose current workspace readiness with `{next_doctor}`"),
-                    ]),
-                    ""
-                );
+                let error = match surface {
+                    WorkspaceScaffoldSurface::Init => {
+                        let next_validate =
+                            command_for_workspace("ota workspace validate", &workspace_path);
+                        let next_doctor =
+                            command_for_workspace("ota workspace doctor", &workspace_path);
+                        format!(
+                            "`{}` already exists; refusing to overwrite an existing workspace contract{}\n{}",
+                            compact_workspace_path(&workspace_path),
+                            format_next_timeline(&[
+                                format!("review the existing workspace contract with `{next_validate}`"),
+                                format!("diagnose current workspace readiness with `{next_doctor}`"),
+                            ]),
+                            ""
+                        )
+                    }
+                    WorkspaceScaffoldSurface::Detect => {
+                        format!(
+                            "`{}` already exists; `{command_name} --write` only writes first contracts{}\n{}",
+                            compact_workspace_path(&workspace_path),
+                            format_next_timeline(&[
+                                format!("use `{command_name} --merge --dry-run {compact_root_display}` to review additive merge changes"),
+                                format!("use `{command_name} --merge {compact_root_display}` to apply additive repo entries"),
+                            ]),
+                            ""
+                        )
+                    }
+                };
                 match format {
                     OutputFormat::Text => CommandOutput::failure(error.trim_end().to_string()),
                     OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
@@ -2071,7 +2102,7 @@ pub fn workspace_init(
                         "written": false,
                         "mode": "scaffold",
                         "error": error.trim_end(),
-                        "next": next_validate,
+                        "next": command_for_workspace("ota workspace validate", &workspace_path),
                     }))),
                 }
             }
@@ -2128,7 +2159,7 @@ pub fn workspace_init(
                         let next_doctor =
                             command_for_workspace("ota workspace doctor", &workspace_path);
                         let mut stdout =
-                            format_command_header("WORKSPACE INIT WRITE", &compact_root_display);
+                            format_command_header(&format!("WORKSPACE {command_label} WRITE"), &compact_root_display);
                         stdout.push_str(&format!(
                             "\n\n{} wrote `{}`",
                             paint_key("Result:"),
@@ -2170,10 +2201,10 @@ pub fn workspace_init(
                     };
 
                     let mut stdout =
-                        format_command_header("WORKSPACE INIT PREVIEW", &compact_root_display);
+                        format_command_header(&format!("WORKSPACE {command_label} PREVIEW"), &compact_root_display);
                     stdout.push_str("\n\nMode: dry-run (no write)");
                     stdout.push_str(&format_next_timeline(&[format!(
-                        "run `ota workspace init {compact_root_display}` to write `{}`",
+                        "run `{command_name} {compact_root_display}` to write `{}`",
                         compact_workspace_path(&workspace_path)
                     )]));
                     stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));

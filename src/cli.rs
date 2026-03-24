@@ -215,11 +215,19 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
 enum WorkspaceCommands {
     /// Create a starter ota.workspace.yaml from local repo structure.
     Init {
-        /// Compatibility flag; writing is now the default.
+        /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to a workspace root directory or ota.workspace.yaml target path.
+        path: Option<PathBuf>,
+    },
+    /// Infer workspace contract shape and merge-ready additions.
+    Detect {
+        /// Write inferred workspace contract.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         write: bool,
         /// Preview inferred workspace contract without writing ota.workspace.yaml.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
+        #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
         /// Merge missing discovered repos into an existing ota.workspace.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -467,8 +475,26 @@ fn dispatch(cli: Cli) -> CommandOutput {
             )
         }
         Commands::Workspace { command } => match command {
-            WorkspaceCommands::Init {
-                write: _write,
+            WorkspaceCommands::Init { json, path } => {
+                if file.is_some() {
+                    return CommandOutput::failure_with_code(
+                        String::from(
+                            "`--file` is only supported for commands that read an existing contract",
+                        ),
+                        2,
+                    );
+                }
+                commands::workspace_init(
+                    path.as_deref(),
+                    true,
+                    false,
+                    commands::WorkspaceScaffoldSurface::Init,
+                    format_from_json(json),
+                    debug,
+                )
+            }
+            WorkspaceCommands::Detect {
+                write,
                 dry_run,
                 merge,
                 json,
@@ -482,11 +508,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         2,
                     );
                 }
-                let write = !dry_run;
+                let write = if merge { !dry_run } else { write && !dry_run };
                 commands::workspace_init(
                     path.as_deref(),
                     write,
                     merge,
+                    commands::WorkspaceScaffoldSurface::Detect,
                     format_from_json(json),
                     debug,
                 )
@@ -5641,14 +5668,14 @@ tasks:
         let preview = run_with([
             "ota",
             "workspace",
-            "init",
+            "detect",
             "--dry-run",
             fixture.path().to_str().unwrap(),
         ]);
         let preview_stdout = strip_ansi(&preview.stdout);
         assert_eq!(preview.exit_code, 0);
         assert!(preview_stdout.contains(&format!(
-            "WORKSPACE INIT PREVIEW {}",
+            "WORKSPACE DETECT PREVIEW {}",
             compact_path(fixture.path(), ".")
         )));
         assert!(preview_stdout.contains("Mode: dry-run (no write)"));
@@ -5734,7 +5761,7 @@ project:
         let output = run_with([
             "ota",
             "workspace",
-            "init",
+            "detect",
             "--merge",
             fixture.path().to_str().unwrap(),
         ]);
@@ -5775,12 +5802,12 @@ repos:
         let output = run_with([
             "ota",
             "workspace",
-            "init",
+            "detect",
             "--merge",
             fixture.path().to_str().unwrap(),
         ]);
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("WORKSPACE MERGED"));
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT MERGED"));
 
         let written = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
         assert!(written.contains("web:"));
@@ -5816,13 +5843,13 @@ repos:
         let output = run_with([
             "ota",
             "workspace",
-            "init",
+            "detect",
             "--merge",
             "--dry-run",
             fixture.path().to_str().unwrap(),
         ]);
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("WORKSPACE INIT MERGE PREVIEW"));
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT MERGE PREVIEW"));
 
         let after = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
         assert_eq!(before, after);

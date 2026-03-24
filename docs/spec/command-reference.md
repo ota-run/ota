@@ -64,6 +64,7 @@ Ota currently ships these commands:
 - `ota up`
 - `ota detect`
 - `ota workspace init`
+- `ota workspace detect`
 - `ota workspace validate`
 - `ota workspace tasks`
 - `ota workspace run <task>`
@@ -559,9 +560,6 @@ Create a starter workspace contract from existing repo contracts.
 
 ```bash
 ota workspace init [PATH]
-ota workspace init --dry-run [PATH]
-ota workspace init --merge [PATH]
-ota workspace init --merge --dry-run [PATH]
 ota workspace init --json [PATH]
 ```
 
@@ -570,24 +568,43 @@ Current behavior:
 - infers workspace repos by scanning common local repo roots (top-level plus containers like `apps/`, `services/`, `repos/`, `packages/`)
 - includes only repos that already have `ota.yaml`
 - skips candidate repos that do not yet have `ota.yaml`
-- default mode writes `ota.workspace.yaml`
-- `--dry-run` is explicit preview mode
-- writes `ota.workspace.yaml` when not in preview mode
-- `--merge` requires an existing `ota.workspace.yaml` and adds only missing discovered repo entries under `repos`
-- merge is additive-only and does not overwrite existing repo entries
+- writes `ota.workspace.yaml`
 - refuses to overwrite an existing `ota.workspace.yaml`
 - when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
-- supports JSON for machine-readable preview/write outcomes
+- supports JSON for machine-readable write outcomes
 
 Text output:
 
-- preview: `WORKSPACE INIT PREVIEW <path>`
 - write: `WORKSPACE INIT WRITE <path>`
 
 JSON output:
 
 - success: `ok`, `path`, `written`, `mode`, `config`, `included`, `missing_contract`
 - failure: `ok`, `path`, `written`, `mode`, `error`, optional `next`
+
+## `ota workspace detect`
+
+Infer workspace contract shape and additive merge candidates.
+
+```bash
+ota workspace detect [PATH]
+ota workspace detect --write [PATH]
+ota workspace detect --dry-run [PATH]
+ota workspace detect --merge [PATH]
+ota workspace detect --merge --dry-run [PATH]
+ota workspace detect --json [PATH]
+```
+
+Current behavior:
+
+- infers workspace repos by scanning common local repo roots (top-level plus containers like `apps/`, `services/`, `repos/`, `packages/`)
+- includes only repos that already have `ota.yaml`
+- skips candidate repos that do not yet have `ota.yaml`
+- default mode is preview
+- `--write` writes `ota.workspace.yaml` only for first contract creation
+- `--merge` requires an existing `ota.workspace.yaml` and adds only missing discovered repo entries under `repos`
+- merge is additive-only and does not overwrite existing repo entries
+- supports JSON for machine-readable preview/write outcomes
 
 ## `ota workspace validate`
 
