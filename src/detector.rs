@@ -172,6 +172,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     let mut builder = DetectBuilder::new(root.clone());
 
     detect_package_json(&root, &mut builder)?;
+    detect_composer_json(&root, &mut builder)?;
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_python_version_file(&root, &mut builder)?;
@@ -268,6 +269,77 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
                     task_confidence,
                 );
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_composer_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("composer.json");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let composer: JsonValue =
+        serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+            path: path.display().to_string(),
+            message: source.to_string(),
+        })?;
+
+    if let Some(name) = composer.get("name").and_then(JsonValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.to_string(),
+            "composer.json#name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    if let Some(runtime) = composer
+        .get("config")
+        .and_then(|config| config.get("platform"))
+        .and_then(|platform| platform.get("php"))
+        .and_then(JsonValue::as_str)
+        && !runtime.trim().is_empty()
+    {
+        builder.set_runtime(
+            "php".to_string(),
+            runtime.trim().to_string(),
+            "composer.json#config.platform.php".to_string(),
+            Confidence::High,
+        );
+    } else if let Some(runtime) = composer
+        .get("require")
+        .and_then(|require| require.get("php"))
+        .and_then(JsonValue::as_str)
+        && !runtime.trim().is_empty()
+    {
+        builder.set_runtime(
+            "php".to_string(),
+            runtime.trim().to_string(),
+            "composer.json#require.php".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_tool(
+        "composer".to_string(),
+        "*".to_string(),
+        "composer.json".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(scripts) = composer.get("scripts").and_then(JsonValue::as_object) {
+        for name in scripts.keys() {
+            builder.set_task(
+                name.to_string(),
+                format!("composer run {name}"),
+                format!("composer.json#scripts.{name}"),
+                Confidence::High,
+            );
         }
     }
 
@@ -374,6 +446,12 @@ fn detect_tool_versions(root: &Path, builder: &mut DetectBuilder) -> Result<(), 
             ),
             "java" => builder.set_runtime(
                 "java".to_string(),
+                version.to_string(),
+                ".tool-versions".to_string(),
+                Confidence::High,
+            ),
+            "php" => builder.set_runtime(
+                "php".to_string(),
                 version.to_string(),
                 ".tool-versions".to_string(),
                 Confidence::High,
@@ -1361,6 +1439,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "setup.cfg#metadata.name" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
+            "composer.json#name" => 3,
             "go.mod#module" => 2,
             "directory-name" => 1,
             _ => 0,
@@ -1406,10 +1485,17 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "Cargo.toml#package.rust-version" => 1,
             _ => 0,
         },
+        "runtimes.php" => match source {
+            "composer.json#config.platform.php" => 3,
+            "composer.json#require.php" => 2,
+            ".tool-versions" => 1,
+            _ => 0,
+        },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
             "package.json#packageManager" => 2,
+            "composer.json" => 2,
             "pnpm-workspace.yaml" => 2,
             "pnpm-lock.yaml" => 2,
             "yarn.lock" => 2,
@@ -1516,6 +1602,90 @@ requires-python = ">=3.12"
         assert_eq!(
             report.contract.runtimes.get("go"),
             Some(&"1.24.0".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_composer_php_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "composer.json",
+            r#"{
+  "name": "qredex/php-app",
+  "require": {
+    "php": "^8.2"
+  },
+  "scripts": {
+    "test": "phpunit",
+    "serve": "php -S localhost:8000 -t public"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex/php-app")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("php"),
+            Some(&"^8.2".to_string())
+        );
+        assert_eq!(report.contract.tools.get("composer"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("composer run test")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("serve")
+                .map(|task| task.run.as_str()),
+            Some("composer run serve")
+        );
+    }
+
+    #[test]
+    fn prefers_composer_platform_php_over_require_php() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "composer.json",
+            r#"{
+  "name": "qredex/php-app",
+  "require": {
+    "php": "^8.1"
+  },
+  "config": {
+    "platform": {
+      "php": "8.3.4"
+    }
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report.contract.runtimes.get("php"),
+            Some(&"8.3.4".to_string())
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "runtimes.php"
+                    && inference.source == "composer.json#config.platform.php"
+                    && inference.confidence == Confidence::High)
         );
     }
 
