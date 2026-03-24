@@ -29,7 +29,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Write-OtaHeader {
-    Write-Host "🦦 INSTALL" -ForegroundColor Cyan
+    Write-Host "🦦  INSTALL" -ForegroundColor Cyan
     Write-Host "◉ doctor first, contract second" -ForegroundColor White
 }
 

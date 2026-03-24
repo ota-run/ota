@@ -89,7 +89,7 @@ if (-not $found -or -not $currentVersion) {
 
 Set-Content -Path $cargoToml -Value $lines
 
-Write-Host "🦦 VERSION BUMP" -ForegroundColor Cyan
+Write-Host "🦦  VERSION BUMP" -ForegroundColor Cyan
 Write-Host "Updated: Cargo.toml"
 Write-Host "From: $currentVersion"
 Write-Host "To:   $Version"

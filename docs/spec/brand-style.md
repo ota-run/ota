@@ -28,7 +28,7 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## Core identity
 
-- mark: `🦦` in rich CLI headers
+- mark: `🦦 ` in rich CLI headers
 - product line: `doctor first, contract second`
 - voice: direct, explicit, deterministic, no hidden magic
 
@@ -45,7 +45,7 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## CLI style
 
-- rich header format: `🦦 <COMMAND> <target>`
+- rich header format: `🦦  <COMMAND> <target>`
 - key commands (`doctor`, `init`, `detect`, `up`, `run`) include:
   - rich: `◉ doctor first, contract second`
   - plain: `Signature: doctor first, contract second`
