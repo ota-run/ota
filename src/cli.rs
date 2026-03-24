@@ -646,9 +646,11 @@ fn finalize_cli_output(
 ) -> CommandOutput {
     let json_requested = command_requests_json(command);
 
-    if output.exit_code != 0 && !json_requested {
+    if output.exit_code != 0 && output.exit_code != 2 && !json_requested {
         if let Some(stderr) = output.stderr.take() {
-            output.stderr = Some(append_try_footer(stderr, command));
+            let structured =
+                commands::stylize_text_failure(command_where_label(command), stderr.as_str());
+            output.stderr = Some(append_try_footer(structured, command));
         }
     }
 
@@ -736,6 +738,30 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Run { json, .. } => *json,
         },
         Commands::Run { .. } | Commands::Clean { .. } => false,
+    }
+}
+
+fn command_where_label(command: &Commands) -> &'static str {
+    match command {
+        Commands::Validate { .. } => "ota validate",
+        Commands::Tasks { .. } => "ota tasks",
+        Commands::Run { .. } => "ota run",
+        Commands::Doctor { .. } => "ota doctor",
+        Commands::Init { .. } => "ota init",
+        Commands::Check { .. } => "ota check",
+        Commands::Up { .. } => "ota up",
+        Commands::Clean { .. } => "ota clean",
+        Commands::Detect { .. } => "ota detect",
+        Commands::Workspace { command } => match command {
+            WorkspaceCommands::Init { .. } => "ota workspace init",
+            WorkspaceCommands::Detect { .. } => "ota workspace detect",
+            WorkspaceCommands::Validate { .. } => "ota workspace validate",
+            WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
+            WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
+            WorkspaceCommands::Check { .. } => "ota workspace check",
+            WorkspaceCommands::Up { .. } => "ota workspace up",
+            WorkspaceCommands::Run { .. } => "ota workspace run",
+        },
     }
 }
 
@@ -6671,6 +6697,7 @@ tasks:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why:"));
         assert!(stderr.contains("workspace repo `web` contract"));
+        assert!(!stderr.contains("/Users/"));
     }
 
     #[test]
@@ -7596,9 +7623,10 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        let stderr = output.stderr.as_deref().unwrap_or_default();
-        assert!(stderr.starts_with("`--stream` currently requires `--jobs 1`"));
-        assert!(stderr.contains("Try: `ota workspace tasks`"));
+        assert_eq!(
+            output.stderr.as_deref(),
+            Some("`--stream` currently requires `--jobs 1`")
+        );
     }
 
     struct ContractFixture {
