@@ -3661,7 +3661,7 @@ fn render_workspace_doctor_text(
             } else {
                 "optional"
             },
-            render_status_line(if repo.ok { "READY" } else { "NOT READY" })
+            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
@@ -3737,7 +3737,7 @@ fn render_workspace_check_text(
             } else {
                 "optional"
             },
-            render_status_line(if repo.ok { "READY" } else { "NOT READY" })
+            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
@@ -4691,7 +4691,7 @@ fn render_workspace_up(
                     } else {
                         "optional"
                     },
-                    render_status_line(&repo.status)
+                    render_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
@@ -4801,7 +4801,7 @@ fn render_workspace_run(
                     } else {
                         "optional"
                     },
-                    render_status_line(&repo.status)
+                    render_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
@@ -5031,13 +5031,18 @@ fn append_markdown_table(
         output.push('\n');
         output.push_str(&format!("{}  ", list_bullet()));
         let first_header = headers.first().copied().unwrap_or("Item");
-        output.push_str(&paint_key(first_header));
-        output.push_str(": ");
-        output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
+        let compact_repo_row = first_header == "Repo";
+        if compact_repo_row {
+            output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
+        } else {
+            output.push_str(&paint_key(first_header));
+            output.push_str(": ");
+            output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
+        }
 
         for (idx, header) in headers.iter().enumerate().skip(1) {
             let value = row.get(idx).map_or("-", String::as_str);
-            output.push_str("\n  ");
+            output.push_str(if compact_repo_row { "\n    " } else { "\n  " });
             output.push_str(&paint_key(header));
             output.push_str(": ");
             output.push_str(&render_table_cell(value));
@@ -5094,6 +5099,10 @@ fn render_status_line(status: &str) -> String {
         "VALID" => render_valid_status(),
         other => other.to_string(),
     }
+}
+
+fn render_status_word(status: &str) -> String {
+    status.trim().to_string()
 }
 
 fn paint_key(key: &str) -> String {
