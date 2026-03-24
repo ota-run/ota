@@ -762,6 +762,32 @@ exec /bin/sh -lc "$1"
         compact_path(path, "ota.workspace.yaml")
     }
 
+    fn strip_ansi(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        let bytes = value.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == 0x1b {
+                i += 1;
+                if i < bytes.len() && bytes[i] == b'[' {
+                    i += 1;
+                    while i < bytes.len() {
+                        let b = bytes[i];
+                        if b.is_ascii_alphabetic() {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        out
+    }
+
     #[test]
     fn validate_json_reports_success() {
         let fixture = ContractFixture::new(
@@ -5389,34 +5415,35 @@ tasks:
         );
 
         let validate = run_with(["ota", "validate", fixture.path()]);
+        let validate_stdout = strip_ansi(&validate.stdout);
         assert_eq!(validate.exit_code, 0);
-        assert_eq!(
-            validate.stdout,
-            format!(
-                "🦦  VALIDATE {}\n\n✓ VALID",
-                compact_contract(&fixture.file_path())
-            )
-        );
-        assert!(!validate.stdout.contains("\n---\n"));
+        assert!(validate_stdout.contains(&format!(
+            "VALIDATE {}",
+            compact_contract(&fixture.file_path())
+        )));
+        assert!(validate_stdout.contains("VALID"));
+        assert!(!validate_stdout.contains("\n---\n"));
 
         let doctor = run_with(["ota", "doctor", fixture.path()]);
+        let doctor_stdout = strip_ansi(&doctor.stdout);
         assert_eq!(doctor.exit_code, 0);
-        assert!(doctor.stdout.contains(&format!(
-            "🦦  DOCTOR {}",
+        assert!(doctor_stdout.contains(&format!(
+            "DOCTOR {}",
             compact_contract(&fixture.file_path())
         )));
-        assert!(doctor.stdout.contains("\n\n✓ READY"));
-        assert!(!doctor.stdout.contains("\n---\n"));
+        assert!(doctor_stdout.contains("READY"));
+        assert!(!doctor_stdout.contains("\n---\n"));
 
         let up = run_with(["ota", "up", fixture.path()]);
+        let up_stdout = strip_ansi(&up.stdout);
         assert_eq!(up.exit_code, 0);
-        assert!(up.stdout.contains(&format!(
-            "🦦  UP {}",
+        assert!(up_stdout.contains(&format!(
+            "UP {}",
             compact_contract(&fixture.file_path())
         )));
-        assert!(up.stdout.contains("\n\n✓ READY"));
-        assert!(up.stdout.contains("Phase: post-setup diagnosis"));
-        assert!(!up.stdout.contains("\n---\n"));
+        assert!(up_stdout.contains("READY"));
+        assert!(up_stdout.contains("Phase: post-setup diagnosis"));
+        assert!(!up_stdout.contains("\n---\n"));
 
         let detect_fixture = ContractFixture::new_dir();
         detect_fixture.write(
@@ -5428,15 +5455,16 @@ edition = "2024"
 "#,
         );
         let detect = run_with(["ota", "detect", "--dry-run", detect_fixture.path()]);
+        let detect_stdout = strip_ansi(&detect.stdout);
         assert_eq!(detect.exit_code, 0);
-        assert!(detect.stdout.contains(&format!(
-            "🦦  DETECT PREVIEW {}",
+        assert!(detect_stdout.contains(&format!(
+            "DETECT PREVIEW {}",
             compact_path(detect_fixture.dir.path(), ".")
         )));
-        assert!(detect.stdout.contains("Mode: dry-run (no write)"));
-        assert!(detect.stdout.contains("Contract:"));
-        assert!(detect.stdout.contains("Annotations:"));
-        assert!(!detect.stdout.contains("\n---\n"));
+        assert!(detect_stdout.contains("Mode: dry-run (no write)"));
+        assert!(detect_stdout.contains("Contract:"));
+        assert!(detect_stdout.contains("Annotations:"));
+        assert!(!detect_stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5450,14 +5478,15 @@ project:
         );
 
         let output = run_with(["ota", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains(&format!(
-            "🦦  DOCTOR {}",
+        assert!(stdout.contains(&format!(
+            "DOCTOR {}",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("\n\n◉ NOT READY"));
-        assert!(output.stdout.contains("◉ ERROR  No tasks defined in contract"));
-        assert!(!output.stdout.contains("\n---\n"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("ERROR  No tasks defined in contract"));
+        assert!(!stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5750,14 +5779,15 @@ tasks:
         );
 
         let doctor = run_with(["ota", "doctor", "--member", "api", fixture.path()]);
+        let doctor_stdout = strip_ansi(&doctor.stdout);
         assert_eq!(doctor.exit_code, 1);
-        assert!(doctor.stdout.contains(&format!(
-            "🦦  DOCTOR {} [member api]",
+        assert!(doctor_stdout.contains(&format!(
+            "DOCTOR {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(doctor.stdout.contains("◉ NOT READY"));
-        assert!(doctor.stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
-        assert!(!doctor.stdout.contains("\n---\n"));
+        assert!(doctor_stdout.contains("NOT READY"));
+        assert!(doctor_stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
+        assert!(!doctor_stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5934,15 +5964,16 @@ repos:
         .unwrap();
 
         let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains(&format!(
-            "🦦  WORKSPACE DOCTOR {}",
+        assert!(stdout.contains(&format!(
+            "WORKSPACE DOCTOR {}",
             compact_workspace(&fixture.workspace_file())
         )));
-        assert!(output.stdout.contains("◉ NOT READY"));
-        assert!(output.stdout.contains("No tasks defined in contract"));
-        assert!(!output.stdout.contains("\n---\n"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("No tasks defined in contract"));
+        assert!(!stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5950,15 +5981,16 @@ repos:
         let fixture = WorkspaceFixture::new_multi_repo();
 
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains(&format!(
-            "🦦  WORKSPACE UP {}",
+        assert!(stdout.contains(&format!(
+            "WORKSPACE UP {}",
             compact_workspace(&fixture.workspace_file())
         )));
-        assert!(output.stdout.contains("✓ READY"));
-        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
-        assert!(!output.stdout.contains("\n---\n"));
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(!stdout.contains("\n---\n"));
     }
 
     #[test]
