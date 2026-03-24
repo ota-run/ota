@@ -13,6 +13,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
+- [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
 - [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
 - [json-schemas/workspace-check.json](json-schemas/workspace-check.json)
@@ -165,6 +166,54 @@ Failure:
   "errors": ["..."]
 }
 ```
+
+## `ota workspace init --json`
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "written": false,
+  "mode": "scaffold",
+  "config": {
+    "version": 1,
+    "workspace": {
+      "name": "ota-workspace"
+    },
+    "repos": {
+      "web": {
+        "path": "apps/web",
+        "required": true
+      }
+    }
+  },
+  "included": [
+    {
+      "name": "web",
+      "path": "apps/web"
+    }
+  ],
+  "missing_contract": []
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "written": false,
+  "mode": "scaffold",
+  "error": "..."
+}
+```
+
+Failure shape can also include:
+
+- `next`: optional safe follow-up command when overwrite is refused
 
 ## `ota workspace doctor --json`
 

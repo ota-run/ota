@@ -309,6 +309,32 @@ ota up
 
 ## Workspace commands
 
+### `ota workspace init`
+
+When to use:
+
+- create a first `ota.workspace.yaml` from already-initialized repos
+
+Why:
+
+- gives one deterministic workspace contract without hand-writing repo entries
+
+```bash
+ota workspace init
+ota workspace init --dry-run
+ota workspace init --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace init --json > .ota-workspace-init.json
+ota workspace init
+```
+
 ### `ota workspace validate`
 
 When to use:

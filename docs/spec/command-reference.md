@@ -63,6 +63,7 @@ Ota currently ships these commands:
 - `ota check`
 - `ota up`
 - `ota detect`
+- `ota workspace init`
 - `ota workspace validate`
 - `ota workspace tasks`
 - `ota workspace run <task>`
@@ -551,6 +552,38 @@ Write behavior:
 - JSON failure responses can include `next` when Ota can point to one safe follow-up command
 
 This is intentionally conservative. Review mode comes first, write mode second.
+
+## `ota workspace init`
+
+Create a starter workspace contract from existing repo contracts.
+
+```bash
+ota workspace init [PATH]
+ota workspace init --dry-run [PATH]
+ota workspace init --json [PATH]
+```
+
+Current behavior:
+
+- infers workspace repos by scanning common local repo roots (top-level plus containers like `apps/`, `services/`, `repos/`, `packages/`)
+- includes only repos that already have `ota.yaml`
+- skips candidate repos that do not yet have `ota.yaml`
+- default mode writes `ota.workspace.yaml`
+- `--dry-run` is explicit preview mode
+- writes `ota.workspace.yaml` when not in preview mode
+- refuses to overwrite an existing `ota.workspace.yaml`
+- when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
+- supports JSON for machine-readable preview/write outcomes
+
+Text output:
+
+- preview: `WORKSPACE INIT PREVIEW <path>`
+- write: `WORKSPACE INIT WRITE <path>`
+
+JSON output:
+
+- success: `ok`, `path`, `written`, `mode`, `config`, `included`, `missing_contract`
+- failure: `ok`, `path`, `written`, `mode`, `error`, optional `next`
 
 ## `ota workspace validate`
 
