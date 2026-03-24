@@ -97,9 +97,12 @@ enum Commands {
     },
     /// Create a starter Ota contract for a repo that does not yet have one.
     Init {
-        /// Write the inferred starter contract to ota.yaml.
+        /// Compatibility flag; writing is now the default.
         #[arg(long, action = ArgAction::SetTrue)]
         write: bool,
+        /// Preview inferred contract output without writing ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
+        dry_run: bool,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
@@ -363,7 +366,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Clean { member, path } => {
             commands::clean(path.as_deref(), file.as_deref(), &member, debug)
         }
-        Commands::Init { write, json, path } => {
+        Commands::Init {
+            write: _write,
+            dry_run,
+            json,
+            path,
+        } => {
             if file.is_some() {
                 return CommandOutput::failure_with_code(
                     String::from(
@@ -372,7 +380,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     2,
                 );
             }
-            commands::init(path.as_deref(), write, format_from_json(json), debug)
+            commands::init(path.as_deref(), !dry_run, format_from_json(json), debug)
         }
         Commands::Detect {
             json,
@@ -3472,13 +3480,13 @@ agent:
 }"#,
         );
 
-        let output = run_with(["ota", "init", fixture.path()]);
+        let output = run_with(["ota", "init", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("INIT"));
         assert!(output.stdout.contains("Mode: detected"));
         assert!(output.stdout.contains(
-            "Next: review this starter contract, edit it if needed, then run `ota init --write"
+            "Next: review this starter contract, edit it if needed, then run `ota init "
         ));
         assert!(output.stdout.contains("name: ota-web"));
         assert!(
@@ -3490,7 +3498,7 @@ agent:
     }
 
     #[test]
-    fn init_write_creates_full_starter_contract() {
+    fn init_writes_by_default_creates_full_starter_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -3501,7 +3509,7 @@ agent:
 }"#,
         );
 
-        let output = run_with(["ota", "init", "--write", fixture.path()]);
+        let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("WROTE"));
@@ -3516,11 +3524,11 @@ agent:
     }
 
     #[test]
-    fn init_write_refuses_when_detected_high_confidence_fields_are_insufficient() {
+    fn init_refuses_default_write_when_high_confidence_fields_are_insufficient() {
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
 
-        let output = run_with(["ota", "init", "--write", fixture.path()]);
+        let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
         assert!(
@@ -3544,7 +3552,7 @@ agent:
     fn init_json_reports_blank_mode() {
         let fixture = ContractFixture::new_dir();
 
-        let output = run_with(["ota", "init", "--json", fixture.path()]);
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -3557,7 +3565,7 @@ agent:
     fn init_blank_mode_text_calls_out_minimal_coverage() {
         let fixture = ContractFixture::new_dir();
 
-        let output = run_with(["ota", "init", fixture.path()]);
+        let output = run_with(["ota", "init", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("Mode: blank"));

@@ -2554,7 +2554,7 @@ fn render_init(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "INIT {}\nMode: {mode}\nNext: review this starter contract, edit it if needed, then run `ota init --write {}`\n---\n{}",
+                "INIT {}\nMode: {mode}\nNext: review this starter contract, edit it if needed, then run `ota init {}`\n---\n{}",
                 report.root.display(),
                 report.root.display(),
                 review_yaml.trim_end()

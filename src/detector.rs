@@ -904,7 +904,7 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
             "maven".to_string(),
             "*".to_string(),
             "pom.xml".to_string(),
-            Confidence::Medium,
+            Confidence::High,
         );
     }
 
