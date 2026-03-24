@@ -88,7 +88,8 @@ pub fn validate(
         }
     };
     let path_display = resolved_path.display().to_string();
-    let text_path_display = display_contract_target(&path_display, member);
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
     let mut debug_lines = vec![
         String::from("DEBUG command=validate"),
         format!("DEBUG contract_path={path_display}"),
@@ -102,7 +103,10 @@ pub fn validate(
             Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
                     OutputFormat::Text => {
-                        CommandOutput::success(format!("VALID {text_path_display}"))
+                        CommandOutput::success(format!(
+                            "{} {text_path_display}",
+                            render_valid_status()
+                        ))
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
@@ -533,8 +537,9 @@ pub fn doctor(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
     let single_member = (members.len() == 1).then(|| members[0].as_str());
-    let text_path_display = display_contract_target(&path_display, single_member);
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=doctor"),
         format!("DEBUG contract_path={path_display}"),
@@ -627,7 +632,10 @@ pub fn doctor(
                                 .as_ref()
                                 .and_then(AgentSummary::from_config);
                             text_sections.push(render_doctor_section(
-                                &display_contract_target(&path_display, Some(member.as_str())),
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
                                 member_agent.as_ref(),
                                 &member_report,
                             ));
@@ -740,7 +748,7 @@ pub fn doctor(
                         .as_ref()
                         .and_then(AgentSummary::from_config);
                     text_sections.push(render_doctor_section(
-                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
                         agent.as_ref(),
                         &report,
                     ));
@@ -823,8 +831,9 @@ pub fn check(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
     let single_member = (members.len() == 1).then(|| members[0].as_str());
-    let text_path_display = display_contract_target(&path_display, single_member);
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=check"),
         format!("DEBUG contract_path={path_display}"),
@@ -909,7 +918,10 @@ pub fn check(
                             }
                             text_sections.push(render_report_section(
                                 "CHECK",
-                                &display_contract_target(&path_display, Some(member.as_str())),
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
                                 None,
                                 &member_report,
                             ));
@@ -1016,7 +1028,7 @@ pub fn check(
                     }
                     text_sections.push(render_report_section(
                         "CHECK",
-                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
                         None,
                         &report,
                     ));
@@ -1073,6 +1085,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
+    let compact_path_display = compact_contract_path(&contract_path);
     let debug_lines = vec![
         String::from("DEBUG command=init"),
         format!("DEBUG repo_root={}", root.display()),
@@ -1081,8 +1094,8 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     ];
 
     if contract_path.exists() {
-        let next = command_for_contract("ota detect --merge --dry-run", &contract_path);
-        let highlighted_path = paint_code(&contract_path.display().to_string());
+        let next = command_for_repo("ota detect --merge --dry-run", &root);
+        let highlighted_path = paint_code(&compact_path_display);
         let highlighted_validate = paint_code("ota validate");
         let highlighted_doctor = paint_code("ota doctor");
         let highlighted_detect_merge_dry = paint_code("ota detect --merge --dry-run");
@@ -1165,8 +1178,9 @@ pub fn up(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
     let single_member = (members.len() == 1).then(|| members[0].as_str());
-    let text_path_display = display_contract_target(&path_display, single_member);
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=up"),
         format!("DEBUG contract_path={path_display}"),
@@ -1234,7 +1248,10 @@ pub fn up(
                                 lifecycle_notes.push(notice);
                             }
                             text_sections.push(render_up_section(
-                                &display_contract_target(&path_display, Some(member.as_str())),
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
                                 &member_result,
                             ));
                             member_results.push(json!({
@@ -1329,7 +1346,7 @@ pub fn up(
                         lifecycle_notes.push(notice);
                     }
                     text_sections.push(render_up_section(
-                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
                         &result,
                     ));
                     member_results.push(json!({
@@ -1402,8 +1419,9 @@ pub fn clean(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
     let single_member = (members.len() == 1).then(|| members[0].as_str());
-    let text_path_display = display_contract_target(&path_display, single_member);
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
     let mut debug_lines = vec![
         String::from("DEBUG command=clean"),
         format!("DEBUG contract_path={path_display}"),
@@ -1450,7 +1468,10 @@ pub fn clean(
                                 }
                             };
                         match render_clean_text(
-                            &display_contract_target(&path_display, Some(member.as_str())),
+                            &display_contract_target(
+                                &compact_path_display,
+                                Some(member.as_str()),
+                            ),
                             clean_execution(&member_target.contract, &member_target.contract_path),
                         ) {
                             Ok(section) => sections.push(section),
@@ -1497,7 +1518,7 @@ pub fn clean(
                             }
                         };
                     match render_clean_text(
-                        &display_contract_target(&path_display, Some(member.as_str())),
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
                         clean_execution(&target.contract, &target.contract_path),
                     ) {
                         Ok(section) => sections.push(section),
@@ -1589,6 +1610,7 @@ pub fn detect(
     finalize_debug(
         match detect_repo(&root) {
             Ok(report) if dry_run => {
+                let compact_root_display = compact_repo_path(&report.root);
                 let comparison = compare_detected_contract(&contract_path, &report.contract);
                 let yaml = serde_yaml::to_string(&report.contract)
                     .expect("serializing detected contract should not fail");
@@ -1597,26 +1619,22 @@ pub fn detect(
                         let mut stdout = if merge {
                             format_command_header(
                                 "DETECT MERGE PREVIEW",
-                                &report.root.display().to_string(),
+                                &compact_root_display,
                             )
                         } else {
-                            format_command_header(
-                                "DETECT PREVIEW",
-                                &report.root.display().to_string(),
-                            )
+                            format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
-                        append_command_signature(&mut stdout, "DETECT");
                         stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --merge {}` to apply add-only high-confidence fields",
-                                report.root.display()
+                                compact_root_display
                             )]));
                         } else {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --write {}` to write a high-confidence contract",
-                                report.root.display()
+                                compact_root_display
                             )]));
                         }
                         stdout.push_str("\nContract:\n---\n");
@@ -1677,6 +1695,7 @@ pub fn workspace_validate(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.validate"),
         format!("DEBUG workspace_path={path_display}"),
@@ -1686,7 +1705,10 @@ pub fn workspace_validate(
         match load_and_validate_workspace(&resolved_path) {
             Ok(()) => match format {
                 OutputFormat::Text => {
-                    CommandOutput::success(format!("VALID WORKSPACE {path_display}"))
+                    CommandOutput::success(format!(
+                        "{} WORKSPACE {compact_path_display}",
+                        render_valid_status()
+                    ))
                 }
                 OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                     ok: true,
@@ -1734,6 +1756,7 @@ pub fn workspace_tasks(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.tasks"),
         format!("DEBUG workspace_path={path_display}"),
@@ -1855,7 +1878,7 @@ pub fn workspace_tasks(
                 }
 
                 match format {
-                    OutputFormat::Text => render_workspace_tasks_text(&path_display, &repos),
+                    OutputFormat::Text => render_workspace_tasks_text(&compact_path_display, &repos),
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
                         path: &path_display,
@@ -1907,6 +1930,7 @@ pub fn workspace_doctor(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.doctor"),
         format!("DEBUG workspace_path={path_display}"),
@@ -1916,7 +1940,7 @@ pub fn workspace_doctor(
     finalize_debug(
         match load_and_diagnose_workspace(&resolved_path, jobs) {
             Ok(report) => match format {
-                OutputFormat::Text => render_workspace_doctor_text(&path_display, &report),
+                OutputFormat::Text => render_workspace_doctor_text(&compact_path_display, &report),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&WorkspaceDoctorSuccess {
                         ok: report.ok,
@@ -1980,6 +2004,7 @@ pub fn workspace_check(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.check"),
         format!("DEBUG workspace_path={path_display}"),
@@ -1989,7 +2014,7 @@ pub fn workspace_check(
     finalize_debug(
         match load_and_check_workspace(&resolved_path, jobs) {
             Ok(report) => match format {
-                OutputFormat::Text => render_workspace_check_text(&path_display, &report),
+                OutputFormat::Text => render_workspace_check_text(&compact_path_display, &report),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&WorkspaceDoctorSuccess {
                         ok: report.ok,
@@ -2081,6 +2106,7 @@ pub fn workspace_up(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.up"),
         format!("DEBUG workspace_path={path_display}"),
@@ -2095,7 +2121,7 @@ pub fn workspace_up(
             matches!(format, OutputFormat::Text),
             stream,
         ) {
-            Ok(report) => render_workspace_up(&path_display, &report, format),
+            Ok(report) => render_workspace_up(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -2178,6 +2204,7 @@ pub fn workspace_run(
         }
     };
     let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
     let debug_lines = vec![
         String::from("DEBUG command=workspace.run"),
         format!("DEBUG workspace_path={path_display}"),
@@ -2194,7 +2221,7 @@ pub fn workspace_run(
             matches!(format, OutputFormat::Text),
             stream,
         ) {
-            Ok(report) => render_workspace_run(task, &path_display, &report, format),
+            Ok(report) => render_workspace_run(task, &compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -2222,12 +2249,14 @@ pub fn workspace_run(
 fn write_detected_contract(report: DetectReport, format: OutputFormat) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
+    let compact_path_display = compact_contract_path(&contract_path);
+    let compact_root_display = compact_repo_path(&report.root);
     if contract_path.exists() {
-        let next = format!("ota detect --merge --dry-run {}", report.root.display());
-        let highlighted_path = paint_code(&contract_path.display().to_string());
+        let next = format!("ota detect --merge --dry-run {}", compact_root_display);
+        let highlighted_path = paint_code(&compact_path_display);
         let highlighted_next = paint_code(&format!(
             "ota detect --merge --dry-run {}",
-            report.root.display()
+            compact_root_display
         ));
         let error = format!(
             "`{}` already exists; refusing to overwrite an existing contract{}",
@@ -2285,21 +2314,20 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let highlighted_written = paint_code(&contract_path.display().to_string());
+                let highlighted_written = paint_code(&compact_path_display);
                 let highlighted_validate =
                     paint_code(&command_for_contract("ota validate", &contract_path));
                 let highlighted_doctor =
                     paint_code(&command_for_contract("ota doctor", &contract_path));
                 let mut stdout = format!(
                     "{}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
-                    format_command_header("DETECT WRITE", &report.root.display().to_string()),
+                    format_command_header("DETECT WRITE", &compact_root_display),
                     highlighted_written,
                     format_next_timeline(&[
                         format!("run `{highlighted_validate}`"),
                         format!("run `{highlighted_doctor}`"),
                     ])
                 );
-                append_command_signature(&mut stdout, "DETECT");
                 stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                 render_inference_section(
                     &mut stdout,
@@ -2318,7 +2346,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
             })),
         },
         Err(error) => {
-            let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+            let error = format!("failed to write `{}`: {}", compact_path_display, error);
             match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -2336,6 +2364,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
 fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
+    let compact_path_display = compact_contract_path(&contract_path);
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
@@ -2377,10 +2406,9 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
             OutputFormat::Text => {
                 let mut stdout = format!(
                     "{}\n{}",
-                    format_command_header("NO CHANGES", &contract_path.display().to_string()),
+                    format_command_header("NO CHANGES", &compact_path_display),
                     detect_standalone_icon()
                 );
-                append_command_signature(&mut stdout, "DETECT");
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
                 CommandOutput::success(stdout)
             }
@@ -2398,7 +2426,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     let contents = match fs::read_to_string(&contract_path) {
         Ok(contents) => contents,
         Err(error) => {
-            let error = format!("failed to read `{}`: {}", contract_path.display(), error);
+            let error = format!("failed to read `{}`: {}", compact_path_display, error);
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -2417,7 +2445,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         Err(error) => {
             let error = format!(
                 "failed to parse existing contract `{}` for merge: {}",
-                contract_path.display(),
+                compact_path_display,
                 error
             );
             return match format {
@@ -2450,7 +2478,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         Err(error) => {
             let error = format!(
                 "failed to serialize merged contract `{}`: {}",
-                contract_path.display(),
+                compact_path_display,
                 error
             );
             return match format {
@@ -2487,10 +2515,9 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
             OutputFormat::Text => {
                 let mut stdout = format!(
                     "{}\n{}",
-                    format_command_header("MERGED", &contract_path.display().to_string()),
+                    format_command_header("MERGED", &compact_path_display),
                     detect_standalone_icon()
                 );
-                append_command_signature(&mut stdout, "DETECT");
                 render_detect_change_section(
                     &mut stdout,
                     "Applied high-confidence additions",
@@ -2509,7 +2536,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
             })),
         },
         Err(error) => {
-            let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+            let error = format!("failed to write `{}`: {}", compact_path_display, error);
             match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -2532,6 +2559,8 @@ fn render_init(
 ) -> CommandOutput {
     let mode = init_mode(&report);
     let path_display = contract_path.display().to_string();
+    let compact_path_display = compact_contract_path(contract_path);
+    let compact_root_display = compact_repo_path(&report.root);
     let review_yaml =
         serde_yaml::to_string(&report.contract).expect("serializing init contract should not fail");
 
@@ -2591,21 +2620,20 @@ fn render_init(
         return match fs::write(contract_path, &write_yaml) {
             Ok(()) => match format {
                 OutputFormat::Text => {
-                    let highlighted_written = paint_code(&contract_path.display().to_string());
+                    let highlighted_written = paint_code(&compact_path_display);
                     let highlighted_validate =
                         paint_code(&command_for_contract("ota validate", &contract_path));
                     let highlighted_doctor =
                         paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
                         "{}\nResult: wrote {}\nMode: {mode}{}",
-                        format_command_header("INIT WRITE", &report.root.display().to_string()),
+                        format_command_header("INIT WRITE", &compact_root_display),
                         highlighted_written,
                         format_next_timeline(&[
                             format!("run `{highlighted_validate}`"),
                             format!("run `{highlighted_doctor}`"),
                         ])
                     );
-                    append_command_signature(&mut stdout, "INIT");
                     if mode == "blank" {
                         stdout.push_str(
                             "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -2633,7 +2661,7 @@ fn render_init(
                 })),
             },
             Err(error) => {
-                let error = format!("failed to write `{}`: {}", contract_path.display(), error);
+                let error = format!("failed to write `{}`: {}", compact_path_display, error);
                 match format {
                     OutputFormat::Text => CommandOutput::failure(error),
                     OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
@@ -2650,14 +2678,13 @@ fn render_init(
 
     match format {
         OutputFormat::Text => {
-            let highlighted_init = paint_code(&format!("ota init {}", report.root.display()));
+            let highlighted_init = paint_code(&format!("ota init {}", compact_root_display));
             let mut stdout = format!(
                 "{}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`\nContract:\n---\n{}",
-                format_command_header("INIT PREVIEW", &report.root.display().to_string()),
+                format_command_header("INIT PREVIEW", &compact_root_display),
                 highlighted_init,
                 review_yaml.trim_end()
             );
-            append_command_signature(&mut stdout, "INIT");
             if mode == "blank" {
                 stdout.push_str(
                     "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -3080,11 +3107,7 @@ fn render_workspace_doctor_text(
     let mut stdout = format!(
         "{}\n{}",
         format_command_header("WORKSPACE DOCTOR", path),
-        if report.ok {
-            paint("READY", "1;32")
-        } else {
-            paint("NOT READY", "1;31")
-        }
+        render_readiness_status(report.ok)
     );
 
     for repo in &report.repos {
@@ -3099,11 +3122,15 @@ fn render_workspace_doctor_text(
             },
             if repo.ok { "READY" } else { "NOT READY" }
         ));
-        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Path:"),
+            compact_repo_path(Path::new(&repo.path))
+        ));
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("Contract:"),
-            repo.contract_path
+            compact_contract_path(Path::new(&repo.contract_path))
         ));
 
         for finding in &repo.findings {
@@ -3136,8 +3163,8 @@ fn render_workspace_doctor_text(
                 } else {
                     String::from("NOT READY")
                 },
-                repo.path.clone(),
-                repo.contract_path.clone(),
+                compact_repo_path(Path::new(&repo.path)),
+                compact_contract_path(Path::new(&repo.contract_path)),
             ]
         }),
     );
@@ -3156,11 +3183,7 @@ fn render_workspace_check_text(
     let mut stdout = format!(
         "{}\n{}",
         format_command_header("WORKSPACE CHECK", path),
-        if report.ok {
-            paint("READY", "1;32")
-        } else {
-            paint("NOT READY", "1;31")
-        }
+        render_readiness_status(report.ok)
     );
 
     for repo in &report.repos {
@@ -3175,11 +3198,15 @@ fn render_workspace_check_text(
             },
             if repo.ok { "READY" } else { "NOT READY" }
         ));
-        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Path:"),
+            compact_repo_path(Path::new(&repo.path))
+        ));
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("Contract:"),
-            repo.contract_path
+            compact_contract_path(Path::new(&repo.contract_path))
         ));
 
         for finding in &repo.findings {
@@ -3212,8 +3239,8 @@ fn render_workspace_check_text(
                 } else {
                     String::from("NOT READY")
                 },
-                repo.path.clone(),
-                repo.contract_path.clone(),
+                compact_repo_path(Path::new(&repo.path)),
+                compact_contract_path(Path::new(&repo.contract_path)),
             ]
         }),
     );
@@ -3248,14 +3275,8 @@ fn render_report_section(
     let mut stdout = format!(
         "{}\n{}",
         format_command_header(command, path),
-        if report.ok {
-            paint("READY", "1;32")
-        } else {
-            paint("NOT READY", "1;31")
-        }
+        render_readiness_status(report.ok)
     );
-    append_command_signature(&mut stdout, command);
-
     if let Some(agent) = agent {
         if let Some(summary) = render_agent_summary_line(agent) {
             stdout.push('\n');
@@ -3362,17 +3383,29 @@ fn display_contract_target(path: &str, member: Option<&str>) -> String {
 }
 
 fn compact_contract_path(path: &Path) -> String {
-    let file = path
+    compact_path(path, DEFAULT_CONTRACT_FILE)
+}
+
+fn compact_workspace_path(path: &Path) -> String {
+    compact_path(path, DEFAULT_WORKSPACE_FILE)
+}
+
+fn compact_repo_path(path: &Path) -> String {
+    compact_path(path, ".")
+}
+
+fn compact_path(path: &Path, fallback: &str) -> String {
+    let tail = path
         .file_name()
         .and_then(|name| name.to_str())
-        .unwrap_or(DEFAULT_CONTRACT_FILE);
+        .unwrap_or(fallback);
     match path
         .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|name| name.to_str())
     {
-        Some(parent) => format!("{parent}/{file}"),
-        None => file.to_string(),
+        Some(parent) => format!("./{parent}/{tail}"),
+        None => tail.to_string(),
     }
 }
 
@@ -3380,7 +3413,22 @@ fn command_for_contract(command: &str, contract_path: &Path) -> String {
     if contract_path_matches_current_dir(contract_path) {
         command.to_string()
     } else {
-        format!("{command} {}", contract_path.display())
+        format!("{command} {}", compact_contract_path(contract_path))
+    }
+}
+
+fn command_for_repo(command: &str, repo_path: &Path) -> String {
+    if std::env::current_dir().ok().is_some_and(|current_dir| {
+        let target = if repo_path.is_absolute() {
+            repo_path.to_path_buf()
+        } else {
+            current_dir.join(repo_path)
+        };
+        target == current_dir
+    }) {
+        command.to_string()
+    } else {
+        format!("{command} {}", compact_repo_path(repo_path))
     }
 }
 
@@ -3455,16 +3503,13 @@ fn run_single_contract_target(
         )),
         Ok(outcome) => Err(RunCommandFailure {
             message: format!(
-                "task `{task_name}` failed with exit code {}\nSignature: doctor first, contract second",
+                "task `{task_name}` failed with exit code {}",
                 outcome.exit_code,
             ),
             exit_code: outcome.exit_code,
         }),
         Err(error) => Err(RunCommandFailure {
-            message: format!(
-                "{}\nSignature: doctor first, contract second",
-                render_run_error(error)
-            ),
+            message: render_run_error(error),
             exit_code: 1,
         }),
     }
@@ -3592,8 +3637,6 @@ fn render_up_section_from_parts(
         status,
         paint_key("Phase:")
     );
-    append_command_signature(&mut stdout, "UP");
-
     if let Some(service) = service {
         stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
     }
@@ -3670,11 +3713,7 @@ fn render_workspace_up(
             let mut stdout = format!(
                 "{}\n{}",
                 format_command_header("WORKSPACE UP", path),
-                if report.ok {
-                    paint("READY", "1;32")
-                } else {
-                    paint("NOT READY", "1;31")
-                }
+                render_readiness_status(report.ok)
             );
 
             for repo in &report.repos {
@@ -3689,11 +3728,15 @@ fn render_workspace_up(
                     },
                     repo.status
                 ));
-                stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Path:"),
+                    compact_repo_path(Path::new(&repo.path))
+                ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
                     paint_key("Contract:"),
-                    repo.contract_path
+                    compact_contract_path(Path::new(&repo.contract_path))
                 ));
                 stdout.push_str(&format!("\n  {} {}", paint_key("Phase:"), repo.phase));
                 if let Some(service) = &repo.service {
@@ -3780,11 +3823,7 @@ fn render_workspace_run(
             let mut stdout = format!(
                 "{}\n{}",
                 format_command_header("WORKSPACE RUN", &format!("{task} {path}")),
-                if report.ok {
-                    paint("READY", "1;32")
-                } else {
-                    paint("NOT READY", "1;31")
-                }
+                render_readiness_status(report.ok)
             );
 
             for repo in &report.repos {
@@ -3799,11 +3838,15 @@ fn render_workspace_run(
                     },
                     repo.status
                 ));
-                stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Path:"),
+                    compact_repo_path(Path::new(&repo.path))
+                ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
                     paint_key("Contract:"),
-                    repo.contract_path
+                    compact_contract_path(Path::new(&repo.contract_path))
                 ));
                 stdout.push_str(&format!("\n  {} {}", paint_key("Task:"), repo.task));
                 if let Some(exit_code) = repo.exit_code {
@@ -3868,7 +3911,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
     let mut stdout = format!(
         "{}\n{}",
         format_command_header("WORKSPACE TASKS", path),
-        paint("READY", "1;32")
+        render_readiness_status(true)
     );
 
     for repo in repos {
@@ -3887,11 +3930,15 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 "not acquired"
             }
         ));
-        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Path:"),
+            compact_repo_path(Path::new(&repo.path))
+        ));
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("Contract:"),
-            repo.contract_path
+            compact_contract_path(Path::new(&repo.contract_path))
         ));
         if !repo.depends_on.is_empty() {
             stdout.push_str(&format!(
@@ -3943,8 +3990,8 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 } else {
                     String::from("not acquired")
                 },
-                repo.path.clone(),
-                repo.contract_path.clone(),
+                compact_repo_path(Path::new(&repo.path)),
+                compact_contract_path(Path::new(&repo.contract_path)),
                 if repo.depends_on.is_empty() {
                     String::from("-")
                 } else {
@@ -4036,10 +4083,42 @@ fn append_markdown_table(
 }
 
 fn render_severity(severity: FindingSeverity) -> String {
+    if plain_mode() {
+        return match severity {
+            FindingSeverity::Error => String::from("ERROR"),
+            FindingSeverity::Warn => String::from("WARN"),
+            FindingSeverity::Info => String::from("INFO"),
+        };
+    }
+
     match severity {
-        FindingSeverity::Error => paint("ERROR", "1;31"),
-        FindingSeverity::Warn => paint("WARN", "1;33"),
-        FindingSeverity::Info => paint("INFO", "1;36"),
+        FindingSeverity::Error => format!("{} {}", paint("◉", "1;31"), paint("ERROR", "1;31")),
+        FindingSeverity::Warn => format!("{} {}", paint("◉", "1;33"), paint("WARN", "1;33")),
+        FindingSeverity::Info => format!("{} {}", paint("◉", "1;36"), paint("INFO", "1;36")),
+    }
+}
+
+fn render_valid_status() -> String {
+    if plain_mode() {
+        String::from("VALID")
+    } else {
+        format!("{} {}", paint("✓", "1;32"), paint("VALID", "1;32"))
+    }
+}
+
+fn render_readiness_status(ready: bool) -> String {
+    if ready {
+        if plain_mode() {
+            String::from("READY")
+        } else {
+            format!("{} {}", paint("✓", "1;32"), paint("READY", "1;32"))
+        }
+    } else {
+        if plain_mode() {
+            String::from("NOT READY")
+        } else {
+            format!("{} {}", paint("◉", "1;93"), paint("NOT READY", "1;93"))
+        }
     }
 }
 
@@ -4088,31 +4167,6 @@ fn detect_standalone_icon() -> String {
         return String::from("-");
     }
     paint("◉", "38;2;0;255;255")
-}
-
-fn append_command_signature(output: &mut String, command: &str) {
-    if !matches_signature_command(command) {
-        return;
-    }
-
-    if plain_mode() {
-        output.push_str("\nSignature: doctor first, contract second");
-        return;
-    }
-
-    output.push_str(&format!(
-        "\n{} {}",
-        paint("◉", "38;2;0;255;255"),
-        paint("doctor first, contract second", "38;2;180;223;255")
-    ));
-}
-
-fn matches_signature_command(command: &str) -> bool {
-    command == "DOCTOR"
-        || command == "UP"
-        || command == "RUN"
-        || command.starts_with("INIT")
-        || command.starts_with("DETECT")
 }
 
 fn format_next_timeline(items: &[String]) -> String {
@@ -4224,13 +4278,13 @@ fn discover_contract_path(start: &Path) -> Result<PathBuf, ResolveContractError>
 
         let Some(parent) = current.parent() else {
             return Err(ResolveContractError::NotFound {
-                start: start.display().to_string(),
+                start: compact_repo_path(start),
             });
         };
 
         if parent == current {
             return Err(ResolveContractError::NotFound {
-                start: start.display().to_string(),
+                start: compact_repo_path(start),
             });
         }
 
@@ -4263,13 +4317,13 @@ fn discover_workspace_path(start: &Path) -> Result<PathBuf, ResolveWorkspaceErro
 
         let Some(parent) = current.parent() else {
             return Err(ResolveWorkspaceError::NotFound {
-                start: start.display().to_string(),
+                start: compact_repo_path(start),
             });
         };
 
         if parent == current {
             return Err(ResolveWorkspaceError::NotFound {
-                start: start.display().to_string(),
+                start: compact_repo_path(start),
             });
         }
 
@@ -5077,7 +5131,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                     why: error,
                     next: format!(
                         "repair `{}` and re-run `ota workspace up`",
-                        repo.contract_path.display()
+                        compact_contract_path(&repo.contract_path)
                     ),
                 }],
                 service: None,
@@ -5105,7 +5159,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 why: render_contract_problem(&error),
                 next: format!(
                     "repair `{}` and re-run `ota workspace up`",
-                    repo.contract_path.display()
+                    compact_contract_path(&repo.contract_path)
                 ),
             }],
             service: None,
@@ -5748,13 +5802,13 @@ fn run_shell_command(
 fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Option<String> {
     match effective_execution(contract, overrides) {
         (crate::schema::Backend::Container, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: running task in an ephemeral container backend\nSignature: doctor first, contract second",
+            "Lifecycle note: running task in an ephemeral container backend",
         )),
         (crate::schema::Backend::Container, Some(Lifecycle::Persistent)) => Some(String::from(
-            "Lifecycle note: reusing persistent container backend\nSignature: doctor first, contract second",
+            "Lifecycle note: reusing persistent container backend",
         )),
         (_, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment\nSignature: doctor first, contract second",
+            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment",
         )),
         _ => None,
     }

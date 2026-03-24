@@ -730,6 +730,29 @@ exec /bin/sh -lc "$1"
         .unwrap();
     }
 
+    fn compact_path(path: &std::path::Path, fallback: &str) -> String {
+        let tail = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(fallback);
+        match path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+        {
+            Some(parent) => format!("./{parent}/{tail}"),
+            None => tail.to_string(),
+        }
+    }
+
+    fn compact_contract(path: &std::path::Path) -> String {
+        compact_path(path, "ota.yaml")
+    }
+
+    fn compact_workspace(path: &std::path::Path) -> String {
+        compact_path(path, "ota.workspace.yaml")
+    }
+
     #[test]
     fn validate_json_reports_success() {
         let fixture = ContractFixture::new(
@@ -1540,11 +1563,11 @@ env:
         assert!(
             output
                 .stdout
-                .contains(&format!("DOCTOR {}", fixture.file_path().display()))
+                .contains(&format!("DOCTOR {}", compact_contract(&fixture.file_path())))
         );
         assert!(output.stdout.contains(&format!(
             "DOCTOR {} [member api]",
-            fixture.file_path().display()
+            compact_contract(&fixture.file_path())
         )));
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("NOT READY"));
@@ -1707,11 +1730,11 @@ env:
         assert!(
             output
                 .stdout
-                .contains(&format!("UP {}", fixture.file_path().display()))
+                .contains(&format!("UP {}", compact_contract(&fixture.file_path())))
         );
         assert!(output.stdout.contains(&format!(
             "UP {} [member api]",
-            fixture.file_path().display()
+            compact_contract(&fixture.file_path())
         )));
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("NOT READY"));
@@ -1835,7 +1858,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("CLEANED {}", fixture.file_path().display())
+            format!("CLEANED {}", compact_contract(&fixture.file_path()))
         );
         assert!(fixture.dir.path().join("docker-log.txt").exists());
     }
@@ -1864,7 +1887,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("NO CLEANUP NEEDED {}", fixture.file_path().display())
+            format!("NO CLEANUP NEEDED {}", compact_contract(&fixture.file_path()))
         );
     }
 
@@ -1896,11 +1919,11 @@ project:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains(&format!(
             "NO CLEANUP NEEDED {}",
-            fixture.file_path().display()
+            compact_contract(&fixture.file_path())
         )));
         assert!(output.stdout.contains(&format!(
             "NO CLEANUP NEEDED {} [member api]",
-            fixture.file_path().display()
+            compact_contract(&fixture.file_path())
         )));
         assert!(output.stdout.contains("\n---\n"));
     }
@@ -2867,17 +2890,8 @@ tasks:
         let output = run_with(["ota", "validate", nested.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(
-            output.stdout.contains(
-                &fixture
-                    .dir
-                    .path()
-                    .join("api")
-                    .join("ota.yaml")
-                    .display()
-                    .to_string()
-            )
-        );
+        let expected = compact_contract(&fixture.dir.path().join("api").join("ota.yaml"));
+        assert!(output.stdout.contains(&expected));
     }
 
     #[test]
@@ -2955,7 +2969,7 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("VALID {}", fixture.file_path().display())
+            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
         );
     }
 
@@ -2994,7 +3008,7 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("VALID {}", fixture.file_path().display())
+            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
         );
     }
 
@@ -3744,7 +3758,7 @@ project:
             json["next"],
             format!(
                 "ota detect --merge --dry-run {}",
-                fixture.file_path().display()
+                compact_path(fixture.dir.path(), ".")
             )
         );
     }
@@ -3792,7 +3806,6 @@ tasks:
         assert!(stderr.contains(
             "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
         ));
-        assert!(stderr.contains("Signature: doctor first, contract second"));
     }
 
     #[test]
@@ -3914,7 +3927,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("CHECK"));
-        assert!(output.stdout.contains("🦦 WARN  Check failed: health-check"));
+        assert!(output.stdout.contains("WARN  Check failed: health-check"));
         assert!(!output.stdout.contains("Missing environment variable"));
     }
 
@@ -4026,11 +4039,11 @@ checks:
         assert!(
             output
                 .stdout
-                .contains(&format!("CHECK {}", fixture.file_path().display()))
+                .contains(&format!("CHECK {}", compact_contract(&fixture.file_path())))
         );
         assert!(output.stdout.contains(&format!(
             "CHECK {} [member api]",
-            fixture.file_path().display()
+            compact_contract(&fixture.file_path())
         )));
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("NOT READY"));
@@ -4105,7 +4118,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("🦦 WARN  Missing tool: ota-tool-that-does-not-exist")
+                .contains("WARN  Missing tool: ota-tool-that-does-not-exist")
         );
     }
 
@@ -4157,7 +4170,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("🦦 WARN  Ephemeral lifecycle is advisory only in V1")
+                .contains("WARN  Ephemeral lifecycle is advisory only in V1")
         );
     }
 
@@ -4191,15 +4204,15 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let error_index = output
             .stdout
-            .find("🦦 ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
+            .find("ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
             .unwrap();
         let warn_index = output
             .stdout
-            .find("🦦 WARN  Version mismatch for tool: cargo")
+            .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
         let info_index = output
             .stdout
-            .find("🦦 INFO  Check failed: informational-check")
+            .find("INFO  Check failed: informational-check")
             .unwrap();
 
         assert!(error_index < warn_index);
@@ -4359,7 +4372,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("🦦 ERROR  Service healthcheck failed: postgres")
+                .contains("ERROR  Service healthcheck failed: postgres")
         );
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
@@ -4397,7 +4410,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("🦦 ERROR  Service healthcheck failed: postgres")
+                .contains("ERROR  Service healthcheck failed: postgres")
         );
         assert!(fixture.dir.path().join("db-started.txt").exists());
         assert!(!fixture.dir.path().join("api-started.txt").exists());
@@ -4505,7 +4518,7 @@ checks:
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("NOT READY"));
         assert!(output.stdout.contains("Phase: post-setup diagnosis"));
-        assert!(output.stdout.contains("🦦 ERROR  Check failed: health-check"));
+        assert!(output.stdout.contains("ERROR  Check failed: health-check"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -4975,7 +4988,7 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("VALID {}", fixture.file_path().display())
+            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
         );
         assert!(
             output
@@ -5184,7 +5197,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains(&format!(
             "WORKSPACE TASKS {}",
-            fixture.workspace_file().display()
+            compact_workspace(&fixture.workspace_file())
         )));
     }
 
@@ -5199,7 +5212,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("VALID WORKSPACE {}", fixture.workspace_file().display())
+            format!("✓ VALID WORKSPACE {}", compact_workspace(&fixture.workspace_file()))
         );
     }
 
@@ -5311,7 +5324,7 @@ env:
         assert!(
             output
                 .stdout
-                .contains("🦦 WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
+                .contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
         );
     }
 
@@ -5345,8 +5358,8 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "VALID WORKSPACE {}",
-                fixture.path().join("ota.workspace.yaml").display()
+                "✓ VALID WORKSPACE {}",
+                compact_workspace(&fixture.path().join("ota.workspace.yaml"))
             )
         );
     }
@@ -5564,7 +5577,7 @@ checks:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("web [optional] (READY)"));
-        assert!(output.stdout.contains("🦦 WARN  Check failed: health-check"));
+        assert!(output.stdout.contains("WARN  Check failed: health-check"));
     }
 
     #[test]
