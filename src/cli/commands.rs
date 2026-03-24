@@ -5515,6 +5515,10 @@ fn paint_next_header() -> String {
     paint("Next:", "1;38;2;220;220;220")
 }
 
+pub fn paint_next_label() -> String {
+    paint_key("Next:")
+}
+
 fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }

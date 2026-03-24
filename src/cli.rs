@@ -683,7 +683,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "ota init",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Run { .. } => "ota tasks --use",
-        Commands::Doctor { .. } => "ota init",
+        Commands::Doctor { .. } => "create missing repo contracts with `ota init <repo-path>`",
         Commands::Init { .. } => "ota init --dry-run",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
@@ -702,7 +702,12 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     };
 
     let next_header = commands::paint_next_label();
-    commands::stylize_inline_text(&format!("{stderr}\n\n{next_header} `{suggestion}`"))
+    let next_value = if suggestion.contains('`') {
+        suggestion.to_string()
+    } else {
+        format!("`{suggestion}`")
+    };
+    commands::stylize_inline_text(&format!("{stderr}\n\n{next_header} {next_value}"))
 }
 
 fn collapse_blank_lines(text: String) -> String {
@@ -3252,7 +3257,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
-        assert!(stderr.contains("Try: `ota tasks --use`"));
+        assert!(stderr.contains("Next: `ota tasks --use`"));
     }
 
     #[test]
