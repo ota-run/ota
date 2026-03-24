@@ -2734,12 +2734,8 @@ pub fn workspace_doctor(
                         } else {
                             known_repos.join(", ")
                         };
-                        let suggested = known_repos
-                            .first()
-                            .map(|name| format!("ota workspace doctor --repo {name}"))
-                            .unwrap_or_else(|| String::from("ota workspace doctor"));
                         let error = format!(
-                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\n  Known repos: {known_list}\n{} `{suggested}`",
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\n  Known repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace doctor filter failed", "1;37"),
                             paint_key("Where:"),
