@@ -3512,7 +3512,7 @@ agent:
         assert!(output.stdout.contains(
             "Write policy: detected mode writes only high-confidence fields automatically"
         ));
-        assert!(output.stdout.contains("Next: run `ota validate"));
+        assert!(output.stdout.contains("Next:\n- run `ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -3532,7 +3532,7 @@ agent:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract; review `ota init` output or use `ota detect --dry-run` before writing")
+                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract\nNext:\n- review `ota init` output\n- use `ota detect --dry-run` before writing")
         );
         assert!(
             output
@@ -3597,7 +3597,7 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .contains("Next: review the existing contract with `ota validate")
+                .contains("review the existing contract with `ota validate")
         );
         assert!(
             output
@@ -4486,7 +4486,7 @@ project:
         assert_eq!(
             output.stderr.as_deref(),
             Some(
-                "`ota detect --merge` requires an existing `ota.yaml`; use `ota detect` to write a first contract or `ota detect --dry-run` to review one",
+                "`ota detect --merge` requires an existing `ota.yaml`\nNext:\n- use `ota detect` to write a first contract\n- use `ota detect --dry-run` to review one",
             )
         );
     }
@@ -4521,7 +4521,7 @@ project:
         assert_eq!(
             output.stderr.as_deref(),
             Some(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`; use `ota detect --dry-run` to review a first contract"
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\nNext:\n- use `ota detect --dry-run` to review a first contract"
             )
         );
     }
@@ -4721,7 +4721,7 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract; use `ota detect --dry-run` to review medium and low confidence fields"),
+                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract\nNext:\n- use `ota detect --dry-run` to review medium and low confidence fields"),
             true
         );
         assert!(
