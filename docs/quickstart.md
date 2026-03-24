@@ -24,6 +24,8 @@
 
 # Ota Quickstart
 
+Install Ota first: [installation.md](installation.md)
+
 ## Use an existing contract
 
 From a repo with `ota.yaml`:
