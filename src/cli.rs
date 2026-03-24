@@ -740,7 +740,7 @@ fn finalize_cli_output(
 }
 
 fn append_try_footer(stderr: String, command: &Commands) -> String {
-    if stderr.contains("\nTry: ") || stderr.contains("\nNext:") {
+    if stderr.contains("Try: ") || stderr.contains("Next:") {
         return stderr;
     }
 
@@ -6932,6 +6932,8 @@ repos:
         let stderr = output.stderr.as_deref().unwrap_or_default();
         assert!(stderr.contains("unknown workspace repo `missing-repo`"));
         assert!(stderr.contains("Known repos:"));
+        let plain = strip_ansi(stderr);
+        assert_eq!(plain.matches("Next:").count(), 1);
     }
 
     #[test]
