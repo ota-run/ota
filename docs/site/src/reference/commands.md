@@ -449,6 +449,9 @@ Why:
 ```bash
 ota workspace doctor
 ota workspace doctor --json
+ota workspace doctor --repo api
+ota workspace doctor --status not-ready
+ota workspace doctor --severity error
 ```
 
 Script example:
