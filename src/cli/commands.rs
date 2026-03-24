@@ -1584,9 +1584,15 @@ pub fn detect(
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = if merge {
-                            format!("DETECT MERGE PREVIEW {}", report.root.display())
+                            format_command_header(
+                                "DETECT MERGE PREVIEW",
+                                &report.root.display().to_string(),
+                            )
                         } else {
-                            format!("DETECT PREVIEW {}", report.root.display())
+                            format_command_header(
+                                "DETECT PREVIEW",
+                                &report.root.display().to_string(),
+                            )
                         };
                         stdout.push_str("\nMode: dry-run (no write)");
                         if merge {
@@ -2272,8 +2278,8 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 let highlighted_doctor =
                     paint_code(&format!("ota doctor {}", contract_path.display()));
                 let mut stdout = format!(
-                    "DETECT WRITE {}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
-                    report.root.display(),
+                    "{}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
+                    format_command_header("DETECT WRITE", &report.root.display().to_string()),
                     highlighted_written,
                     format_next_timeline(&[
                         format!("run `{highlighted_validate}`"),
@@ -2354,7 +2360,8 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     if addable_fields.is_empty() {
         return match format {
             OutputFormat::Text => {
-                let mut stdout = format!("NO CHANGES {}", contract_path.display());
+                let mut stdout =
+                    format_command_header("NO CHANGES", &contract_path.display().to_string());
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
                 CommandOutput::success(stdout)
             }
@@ -2459,7 +2466,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let mut stdout = format!("MERGED {}", contract_path.display());
+                let mut stdout = format_command_header("MERGED", &contract_path.display().to_string());
                 render_detect_change_section(
                     &mut stdout,
                     "Applied high-confidence additions",
@@ -2566,8 +2573,8 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&format!("ota doctor {}", contract_path.display()));
                     let mut stdout = format!(
-                        "INIT WRITE {}\nResult: wrote {}\nMode: {mode}{}",
-                        report.root.display(),
+                        "{}\nResult: wrote {}\nMode: {mode}{}",
+                        format_command_header("INIT WRITE", &report.root.display().to_string()),
                         highlighted_written,
                         format_next_timeline(&[
                             format!("run `{highlighted_validate}`"),
@@ -2620,8 +2627,8 @@ fn render_init(
         OutputFormat::Text => {
             let highlighted_init = paint_code(&format!("ota init {}", report.root.display()));
             let mut stdout = format!(
-                "INIT PREVIEW {}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`\nContract:\n---\n{}",
-                report.root.display(),
+                "{}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`\nContract:\n---\n{}",
+                format_command_header("INIT PREVIEW", &report.root.display().to_string()),
                 highlighted_init,
                 review_yaml.trim_end()
             );
@@ -2935,7 +2942,7 @@ fn render_tasks_text(
     agent: Option<&AgentSummary<'_>>,
     tasks: &[TaskSummary<'_>],
 ) -> String {
-    let mut output = format!("{} {path}", paint("TASKS", "1;36"));
+    let mut output = format_command_header("TASKS", path);
 
     if let Some(agent) = agent {
         let mut details = Vec::new();
@@ -2971,7 +2978,7 @@ fn render_tasks_text(
 
     output.push_str("\n---\nTasks:");
     if tasks.is_empty() {
-        output.push_str("\n- none");
+        output.push_str(&format!("\n{} none", list_bullet()));
         return output;
     }
 
@@ -2985,7 +2992,7 @@ fn render_tasks_text(
             .or_else(|| task.script.map(|script| script.lines().next().unwrap_or(script).trim().to_string()))
             .unwrap_or_else(|| String::from("-"));
 
-        output.push_str(&format!("\n- {}", paint(task.name, "1")));
+        output.push_str(&format!("\n{} {}", list_bullet(), paint(task.name, "1")));
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
         output.push_str(&format!(
             "\n  {} {}",
@@ -3045,8 +3052,8 @@ fn render_workspace_doctor_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "{} {path}\n{}",
-        paint("WORKSPACE DOCTOR", "1;36"),
+        "{}\n{}",
+        format_command_header("WORKSPACE DOCTOR", path),
         if report.ok {
             paint("READY", "1;32")
         } else {
@@ -3056,7 +3063,8 @@ fn render_workspace_doctor_text(
 
     for repo in &report.repos {
         stdout.push_str(&format!(
-            "\n- {} [{}] ({})",
+            "\n\n{} {} [{}] ({})",
+            list_bullet(),
             repo.name,
             if repo.required {
                 "required"
@@ -3065,15 +3073,21 @@ fn render_workspace_doctor_text(
             },
             if repo.ok { "READY" } else { "NOT READY" }
         ));
-        stdout.push_str(&format!("\n  Path: {}", repo.path));
-        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Contract:"),
+            repo.contract_path
+        ));
 
         for finding in &repo.findings {
             stdout.push_str(&format!(
-                "\n  {}  {}\n  Why: {}\n  Next: {}",
+                "\n\n  {}  {}\n  {} {}\n  {} {}",
                 render_severity(finding.severity),
                 finding.summary,
+                paint_key("Why:"),
                 finding.why,
+                paint_key("Next:"),
                 finding.next
             ));
         }
@@ -3122,8 +3136,8 @@ fn render_workspace_check_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "{} {path}\n{}",
-        paint("WORKSPACE CHECK", "1;36"),
+        "{}\n{}",
+        format_command_header("WORKSPACE CHECK", path),
         if report.ok {
             paint("READY", "1;32")
         } else {
@@ -3133,7 +3147,8 @@ fn render_workspace_check_text(
 
     for repo in &report.repos {
         stdout.push_str(&format!(
-            "\n- {} [{}] ({})",
+            "\n\n{} {} [{}] ({})",
+            list_bullet(),
             repo.name,
             if repo.required {
                 "required"
@@ -3142,15 +3157,21 @@ fn render_workspace_check_text(
             },
             if repo.ok { "READY" } else { "NOT READY" }
         ));
-        stdout.push_str(&format!("\n  Path: {}", repo.path));
-        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Contract:"),
+            repo.contract_path
+        ));
 
         for finding in &repo.findings {
             stdout.push_str(&format!(
-                "\n  {}  {}\n  Why: {}\n  Next: {}",
+                "\n\n  {}  {}\n  {} {}\n  {} {}",
                 render_severity(finding.severity),
                 finding.summary,
+                paint_key("Why:"),
                 finding.why,
+                paint_key("Next:"),
                 finding.next
             ));
         }
@@ -3215,8 +3236,8 @@ fn render_report_section(
     report: &DoctorReport,
 ) -> String {
     let mut stdout = format!(
-        "{} {path}\n{}",
-        paint(command, "1;36"),
+        "{}\n{}",
+        format_command_header(command, path),
         if report.ok {
             paint("READY", "1;32")
         } else {
@@ -3232,12 +3253,14 @@ fn render_report_section(
     }
 
     for finding in &report.findings {
-        stdout.push('\n');
+        stdout.push_str("\n\n");
         stdout.push_str(&format!(
-            "{}  {}\nWhy: {}\nNext: {}",
+            "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
+            paint_key("Why:"),
             finding.why,
+            paint_key("Next:"),
             finding.next
         ));
     }
@@ -3517,35 +3540,46 @@ fn render_up_section_from_parts(
     task: Option<&str>,
     exit_code: Option<i32>,
 ) -> String {
-    let mut stdout = format!("{} {path}\n{status}\nPhase: {phase}", paint("UP", "1;36"));
+    let mut stdout = format!(
+        "{}\n{}\n{} {phase}",
+        format_command_header("UP", path),
+        status,
+        paint_key("Phase:")
+    );
 
     if let Some(service) = service {
-        stdout.push_str(&format!("\nService: {service}"));
+        stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
     }
 
     if let Some(task) = task {
-        stdout.push_str(&format!("\nTask: {task}"));
+        stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
     }
 
     if let Some(exit_code) = exit_code {
-        stdout.push_str(&format!("\nExit code: {exit_code}"));
+        stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
         if phase == "services" {
             stdout.push_str(&format!(
-                "\nNext: inspect `services.{}.start` output and fix the reported issue",
+                "\n{} inspect `services.{}.start` output and fix the reported issue",
+                paint_key("Next:"),
                 service.unwrap_or("service")
             ));
         } else if phase == "setup" {
-            stdout.push_str("\nNext: inspect the `setup` task output and fix the reported issue");
+            stdout.push_str(&format!(
+                "\n{} inspect the `setup` task output and fix the reported issue",
+                paint_key("Next:")
+            ));
         }
     }
 
     for finding in &report.findings {
-        stdout.push('\n');
+        stdout.push_str("\n\n");
         stdout.push_str(&format!(
-            "{}  {}\nWhy: {}\nNext: {}",
+            "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
             finding.summary,
+            paint_key("Why:"),
             finding.why,
+            paint_key("Next:"),
             finding.next
         ));
     }
@@ -3589,8 +3623,8 @@ fn render_workspace_up(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "{} {path}\n{}",
-                paint("WORKSPACE UP", "1;36"),
+                "{}\n{}",
+                format_command_header("WORKSPACE UP", path),
                 if report.ok {
                     paint("READY", "1;32")
                 } else {
@@ -3600,7 +3634,8 @@ fn render_workspace_up(
 
             for repo in &report.repos {
                 stdout.push_str(&format!(
-                    "\n- {} [{}] ({})",
+                    "\n\n{} {} [{}] ({})",
+                    list_bullet(),
                     repo.name,
                     if repo.required {
                         "required"
@@ -3609,24 +3644,30 @@ fn render_workspace_up(
                     },
                     repo.status
                 ));
-                stdout.push_str(&format!("\n  Path: {}", repo.path));
-                stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
-                stdout.push_str(&format!("\n  Phase: {}", repo.phase));
+                stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Contract:"),
+                    repo.contract_path
+                ));
+                stdout.push_str(&format!("\n  {} {}", paint_key("Phase:"), repo.phase));
                 if let Some(service) = &repo.service {
-                    stdout.push_str(&format!("\n  Service: {service}"));
+                    stdout.push_str(&format!("\n  {} {service}", paint_key("Service:")));
                 }
                 if let Some(task) = &repo.task {
-                    stdout.push_str(&format!("\n  Task: {task}"));
+                    stdout.push_str(&format!("\n  {} {task}", paint_key("Task:")));
                 }
                 if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n  Exit code: {exit_code}"));
+                    stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
                     stdout.push_str(&format!(
-                        "\n  {}  {}\n  Why: {}\n  Next: {}",
+                        "\n\n  {}  {}\n  {} {}\n  {} {}",
                         render_severity(finding.severity),
                         finding.summary,
+                        paint_key("Why:"),
                         finding.why,
+                        paint_key("Next:"),
                         finding.next
                     ));
                 }
@@ -3700,8 +3741,8 @@ fn render_workspace_run(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "{} {task} {path}\n{}",
-                paint("WORKSPACE RUN", "1;36"),
+                "{}\n{}",
+                format_command_header("WORKSPACE RUN", &format!("{task} {path}")),
                 if report.ok {
                     paint("READY", "1;32")
                 } else {
@@ -3711,7 +3752,8 @@ fn render_workspace_run(
 
             for repo in &report.repos {
                 stdout.push_str(&format!(
-                    "\n- {} [{}] ({})",
+                    "\n\n{} {} [{}] ({})",
+                    list_bullet(),
                     repo.name,
                     if repo.required {
                         "required"
@@ -3720,18 +3762,24 @@ fn render_workspace_run(
                     },
                     repo.status
                 ));
-                stdout.push_str(&format!("\n  Path: {}", repo.path));
-                stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
-                stdout.push_str(&format!("\n  Task: {}", repo.task));
+                stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Contract:"),
+                    repo.contract_path
+                ));
+                stdout.push_str(&format!("\n  {} {}", paint_key("Task:"), repo.task));
                 if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n  Exit code: {exit_code}"));
+                    stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
                     stdout.push_str(&format!(
-                        "\n  {}  {}\n  Why: {}\n  Next: {}",
+                        "\n\n  {}  {}\n  {} {}\n  {} {}",
                         render_severity(finding.severity),
                         finding.summary,
+                        paint_key("Why:"),
                         finding.why,
+                        paint_key("Next:"),
                         finding.next
                     ));
                 }
@@ -3789,14 +3837,15 @@ fn render_workspace_run(
 
 fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
     let mut stdout = format!(
-        "{} {path}\n{}",
-        paint("WORKSPACE TASKS", "1;36"),
+        "{}\n{}",
+        format_command_header("WORKSPACE TASKS", path),
         paint("READY", "1;32")
     );
 
     for repo in repos {
         stdout.push_str(&format!(
-            "\n- {} [{}] ({})",
+            "\n\n{} {} [{}] ({})",
+            list_bullet(),
             repo.name,
             if repo.required {
                 "required"
@@ -3809,24 +3858,32 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 "not acquired"
             }
         ));
-        stdout.push_str(&format!("\n  Path: {}", repo.path));
-        stdout.push_str(&format!("\n  Contract: {}", repo.contract_path));
+        stdout.push_str(&format!("\n  {} {}", paint_key("Path:"), repo.path));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Contract:"),
+            repo.contract_path
+        ));
         if !repo.depends_on.is_empty() {
-            stdout.push_str(&format!("\n  Depends on: {}", repo.depends_on.join(", ")));
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Depends on:"),
+                repo.depends_on.join(", ")
+            ));
         }
 
         if !repo.acquired {
-            stdout.push_str("\n  Tasks: repo not acquired");
+            stdout.push_str(&format!("\n  {} repo not acquired", paint_key("Tasks:")));
             continue;
         }
 
         if repo.tasks.is_empty() {
-            stdout.push_str("\n  Tasks: none");
+            stdout.push_str(&format!("\n  {} none", paint_key("Tasks:")));
             continue;
         }
 
         for task in &repo.tasks {
-            stdout.push_str(&format!("\n  - {} ({})", task.name, task.kind));
+            stdout.push_str(&format!("\n  {} {} ({})", list_bullet(), task.name, task.kind));
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
@@ -3905,7 +3962,7 @@ fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>)
         return;
     }
 
-    buffer.push_str(&format!("\n  {label}:"));
+    buffer.push_str(&format!("\n  {} ", paint_key(&format!("{label}:"))));
     for line in contents.lines() {
         buffer.push_str(&format!("\n    {line}"));
     }
@@ -3938,17 +3995,20 @@ fn append_markdown_table(
     output.push_str(&format!("\n---\n{}:", paint(title, "1;34")));
 
     if rows.is_empty() {
-        output.push_str("\n- none");
+        output.push_str(&format!("\n{} none", list_bullet()));
         return;
     }
 
-    for row in rows {
+    for (idx, row) in rows.into_iter().enumerate() {
+        if idx == 0 {
+            output.push('\n');
+        }
         output.push('\n');
-        output.push_str("- ");
+        output.push_str(&format!("{} ", list_bullet()));
         let first_header = headers.first().copied().unwrap_or("Item");
         output.push_str(&paint_key(first_header));
         output.push_str(": ");
-        output.push_str(&render_table_cell(row.first().map_or("-", String::as_str)));
+        output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
 
         for (idx, header) in headers.iter().enumerate().skip(1) {
             let value = row.get(idx).map_or("-", String::as_str);
@@ -3971,7 +4031,32 @@ fn render_severity(severity: FindingSeverity) -> String {
 }
 
 fn paint_key(key: &str) -> String {
-    paint(key, "1;36")
+    paint(key, "38;2;123;208;197")
+}
+
+fn command_icon(command: &str) -> &'static str {
+    match command {
+        "VALID" | "VALID WORKSPACE" => "◆",
+        "TASKS" | "WORKSPACE TASKS" => "▣",
+        "DOCTOR" | "WORKSPACE DOCTOR" => "✦",
+        "WORKSPACE CHECK" | "CHECK" => "◈",
+        "UP" | "WORKSPACE UP" => "▲",
+        "RUN" | "WORKSPACE RUN" => "▶",
+        "INIT WRITE" | "INIT PREVIEW" => "◎",
+        "DETECT WRITE" | "DETECT PREVIEW" | "DETECT MERGE PREVIEW" => "◉",
+        "MERGED" => "◍",
+        "CLEANED" | "NO CLEANUP NEEDED" => "◇",
+        _ => "•",
+    }
+}
+
+fn format_command_header(command: &str, target: &str) -> String {
+    format!(
+        "{} {} {} {target}",
+        "🦦",
+        paint(command_icon(command), "1;34"),
+        paint(command, "1;36")
+    )
 }
 
 fn paint(value: &str, code: &str) -> String {
@@ -3989,6 +4074,10 @@ fn paint_code(value: &str) -> String {
     paint(value, "38;2;214;161;95")
 }
 
+fn list_bullet() -> String {
+    paint("▸", "38;2;123;208;197")
+}
+
 fn format_next_timeline(items: &[String]) -> String {
     if items.is_empty() {
         return String::new();
@@ -3996,7 +4085,7 @@ fn format_next_timeline(items: &[String]) -> String {
 
     let mut output = String::from("\n\nNext:");
     for item in items {
-        output.push_str(&format!("\n- {item}"));
+        output.push_str(&format!("\n{} {item}", list_bullet()));
     }
     output
 }
