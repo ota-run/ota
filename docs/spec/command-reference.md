@@ -122,6 +122,10 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
 - parses the contract
 - applies semantic validation
+- includes provider-specific target examples for remote target validation errors:
+- `daytona`: `sandbox-dev`
+- `ssh` / `tsh`: `user@host`
+- `kubectl`: `pod/ota-dev`
 - exits `0` on success and non-zero on failure
 
 Text output:
@@ -229,6 +233,9 @@ Current behavior:
 - repeated `--member` values diagnose those members in the provided order
 - checks configured env requirements
 - checks preferred execution backend prerequisites such as `docker`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
+- warns on suspicious remote target shape:
+- `ssh` / `tsh` targets without `user@host`
+- `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified
