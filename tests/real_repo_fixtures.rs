@@ -436,7 +436,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) {
 #[test]
 fn init_json_reports_detected_mode_for_java_gradle_fixture() {
     let fixture = real_fixture_path("java-gradle");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -476,7 +476,7 @@ fn init_write_writes_high_confidence_contract_for_java_gradle_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_java_maven_fixture() {
     let fixture = real_fixture_path("java-maven");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -503,7 +503,8 @@ fn init_write_writes_high_confidence_contract_for_java_maven_fixture() {
 
     assert!(written.contains("name: ota-maven-service"));
     assert!(written.contains("java: '21'"));
-    assert!(!written.contains("tools:"));
+    assert!(written.contains("tools:"));
+    assert!(written.contains("maven: '*'"));
     assert!(!written.contains("tasks:"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
@@ -528,7 +529,7 @@ fn init_json_prefers_maven_wrapper_on_real_fixture() {
     )
     .expect("wrapper properties should be written");
 
-    let output = run_ota(&["init", "--json", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.path().to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["config"]["tools"]["maven"], "3.9.9");
@@ -539,7 +540,7 @@ fn init_json_prefers_maven_wrapper_on_real_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_java_gradle_multimodule_fixture() {
     let fixture = real_fixture_path("java-gradle-multimodule");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -554,7 +555,7 @@ fn init_json_reports_detected_mode_for_java_gradle_multimodule_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
     let fixture = real_fixture_path("docker-legacy");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -584,7 +585,7 @@ fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_rust_cargo_fixture() {
     let fixture = real_fixture_path("rust-cargo");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -600,7 +601,7 @@ fn init_json_reports_detected_mode_for_rust_cargo_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_python_setup_cfg_fixture() {
     let fixture = real_fixture_path("python-setup-cfg");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -613,7 +614,7 @@ fn init_json_reports_detected_mode_for_python_setup_cfg_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_python_requirements_fixture() {
     let fixture = real_fixture_path("python-requirements");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -627,7 +628,7 @@ fn init_json_reports_detected_mode_for_python_requirements_fixture() {
 #[test]
 fn init_json_reports_detected_mode_for_mixed_node_python_compose_fixture() {
     let fixture = real_fixture_path("mixed-node-python-compose");
-    let output = run_ota(&["init", "--json", fixture.to_str().unwrap()]);
+    let output = run_ota(&["init", "--json", "--dry-run", fixture.to_str().unwrap()]);
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
@@ -991,7 +992,8 @@ fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
 
     assert!(written.contains("name: ota-maven-service"));
     assert!(written.contains("java: '21'"));
-    assert!(!written.contains("tools:"));
+    assert!(written.contains("tools:"));
+    assert!(written.contains("maven: '*'"));
     assert!(!written.contains("tasks:"));
 }
 
