@@ -3492,7 +3492,7 @@ agent:
         assert!(
             output
                 .stdout
-                .contains("tools.pnpm: 10.1.0 <- from package.json#packageManager [high]")
+                .contains("| tools.pnpm | 10.1.0 | package.json#packageManager | high |")
         );
         assert!(!fixture.file_path().exists());
     }
@@ -4387,12 +4387,12 @@ checks:
         assert!(
             output
                 .stdout
-                .contains("runtimes.node: 22 <- from .nvmrc [high]")
+                .contains("| runtimes.node | 22 | .nvmrc | high |")
         );
         assert!(
             output
                 .stdout
-                .contains("tasks.dev.run: pnpm dev <- from package.json#scripts.dev [high]")
+                .contains("| tasks.dev.run | pnpm dev | package.json#scripts.dev | high |")
         );
     }
 
@@ -4664,7 +4664,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("runtimes.node: 20 <- from package.json#engines.node [medium]")
+                .contains("| runtimes.node | 20 | package.json#engines.node | medium |")
         );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
@@ -4752,7 +4752,7 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .contains("project.name: go-service <- from go.mod#module [medium]")
+                .contains("| project.name | go-service | go.mod#module | medium |")
         );
         assert!(!fixture.file_path().exists());
     }

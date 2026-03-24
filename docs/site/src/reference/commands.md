@@ -55,6 +55,16 @@ ota validate
 ota validate --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota validate
+ota doctor --json > .ota-doctor.json
+```
+
 ### `ota doctor`
 
 When to use:
@@ -72,6 +82,16 @@ Use-case:
 ```bash
 ota doctor
 ota doctor --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# fail fast in CI if repo is not ready
+ota doctor --json | tee .ota-doctor.json
 ```
 
 ### `ota up`
@@ -93,6 +113,16 @@ ota up
 ota up --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota up
+ota run test
+```
+
 ### `ota run <task>`
 
 When to use:
@@ -109,6 +139,16 @@ Use-case:
 
 ```bash
 ota run test
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+TASK="${1:-test}"
+ota run "$TASK"
 ```
 
 ### `ota tasks`
@@ -130,6 +170,16 @@ ota tasks
 ota tasks --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota tasks --json > .ota-tasks.json
+cat .ota-tasks.json
+```
+
 ### `ota check`
 
 When to use:
@@ -149,6 +199,15 @@ ota check
 ota check --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota check --json > .ota-check.json
+```
+
 ### `ota init`
 
 When to use:
@@ -165,7 +224,20 @@ Use-case:
 
 ```bash
 ota init
+ota init --dry-run
 ota init --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# preview first, then write
+ota init --dry-run
+ota init
+ota validate
 ```
 
 ### `ota detect`
@@ -189,6 +261,21 @@ ota detect --merge --dry-run .
 ota detect --merge .
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# contract does not exist yet
+ota detect --dry-run .
+ota detect .
+
+# later, add high-confidence missing fields only
+ota detect --merge --dry-run .
+ota detect --merge .
+```
+
 ### `ota clean`
 
 When to use:
@@ -205,6 +292,16 @@ Use-case:
 
 ```bash
 ota clean
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota clean
+ota up
 ```
 
 ## Workspace commands
@@ -224,6 +321,15 @@ ota workspace validate
 ota workspace validate --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace validate --json > .ota-workspace-validate.json
+```
+
 ### `ota workspace tasks`
 
 When to use:
@@ -237,6 +343,15 @@ Why:
 ```bash
 ota workspace tasks
 ota workspace tasks --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace tasks --json > .ota-workspace-tasks.json
 ```
 
 ### `ota workspace doctor`
@@ -254,6 +369,15 @@ ota workspace doctor
 ota workspace doctor --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace doctor --json > .ota-workspace-doctor.json
+```
+
 ### `ota workspace check`
 
 When to use:
@@ -267,6 +391,15 @@ Why:
 ```bash
 ota workspace check
 ota workspace check --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace check --json > .ota-workspace-check.json
 ```
 
 ### `ota workspace run <task>`
@@ -284,6 +417,16 @@ ota workspace run test
 ota workspace run test --json
 ```
 
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+TASK="${1:-test}"
+ota workspace run "$TASK"
+```
+
 ### `ota workspace up`
 
 When to use:
@@ -297,6 +440,16 @@ Why:
 ```bash
 ota workspace up
 ota workspace up --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace up
+ota workspace run test
 ```
 
 ## Machine integration

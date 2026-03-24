@@ -22,6 +22,8 @@
    If you need additional information or have any questions, please email: os@ota.run
 */
 
+@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap");
+
 :root {
   --ota-accent: #0f766e;
   --ota-accent-soft: #14b8a6;
@@ -98,7 +100,8 @@
 
 html,
 body {
-  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  font-family: "Fira Code", "IBM Plex Sans", "Avenir Next", "Segoe UI", monospace;
+  font-size: 17px;
 }
 
 .content {
@@ -106,15 +109,16 @@ body {
 }
 
 .content main {
-  line-height: 1.72;
+  line-height: 1.78;
   letter-spacing: 0.01em;
+  font-size: 1.03rem;
 }
 
 .content h1,
 .content h2,
 .content h3,
 .content h4 {
-  font-family: "Sora", "IBM Plex Sans", "Avenir Next", sans-serif;
+  font-family: "Fira Code", "Sora", "IBM Plex Sans", "Avenir Next", monospace;
   letter-spacing: -0.01em;
 }
 
@@ -136,7 +140,7 @@ body {
   border: 1px solid var(--table-border-color);
   border-radius: 6px;
   padding: 0.12em 0.38em;
-  font-size: 0.93em;
+  font-size: 0.98em;
 }
 
 .content pre code {
@@ -172,6 +176,10 @@ body {
 .chapter li a {
   border-radius: 8px;
   transition: background-color 140ms ease, color 140ms ease;
+  font-size: 0.98rem;
+  line-height: 1.45;
+  padding-top: 0.18rem;
+  padding-bottom: 0.18rem;
 }
 
 .chapter li a:hover {
@@ -184,7 +192,22 @@ body {
 }
 
 .menu-title {
-  font-family: "Sora", "IBM Plex Sans", sans-serif;
+  font-family: "Fira Code", "Sora", "IBM Plex Sans", monospace;
   font-weight: 700;
   letter-spacing: 0.01em;
+  font-size: 1.02rem;
+}
+
+.sidebar,
+.sidebar-scrollbox {
+  font-size: 0.99rem;
+}
+
+#searchbar {
+  font-size: 0.96rem;
+}
+
+.content pre,
+.content code {
+  font-family: "Fira Code", "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
 }
