@@ -3664,19 +3664,19 @@ fn render_workspace_doctor_text(
             render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Path:"),
             compact_repo_path(Path::new(&repo.path))
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Contract:"),
             compact_contract_path(Path::new(&repo.contract_path))
         ));
 
         for finding in &repo.findings {
             stdout.push_str(&format!(
-                "\n\n  {}  {}\n  {} {}\n  {} {}",
+                "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
                 paint_key("Why:"),
@@ -3740,19 +3740,19 @@ fn render_workspace_check_text(
             render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Path:"),
             compact_repo_path(Path::new(&repo.path))
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Contract:"),
             compact_contract_path(Path::new(&repo.contract_path))
         ));
 
         for finding in &repo.findings {
             stdout.push_str(&format!(
-                "\n\n  {}  {}\n  {} {}\n  {} {}",
+                "\n\n{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
                 finding.summary,
                 paint_key("Why:"),
@@ -4694,28 +4694,28 @@ fn render_workspace_up(
                     render_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
-                    "\n  {} {}",
+                    "\n{} {}",
                     paint_key("Path:"),
                     compact_repo_path(Path::new(&repo.path))
                 ));
                 stdout.push_str(&format!(
-                    "\n  {} {}",
+                    "\n{} {}",
                     paint_key("Contract:"),
                     compact_contract_path(Path::new(&repo.contract_path))
                 ));
-                stdout.push_str(&format!("\n  {} {}", paint_key("Phase:"), repo.phase));
+                stdout.push_str(&format!("\n{} {}", paint_key("Phase:"), repo.phase));
                 if let Some(service) = &repo.service {
-                    stdout.push_str(&format!("\n  {} {service}", paint_key("Service:")));
+                    stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
                 }
                 if let Some(task) = &repo.task {
-                    stdout.push_str(&format!("\n  {} {task}", paint_key("Task:")));
+                    stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
                 }
                 if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
+                    stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
                     stdout.push_str(&format!(
-                        "\n\n  {}  {}\n  {} {}\n  {} {}",
+                        "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
                         paint_key("Why:"),
@@ -4804,22 +4804,22 @@ fn render_workspace_run(
                     render_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
-                    "\n  {} {}",
+                    "\n{} {}",
                     paint_key("Path:"),
                     compact_repo_path(Path::new(&repo.path))
                 ));
                 stdout.push_str(&format!(
-                    "\n  {} {}",
+                    "\n{} {}",
                     paint_key("Contract:"),
                     compact_contract_path(Path::new(&repo.contract_path))
                 ));
-                stdout.push_str(&format!("\n  {} {}", paint_key("Task:"), repo.task));
+                stdout.push_str(&format!("\n{} {}", paint_key("Task:"), repo.task));
                 if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
+                    stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
                 for finding in &repo.findings {
                     stdout.push_str(&format!(
-                        "\n\n  {}  {}\n  {} {}\n  {} {}",
+                        "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
                         finding.summary,
                         paint_key("Why:"),
@@ -4896,35 +4896,35 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             }
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Path:"),
             compact_repo_path(Path::new(&repo.path))
         ));
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n{} {}",
             paint_key("Contract:"),
             compact_contract_path(Path::new(&repo.contract_path))
         ));
         if !repo.depends_on.is_empty() {
             stdout.push_str(&format!(
-                "\n  {} {}",
+                "\n{} {}",
                 paint_key("Depends on:"),
                 repo.depends_on.join(", ")
             ));
         }
 
         if !repo.acquired {
-            stdout.push_str(&format!("\n  {} repo not acquired", paint_key("Tasks:")));
+            stdout.push_str(&format!("\n{} repo not acquired", paint_key("Tasks:")));
             continue;
         }
 
         if repo.tasks.is_empty() {
-            stdout.push_str(&format!("\n  {} none", paint_key("Tasks:")));
+            stdout.push_str(&format!("\n{} none", paint_key("Tasks:")));
             continue;
         }
 
         for task in &repo.tasks {
-            stdout.push_str(&format!("\n  {} {} ({})", list_bullet(), task.name, task.kind));
+            stdout.push_str(&format!("\n{} {} ({})", list_bullet(), task.name, task.kind));
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
@@ -5029,9 +5029,13 @@ fn append_markdown_table(
             output.push('\n');
         }
         output.push('\n');
-        output.push_str(&format!("{}  ", list_bullet()));
         let first_header = headers.first().copied().unwrap_or("Item");
         let compact_repo_row = first_header == "Repo";
+        output.push_str(&format!(
+            "{}{}",
+            list_bullet(),
+            if compact_repo_row { " " } else { "  " }
+        ));
         if compact_repo_row {
             output.push_str(&paint(&render_table_cell(row.first().map_or("-", String::as_str)), "1"));
         } else {
@@ -5042,7 +5046,7 @@ fn append_markdown_table(
 
         for (idx, header) in headers.iter().enumerate().skip(1) {
             let value = row.get(idx).map_or("-", String::as_str);
-            output.push_str(if compact_repo_row { "\n    " } else { "\n  " });
+            output.push_str(if compact_repo_row { "\n" } else { "\n  " });
             output.push_str(&paint_key(header));
             output.push_str(": ");
             output.push_str(&render_table_cell(value));
@@ -5102,7 +5106,16 @@ fn render_status_line(status: &str) -> String {
 }
 
 fn render_status_word(status: &str) -> String {
-    status.trim().to_string()
+    let trimmed = status.trim();
+    if plain_mode() {
+        return trimmed.to_string();
+    }
+    match trimmed {
+        "READY" => paint("READY", "1;32"),
+        "NOT READY" => paint("NOT READY", "1;93"),
+        "VALID" => paint("VALID", "1;32"),
+        other => other.to_string(),
+    }
 }
 
 fn paint_key(key: &str) -> String {
