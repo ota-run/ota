@@ -111,7 +111,7 @@ body {
 
 .content main {
   line-height: 1.78;
-  letter-spacing: 0.01em;
+  /*letter-spacing: 0.01em;*/
   font-size: 1.18rem !important;
 }
 
@@ -127,7 +127,7 @@ body {
 .content h3,
 .content h4 {
   font-family: "Fira Code", "Sora", "IBM Plex Sans", "Avenir Next", monospace;
-  letter-spacing: -0.01em;
+  /*letter-spacing: -0.01em;*/
 }
 
 .content h1 {
