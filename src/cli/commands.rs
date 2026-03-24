@@ -22,6 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -3843,34 +3844,70 @@ fn append_markdown_table(
     headers: &[&str],
     rows: impl IntoIterator<Item = Vec<String>>,
 ) {
-    output.push_str(&format!("\n---\n{title}:"));
-    output.push_str("\n| ");
-    output.push_str(&headers.join(" | "));
-    output.push_str(" |");
-    output.push_str("\n|");
-    for _ in headers {
-        output.push_str(" --- |");
+    let rows = rows.into_iter().collect::<Vec<_>>();
+
+    output.push_str(&format!("\n\n{}:", paint(title, "1;36")));
+
+    if rows.is_empty() {
+        output.push_str("\n  (none)");
+        return;
     }
 
-    let mut wrote_any = false;
-    for row in rows {
-        wrote_any = true;
-        output.push_str("\n| ");
-        let mut rendered = Vec::with_capacity(headers.len());
-        for (idx, _) in headers.iter().enumerate() {
+    let mut widths = headers
+        .iter()
+        .map(|header| header.len())
+        .collect::<Vec<_>>();
+    for row in &rows {
+        for (idx, width) in widths.iter_mut().enumerate() {
             let value = row.get(idx).map_or("-", String::as_str);
-            rendered.push(render_table_cell(value));
+            *width = (*width).max(render_table_cell(value).len());
         }
-        output.push_str(&rendered.join(" | "));
-        output.push_str(" |");
     }
 
-    if !wrote_any {
-        output.push_str("\n| none");
-        for _ in 1..headers.len() {
-            output.push_str(" | -");
+    output.push('\n');
+    output.push_str("  ");
+    for (idx, header) in headers.iter().enumerate() {
+        if idx > 0 {
+            output.push_str("  ");
         }
-        output.push_str(" |");
+        output.push_str(&format!(
+            "{:<width$}",
+            paint(header, "1;34"),
+            width = widths[idx]
+        ));
+    }
+
+    output.push('\n');
+    output.push_str("  ");
+    for (idx, width) in widths.iter().enumerate() {
+        if idx > 0 {
+            output.push_str("  ");
+        }
+        output.push_str(&"─".repeat(*width));
+    }
+
+    for row in rows {
+        output.push('\n');
+        output.push_str("  ");
+        for (idx, width) in widths.iter().enumerate() {
+            if idx > 0 {
+                output.push_str("  ");
+            }
+            let value = row.get(idx).map_or("-", String::as_str);
+            output.push_str(&format!(
+                "{:<width$}",
+                render_table_cell(value),
+                width = *width
+            ));
+        }
+    }
+}
+
+fn paint(value: &str, code: &str) -> String {
+    if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+        format!("\x1b[{code}m{value}\x1b[0m")
+    } else {
+        value.to_string()
     }
 }
 
@@ -5636,29 +5673,23 @@ fn render_inference_section<'a>(
     title: &str,
     inferences: impl IntoIterator<Item = &'a Inference>,
 ) {
-    output.push_str(&format!("\n---\n{title}:"));
-
-    let mut wrote_any = false;
-    output.push_str("\n| Field | Value | Source | Confidence |");
-    output.push_str("\n| --- | --- | --- | --- |");
-    for inference in inferences {
-        wrote_any = true;
-        output.push_str(&format!(
-            "\n| {} | {} | {} | {} |",
-            render_table_cell(&inference.field),
-            render_table_cell(&inference.value),
-            render_table_cell(&inference.source),
-            render_confidence(inference.confidence)
-        ));
-    }
-
-    if !wrote_any {
-        output.push_str("\n| none | - | - | - |");
-    }
+    append_markdown_table(
+        output,
+        title,
+        &["Field", "Value", "Source", "Confidence"],
+        inferences.into_iter().map(|inference| {
+            vec![
+                inference.field.clone(),
+                inference.value.clone(),
+                inference.source.clone(),
+                render_confidence(inference.confidence).to_string(),
+            ]
+        }),
+    );
 }
 
 fn render_table_cell(value: &str) -> String {
-    value.replace('\n', " ").replace('|', "\\|")
+    value.replace('\n', " ").replace('|', "¦")
 }
 
 enum ContractProblem {
