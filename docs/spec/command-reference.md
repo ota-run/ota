@@ -417,6 +417,8 @@ Infer a starting contract from repo state.
 ```bash
 ota detect --dry-run [PATH]
 ota detect --json --dry-run [PATH]
+ota detect --write [PATH]
+ota detect --json --write [PATH]
 ota detect --merge --dry-run [PATH]
 ota detect --merge [PATH]
 ota detect [PATH]
@@ -452,6 +454,12 @@ Current detect sources:
 - `pom.xml`
 - `mvnw`
 - `.mvn/wrapper/maven-wrapper.properties`
+- `composer.json`
+- `.ruby-version`
+- `Gemfile`
+- `global.json`
+- `*.sln` / `*.csproj` / `*.fsproj`
+- `mix.exs`
 - `docker-compose.yml` / `docker-compose.yaml`
 - `compose.yml` / `compose.yaml`
 
@@ -463,11 +471,18 @@ For Docker Compose service inference, Ota currently derives:
 
 Dry-run behavior:
 
+- `ota detect` is read-only by default
 - prints a candidate `ota.yaml`
 - prints per-field provenance
 - prints per-field confidence
 - when `ota.yaml` already exists, prints a non-destructive comparison preview for detected fields
 - does not write anything
+
+Current write behavior:
+
+- `ota detect --write` writes using only `high` confidence fields
+- validates the generated contract before writing
+- refuses to overwrite an existing `ota.yaml`
 
 Current merge-preview behavior:
 
@@ -512,7 +527,7 @@ Current precedence is conservative:
 
 Write behavior:
 
-- writes only `high` confidence fields
+- `ota detect --write` writes only `high` confidence fields
 - validates the projected contract before writing
 - refuses to overwrite an existing `ota.yaml`
 - when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run`

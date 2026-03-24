@@ -1520,6 +1520,7 @@ fn render_clean_text<E: ToString>(path: &str, result: Result<bool, E>) -> Result
 
 pub fn detect(
     path: Option<&Path>,
+    write: bool,
     dry_run: bool,
     merge: bool,
     format: OutputFormat,
@@ -1532,9 +1533,11 @@ pub fn detect(
         String::from("DEBUG command=detect"),
         format!("DEBUG repo_root={}", root.display()),
         format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG write={write}"),
         format!("DEBUG dry_run={dry_run}"),
         format!("DEBUG merge={merge}"),
     ];
+    let dry_run = if merge { dry_run } else { dry_run || !write };
     if merge && !contract_path.exists() {
         let error = if dry_run {
             format!(
@@ -1547,7 +1550,7 @@ pub fn detect(
             format!(
                 "`ota detect --merge` requires an existing `ota.yaml`{}",
                 format_next_timeline(&[
-                    String::from("use `ota detect` to write a first contract"),
+                    String::from("use `ota detect --write` to write a first contract"),
                     String::from("use `ota detect --dry-run` to review one"),
                 ]),
             )
@@ -1555,7 +1558,7 @@ pub fn detect(
         let next = if dry_run {
             format!("ota detect --dry-run {}", root.display())
         } else {
-            format!("ota detect {}", root.display())
+            format!("ota detect --write {}", root.display())
         };
         return finalize_debug(
             match format {
@@ -1593,7 +1596,7 @@ pub fn detect(
                             )]));
                         } else {
                             stdout.push_str(&format_next_timeline(&[format!(
-                                "run `ota detect {}` to write a high-confidence contract",
+                                "run `ota detect --write {}` to write a high-confidence contract",
                                 report.root.display()
                             )]));
                         }
@@ -5815,7 +5818,7 @@ enum ResolveContractError {
     #[error("failed to read the current directory: {message}")]
     CurrentDirectory { message: String },
     #[error(
-        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect` to create one, or `ota detect --dry-run` to preview detected signals first"
+        "no `ota.yaml` found from `{start}` upward; run `ota init` or `ota detect --write` to create one, or `ota detect --dry-run` to preview detected signals first"
     )]
     NotFound { start: String },
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
