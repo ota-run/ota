@@ -26,6 +26,20 @@
 
 `ota.workspace.yaml` is the canonical workspace bootstrap contract for multi-repo orchestration.
 
+When to use:
+
+- teams with multiple repos that need a single bootstrap and execution entrypoint
+
+Why:
+
+- centralizes acquisition and dependency order while reusing repo-level contracts
+
+Typical use-cases:
+
+- bootstrapping a fullstack system spread across `api`, `web`, and `infra` repos
+- running one task (like `test`) across repos in deterministic order
+- diagnosing cross-repo readiness failures from one command
+
 It defines:
 
 - workspace identity
@@ -53,6 +67,18 @@ Execution model:
 - `ota workspace up` can acquire missing repos from `source.git`.
 - workspace orchestration reuses repo-level `ota up` and `ota run` behavior.
 - dependency order is deterministic.
+
+## Practical workflow
+
+1. `ota workspace validate`
+1. `ota workspace doctor`
+1. `ota workspace up`
+1. `ota workspace run <task>`
+
+Design rule:
+
+- workspace contract orchestrates repos
+- repo contracts remain the source of truth for repo readiness
 
 Canonical workspace reference in repository:
 

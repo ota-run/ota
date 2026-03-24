@@ -26,6 +26,20 @@
 
 `ota.yaml` is the canonical repo readiness contract.
 
+When to use:
+
+- any repository that wants deterministic setup and execution behavior
+
+Why:
+
+- replaces scattered setup truth with one machine-readable contract
+
+Typical use-cases:
+
+- onboarding new contributors without tribal setup steps
+- giving CI and agents the same execution contract as humans
+- documenting runtime/tool/service expectations in one file
+
 Primary sections:
 
 - `version`
@@ -59,6 +73,20 @@ Trust and behavior rules:
 - `ota doctor` reports readiness findings without hidden mutation.
 - `ota detect` writes conservatively from high-confidence fields only.
 - `ota detect --merge` applies additive high-confidence fields only.
+
+## Authoring guidance
+
+Start minimal, then expand:
+
+1. define `project`, `tasks`, and required runtimes
+1. add tools/env/services only when they are real blockers
+1. run `ota validate` and `ota doctor` after every change
+
+Prefer explicitness:
+
+- name tasks by intent (`setup`, `test`, `lint`, `dev`)
+- keep checks actionable and bounded
+- avoid hidden side effects in task commands
 
 Canonical contract reference in repository:
 

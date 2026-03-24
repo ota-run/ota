@@ -32,3 +32,9 @@ This section summarizes the stable surfaces of Ota:
 - machine-readable JSON output
 
 Canonical specification files remain under `docs/spec/`.
+
+Use this section when you need precision:
+
+- exact command behavior for automation
+- schema/contract clarity for repository standards
+- stable machine interfaces for CI and agents

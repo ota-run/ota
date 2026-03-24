@@ -520,6 +520,11 @@ Update documentation when changing:
 - exit code semantics
 - adoption workflow (`doctor`, `init`, `detect`, `up`)
 
+Documentation quality rule for OSS adoption:
+- command docs must explain **when to use**, **why it exists**, and at least one concrete **use-case**
+- avoid "list-only" command pages that only enumerate commands without operator guidance
+- optimize docs for fast first success by humans and agents, not just completeness
+
 The docs are part of the product.
 
 ---

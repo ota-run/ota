@@ -24,6 +24,10 @@
 
 # Quickstart
 
+Goal:
+
+- move from zero context to runnable repo quickly and safely
+
 1. Confirm CLI is available:
 
 ```bash
@@ -61,3 +65,47 @@ ota detect --merge /path/to/repo
 ```
 
 For full command semantics, see the Reference section.
+
+## Typical adoption paths
+
+### Existing mature repo
+
+When:
+
+- team already has scripts/manifests but no Ota contract
+
+Use:
+
+```bash
+ota detect --dry-run .
+ota detect .
+ota doctor
+ota up
+```
+
+### New contributor onboarding
+
+When:
+
+- engineer cloned repo and needs a deterministic first run
+
+Use:
+
+```bash
+ota doctor
+ota up
+ota run test
+```
+
+### CI safety gate
+
+When:
+
+- enforce contract correctness and checks in PR pipelines
+
+Use:
+
+```bash
+ota validate --json
+ota check --json
+```

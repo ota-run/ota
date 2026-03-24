@@ -35,6 +35,12 @@ It gives repositories one explicit contract for:
 - how they are prepared
 - how tasks are executed
 
+Who this helps most:
+
+- teams onboarding engineers into complex repos
+- maintainers who want deterministic local + CI behavior
+- agent workflows that need machine-readable contracts and outputs
+
 Start here:
 
 - [Installation](guide/installation.md)
