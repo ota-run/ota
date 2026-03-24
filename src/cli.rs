@@ -315,6 +315,17 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// List workspace repos declared in ota.workspace.yaml.
+    List {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Filter output to one workspace repo by name.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Diagnose workspace repo readiness from an ota.workspace.yaml contract.
     Doctor {
         /// Print machine-readable JSON output.
@@ -628,6 +639,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
+            WorkspaceCommands::List { json, repo, path } => commands::workspace_list(
+                path.as_deref(),
+                file.as_deref(),
+                repo.as_deref(),
+                format_from_json(json),
+                debug,
+            ),
             WorkspaceCommands::Doctor {
                 json,
                 jobs,
@@ -751,6 +769,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Detect { .. } => "ota workspace detect --dry-run",
             WorkspaceCommands::Validate { .. } => "ota workspace doctor",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
+            WorkspaceCommands::List { .. } => "ota workspace list",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
@@ -795,6 +814,7 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Detect { json, .. }
             | WorkspaceCommands::Validate { json, .. }
             | WorkspaceCommands::Tasks { json, .. }
+            | WorkspaceCommands::List { json, .. }
             | WorkspaceCommands::Doctor { json, .. }
             | WorkspaceCommands::Check { json, .. }
             | WorkspaceCommands::Up { json, .. }
@@ -820,6 +840,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             WorkspaceCommands::Detect { .. } => "ota workspace detect",
             WorkspaceCommands::Validate { .. } => "ota workspace validate",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
+            WorkspaceCommands::List { .. } => "ota workspace list",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
@@ -6665,6 +6686,44 @@ tasks:
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
         assert_eq!(json["repos"][1]["name"], "api");
         assert_eq!(json["repos"][1]["depends_on"][0], "db");
+    }
+
+    #[test]
+    fn workspace_list_text_and_json_report_repos() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let text = run_with(["ota", "workspace", "list", fixture.path()]);
+        assert_eq!(text.exit_code, 0);
+        let text_body = strip_ansi(&text.stdout);
+        assert!(text_body.contains("WORKSPACE LIST"));
+        assert!(text_body.contains("db [required] (ACQUIRED)"));
+        assert!(text_body.contains("api [required] (ACQUIRED)"));
+
+        let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
+        assert_eq!(json.exit_code, 0);
+        let body: Value = serde_json::from_str(&json.stdout).unwrap();
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["repos"][0]["name"], "db");
+        assert_eq!(body["repos"][1]["name"], "api");
+    }
+
+    #[test]
+    fn workspace_list_repo_filter_rejects_unknown_repo() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "list",
+            "--repo",
+            "missing-repo",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("unknown workspace repo `missing-repo`"));
+        assert!(stderr.contains("Known repos:"));
     }
 
     #[test]

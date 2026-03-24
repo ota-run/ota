@@ -42,8 +42,9 @@ use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
     TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
-    WorkspaceRepoRunReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceUpSuccess,
+    WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -2676,6 +2677,129 @@ pub fn workspace_tasks(
     )
 }
 
+pub fn workspace_list(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    repo_filter: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.list")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.list"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG filter_repo={}", repo_filter.unwrap_or("-")),
+    ];
+
+    finalize_debug(
+        match load_workspace_contract(&resolved_path) {
+            Ok(workspace) => {
+                let repo_refs = match ordered_workspace_repo_refs(&resolved_path, &workspace) {
+                    Ok(repo_refs) => repo_refs,
+                    Err(errors) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect(),
+                                    error: None,
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                if let Some(target_repo) = repo_filter {
+                    let known_repos = repo_refs
+                        .iter()
+                        .map(|repo| repo.name.as_str())
+                        .collect::<Vec<_>>();
+                    if !known_repos.iter().any(|name| *name == target_repo) {
+                        let known_list = if known_repos.is_empty() {
+                            String::from("none")
+                        } else {
+                            known_repos.join(", ")
+                        };
+                        let error = format!(
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
+                            render_severity(FindingSeverity::Error),
+                            paint("Workspace list filter failed", "1;37"),
+                            paint_key("Where:"),
+                            paint_code(&compact_path_display),
+                            paint_key("Why:"),
+                            paint_key("Next:")
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: Vec::new(),
+                                    error: Some(error),
+                                }))
+                            }
+                        };
+                    }
+                }
+
+                let repos = repo_refs
+                    .into_iter()
+                    .filter(|repo| match repo_filter {
+                        Some(target) => repo.name == target,
+                        None => true,
+                    })
+                    .map(|repo| WorkspaceRepoListReport {
+                        name: repo.name,
+                        path: repo.path.display().to_string(),
+                        contract_path: repo.contract_path.display().to_string(),
+                        required: repo.required,
+                        acquired: repo.present,
+                        depends_on: repo.depends_on,
+                    })
+                    .collect::<Vec<_>>();
+
+                match format {
+                    OutputFormat::Text => render_workspace_list_text(&compact_path_display, &repos),
+                    OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceListSuccess {
+                        ok: true,
+                        path: &path_display,
+                        repos: &repos,
+                    })),
+                }
+            }
+            Err(error) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn workspace_doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -2735,13 +2859,14 @@ pub fn workspace_doctor(
                             known_repos.join(", ")
                         };
                         let error = format!(
-                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\n  Known repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`; run `{}`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace doctor filter failed", "1;37"),
                             paint_key("Where:"),
                             paint_code(&compact_path_display),
                             paint_key("Why:"),
-                            paint_key("Next:")
+                            paint_key("Next:"),
+                            paint_code("ota workspace list")
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error),
@@ -5405,6 +5530,59 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
         &["Repo", "Task", "Kind", "Depends On", "Command", "Use"],
         task_rows,
     );
+
+    CommandOutput::success(stdout)
+}
+
+fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> CommandOutput {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("WORKSPACE LIST", path),
+        render_readiness_status(true)
+    );
+
+    if repos.is_empty() {
+        stdout.push_str(&format!("\n\n{} none", paint_section_title("Repos:")));
+        return CommandOutput::success(stdout);
+    }
+
+    stdout.push_str(&format!("\n\n{}:", paint_section_title("Repos")));
+    for repo in repos {
+        stdout.push_str(&format!(
+            "\n\n{} {} [{}] ({})",
+            list_bullet(),
+            paint(&repo.name, "1"),
+            if repo.required {
+                "required"
+            } else {
+                "optional"
+            },
+            if repo.acquired {
+                paint("ACQUIRED", "1;32")
+            } else {
+                paint("NOT ACQUIRED", "1;93")
+            }
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Path:"),
+            compact_repo_path(Path::new(&repo.path))
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Contract:"),
+            compact_contract_path(Path::new(&repo.contract_path))
+        ));
+        if repo.depends_on.is_empty() {
+            stdout.push_str(&format!("\n{} -", paint_key("Depends On:")));
+        } else {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Depends On:"),
+                repo.depends_on.join(", ")
+            ));
+        }
+    }
 
     CommandOutput::success(stdout)
 }
