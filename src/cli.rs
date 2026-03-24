@@ -3159,6 +3159,281 @@ agent:
     }
 
     #[test]
+    fn doctor_json_reports_suspicious_ssh_remote_target_warning() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["findings"].as_array().unwrap().iter().any(|finding| {
+            finding["severity"] == "warn"
+                && finding["summary"] == "Suspicious remote target for ssh: sandbox-dev"
+        }));
+    }
+
+    #[test]
+    fn doctor_json_reports_suspicious_kubectl_remote_target_warning() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: ota-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["findings"].as_array().unwrap().iter().any(|finding| {
+            finding["severity"] == "warn"
+                && finding["summary"] == "Suspicious remote target for kubectl: ota-dev"
+        }));
+    }
+
+    #[test]
+    fn doctor_json_suspicious_kubectl_warning_object_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: ota-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "Suspicious remote target for kubectl: ota-dev")
+            .expect("expected suspicious kubectl target warning");
+
+        assert_eq!(finding["severity"], "warn");
+        assert_eq!(
+            finding["summary"],
+            "Suspicious remote target for kubectl: ota-dev"
+        );
+        assert_eq!(
+            finding["why"],
+            "remote provider `kubectl` is currently validated for `pod/<name>` style targets, but current target `ota-dev` does not start with `pod/`"
+        );
+        assert_eq!(
+            finding["next"],
+            "set `execution.backends.remote.target` to a pod target such as `pod/ota-dev`"
+        );
+    }
+
+    #[test]
+    fn doctor_json_suspicious_ssh_warning_object_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "Suspicious remote target for ssh: sandbox-dev")
+            .expect("expected suspicious ssh target warning");
+
+        assert_eq!(finding["severity"], "warn");
+        assert_eq!(
+            finding["summary"],
+            "Suspicious remote target for ssh: sandbox-dev"
+        );
+        assert_eq!(
+            finding["why"],
+            "remote provider `ssh` usually expects a `user@host` style target, but current target `sandbox-dev` has no `@` separator"
+        );
+        assert_eq!(
+            finding["next"],
+            "set `execution.backends.remote.target` to a host target such as `user@host` for provider `ssh`"
+        );
+    }
+
+    #[test]
+    fn doctor_json_suspicious_tsh_warning_object_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "Suspicious remote target for tsh: sandbox-dev")
+            .expect("expected suspicious tsh target warning");
+
+        assert_eq!(finding["severity"], "warn");
+        assert_eq!(
+            finding["summary"],
+            "Suspicious remote target for tsh: sandbox-dev"
+        );
+        assert_eq!(
+            finding["why"],
+            "remote provider `tsh` usually expects a `user@host` style target, but current target `sandbox-dev` has no `@` separator"
+        );
+        assert_eq!(
+            finding["next"],
+            "set `execution.backends.remote.target` to a host target such as `user@host` for provider `tsh`"
+        );
+    }
+
+    #[test]
+    fn doctor_json_reports_all_suspicious_remote_target_warnings_together() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - ssh-member
+    - tsh-member
+    - kubectl-member
+"#,
+        );
+        fixture.write(
+            "ssh-member/ota.yaml",
+            r#"
+project:
+  name: ssh-member
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        fixture.write(
+            "tsh-member/ota.yaml",
+            r#"
+project:
+  name: tsh-member
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        fixture.write(
+            "kubectl-member/ota.yaml",
+            r#"
+project:
+  name: kubectl-member
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: ota-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members.len(), 3);
+        let summaries = members
+            .iter()
+            .flat_map(|member| member["findings"].as_array().into_iter().flatten())
+            .map(|finding| finding["summary"].as_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary == "Suspicious remote target for ssh: sandbox-dev")
+        );
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary == "Suspicious remote target for tsh: sandbox-dev")
+        );
+        assert!(
+            summaries
+                .iter()
+                .any(|summary| summary == "Suspicious remote target for kubectl: ota-dev")
+        );
+    }
+
+    #[test]
     fn doctor_text_includes_agent_summary() {
         let fixture = ContractFixture::new(
             r#"

@@ -26,7 +26,7 @@
 
 Status: active.
 
-Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/08-v3-spec.md)
+Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/08-v3-spec.md)
 
 V3 theme:
 
@@ -99,10 +99,15 @@ Implemented so far:
 - runtime distribution support such as `runtimes.java.distribution`
 - real remote-backed `ota run` for `provider: daytona`, `provider: ssh`, `provider: tsh`, and `provider: kubectl` with explicit `target`
 - remote-backed `ota up` setup execution through the same backend path
+- provider-specific remote target guidance in validator and runner errors (for `daytona`, `ssh`/`tsh`, and `kubectl`)
+- doctor warnings for suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` without `pod/...`)
+- doctor JSON warning contract locks for suspicious remote target findings (`ssh`, `tsh`, `kubectl`) including full finding object stability
+- aggregate doctor JSON monorepo coverage proving all suspicious remote target warning families can appear together in one run
 
 Still to do in V3:
 
-- broader remote backend support beyond the current shipped `daytona` / `ssh` / `tsh` / `kubectl` paths
+- no additional required scope items remain in this plan
+- broader provider-specific remote semantics are deferred per [12-v3-gap-closure-and-deferred.md](/Users/bobai/Desktop/Ota.run/Spec/new/12-v3-gap-closure-and-deferred.md)
 
 ## Workspace model direction
 
