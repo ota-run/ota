@@ -90,18 +90,19 @@ cargo run -- init
 cargo run -- detect --dry-run /path/to/repo
 ```
 
-`ota init` is the repo-local starter path. It now tells you what to do next in text mode:
+`ota init` is the repo-local starter path. It now writes by default and still tells you what to do next in text mode:
 
-- review the generated starter contract first
-- write it only when ready
+- write the inferred starter contract to `ota.yaml`
+- validate and diagnose immediately after write
 - run `ota validate` and `ota doctor` after writing
 - treat `Mode: blank` as minimal coverage, not a complete contract
 - in `Mode: detected`, automatic write is conservative and only persists `high` confidence fields when that is enough for a valid contract
 
-Write only if the `high` confidence projection is sufficient:
+Preview first (no write) or write directly:
 
 ```bash
-cargo run -- init --write
+cargo run -- init --dry-run
+cargo run -- init
 cargo run -- detect /path/to/repo
 ```
 

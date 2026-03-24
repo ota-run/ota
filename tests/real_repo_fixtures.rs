@@ -505,7 +505,9 @@ fn init_write_writes_high_confidence_contract_for_java_maven_fixture() {
     assert!(written.contains("java: '21'"));
     assert!(written.contains("tools:"));
     assert!(written.contains("maven: '*'"));
-    assert!(!written.contains("tasks:"));
+    assert!(written.contains("tasks:"));
+    assert!(written.contains("run: mvn package"));
+    assert!(written.contains("run: mvn test"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
     assert!(
@@ -529,7 +531,12 @@ fn init_json_prefers_maven_wrapper_on_real_fixture() {
     )
     .expect("wrapper properties should be written");
 
-    let output = run_ota(&["init", "--json", "--dry-run", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&[
+        "init",
+        "--json",
+        "--dry-run",
+        fixture.path().to_str().unwrap(),
+    ]);
     let json = stdout_json(&output);
 
     assert_eq!(json["config"]["tools"]["maven"], "3.9.9");
@@ -994,7 +1001,9 @@ fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
     assert!(written.contains("java: '21'"));
     assert!(written.contains("tools:"));
     assert!(written.contains("maven: '*'"));
-    assert!(!written.contains("tasks:"));
+    assert!(written.contains("tasks:"));
+    assert!(written.contains("run: mvn package"));
+    assert!(written.contains("run: mvn test"));
 }
 
 #[cfg(unix)]

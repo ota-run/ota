@@ -12,7 +12,7 @@ Ota executes repo-declared commands. That makes trust boundaries explicit and im
 ## Current trust model
 
 - `detect` is review-first
-- `init` is review-first unless `--write` is provided
+- `init` writes by default; use `--dry-run` to preview without writing
 - `run`, `up`, `doctor`, and `check` execute repo-controlled commands from the contract
 
 ## Risks to acknowledge

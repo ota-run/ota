@@ -922,11 +922,7 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
         .as_ref()
         .map(|(_, source)| source.as_str())
         .unwrap_or("pom.xml");
-    let task_confidence = if maven_wrapper.is_some() {
-        Confidence::High
-    } else {
-        Confidence::Medium
-    };
+    let task_confidence = Confidence::High;
 
     builder.set_task(
         "build".to_string(),
