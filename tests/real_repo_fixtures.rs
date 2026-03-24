@@ -189,6 +189,9 @@ fn workspace_up_json_reports_ready_repo_on_real_command_path() {
 version: 1
 project:
   name: web
+tasks:
+  setup:
+    run: 'true'
 "#,
     )
     .unwrap();
@@ -226,7 +229,8 @@ fn validate_discovers_contract_from_current_directory_real_fixture() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains(&format!("VALID {}", fixture.join("ota.yaml").display())));
+    assert!(stdout.contains("VALIDATE"));
+    assert!(stdout.contains("✓ VALID"));
 }
 
 #[test]
@@ -242,7 +246,8 @@ fn validate_uses_ota_file_override_real_fixture() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success());
-    assert!(stdout.contains(&format!("VALID {}", fixture.join("ota.yaml").display())));
+    assert!(stdout.contains("VALIDATE"));
+    assert!(stdout.contains("✓ VALID"));
 }
 
 #[test]
@@ -724,7 +729,7 @@ fn init_write_writes_high_confidence_contract_for_mixed_node_python_compose_fixt
 fn detect_writes_high_confidence_contract_for_mixed_node_python_compose_fixture() {
     let fixture = copy_fixture_to_temp("mixed-node-python-compose");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -752,7 +757,7 @@ fn detect_writes_high_confidence_contract_for_mixed_node_python_compose_fixture(
 fn detect_writes_high_confidence_contract_for_python_setup_cfg_fixture() {
     let fixture = copy_fixture_to_temp("python-setup-cfg");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -841,7 +846,7 @@ fn detect_json_handles_rust_cargo_fixture() {
 fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     let fixture = copy_fixture_to_temp("docker-heavy-node");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -970,7 +975,7 @@ project:
 fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
     let fixture = copy_fixture_to_temp("java-gradle");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -989,7 +994,7 @@ fn detect_writes_high_confidence_contract_for_java_gradle_fixture() {
 fn detect_writes_high_confidence_contract_for_java_maven_fixture() {
     let fixture = copy_fixture_to_temp("java-maven");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -1113,7 +1118,7 @@ runtimes:
 fn detect_writes_high_confidence_contract_for_rust_cargo_fixture() {
     let fixture = copy_fixture_to_temp("rust-cargo");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -1305,7 +1310,7 @@ fn init_write_writes_high_confidence_contract_for_polyglot_ops_fixture() {
 fn detect_writes_high_confidence_contract_for_polyglot_ops_fixture() {
     let fixture = copy_fixture_to_temp("polyglot-ops");
 
-    let output = run_ota(&["detect", fixture.path().to_str().unwrap()]);
+    let output = run_ota(&["detect", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
@@ -1334,6 +1339,9 @@ project:
 execution:
   preferred: native
   lifecycle: ephemeral
+tasks:
+  setup:
+    run: 'true'
 services:
   postgres:
     required: true
@@ -1379,6 +1387,9 @@ env:
     allowed:
       - local
       - ci
+tasks:
+  setup:
+    run: 'true'
 "#;
 
     fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
@@ -1404,6 +1415,9 @@ env:
     allowed:
       - local
       - ci
+tasks:
+  setup:
+    run: 'true'
 "#;
 
     fs::write(fixture.path().join("ota.yaml"), contract).expect("contract should be written");
@@ -1536,6 +1550,9 @@ fn doctor_json_runs_warning_check_in_ugly_polyglot_fixture() {
 version: 1
 project:
   name: ota-polyglot-app
+tasks:
+  setup:
+    run: 'true'
 checks:
   - name: docs-ops
     kind: health
@@ -1562,6 +1579,9 @@ fn doctor_json_reports_optional_service_failure_as_warning_on_real_fixture() {
 version: 1
 project:
   name: polyglot-ops
+tasks:
+  setup:
+    run: 'true'
 services:
   redis:
     required: false

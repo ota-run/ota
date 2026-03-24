@@ -24,7 +24,7 @@
 
 # V4 Plan
 
-Status: active (started 2026-03-24).
+Status: complete (started 2026-03-24, completed 2026-03-24).
 
 Source direction:
 - [09-v4-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/09-v4-spec.md)
