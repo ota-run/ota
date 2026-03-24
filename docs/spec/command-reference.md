@@ -560,6 +560,8 @@ Create a starter workspace contract from existing repo contracts.
 ```bash
 ota workspace init [PATH]
 ota workspace init --dry-run [PATH]
+ota workspace init --merge [PATH]
+ota workspace init --merge --dry-run [PATH]
 ota workspace init --json [PATH]
 ```
 
@@ -571,6 +573,8 @@ Current behavior:
 - default mode writes `ota.workspace.yaml`
 - `--dry-run` is explicit preview mode
 - writes `ota.workspace.yaml` when not in preview mode
+- `--merge` requires an existing `ota.workspace.yaml` and adds only missing discovered repo entries under `repos`
+- merge is additive-only and does not overwrite existing repo entries
 - refuses to overwrite an existing `ota.workspace.yaml`
 - when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
 - supports JSON for machine-readable preview/write outcomes

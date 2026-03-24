@@ -322,6 +322,7 @@ Why:
 ```bash
 ota workspace init
 ota workspace init --dry-run
+ota workspace init --merge
 ota workspace init --json
 ```
 
@@ -333,6 +334,7 @@ set -euo pipefail
 
 ota workspace init --json > .ota-workspace-init.json
 ota workspace init
+ota workspace init --merge
 ```
 
 ### `ota workspace validate`

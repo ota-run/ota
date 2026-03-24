@@ -221,6 +221,9 @@ enum WorkspaceCommands {
         /// Preview inferred workspace contract without writing ota.workspace.yaml.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
         dry_run: bool,
+        /// Merge missing discovered repos into an existing ota.workspace.yaml.
+        #[arg(long, action = ArgAction::SetTrue)]
+        merge: bool,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
@@ -467,6 +470,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             WorkspaceCommands::Init {
                 write: _write,
                 dry_run,
+                merge,
                 json,
                 path,
             } => {
@@ -479,7 +483,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     );
                 }
                 let write = !dry_run;
-                commands::workspace_init(path.as_deref(), write, format_from_json(json), debug)
+                commands::workspace_init(
+                    path.as_deref(),
+                    write,
+                    merge,
+                    format_from_json(json),
+                    debug,
+                )
             }
             WorkspaceCommands::Validate { json, path } => commands::workspace_validate(
                 path.as_deref(),
@@ -5704,6 +5714,118 @@ repos:
         assert!(body.contains("already exists; refusing to overwrite an existing workspace contract"));
         assert!(body.contains("ota workspace validate"));
         assert!(body.contains("ota workspace doctor"));
+    }
+
+    #[test]
+    fn workspace_init_merge_requires_existing_workspace_contract() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--merge",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap_or("")
+                .contains("requires an existing `ota.workspace.yaml`")
+        );
+    }
+
+    #[test]
+    fn workspace_init_merge_adds_missing_repos_without_overwriting_existing_entries() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(api_dir.join("ota.yaml"), "version: 1\nproject:\n  name: api\n").unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: existing
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--merge",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE MERGED"));
+
+        let written = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+        assert!(written.contains("web:"));
+        assert!(written.contains("required: false"));
+        assert!(written.contains("api:"));
+        assert!(written.contains("path: services/api"));
+    }
+
+    #[test]
+    fn workspace_init_merge_dry_run_does_not_write_workspace_contract() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(api_dir.join("ota.yaml"), "version: 1\nproject:\n  name: api\n").unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: existing
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        let before = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--merge",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE INIT MERGE PREVIEW"));
+
+        let after = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]
