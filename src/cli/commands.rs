@@ -3142,14 +3142,6 @@ fn render_workspace_doctor_text(
         }),
     );
 
-    for repo in &report.repos {
-        append_findings_table(
-            &mut stdout,
-            &format!("{} findings", repo.name),
-            &repo.findings,
-        );
-    }
-
     CommandOutput {
         stdout,
         stderr: None,
@@ -3226,14 +3218,6 @@ fn render_workspace_check_text(
         }),
     );
 
-    for repo in &report.repos {
-        append_findings_table(
-            &mut stdout,
-            &format!("{} findings", repo.name),
-            &repo.findings,
-        );
-    }
-
     CommandOutput {
         stdout,
         stderr: None,
@@ -3291,8 +3275,6 @@ fn render_report_section(
             finding.next
         ));
     }
-
-    append_findings_table(&mut stdout, "Findings", &report.findings);
 
     stdout
 }
@@ -3649,8 +3631,6 @@ fn render_up_section_from_parts(
         ));
     }
 
-    append_findings_table(&mut stdout, "Findings", &report.findings);
-
     stdout
 }
 
@@ -3771,14 +3751,6 @@ fn render_workspace_up(
                 }),
             );
 
-            for repo in &report.repos {
-                append_findings_table(
-                    &mut stdout,
-                    &format!("{} findings", repo.name),
-                    &repo.findings,
-                );
-            }
-
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -3872,14 +3844,6 @@ fn render_workspace_run(
                     ]
                 }),
             );
-
-            for repo in &report.repos {
-                append_findings_table(
-                    &mut stdout,
-                    &format!("{} findings", repo.name),
-                    &repo.findings,
-                );
-            }
 
             CommandOutput {
                 stdout,
@@ -4033,22 +3997,6 @@ fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>)
     }
 }
 
-fn append_findings_table(output: &mut String, title: &str, findings: &[Finding]) {
-    append_markdown_table(
-        output,
-        title,
-        &["Severity", "Summary", "Why", "Next"],
-        findings.iter().map(|finding| {
-            vec![
-                render_severity(finding.severity).to_string(),
-                finding.summary.clone(),
-                finding.why.clone(),
-                finding.next.clone(),
-            ]
-        }),
-    );
-}
-
 fn append_markdown_table(
     output: &mut String,
     title: &str,
@@ -4088,20 +4036,11 @@ fn append_markdown_table(
 }
 
 fn render_severity(severity: FindingSeverity) -> String {
-    if plain_mode() {
-        return match severity {
-            FindingSeverity::Error => String::from("ERROR"),
-            FindingSeverity::Warn => String::from("WARN"),
-            FindingSeverity::Info => String::from("INFO"),
-        };
-    }
-
-    let level = match severity {
+    match severity {
         FindingSeverity::Error => paint("ERROR", "1;31"),
         FindingSeverity::Warn => paint("WARN", "1;33"),
         FindingSeverity::Info => paint("INFO", "1;36"),
-    };
-    format!("{} {}", paint("🦦", "38;2;0;255;255"), level)
+    }
 }
 
 fn paint_key(key: &str) -> String {

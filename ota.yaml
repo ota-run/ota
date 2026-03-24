@@ -1,11 +1,6 @@
 version: 1
 project:
-  name: ota
-tools:
-  cargo: '*'
-tasks:
-  build:
-    run: cargo build
-  test:
-    run: cargo test
-    safe_for_agent: true
+    name: full-contract
+    description: Full example of the current Ota contract surface
+    type: application
+
