@@ -157,6 +157,7 @@ pub fn tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
     members: &[String],
+    use_cmd: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -214,7 +215,8 @@ pub fn tasks(
                         workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                     })
                 {
-                    let mut text_sections = vec![render_tasks_text(
+                    let mut text_sections = vec![render_tasks_output_text(
+                        use_cmd,
                         &text_path_display,
                         agent_summary.as_ref(),
                         &task_summaries,
@@ -282,7 +284,8 @@ pub fn tasks(
                                     TaskSummary::from_spec(name, task, current_os())
                                 })
                                 .collect::<Vec<_>>();
-                            text_sections.push(render_tasks_text(
+                            text_sections.push(render_tasks_output_text(
+                                use_cmd,
                                 &display_contract_target(
                                     &compact_path_display,
                                     Some(member.as_str()),
@@ -310,7 +313,8 @@ pub fn tasks(
                     }
                 } else {
                     match format {
-                        OutputFormat::Text => CommandOutput::success(render_tasks_text(
+                        OutputFormat::Text => CommandOutput::success(render_tasks_output_text(
+                            use_cmd,
                             &text_path_display,
                             agent_summary.as_ref(),
                             &task_summaries,
@@ -386,7 +390,8 @@ pub fn tasks(
                         .iter()
                         .map(|(name, task)| TaskSummary::from_spec(name, task, current_os()))
                         .collect::<Vec<_>>();
-                    text_sections.push(render_tasks_text(
+                    text_sections.push(render_tasks_output_text(
+                        use_cmd,
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         agent.as_ref(),
                         &tasks,
@@ -3070,6 +3075,38 @@ fn render_tasks_text(
     }
 
     output
+}
+
+fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
+    let mut output = format_command_header("TASKS", path);
+    output.push_str("\n---");
+    if tasks.is_empty() {
+        output.push_str(&format!("\n{} none", info_bullet()));
+        return output;
+    }
+
+    for task in tasks {
+        output.push_str(&format!(
+            "\n{} {} `{}`",
+            info_bullet(),
+            paint(task.name, "1"),
+            paint_code(&format!("ota run {}", task.name))
+        ));
+    }
+    output
+}
+
+fn render_tasks_output_text(
+    use_cmd: bool,
+    path: &str,
+    agent: Option<&AgentSummary<'_>>,
+    tasks: &[TaskSummary<'_>],
+) -> String {
+    if use_cmd {
+        render_tasks_use_text(path, tasks)
+    } else {
+        render_tasks_text(path, agent, tasks)
+    }
 }
 
 fn render_doctor_text(

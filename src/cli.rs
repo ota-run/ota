@@ -69,6 +69,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Print compact runnable usage lines for each task.
+        #[arg(long = "use", action = ArgAction::SetTrue)]
+        use_cmd: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -342,10 +345,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Tasks { json, member, path } => commands::tasks(
+        Commands::Tasks {
+            json,
+            use_cmd,
+            member,
+            path,
+        } => commands::tasks(
             path.as_deref(),
             file.as_deref(),
             &member,
+            use_cmd,
             format_from_json(json),
             debug,
         ),
@@ -3197,6 +3206,33 @@ tasks:
         assert!(normalized.contains("\n✦ build"));
         assert!(normalized.contains("\n✦ dev"));
         assert!(!normalized.contains("- Task:"));
+    }
+
+    #[test]
+    fn tasks_use_prints_compact_usage_lines() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: cargo run
+  start:
+    run: cargo run --release
+  typecheck:
+    run: cargo check
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("🦦  TASKS "));
+        assert!(output.stdout.contains("\n---\n✦ dev `ota run dev`"));
+        assert!(output.stdout.contains("\n✦ start `ota run start`"));
+        assert!(output.stdout.contains("\n✦ typecheck `ota run typecheck`"));
+        assert!(!output.stdout.contains("Command Preview:"));
     }
 
     #[test]
