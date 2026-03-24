@@ -4,13 +4,3 @@ project:
   description: Full example of the current Ota contract surface
   type: application
 tools:
-  cargo: '*'
-tasks:
-  build:
-    run: cargo build
-  test:
-    run: cargo test
-    safe_for_agent: true
-  compat:
-    run: ./scripts/test-compat.sh
-    safe_for_agent: true
