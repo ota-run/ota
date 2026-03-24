@@ -24,7 +24,7 @@
 
 # V3 Plan
 
-Status: active.
+Status: completed (2026-03-24).
 
 Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/08-v3-spec.md)
 
@@ -104,10 +104,10 @@ Implemented so far:
 - doctor JSON warning contract locks for suspicious remote target findings (`ssh`, `tsh`, `kubectl`) including full finding object stability
 - aggregate doctor JSON monorepo coverage proving all suspicious remote target warning families can appear together in one run
 
-Still to do in V3:
+V3 closure:
 
-- no additional required scope items remain in this plan
-- broader provider-specific remote semantics are deferred per [12-v3-gap-closure-and-deferred.md](/Users/bobai/Desktop/Ota.run/Spec/new/12-v3-gap-closure-and-deferred.md)
+- all required V3 scope items in this plan are implemented
+- broader provider-specific remote semantics remain intentionally deferred per [12-v3-gap-closure-and-deferred.md](/Users/bobai/Desktop/Ota.run/Spec/new/12-v3-gap-closure-and-deferred.md)
 
 ## Workspace model direction
 
