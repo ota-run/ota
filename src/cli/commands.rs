@@ -1701,7 +1701,10 @@ pub fn detect(
                         } else {
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
-                        stdout.push_str("\n\nMode: dry-run (no write)");
+                        stdout.push_str(&format!(
+                            "\n\n{}",
+                            format_mode_line("dry-run (no write)")
+                        ));
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --merge {}` to apply add-only high-confidence fields",
@@ -1965,7 +1968,10 @@ pub fn workspace_init(
                         };
                     let mut stdout =
                             format_command_header(&format!("WORKSPACE {command_label} MERGE PREVIEW"), &compact_root_display);
-                        stdout.push_str("\n\nMode: dry-run (no write)");
+                        stdout.push_str(&format!(
+                            "\n\n{}",
+                            format_mode_line("dry-run (no write)")
+                        ));
                         stdout.push_str(&format_next_timeline(&[format!(
                             "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
@@ -2165,7 +2171,7 @@ pub fn workspace_init(
                             paint_key("Result:"),
                             compact_workspace_path(&workspace_path)
                         ));
-                        stdout.push_str("\nMode: scaffold");
+                        stdout.push_str(&format!("\n\n{}", format_mode_line("scaffold")));
                         stdout.push_str(&format_next_timeline(&[
                             format!("run `{next_validate}`"),
                             format!("run `{next_doctor}`"),
@@ -2202,7 +2208,10 @@ pub fn workspace_init(
 
                     let mut stdout =
                         format_command_header(&format!("WORKSPACE {command_label} PREVIEW"), &compact_root_display);
-                    stdout.push_str("\n\nMode: dry-run (no write)");
+                    stdout.push_str(&format!(
+                        "\n\n{}",
+                        format_mode_line("dry-run (no write)")
+                    ));
                     stdout.push_str(&format_next_timeline(&[format!(
                         "run `{command_name} {compact_root_display}` to write `{}`",
                         compact_workspace_path(&workspace_path)
@@ -3120,9 +3129,11 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
-                        "{}\nResult: wrote {}\nMode: {mode}{}",
+                        "{}\n{} wrote {}\n\n{}{}",
                         format_command_header("INIT WRITE", &compact_root_display),
+                        paint_key("Result:"),
                         highlighted_written,
+                        format_mode_line(mode),
                         format_next_timeline(&[
                             format!("run `{highlighted_validate}`"),
                             format!("run `{highlighted_doctor}`"),
@@ -3174,8 +3185,10 @@ fn render_init(
         OutputFormat::Text => {
             let highlighted_init = paint_code(&format!("ota init {}", compact_root_display));
             let mut stdout = format!(
-                "{}\nMode: {mode} (dry-run)\nNext: review this starter contract, edit it if needed, then run `{}`",
+                "{}\n{}\n{} review this starter contract, edit it if needed, then run `{}`",
                 format_command_header("INIT PREVIEW", &compact_root_display),
+                format_mode_line(&format!("{mode} (dry-run)")),
+                paint_next_header(),
                 highlighted_init,
             );
             stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
@@ -5137,12 +5150,24 @@ fn paint_section_title(value: &str) -> String {
     paint(value, "1;34")
 }
 
+fn paint_next_header() -> String {
+    paint("Next:", "1;38;2;220;220;220")
+}
+
+fn paint_mode_value(value: &str) -> String {
+    paint(value, "1;38;2;214;161;95")
+}
+
+fn format_mode_line(value: &str) -> String {
+    format!("{} {}", paint_key("Mode:"), paint_mode_value(value))
+}
+
 fn format_next_timeline(items: &[String]) -> String {
     if items.is_empty() {
         return String::new();
     }
 
-    let mut output = String::from("\n\nNext:");
+    let mut output = format!("\n\n{}", paint_next_header());
     for item in items {
         output.push_str(&format!("\n{}  {item}", next_bullet()));
     }
