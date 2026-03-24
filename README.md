@@ -229,6 +229,7 @@ Example contracts:
 ## Documentation
 
 ### Start here
+- [Docs site (GitHub Pages)](https://ota-run.github.io/ota/) *(goes live after first Pages deploy)*
 - [Installation](docs/installation.md)
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
