@@ -28,6 +28,11 @@ Prerequisite:
 
 - Rust toolchain with `cargo` on `PATH`
 
+Choose the path based on your use-case:
+
+- local development from a cloned repo: install from source
+- quick bootstrap without cloning first: install from git
+
 macOS/Linux:
 
 ```bash
@@ -62,3 +67,25 @@ ota doctor --help
 ```
 
 For pinning options and details, see `docs/installation.md` in the repository.
+
+## When to use each installer
+
+### `install.sh --from-source` / `install.ps1 -FromSource`
+
+When:
+
+- you are developing Ota itself or testing local changes
+
+Why:
+
+- installs the current checked-out source deterministically
+
+### `install.sh` / `install.ps1`
+
+When:
+
+- you need Ota quickly on a workstation without building a custom checkout
+
+Why:
+
+- installs from git with optional pinning (`OTA_GIT_TAG`, `OTA_GIT_REV`)

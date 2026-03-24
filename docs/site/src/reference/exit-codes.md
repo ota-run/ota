@@ -26,11 +26,23 @@
 
 Ota uses stable exit code behavior for scripting and CI.
 
+When to use:
+
+- any automated integration where command success/failure must be deterministic
+
+Why:
+
+- text output can vary for humans, but exit codes remain the control signal for machines
+
 Common cases:
 
 - `0` command succeeded
 - `1` command failed due to validation, readiness, runtime, or task failure
 - `2` command usage error (for example invalid flag combinations or duplicate member flags)
+
+Use-case:
+
+- in CI, treat `1` as contract/readiness failure and `2` as pipeline misconfiguration.
 
 For full command-by-command semantics, use the canonical reference in:
 

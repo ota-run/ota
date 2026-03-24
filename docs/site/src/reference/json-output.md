@@ -26,6 +26,13 @@
 
 Ota supports machine-readable JSON for core commands and workspace commands.
 
+When to use:
+
+- CI pipelines
+- editor tooling
+- agent workflows
+- scripts that need stable parsing
+
 JSON output is part of Ota’s integration contract for:
 
 - CI
@@ -43,6 +50,18 @@ Common patterns:
 - success payloads include `ok: true`
 - failure payloads include `ok: false` and structured error/findings context
 - workspace commands include per-repo result objects when applicable
+
+## Practical integration pattern
+
+For each command execution in automation:
+
+1. run with `--json`
+1. check process exit code first
+1. parse payload fields (`ok`, `errors`, `findings`, per-repo reports)
+
+Use-case:
+
+- a CI job runs `ota doctor --json`, fails on errors, and posts warnings as annotations.
 
 Canonical JSON references in repository:
 

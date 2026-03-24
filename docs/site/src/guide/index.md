@@ -28,3 +28,9 @@ Start with:
 
 - [Installation](installation.md)
 - [Quickstart](quickstart.md)
+
+Use this section when your goal is adoption speed:
+
+- first-time local install
+- first successful repo run
+- first CI-friendly Ota command path
