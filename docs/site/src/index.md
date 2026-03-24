@@ -24,6 +24,8 @@
 
 # Ota
 
+![Ota Logo](assets/ota-icon.svg)
+
 Ota is open infrastructure for repo readiness.
 
 It gives repositories one explicit contract for:

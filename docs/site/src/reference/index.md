@@ -32,4 +32,3 @@ This section summarizes the stable surfaces of Ota:
 - machine-readable JSON output
 
 Canonical specification files remain under `docs/spec/`.
-

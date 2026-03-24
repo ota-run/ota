@@ -1,0 +1,9 @@
+---
+config:
+  default: true
+globs:
+  - docs/site/src/**/*.md
+overrides:
+  - files: "docs/site/src/**/*.md"
+    config:
+      MD013: false
