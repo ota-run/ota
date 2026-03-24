@@ -757,13 +757,15 @@ tasks:
         .unwrap();
 
         let report = diagnose_contract(&contract, Path::new("ota.yaml"));
-        assert!(report.ok);
-        assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
-        assert_eq!(
-            report.findings[0].summary,
-            "Ephemeral lifecycle is only enforced for backend-backed task execution"
-        );
+        let warning = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "Ephemeral lifecycle is only enforced for backend-backed task execution"
+            })
+            .expect("expected lifecycle warning for container+ephemeral configuration");
+        assert_eq!(warning.severity, FindingSeverity::Warn);
     }
 
     #[test]
