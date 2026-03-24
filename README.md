@@ -155,6 +155,34 @@ Current planning state:
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
 - Active version: [docs/planning/v3/plan.md](docs/planning/v3/plan.md)
 
+## Installation
+
+Install from a local checkout:
+
+```bash
+./scripts/install.sh --from-source
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+```
+
+Install from git:
+
+```bash
+./scripts/install.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+```
+
+See [docs/installation.md](docs/installation.md) for pinning by tag/branch/revision.
+
 ## Quickstart
 
 Use an existing contract:
@@ -201,6 +229,7 @@ Example contracts:
 ## Documentation
 
 ### Start here
+- [Installation](docs/installation.md)
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)

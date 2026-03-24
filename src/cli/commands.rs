@@ -90,35 +90,33 @@ pub fn validate(
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
-            Ok(contract) => {
-                match validate_declared_monorepo_members(&resolved_path, &contract.contract) {
-                    Ok(()) => match format {
-                        OutputFormat::Text => {
-                            CommandOutput::success(format!("VALID {text_path_display}"))
+            Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
+                Ok(()) => match format {
+                    OutputFormat::Text => {
+                        CommandOutput::success(format!("VALID {text_path_display}"))
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
+                        ok: true,
+                        path: &path_display,
+                    })),
+                },
+                Err(errors) => match format {
+                    OutputFormat::Text => {
+                        let mut stderr = String::from("INVALID ota.yaml");
+                        for error in errors {
+                            stderr.push_str("\n- ");
+                            stderr.push_str(&error);
                         }
-                        OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
-                            ok: true,
-                            path: &path_display,
-                        })),
-                    },
-                    Err(errors) => match format {
-                        OutputFormat::Text => {
-                            let mut stderr = String::from("INVALID ota.yaml");
-                            for error in errors {
-                                stderr.push_str("\n- ");
-                                stderr.push_str(&error);
-                            }
-                            CommandOutput::failure(stderr)
-                        }
-                        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                            ok: false,
-                            path: &path_display,
-                            errors,
-                            error: None,
-                        })),
-                    },
-                }
-            }
+                        CommandOutput::failure(stderr)
+                    }
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        ok: false,
+                        path: &path_display,
+                        errors,
+                        error: None,
+                    })),
+                },
+            },
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -3251,8 +3249,14 @@ fn render_contract_problem_failure(error: ContractProblem) -> RunCommandFailure 
     }
 }
 
-fn validate_declared_monorepo_members(path: &Path, contract: &Contract) -> Result<(), Vec<String>> {
-    let Some(workspace) = contract.workspace.as_ref() else {
+fn validate_declared_monorepo_members(path: &Path) -> Result<(), Vec<String>> {
+    let root_contract = match load_contract(path) {
+        Ok(contract) => contract,
+        Err(LoadContractError::Parse { .. }) => return Ok(()),
+        Err(error) => return Err(vec![error.to_string()]),
+    };
+
+    let Some(workspace) = root_contract.workspace.as_ref() else {
         return Ok(());
     };
 
