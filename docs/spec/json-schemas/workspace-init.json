@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ota.run/spec/json-schemas/workspace-init.json",
+  "title": "ota workspace init --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "written",
+        "mode",
+        "config",
+        "included",
+        "missing_contract"
+      ],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "written": { "type": "boolean" },
+        "mode": { "const": "scaffold" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "workspace", "repos"],
+          "properties": {
+            "version": { "type": "integer" },
+            "workspace": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" }
+              }
+            },
+            "repos": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "required"],
+                "properties": {
+                  "path": { "type": "string" },
+                  "required": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "included": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repoSummary" }
+        },
+        "missing_contract": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/repoSummary" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "mode", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": false },
+        "mode": { "const": "scaffold" },
+        "error": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    }
+  ],
+  "$defs": {
+    "repoSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path"],
+      "properties": {
+        "name": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    }
+  }
+}

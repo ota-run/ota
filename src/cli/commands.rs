@@ -29,6 +29,7 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 
+use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
 
@@ -1813,6 +1814,227 @@ pub fn workspace_validate(
     )
 }
 
+#[derive(Debug, Serialize)]
+struct WorkspaceInitContract {
+    version: u32,
+    workspace: WorkspaceInitWorkspace,
+    repos: BTreeMap<String, WorkspaceInitRepoSpec>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceInitWorkspace {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceInitRepoSpec {
+    path: String,
+    required: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceInitRepoSummary {
+    name: String,
+    path: String,
+}
+
+struct WorkspaceInitDraft {
+    contract: WorkspaceInitContract,
+    included: Vec<WorkspaceInitRepoSummary>,
+    missing_contract: Vec<WorkspaceInitRepoSummary>,
+}
+
+pub fn workspace_init(
+    path: Option<&Path>,
+    write: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let (workspace_root, workspace_path) = match resolve_workspace_init_target(path) {
+        Ok(target) => target,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error),
+                debug,
+                vec![String::from("DEBUG command=workspace.init")],
+            );
+        }
+    };
+
+    let path_display = workspace_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&workspace_path);
+    let compact_root_display = compact_repo_path(&workspace_root);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.init"),
+        format!("DEBUG workspace_root={}", workspace_root.display()),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG write={write}"),
+    ];
+
+    finalize_debug(
+        match build_workspace_init_draft(&workspace_root) {
+            Ok(_draft) if write && workspace_path.exists() => {
+                let next_validate = command_for_workspace("ota workspace validate", &workspace_path);
+                let next_doctor = command_for_workspace("ota workspace doctor", &workspace_path);
+                let error = format!(
+                    "`{}` already exists; refusing to overwrite an existing workspace contract{}\n{}",
+                    compact_workspace_path(&workspace_path),
+                    format_next_timeline(&[
+                        format!("review the existing workspace contract with `{next_validate}`"),
+                        format!("diagnose current workspace readiness with `{next_doctor}`"),
+                    ]),
+                    ""
+                );
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.trim_end().to_string()),
+                    OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                        "ok": false,
+                        "path": path_display,
+                        "written": false,
+                        "mode": "scaffold",
+                        "error": error.trim_end(),
+                        "next": next_validate,
+                    }))),
+                }
+            }
+            Ok(draft) if write => {
+                let yaml = match serde_yaml::to_string(&draft.contract) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        let error = format!(
+                            "failed to serialize workspace contract for `{}`: {error}",
+                            compact_path_display
+                        );
+                        return finalize_debug(
+                            match format {
+                                OutputFormat::Text => CommandOutput::failure(error),
+                                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                    "ok": false,
+                                    "path": path_display,
+                                    "written": false,
+                                    "mode": "scaffold",
+                                    "error": error,
+                                }))),
+                            },
+                            debug,
+                            debug_lines,
+                        );
+                    }
+                };
+
+                if let Err(error) = fs::write(&workspace_path, &yaml) {
+                    let error = format!(
+                        "failed to write `{}`: {error}",
+                        compact_workspace_path(&workspace_path)
+                    );
+                    return finalize_debug(
+                        match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                "ok": false,
+                                "path": path_display,
+                                "written": false,
+                                "mode": "scaffold",
+                                "error": error,
+                            }))),
+                        },
+                        debug,
+                        debug_lines,
+                    );
+                }
+
+                match format {
+                    OutputFormat::Text => {
+                        let next_validate =
+                            command_for_workspace("ota workspace validate", &workspace_path);
+                        let next_doctor =
+                            command_for_workspace("ota workspace doctor", &workspace_path);
+                        let mut stdout =
+                            format_command_header("WORKSPACE INIT WRITE", &compact_root_display);
+                        stdout.push_str(&format!(
+                            "\n\n{} wrote `{}`",
+                            paint_key("Result:"),
+                            compact_workspace_path(&workspace_path)
+                        ));
+                        stdout.push_str("\nMode: scaffold");
+                        stdout.push_str(&format_next_timeline(&[
+                            format!("run `{next_validate}`"),
+                            format!("run `{next_doctor}`"),
+                        ]));
+                        render_workspace_init_discovery_sections(
+                            &mut stdout,
+                            &draft.included,
+                            &draft.missing_contract,
+                        );
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": true,
+                        "mode": "scaffold",
+                        "config": draft.contract,
+                        "included": draft.included,
+                        "missing_contract": draft.missing_contract,
+                    }))),
+                }
+            }
+            Ok(draft) => match format {
+                OutputFormat::Text => {
+                    let yaml = match serde_yaml::to_string(&draft.contract) {
+                        Ok(yaml) => yaml,
+                        Err(error) => {
+                            return CommandOutput::failure(format!(
+                                "failed to serialize workspace contract for `{}`: {error}",
+                                compact_path_display
+                            ));
+                        }
+                    };
+
+                    let mut stdout =
+                        format_command_header("WORKSPACE INIT PREVIEW", &compact_root_display);
+                    stdout.push_str("\n\nMode: dry-run (no write)");
+                    stdout.push_str(&format_next_timeline(&[format!(
+                        "run `ota workspace init {compact_root_display}` to write `{}`",
+                        compact_workspace_path(&workspace_path)
+                    )]));
+                    stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                    stdout.push_str(yaml.trim_end());
+                    render_workspace_init_discovery_sections(
+                        &mut stdout,
+                        &draft.included,
+                        &draft.missing_contract,
+                    );
+                    CommandOutput::success(stdout)
+                }
+                OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                    "ok": true,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "config": draft.contract,
+                    "included": draft.included,
+                    "missing_contract": draft.missing_contract,
+                }))),
+            },
+            Err(error) => match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "error": error,
+                }))),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn workspace_tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -3530,6 +3752,14 @@ fn command_for_repo(command: &str, repo_path: &Path) -> String {
     }
 }
 
+fn command_for_workspace(command: &str, workspace_path: &Path) -> String {
+    if workspace_path_matches_current_dir(workspace_path) {
+        command.to_string()
+    } else {
+        format!("{command} {}", compact_workspace_path(workspace_path))
+    }
+}
+
 fn contract_path_matches_current_dir(contract_path: &Path) -> bool {
     std::env::current_dir().ok().is_some_and(|current_dir| {
         let target = if contract_path.is_absolute() {
@@ -3541,6 +3771,17 @@ fn contract_path_matches_current_dir(contract_path: &Path) -> bool {
     })
 }
 
+fn workspace_path_matches_current_dir(workspace_path: &Path) -> bool {
+    std::env::current_dir().ok().is_some_and(|current_dir| {
+        let target = if workspace_path.is_absolute() {
+            workspace_path.to_path_buf()
+        } else {
+            current_dir.join(workspace_path)
+        };
+        target == current_dir.join(DEFAULT_WORKSPACE_FILE)
+    })
+}
+
 fn duplicate_member<'a>(members: &'a [String]) -> Option<&'a str> {
     let mut seen = BTreeSet::new();
     for member in members {
@@ -3549,6 +3790,268 @@ fn duplicate_member<'a>(members: &'a [String]) -> Option<&'a str> {
         }
     }
     None
+}
+
+fn render_workspace_init_discovery_sections(
+    stdout: &mut String,
+    included: &[WorkspaceInitRepoSummary],
+    missing_contract: &[WorkspaceInitRepoSummary],
+) {
+    stdout.push_str(&format!("\n\n{}:", paint_section_title("Included repos")));
+    if included.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+    } else {
+        for repo in included {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Skipped (missing ota.yaml)")
+    ));
+    if missing_contract.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+    } else {
+        for repo in missing_contract {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+        stdout.push_str(&format_next_timeline(&[
+            String::from("create missing repo contracts with `ota init --write <repo-path>`"),
+            String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
+        ]));
+    }
+}
+
+fn resolve_workspace_init_target(
+    path: Option<&Path>,
+) -> Result<(PathBuf, PathBuf), String> {
+    match path {
+        Some(path)
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == DEFAULT_WORKSPACE_FILE) =>
+        {
+            let root = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            Ok((root, path.to_path_buf()))
+        }
+        Some(path) if path.is_dir() => {
+            let root = path.to_path_buf();
+            let workspace_path = root.join(DEFAULT_WORKSPACE_FILE);
+            Ok((root, workspace_path))
+        }
+        Some(path) => Err(format!(
+            "workspace init path must be a directory or `{DEFAULT_WORKSPACE_FILE}` target path: {}",
+            path.display()
+        )),
+        None => {
+            let root = std::env::current_dir()
+                .map_err(|error| format!("failed to resolve current directory: {error}"))?;
+            let workspace_path = root.join(DEFAULT_WORKSPACE_FILE);
+            Ok((root, workspace_path))
+        }
+    }
+}
+
+fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraft, String> {
+    let mut candidates = discover_workspace_candidates(workspace_root)?;
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let mut included = Vec::new();
+    let mut missing_contract = Vec::new();
+    for candidate in candidates {
+        if candidate.has_contract {
+            included.push(WorkspaceInitRepoSummary {
+                name: candidate.name,
+                path: candidate.path,
+            });
+        } else {
+            missing_contract.push(WorkspaceInitRepoSummary {
+                name: candidate.name,
+                path: candidate.path,
+            });
+        }
+    }
+
+    if included.is_empty() {
+        return Err(String::from(
+            "workspace init could not find any repos with `ota.yaml`; add repo contracts first or run from a workspace root that already contains initialized repos",
+        ));
+    }
+
+    let mut repos = BTreeMap::new();
+    for repo in &included {
+        repos.insert(
+            repo.name.clone(),
+            WorkspaceInitRepoSpec {
+                path: repo.path.clone(),
+                required: true,
+            },
+        );
+    }
+
+    let workspace_name = workspace_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("ota-workspace")
+        .to_string();
+
+    Ok(WorkspaceInitDraft {
+        contract: WorkspaceInitContract {
+            version: 1,
+            workspace: WorkspaceInitWorkspace {
+                name: workspace_name,
+                description: None,
+            },
+            repos,
+        },
+        included,
+        missing_contract,
+    })
+}
+
+#[derive(Clone)]
+struct WorkspaceCandidate {
+    name: String,
+    path: String,
+    has_contract: bool,
+}
+
+fn discover_workspace_candidates(workspace_root: &Path) -> Result<Vec<WorkspaceCandidate>, String> {
+    let mut rel_paths = BTreeSet::new();
+    collect_child_repo_dirs(workspace_root, workspace_root, &mut rel_paths)?;
+
+    for group in ["apps", "services", "repos", "packages"] {
+        let container = workspace_root.join(group);
+        if container.is_dir() {
+            collect_child_repo_dirs(workspace_root, &container, &mut rel_paths)?;
+        }
+    }
+
+    let mut used_names = BTreeSet::new();
+    let mut candidates = Vec::new();
+    for rel_path in rel_paths {
+        let repo_root = workspace_root.join(&rel_path);
+        if !looks_like_repo_candidate(&repo_root) {
+            continue;
+        }
+        let has_contract = repo_root.join(DEFAULT_CONTRACT_FILE).is_file();
+        let name = make_workspace_repo_name(&rel_path, &mut used_names);
+        candidates.push(WorkspaceCandidate {
+            name,
+            path: rel_path,
+            has_contract,
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn collect_child_repo_dirs(
+    workspace_root: &Path,
+    parent: &Path,
+    rel_paths: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(parent)
+        .map_err(|error| format!("failed to inspect `{}`: {error}", parent.display()))?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|error| format!("failed to inspect `{}`: {error}", parent.display()))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+
+        let rel = match path.strip_prefix(workspace_root) {
+            Ok(rel) => rel,
+            Err(_) => continue,
+        };
+        rel_paths.insert(path_to_contract_style(rel));
+    }
+    Ok(())
+}
+
+fn path_to_contract_style(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn make_workspace_repo_name(rel_path: &str, used_names: &mut BTreeSet<String>) -> String {
+    let base = rel_path
+        .rsplit('/')
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("repo")
+        .to_string();
+    if used_names.insert(base.clone()) {
+        return base;
+    }
+
+    let mut normalized = rel_path.replace('/', "-");
+    if normalized.is_empty() {
+        normalized = String::from("repo");
+    }
+    if used_names.insert(normalized.clone()) {
+        return normalized;
+    }
+
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{normalized}-{suffix}");
+        if used_names.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn looks_like_repo_candidate(repo_root: &Path) -> bool {
+    if repo_root.join(DEFAULT_CONTRACT_FILE).is_file() || repo_root.join(".git").exists() {
+        return true;
+    }
+
+    const MARKERS: [&str; 12] = [
+        "package.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "go.mod",
+        "Cargo.toml",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "composer.json",
+        "CMakeLists.txt",
+        "mix.exs",
+        "Project.toml",
+    ];
+
+    MARKERS
+        .iter()
+        .any(|marker| repo_root.join(marker).is_file())
 }
 
 fn run_contract_targets(

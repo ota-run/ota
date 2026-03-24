@@ -34,7 +34,7 @@ mod commands;
 #[command(name = "ota")]
 #[command(
     about = "Open repo readiness CLI",
-    version = concat!("🦦  v", env!("CARGO_PKG_VERSION")),
+    version = env!("CARGO_PKG_VERSION"),
     help_template = "🦦  {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -213,6 +213,20 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
 
 #[derive(Debug, Subcommand)]
 enum WorkspaceCommands {
+    /// Create a starter ota.workspace.yaml from local repo structure.
+    Init {
+        /// Compatibility flag; writing is now the default.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Preview inferred workspace contract without writing ota.workspace.yaml.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
+        dry_run: bool,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to a workspace root directory or ota.workspace.yaml target path.
+        path: Option<PathBuf>,
+    },
     /// Validate an ota.workspace.yaml contract.
     Validate {
         /// Print machine-readable JSON output.
@@ -450,6 +464,23 @@ fn dispatch(cli: Cli) -> CommandOutput {
             )
         }
         Commands::Workspace { command } => match command {
+            WorkspaceCommands::Init {
+                write: _write,
+                dry_run,
+                json,
+                path,
+            } => {
+                if file.is_some() {
+                    return CommandOutput::failure_with_code(
+                        String::from(
+                            "`--file` is only supported for commands that read an existing contract",
+                        ),
+                        2,
+                    );
+                }
+                let write = !dry_run;
+                commands::workspace_init(path.as_deref(), write, format_from_json(json), debug)
+            }
             WorkspaceCommands::Validate { json, path } => commands::workspace_validate(
                 path.as_deref(),
                 file.as_deref(),
@@ -5494,6 +5525,42 @@ project:
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
 
+        let init_fixture = TempDir::new().unwrap();
+        let web_dir = init_fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        let workspace_init = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--json",
+            init_fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(workspace_init.exit_code, 0);
+        assert_json_top_level_keys(
+            &workspace_init,
+            &[
+                "config",
+                "included",
+                "missing_contract",
+                "mode",
+                "ok",
+                "path",
+                "written",
+            ],
+        );
+
         let validate = run_with(["ota", "workspace", "validate", "--json", single_repo.path()]);
         assert_eq!(validate.exit_code, 0);
         assert_json_top_level_keys(&validate, &["ok", "path"]);
@@ -5524,6 +5591,119 @@ project:
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
         assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+    }
+
+    #[test]
+    fn workspace_init_text_preview_and_write() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        let docs_dir = fixture.path().join("docs-site");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::create_dir_all(&docs_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  setup:
+    run: echo api
+"#,
+        )
+        .unwrap();
+        fs::write(docs_dir.join("README.md"), "# docs\n").unwrap();
+
+        let preview = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert_eq!(preview.exit_code, 0);
+        assert!(preview_stdout.contains(&format!(
+            "WORKSPACE INIT PREVIEW {}",
+            compact_path(fixture.path(), ".")
+        )));
+        assert!(preview_stdout.contains("Mode: dry-run (no write)"));
+        assert!(preview_stdout.contains("Included repos:"));
+        assert!(preview_stdout.contains("api (services/api)"));
+        assert!(preview_stdout.contains("web (apps/web)"));
+        assert!(!fixture.path().join("ota.workspace.yaml").exists());
+
+        let write = run_with(["ota", "workspace", "init", fixture.path().to_str().unwrap()]);
+        let write_stdout = strip_ansi(&write.stdout);
+        assert_eq!(write.exit_code, 0);
+        assert!(write_stdout.contains(&format!(
+            "WORKSPACE INIT WRITE {}",
+            compact_path(fixture.path(), ".")
+        )));
+        assert!(fixture.path().join("ota.workspace.yaml").exists());
+    }
+
+    #[test]
+    fn workspace_init_refuses_overwrite_and_provides_next_steps() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: existing
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            fixture.path().to_str().unwrap(),
+        ]);
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or(""))
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(body.contains("already exists; refusing to overwrite an existing workspace contract"));
+        assert!(body.contains("ota workspace validate"));
+        assert!(body.contains("ota workspace doctor"));
     }
 
     #[test]
