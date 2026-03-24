@@ -1226,10 +1226,38 @@ pub fn up(
                                 match load_and_validate_target(&resolved_path, Some(member)) {
                                     Ok(target) => target,
                                     Err(ContractProblem::Validation(errors)) => {
-                                        return CommandOutput::failure(errors.to_string());
+                                        return match format {
+                                            OutputFormat::Text => {
+                                                CommandOutput::failure(errors.to_string())
+                                            }
+                                            OutputFormat::Json => {
+                                                CommandOutput::failure(to_json(&ValidateFailure {
+                                                    ok: false,
+                                                    path: &path_display,
+                                                    errors: errors
+                                                        .errors()
+                                                        .iter()
+                                                        .map(ToString::to_string)
+                                                        .collect(),
+                                                    error: None,
+                                                }))
+                                            }
+                                        };
                                     }
                                     Err(ContractProblem::Load(error)) => {
-                                        return CommandOutput::failure(error.to_string());
+                                        return match format {
+                                            OutputFormat::Text => {
+                                                CommandOutput::failure(error.to_string())
+                                            }
+                                            OutputFormat::Json => {
+                                                CommandOutput::failure(to_json(&ValidateFailure {
+                                                    ok: false,
+                                                    path: &path_display,
+                                                    errors: Vec::new(),
+                                                    error: Some(error.to_string()),
+                                                }))
+                                            }
+                                        };
                                     }
                                 };
                             let member_result = match execute_repo_up(
@@ -1324,10 +1352,38 @@ pub fn up(
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
                             Ok(target) => target,
                             Err(ContractProblem::Validation(errors)) => {
-                                return CommandOutput::failure(errors.to_string());
+                                return match format {
+                                    OutputFormat::Text => {
+                                        CommandOutput::failure(errors.to_string())
+                                    }
+                                    OutputFormat::Json => {
+                                        CommandOutput::failure(to_json(&ValidateFailure {
+                                            ok: false,
+                                            path: &path_display,
+                                            errors: errors
+                                                .errors()
+                                                .iter()
+                                                .map(ToString::to_string)
+                                                .collect(),
+                                            error: None,
+                                        }))
+                                    }
+                                };
                             }
                             Err(ContractProblem::Load(error)) => {
-                                return CommandOutput::failure(error.to_string());
+                                return match format {
+                                    OutputFormat::Text => {
+                                        CommandOutput::failure(error.to_string())
+                                    }
+                                    OutputFormat::Json => {
+                                        CommandOutput::failure(to_json(&ValidateFailure {
+                                            ok: false,
+                                            path: &path_display,
+                                            errors: Vec::new(),
+                                            error: Some(error.to_string()),
+                                        }))
+                                    }
+                                };
                             }
                         };
                     let result = match execute_repo_up(
@@ -1387,8 +1443,24 @@ pub fn up(
                     .with_stderr(join_notices(lifecycle_notes)),
                 }
             }
-            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
-            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
         },
         debug,
         debug_lines,

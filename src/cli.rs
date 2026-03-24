@@ -2962,6 +2962,29 @@ unexpected: true
     }
 
     #[test]
+    fn validate_rejects_extensions_top_level_until_v6() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: check_provider
+    command: ota-ext-demo
+    api_version: 1
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap();
+        assert!(stderr.contains("extensions"));
+        assert!(stderr.contains("unknown field"));
+    }
+
+    #[test]
     fn validate_discovers_contract_from_nested_directory() {
         let fixture = ContractFixture::new(
             r#"
@@ -5134,6 +5157,120 @@ tasks:
     }
 
     #[test]
+    fn repo_commands_json_success_contract_is_stable() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: echo ready
+  test:
+    run: echo test
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let validate = run_with(["ota", "validate", "--json", fixture.path()]);
+        assert_eq!(validate.exit_code, 0);
+        assert_json_top_level_keys(&validate, &["ok", "path"]);
+
+        let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 0);
+        assert_json_top_level_keys(&tasks, &["ok", "path", "tasks"]);
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 0);
+        assert_json_top_level_keys(&doctor, &["findings", "ok", "path"]);
+
+        let check = run_with(["ota", "check", "--json", fixture.path()]);
+        assert_eq!(check.exit_code, 0);
+        assert_json_top_level_keys(&check, &["findings", "ok", "path"]);
+
+        let up = run_with(["ota", "up", "--json", fixture.path()]);
+        assert_eq!(up.exit_code, 0);
+        assert_json_top_level_keys(&up, &["findings", "ok", "path", "phase", "status"]);
+
+        let detect = run_with(["ota", "detect", "--json", "--dry-run", fixture.path()]);
+        assert_eq!(detect.exit_code, 0);
+        assert_json_top_level_keys(
+            &detect,
+            &["comparison", "config", "inferred", "ok", "path", "written"],
+        );
+
+        let init_fixture = ContractFixture::new_dir();
+        let init = run_with(["ota", "init", "--json", init_fixture.path()]);
+        assert_eq!(init.exit_code, 0);
+        assert_json_top_level_keys(&init, &["config", "inferred", "mode", "ok", "path", "written"]);
+    }
+
+    #[test]
+    fn repo_commands_json_validation_failure_contract_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    depends_on:
+      - setup
+"#,
+        );
+
+        let validate = run_with(["ota", "validate", "--json", fixture.path()]);
+        assert_eq!(validate.exit_code, 1);
+        assert_eq!(
+            json_top_level_keys_named("validate", &validate),
+            vec!["errors", "ok", "path"],
+            "validate failure keys"
+        );
+
+        let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 1);
+        assert_eq!(
+            json_top_level_keys_named("tasks", &tasks),
+            vec!["errors", "ok", "path"],
+            "tasks failure keys"
+        );
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        assert_eq!(
+            json_top_level_keys_named("doctor", &doctor),
+            vec!["errors", "ok", "path"],
+            "doctor failure keys"
+        );
+
+        let check = run_with(["ota", "check", "--json", fixture.path()]);
+        assert_eq!(check.exit_code, 1);
+        assert_eq!(
+            json_top_level_keys_named("check", &check),
+            vec!["errors", "ok", "path"],
+            "check failure keys"
+        );
+
+        let up = run_with(["ota", "up", "--json", fixture.path()]);
+        assert_eq!(up.exit_code, 1);
+        assert_eq!(
+            json_top_level_keys_named("up", &up),
+            vec!["errors", "ok", "path"],
+            "up failure keys"
+        );
+    }
+
+    #[test]
     fn workspace_commands_json_success_contract_is_stable() {
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
@@ -6479,13 +6616,39 @@ repos:
     }
 
     fn assert_json_top_level_keys(output: &super::CommandOutput, expected: &[&str]) {
+        let actual = json_top_level_keys(output);
+        let mut expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    fn json_top_level_keys(output: &super::CommandOutput) -> Vec<String> {
         let json = parse_json_from_output(output);
         let object = json.as_object().expect("json output should be an object");
         let mut actual = object.keys().cloned().collect::<Vec<_>>();
         actual.sort();
-        let mut expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
-        expected.sort();
-        assert_eq!(actual, expected);
+        actual
+    }
+
+    fn json_top_level_keys_named(name: &str, output: &super::CommandOutput) -> Vec<String> {
+        let payload = if output.stdout.trim().is_empty() {
+            output
+                .stderr
+                .as_deref()
+                .expect("json payload should be present in stderr when stdout is empty")
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(payload).unwrap_or_else(|error| {
+            panic!(
+                "{name} produced non-json payload: stdout={:?} stderr={:?} error={error}",
+                output.stdout, output.stderr
+            )
+        });
+        let object = json.as_object().expect("json output should be an object");
+        let mut actual = object.keys().cloned().collect::<Vec<_>>();
+        actual.sort();
+        actual
     }
 
     fn parse_json_from_output(output: &super::CommandOutput) -> Value {

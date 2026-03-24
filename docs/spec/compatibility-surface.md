@@ -1,0 +1,76 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Compatibility Surface Inventory
+
+Purpose: define the V4 compatibility baseline that must remain stable unless an explicit versioned change is made.
+
+## CLI surfaces
+
+Repo commands:
+- `ota validate`
+- `ota tasks`
+- `ota run`
+- `ota doctor`
+- `ota check`
+- `ota init`
+- `ota detect`
+- `ota up`
+- `ota clean`
+
+Workspace commands:
+- `ota workspace validate`
+- `ota workspace tasks`
+- `ota workspace doctor`
+- `ota workspace check`
+- `ota workspace run`
+- `ota workspace up`
+
+## Compatibility-locked dimensions
+
+For each command above, V4 must preserve:
+- exit behavior and mapping
+- JSON top-level shape and key semantics
+- deterministic ordering for list outputs
+- human output status semantics (`READY`, `NOT READY`, `VALID`) and failure clarity
+
+## Existing authoritative docs
+
+- `docs/spec/exit-codes.md`
+- `docs/spec/json-output-reference.md`
+- `docs/spec/command-reference.md`
+
+## Baseline tests that must remain green
+
+- parser/validator semantic tests
+- command JSON stability tests in `src/cli.rs`
+- monorepo and workspace command behavior tests in `src/cli.rs`
+- detector confidence/provenance tests in `src/detector.rs`
+
+## V4 change rule
+
+If a change modifies any compatibility-locked dimension:
+- update the relevant normative doc in the same change
+- add/adjust regression tests that lock the new behavior
+- call out the change explicitly in planning notes
