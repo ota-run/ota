@@ -1717,7 +1717,7 @@ pub fn detect(
                             )]));
                         }
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-                        stdout.push_str(yaml.trim_end());
+                        stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                         render_inference_section(
                             &mut stdout,
                             "Annotations",
@@ -1976,7 +1976,7 @@ pub fn workspace_init(
                             "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-                        stdout.push_str(yaml.trim_end());
+                        stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Additive merge preview",
@@ -2214,12 +2214,20 @@ pub fn workspace_init(
                         "\n\n{}",
                         format_mode_line("dry-run (no write)")
                     ));
+                    let write_command = match surface {
+                        WorkspaceScaffoldSurface::Init => {
+                            format!("{command_name} {compact_root_display}")
+                        }
+                        WorkspaceScaffoldSurface::Detect => {
+                            format!("{command_name} --write {compact_root_display}")
+                        }
+                    };
                     stdout.push_str(&format_next_timeline(&[format!(
-                        "run `{command_name} {compact_root_display}` to write `{}`",
+                        "run `{write_command}` to write `{}`",
                         compact_workspace_path(&workspace_path)
                     )]));
                     stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-                    stdout.push_str(yaml.trim_end());
+                    stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                     render_workspace_init_discovery_sections(
                         &mut stdout,
                         &draft.included,
@@ -3193,7 +3201,7 @@ fn render_init(
                 highlighted_init,
             );
             stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-            stdout.push_str(review_yaml.trim_end());
+            stdout.push_str(&stylize_yaml_preview(review_yaml.trim_end()));
             if mode == "blank" {
                 stdout.push_str(
                     "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
@@ -6854,6 +6862,33 @@ fn stylize_inline_code(value: &str) -> String {
     }
 
     output
+}
+
+fn stylize_yaml_preview(value: &str) -> String {
+    if plain_mode() {
+        return value.to_string();
+    }
+
+    let mut out = String::with_capacity(value.len() + 16);
+    for (idx, line) in value.lines().enumerate() {
+        if idx > 0 {
+            out.push('\n');
+        }
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let styled = if trimmed.ends_with(':') {
+            paint(line, "1;38;2;155;240;195")
+        } else if trimmed.contains(": ") {
+            paint(line, "1;37")
+        } else {
+            paint(line, "37")
+        };
+        out.push_str(&styled);
+    }
+    out
 }
 
 struct LoadedContractTarget {
