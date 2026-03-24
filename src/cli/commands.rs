@@ -5058,7 +5058,7 @@ fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
     match severity {
         FindingSeverity::Error => match key {
             "Why:" => paint(key, "1;38;2;255;150;150"),
-            "Next:" => paint(key, "1;38;2;150;210;255"),
+            "Next:" => paint(key, "1;38;2;255;185;225"),
             _ => paint_key(key),
         },
         _ => paint_key(key),
