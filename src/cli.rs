@@ -2969,7 +2969,10 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
+            format!(
+                "🦦  VALIDATE {}\n\n✓ VALID",
+                compact_contract(&fixture.file_path())
+            )
         );
     }
 
@@ -3008,7 +3011,10 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
+            format!(
+                "🦦  VALIDATE {}\n\n✓ VALID",
+                compact_contract(&fixture.file_path())
+            )
         );
     }
 
@@ -3187,9 +3193,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(normalized.starts_with("🦦  TASKS "));
-        assert!(normalized.contains("/ota.yaml\n---\n▸ build"));
-        assert!(normalized.contains("\n▸ build"));
-        assert!(normalized.contains("\n▸ dev"));
+        assert!(normalized.contains("/ota.yaml\n---\n◦ build"));
+        assert!(normalized.contains("\n◦ build"));
+        assert!(normalized.contains("\n◦ dev"));
         assert!(!normalized.contains("- Task:"));
     }
 
@@ -3209,7 +3215,7 @@ tasks:
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
-        assert!(detect.stdout.contains("\nNext:\n- run `ota detect --write"));
+        assert!(detect.stdout.contains("\nNext:\n-  run `ota detect --write"));
         assert!(!detect.stdout.contains("🦦"));
         assert!(!detect.stdout.contains("▸"));
     }
@@ -3642,7 +3648,7 @@ agent:
         assert!(output.stdout.contains(
             "Write policy: detected mode writes only high-confidence fields automatically"
         ));
-        assert!(output.stdout.contains("Next:\n▸ run `ota validate"));
+        assert!(output.stdout.contains("Next:\n▸  run `ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -3662,7 +3668,7 @@ agent:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract\n\nNext:\n▸ review `ota init` output\n▸ use `ota detect --dry-run` before writing")
+                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract\n\nNext:\n▸  review `ota init` output\n▸  use `ota detect --dry-run` before writing")
         );
         assert!(
             output
@@ -4646,7 +4652,7 @@ project:
         assert_eq!(
             output.stderr.as_deref(),
             Some(
-                "`ota detect --merge` requires an existing `ota.yaml`\n\nNext:\n▸ use `ota detect --write` to write a first contract\n▸ use `ota detect --dry-run` to review one",
+                "`ota detect --merge` requires an existing `ota.yaml`\n\nNext:\n▸  use `ota detect --write` to write a first contract\n▸  use `ota detect --dry-run` to review one",
             )
         );
     }
@@ -4681,7 +4687,7 @@ project:
         assert_eq!(
             output.stderr.as_deref(),
             Some(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\n\nNext:\n▸ use `ota detect --dry-run` to review a first contract"
+                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\n\nNext:\n▸  use `ota detect --dry-run` to review a first contract"
             )
         );
     }
@@ -4945,7 +4951,7 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract\n\nNext:\n▸ use `ota detect --dry-run` to review medium and low confidence fields"),
+                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract\n\nNext:\n▸  use `ota detect --dry-run` to review medium and low confidence fields"),
             true
         );
         assert!(
@@ -4988,7 +4994,10 @@ project:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("✓ VALID {}", compact_contract(&fixture.file_path()))
+            format!(
+                "🦦  VALIDATE {}\n\n✓ VALID",
+                compact_contract(&fixture.file_path())
+            )
         );
         assert!(
             output
@@ -5212,7 +5221,10 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             output.stdout,
-            format!("✓ VALID WORKSPACE {}", compact_workspace(&fixture.workspace_file()))
+            format!(
+                "🦦  WORKSPACE VALIDATE {}\n\n✓ VALID",
+                compact_workspace(&fixture.workspace_file())
+            )
         );
     }
 
@@ -5320,7 +5332,7 @@ env:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (READY)"));
+        assert!(output.stdout.contains("web [optional] (✓ READY)"));
         assert!(
             output
                 .stdout
@@ -5358,7 +5370,7 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "✓ VALID WORKSPACE {}",
+                "🦦  WORKSPACE VALIDATE {}\n\n✓ VALID",
                 compact_workspace(&fixture.path().join("ota.workspace.yaml"))
             )
         );
@@ -5576,7 +5588,7 @@ checks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (READY)"));
+        assert!(output.stdout.contains("web [optional] (✓ READY)"));
         assert!(output.stdout.contains("WARN  Check failed: health-check"));
     }
 

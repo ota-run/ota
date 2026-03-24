@@ -102,12 +102,11 @@ pub fn validate(
         match load_and_validate_target(&resolved_path, member) {
             Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
-                    OutputFormat::Text => {
-                        CommandOutput::success(format!(
-                            "{} {text_path_display}",
-                            render_valid_status()
-                        ))
-                    }
+                    OutputFormat::Text => CommandOutput::success(format!(
+                        "{}\n\n{}",
+                        format_command_header("VALIDATE", &text_path_display),
+                        render_valid_status()
+                    )),
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
                         path: &path_display,
@@ -1624,8 +1623,7 @@ pub fn detect(
                         } else {
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
-                        stdout.push_str(&format!("\n{}", detect_standalone_icon()));
-                        stdout.push_str("\nMode: dry-run (no write)");
+                        stdout.push_str("\n\nMode: dry-run (no write)");
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --merge {}` to apply add-only high-confidence fields",
@@ -1704,12 +1702,11 @@ pub fn workspace_validate(
     finalize_debug(
         match load_and_validate_workspace(&resolved_path) {
             Ok(()) => match format {
-                OutputFormat::Text => {
-                    CommandOutput::success(format!(
-                        "{} WORKSPACE {compact_path_display}",
-                        render_valid_status()
-                    ))
-                }
+                OutputFormat::Text => CommandOutput::success(format!(
+                    "{}\n\n{}",
+                    format_command_header("WORKSPACE VALIDATE", &compact_path_display),
+                    render_valid_status()
+                )),
                 OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                     ok: true,
                     path: &path_display,
@@ -2328,7 +2325,6 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                         format!("run `{highlighted_doctor}`"),
                     ])
                 );
-                stdout.push_str(&format!("\n{}", detect_standalone_icon()));
                 render_inference_section(
                     &mut stdout,
                     "Excluded from automatic write",
@@ -2404,11 +2400,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     if addable_fields.is_empty() {
         return match format {
             OutputFormat::Text => {
-                let mut stdout = format!(
-                    "{}\n{}",
-                    format_command_header("NO CHANGES", &compact_path_display),
-                    detect_standalone_icon()
-                );
+                let mut stdout = format_command_header("NO CHANGES", &compact_path_display);
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
                 CommandOutput::success(stdout)
             }
@@ -2513,11 +2505,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let mut stdout = format!(
-                    "{}\n{}",
-                    format_command_header("MERGED", &compact_path_display),
-                    detect_standalone_icon()
-                );
+                let mut stdout = format_command_header("MERGED", &compact_path_display);
                 render_detect_change_section(
                     &mut stdout,
                     "Applied high-confidence additions",
@@ -2867,23 +2855,26 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
         return;
     };
 
-    stdout.push('\n');
-    stdout.push_str("Existing contract comparison:");
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Existing contract comparison")
+    ));
 
     if let Some(error) = comparison.error.as_deref() {
-        stdout.push_str("\n- ");
-        stdout.push_str(error);
+        stdout.push_str(&format!("\n{}  {error}", list_bullet()));
         return;
     }
 
     if comparison.changes.is_empty() {
-        stdout.push_str("\n- no detected changes against the existing contract");
+        stdout.push_str(&format!(
+            "\n{}  no detected changes against the existing contract",
+            list_bullet()
+        ));
         return;
     }
 
     for change in &comparison.changes {
-        stdout.push_str("\n- ");
-        stdout.push_str(&change.field);
+        stdout.push_str(&format!("\n{}  {}", list_bullet(), change.field));
         match change.status {
             "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
             "update" => stdout.push_str(&format!(
@@ -2905,12 +2896,9 @@ fn render_detect_change_section(
         return;
     }
 
-    stdout.push('\n');
-    stdout.push_str(title);
-    stdout.push(':');
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
     for change in changes {
-        stdout.push_str("\n- ");
-        stdout.push_str(&change.field);
+        stdout.push_str(&format!("\n{}  {}", list_bullet(), change.field));
         stdout.push_str(": added `");
         stdout.push_str(&change.detected);
         stdout.push('`');
@@ -3120,7 +3108,7 @@ fn render_workspace_doctor_text(
             } else {
                 "optional"
             },
-            if repo.ok { "READY" } else { "NOT READY" }
+            render_status_line(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
@@ -3196,7 +3184,7 @@ fn render_workspace_check_text(
             } else {
                 "optional"
             },
-            if repo.ok { "READY" } else { "NOT READY" }
+            render_status_line(if repo.ok { "READY" } else { "NOT READY" })
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
@@ -3726,7 +3714,7 @@ fn render_workspace_up(
                     } else {
                         "optional"
                     },
-                    repo.status
+                    render_status_line(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
@@ -3836,7 +3824,7 @@ fn render_workspace_run(
                     } else {
                         "optional"
                     },
-                    repo.status
+                    render_status_line(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n  {} {}",
@@ -4052,7 +4040,7 @@ fn append_markdown_table(
 ) {
     let rows = rows.into_iter().collect::<Vec<_>>();
 
-    output.push_str(&format!("\n---\n{}:", paint(title, "1;34")));
+    output.push_str(&format!("\n---\n{}:", paint_section_title(title)));
 
     if rows.is_empty() {
         output.push_str(&format!("\n{} none", list_bullet()));
@@ -4064,7 +4052,7 @@ fn append_markdown_table(
             output.push('\n');
         }
         output.push('\n');
-        output.push_str(&format!("{} ", list_bullet()));
+        output.push_str(&format!("{}  ", list_bullet()));
         let first_header = headers.first().copied().unwrap_or("Item");
         output.push_str(&paint_key(first_header));
         output.push_str(": ");
@@ -4123,9 +4111,10 @@ fn render_readiness_status(ready: bool) -> String {
 }
 
 fn render_status_line(status: &str) -> String {
-    match status {
+    match status.trim() {
         "READY" => render_readiness_status(true),
         "NOT READY" => render_readiness_status(false),
+        "VALID" => render_valid_status(),
         other => other.to_string(),
     }
 }
@@ -4164,17 +4153,25 @@ fn paint_code(value: &str) -> String {
 }
 
 fn list_bullet() -> String {
+    info_bullet()
+}
+
+fn info_bullet() -> String {
+    if plain_mode() {
+        return String::from("-");
+    }
+    paint("◦", "38;2;102;217;255")
+}
+
+fn next_bullet() -> String {
     if plain_mode() {
         return String::from("-");
     }
     paint("▸", "38;2;0;255;255")
 }
 
-fn detect_standalone_icon() -> String {
-    if plain_mode() {
-        return String::from("-");
-    }
-    paint("◉", "38;2;0;255;255")
+fn paint_section_title(value: &str) -> String {
+    paint(value, "1;34")
 }
 
 fn format_next_timeline(items: &[String]) -> String {
@@ -4184,7 +4181,7 @@ fn format_next_timeline(items: &[String]) -> String {
 
     let mut output = String::from("\n\nNext:");
     for item in items {
-        output.push_str(&format!("\n{} {item}", list_bullet()));
+        output.push_str(&format!("\n{}  {item}", next_bullet()));
     }
     output
 }
@@ -6018,7 +6015,7 @@ enum ResolveContractError {
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
     #[error(
-        "contract path does not exist: `{path}`\n\nNext:\n- use `ota init` to create a starter contract\n- use `ota detect --dry-run` to preview inferred fields\n- use `ota detect --write` to write a detected contract"
+        "contract path does not exist: `{path}`\n\nNext:\n▸ use `ota init` to create a starter contract\n▸ use `ota detect --dry-run` to preview inferred fields\n▸ use `ota detect --write` to write a detected contract"
     )]
     MissingExplicitPath { path: String },
 }
