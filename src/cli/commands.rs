@@ -2167,9 +2167,11 @@ pub fn workspace_init(
                         let mut stdout =
                             format_command_header(&format!("WORKSPACE {command_label} WRITE"), &compact_root_display);
                         stdout.push_str(&format!(
-                            "\n\n{} wrote `{}`",
-                            paint_key("Result:"),
-                            compact_workspace_path(&workspace_path)
+                            "\n\n{}",
+                            format_result_line(&format!(
+                                "wrote `{}`",
+                                compact_workspace_path(&workspace_path)
+                            ))
                         ));
                         stdout.push_str(&format!("\n\n{}", format_mode_line("scaffold")));
                         stdout.push_str(&format_next_timeline(&[
@@ -2832,9 +2834,9 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 let highlighted_doctor =
                     paint_code(&command_for_contract("ota doctor", &contract_path));
                 let mut stdout = format!(
-                    "{}\nResult: wrote {}\nPolicy: only high-confidence fields are written automatically{}",
+                    "{}\n{}\nPolicy: only high-confidence fields are written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
-                    highlighted_written,
+                    format_result_line(&format!("wrote {highlighted_written}")),
                     format_next_timeline(&[
                         format!("run `{highlighted_validate}`"),
                         format!("run `{highlighted_doctor}`"),
@@ -3129,10 +3131,9 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
-                        "{}\n{} wrote {}\n\n{}{}",
+                        "{}\n{}\n\n{}{}",
                         format_command_header("INIT WRITE", &compact_root_display),
-                        paint_key("Result:"),
-                        highlighted_written,
+                        format_result_line(&format!("wrote {highlighted_written}")),
                         format_mode_line(mode),
                         format_next_timeline(&[
                             format!("run `{highlighted_validate}`"),
@@ -5187,8 +5188,20 @@ fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }
 
+fn result_icon() -> &'static str {
+    if plain_mode() { "-" } else { "★" }
+}
+
+fn mode_icon() -> &'static str {
+    if plain_mode() { "-" } else { "❖" }
+}
+
+fn format_result_line(value: &str) -> String {
+    format!("{} {} {}", result_icon(), paint_key("Result:"), value)
+}
+
 fn format_mode_line(value: &str) -> String {
-    format!("{} {}", paint_key("Mode:"), paint_mode_value(value))
+    format!("{} {} {}", mode_icon(), paint_key("Mode:"), paint_mode_value(value))
 }
 
 fn format_next_timeline(items: &[String]) -> String {
