@@ -32,7 +32,11 @@ mod commands;
 
 #[derive(Debug, Parser)]
 #[command(name = "ota")]
-#[command(about = "Open repo readiness CLI", version)]
+#[command(
+    about = "Open repo readiness CLI",
+    version = concat!("🦦  v", env!("CARGO_PKG_VERSION")),
+    help_template = "🦦  {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
+)]
 pub struct Cli {
     /// Emit command-phase debug tracing to stderr.
     #[arg(long, global = true, action = ArgAction::SetTrue)]
@@ -295,12 +299,35 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    if is_version_request(&args) {
+        return CommandOutput::success(format!("🦦  v{}", env!("CARGO_PKG_VERSION")));
+    }
+
     match Cli::try_parse_from(args) {
         Ok(cli) => dispatch(cli),
         Err(error) => {
             CommandOutput::failure_with_code(error.render().to_string().trim_end().to_string(), 2)
         }
     }
+}
+
+fn is_version_request(args: &[OsString]) -> bool {
+    if args.len() < 2 {
+        return false;
+    }
+
+    let mut has_version = false;
+    for arg in &args[1..] {
+        let value = arg.to_string_lossy();
+        match value.as_ref() {
+            "--version" | "-V" => has_version = true,
+            "--plain" => {}
+            _ => return false,
+        }
+    }
+
+    has_version
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
@@ -3761,12 +3788,11 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stderr.as_deref(),
-            Some(
-                "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
-            )
-        );
+        let stderr = output.stderr.as_deref().unwrap_or("");
+        assert!(stderr.contains(
+            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
+        ));
+        assert!(stderr.contains("Signature: doctor first, contract second"));
     }
 
     #[test]
@@ -3888,7 +3914,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("CHECK"));
-        assert!(output.stdout.contains("WARN  Check failed: health-check"));
+        assert!(output.stdout.contains("🦦 WARN  Check failed: health-check"));
         assert!(!output.stdout.contains("Missing environment variable"));
     }
 
@@ -4079,7 +4105,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("WARN  Missing tool: ota-tool-that-does-not-exist")
+                .contains("🦦 WARN  Missing tool: ota-tool-that-does-not-exist")
         );
     }
 
@@ -4131,7 +4157,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("WARN  Ephemeral lifecycle is advisory only in V1")
+                .contains("🦦 WARN  Ephemeral lifecycle is advisory only in V1")
         );
     }
 
@@ -4165,15 +4191,15 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let error_index = output
             .stdout
-            .find("ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
+            .find("🦦 ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
             .unwrap();
         let warn_index = output
             .stdout
-            .find("WARN  Version mismatch for tool: cargo")
+            .find("🦦 WARN  Version mismatch for tool: cargo")
             .unwrap();
         let info_index = output
             .stdout
-            .find("INFO  Check failed: informational-check")
+            .find("🦦 INFO  Check failed: informational-check")
             .unwrap();
 
         assert!(error_index < warn_index);
@@ -4333,7 +4359,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("ERROR  Service healthcheck failed: postgres")
+                .contains("🦦 ERROR  Service healthcheck failed: postgres")
         );
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
@@ -4371,7 +4397,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("ERROR  Service healthcheck failed: postgres")
+                .contains("🦦 ERROR  Service healthcheck failed: postgres")
         );
         assert!(fixture.dir.path().join("db-started.txt").exists());
         assert!(!fixture.dir.path().join("api-started.txt").exists());
@@ -4479,7 +4505,7 @@ checks:
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("NOT READY"));
         assert!(output.stdout.contains("Phase: post-setup diagnosis"));
-        assert!(output.stdout.contains("ERROR  Check failed: health-check"));
+        assert!(output.stdout.contains("🦦 ERROR  Check failed: health-check"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -5285,7 +5311,7 @@ env:
         assert!(
             output
                 .stdout
-                .contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
+                .contains("🦦 WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
         );
     }
 
@@ -5538,7 +5564,7 @@ checks:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("web [optional] (READY)"));
-        assert!(output.stdout.contains("WARN  Check failed: health-check"));
+        assert!(output.stdout.contains("🦦 WARN  Check failed: health-check"));
     }
 
     #[test]

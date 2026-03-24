@@ -41,6 +41,7 @@ Rules:
 - prefer command examples that are already covered by tests
 - do not introduce behavior claims that are not in `src/` and tests
 - keep canonical specs in `docs/spec/` as the normative product surface
+- keep visuals aligned with `docs/spec/brand-style.md`
 - for command docs, always include when-to-use, why, and concrete use-cases
 - avoid list-only pages that enumerate commands without operator guidance
 

@@ -1,0 +1,11 @@
+version: 1
+project:
+  name: ota
+tools:
+  cargo: '*'
+tasks:
+  build:
+    run: cargo build
+  test:
+    run: cargo test
+    safe_for_agent: true

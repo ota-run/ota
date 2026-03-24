@@ -33,6 +33,7 @@ For canonical exit-code behavior, see [exit-codes.md](exit-codes.md).
 For service behavior across commands, see [service-behavior.md](service-behavior.md).
 For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
 For text rendering and plain-mode behavior, see [output-style.md](output-style.md).
+For visual identity tokens and CLI/docs branding, see [brand-style.md](brand-style.md).
 
 ## Global
 

@@ -28,6 +28,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Write-OtaHeader {
+    Write-Host "🦦  INSTALL" -ForegroundColor Cyan
+    Write-Host "◉ doctor first, contract second" -ForegroundColor White
+}
+
+function Write-OtaInfo {
+    param([string]$Message)
+    Write-Host $Message -ForegroundColor DarkYellow
+}
+
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Error "cargo is required to install ota"
     exit 1
@@ -38,8 +48,10 @@ if ((Test-Path ".\Cargo.toml") -and (Select-String -Path ".\Cargo.toml" -Pattern
     $installFromSource = $true
 }
 
+Write-OtaHeader
+
 if ($installFromSource) {
-    Write-Host "installing ota from local source (cargo install --path .)..."
+    Write-OtaInfo "installing ota from local source (cargo install --path .)..."
     & cargo install --path . --locked --force
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
@@ -59,7 +71,7 @@ if ($installFromSource) {
         exit 1
     }
 
-    Write-Host "installing ota from $gitUrl..."
+    Write-OtaInfo "installing ota from $gitUrl..."
     if ($tag) {
         & cargo install --git $gitUrl --tag $tag ota --locked --force
     } elseif ($branch) {
