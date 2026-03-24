@@ -177,7 +177,7 @@ Current implementation:
 - the first container path uses the local `docker` CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
 - `ota up` now runs the `setup` task through the same configured execution backend when one exists
 - `ota run` now supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
-- current shipped remote providers are `daytona` and `ssh`
+- current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
 - the current remote path shells out to the local provider CLI with optional `execution.backends.remote.cwd`
 - `ota up` runs its `setup` task through the same remote backend path when remote execution is preferred or explicitly overridden
 - remote provisioning and remote workspace selection are still out of scope today
