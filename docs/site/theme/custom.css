@@ -22,139 +22,149 @@
    If you need additional information or have any questions, please email: os@ota.run
 */
 
-@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap");
 
 :root {
-  --ota-accent: #0f766e;
-  --ota-accent-soft: #14b8a6;
+  --ota-accent: #0ea5a0;
+  --ota-accent-soft: #2dd4bf;
   --ota-command: #d6a15f;
-  --ota-ink: #0b1728;
-  --ota-surface: #f7fafc;
-  --ota-card-border: #dce6f0;
+  --ota-ink: #102132;
+  --ota-surface: #f5f8fc;
+  --ota-card-border: #d4e0eb;
+  --ota-radius: 12px;
 }
 
 .light {
-  --bg: linear-gradient(180deg, #f4f8fb 0%, #f9fbfd 30%, #ffffff 100%);
+  --bg: radial-gradient(1200px 600px at 8% -20%, #e8f7f4 0%, transparent 42%),
+    radial-gradient(900px 500px at 92% -24%, #eef5ff 0%, transparent 48%),
+    linear-gradient(180deg, #f7fbfd 0%, #ffffff 100%);
   --fg: var(--ota-ink);
-  --sidebar-bg: #edf3f8;
-  --sidebar-fg: #213044;
-  --sidebar-non-existant: #63748b;
+  --sidebar-bg: #eef4f9;
+  --sidebar-fg: #1f3146;
+  --sidebar-non-existant: #6a7c92;
   --sidebar-active: var(--ota-accent);
-  --sidebar-spacer: #ced9e5;
-  --scrollbar: #bcc9d9;
-  --searchresults-header-fg: #2f3f53;
-  --searchresults-border-color: #d4dfeb;
+  --sidebar-spacer: #cfdae6;
+  --scrollbar: #b8c8d9;
+  --searchresults-header-fg: #293b50;
+  --searchresults-border-color: #d2deea;
   --searchbar-bg: #ffffff;
-  --searchbar-fg: #10233b;
+  --searchbar-fg: #13263d;
   --searchbar-shadow-color: rgba(9, 30, 66, 0.08);
   --searchresults-bg: #ffffff;
-  --searchresults-fg: #122131;
+  --searchresults-fg: #102132;
   --searchresults-li-bg: #f8fbff;
   --search-mark-bg: #fff2a9;
-  --links: #0f6c9a;
+  --links: #0b6f99;
   --inline-code-color: var(--ota-command);
   --theme-popup-bg: #ffffff;
-  --theme-popup-border: #d4dfeb;
-  --theme-hover: #f3f7fc;
+  --theme-popup-border: #d2deea;
+  --theme-hover: #f1f7fc;
   --quote-bg: #f2f7fb;
-  --quote-border: #8ecae6;
-  --table-border-color: #d6e1ec;
+  --quote-border: #7fc0de;
+  --table-border-color: #d2deea;
   --table-header-bg: #eff5fb;
   --table-alternate-bg: #f8fbfe;
   --code-bg: #eff4fa;
   --code-hl-bg: #e5edf8;
-  --warning-border: #b7791f;
+  --warning-border: #c27f20;
 }
 
 .navy {
-  --bg: linear-gradient(180deg, #0b1525 0%, #0f1b31 45%, #111f38 100%);
-  --fg: #deebfa;
-  --sidebar-bg: #0a1628;
+  --bg: radial-gradient(1200px 600px at 10% -30%, #11413c 0%, transparent 42%),
+    radial-gradient(900px 500px at 96% -28%, #202d58 0%, transparent 46%),
+    linear-gradient(180deg, #0a1628 0%, #0f1f36 100%);
+  --fg: #deecfb;
+  --sidebar-bg: #0c1930;
   --sidebar-fg: #c8d9ef;
-  --sidebar-non-existant: #7c93b2;
-  --sidebar-active: #39d2c0;
-  --sidebar-spacer: #223750;
-  --scrollbar: #395172;
-  --searchresults-header-fg: #b8cee9;
-  --searchresults-border-color: #2a4060;
-  --searchbar-bg: #0f223b;
-  --searchbar-fg: #deebfa;
+  --sidebar-non-existant: #7f96b5;
+  --sidebar-active: #3ce0ca;
+  --sidebar-spacer: #233a56;
+  --scrollbar: #3d577a;
+  --searchresults-header-fg: #bfd4ef;
+  --searchresults-border-color: #2b4568;
+  --searchbar-bg: #122640;
+  --searchbar-fg: #e3effc;
   --searchbar-shadow-color: rgba(0, 0, 0, 0.4);
-  --searchresults-bg: #0f223b;
-  --searchresults-fg: #deebfa;
-  --searchresults-li-bg: #183452;
+  --searchresults-bg: #122640;
+  --searchresults-fg: #deecfb;
+  --searchresults-li-bg: #1a3859;
   --search-mark-bg: #7f5f1d;
-  --links: #59c7ff;
+  --links: #67cdfd;
   --inline-code-color: var(--ota-command);
-  --theme-popup-bg: #10243f;
-  --theme-popup-border: #2a4060;
-  --theme-hover: #173553;
-  --quote-bg: #13263f;
-  --quote-border: #39d2c0;
-  --table-border-color: #2b4161;
-  --table-header-bg: #142b47;
-  --table-alternate-bg: #12263f;
-  --code-bg: #142741;
-  --code-hl-bg: #1a3152;
+  --theme-popup-bg: #122741;
+  --theme-popup-border: #2b4568;
+  --theme-hover: #183a5d;
+  --quote-bg: #142b45;
+  --quote-border: #3ce0ca;
+  --table-border-color: #2d4668;
+  --table-header-bg: #162f4e;
+  --table-alternate-bg: #132941;
+  --code-bg: #152b46;
+  --code-hl-bg: #1c3658;
   --warning-border: #d9a441;
 }
 
 html,
 body {
-  font-family: "Fira Code", "IBM Plex Sans", "Avenir Next", "Segoe UI", monospace;
-  font-size: 13px !important;
+  font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px !important;
   font-weight: 500;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 .content {
-  max-width: 980px;
+  max-width: 1020px;
 }
 
 .content main {
-  line-height: 1.78;
-  /*letter-spacing: 0.01em;*/
-  font-size: 1.18rem !important;
+  line-height: 1.75;
+  font-size: 1.12rem !important;
 }
 
 .content p,
 .content li,
 .content td,
 .content th {
-  font-size: 1.12rem !important;
+  font-size: 1.05rem !important;
 }
 
 .content h1,
 .content h2,
 .content h3,
 .content h4 {
-  font-family: "Fira Code", "Sora", "IBM Plex Sans", "Avenir Next", monospace;
-  /*letter-spacing: -0.01em;*/
+  font-family: "Space Grotesk", "Manrope", "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
 }
 
 .content h1 {
-  font-size: clamp(2.25rem, 4.2vw, 3rem);
+  font-size: clamp(2.2rem, 4.2vw, 3rem);
   margin-top: 0.4rem;
-  margin-bottom: 1.15rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
 }
 
 .content h2 {
-  font-size: 1.72rem;
+  font-size: 1.65rem;
   margin-top: 2.1rem;
-  padding-top: 0.6rem;
+  padding-top: 0.7rem;
   border-top: 1px solid var(--table-border-color);
+  font-weight: 700;
 }
 
 .content h3 {
-  font-size: 1.42rem;
+  font-size: 1.35rem;
+  font-weight: 650;
 }
 
 .content p code,
 .content li code {
   background: var(--code-bg);
   border: 1px solid var(--table-border-color);
-  border-radius: 6px;
-  padding: 0.12em 0.38em;
-  font-size: 1.02em;
+  border-radius: 8px;
+  padding: 0.14em 0.42em;
+  font-size: 0.95em;
 }
 
 .content pre code {
@@ -163,21 +173,23 @@ body {
 
 .content pre {
   border: 1px solid var(--table-border-color);
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(9, 30, 66, 0.08);
-  font-size: 1.06rem !important;
+  border-radius: var(--ota-radius);
+  box-shadow: 0 12px 30px rgba(9, 30, 66, 0.12);
+  font-size: 0.98rem !important;
+  line-height: 1.6;
+  padding: 0.95rem 1rem !important;
 }
 
 .light .content pre {
-  background: #f2f7fc;
+  background: #f1f7fd;
 }
 
 .navy .content pre {
-  background: #0f233c;
+  background: #132a45;
 }
 
 .content ul li {
-  margin: 0.42rem 0;
+  margin: 0.48rem 0;
 }
 
 .content img[alt="Ota Logo"] {
@@ -189,40 +201,65 @@ body {
 }
 
 .chapter li a {
-  border-radius: 8px;
-  transition: background-color 140ms ease, color 140ms ease;
-  font-size: 1.14rem !important;
+  border-radius: 10px;
+  transition: background-color 140ms ease, color 140ms ease, transform 140ms ease;
+  font-size: 1.03rem !important;
   line-height: 1.5;
-  padding-top: 0.3rem;
-  padding-bottom: 0.3rem;
+  padding-top: 0.38rem;
+  padding-bottom: 0.38rem;
 }
 
 .chapter li a:hover {
   background: var(--theme-hover);
   text-decoration: none;
+  transform: translateX(2px);
 }
 
 .right-buttons button {
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .menu-title {
-  font-family: "Fira Code", "Sora", "IBM Plex Sans", monospace;
+  font-family: "Space Grotesk", "Manrope", sans-serif;
   font-weight: 700;
-  letter-spacing: 0.01em;
-  font-size: 1.22rem !important;
+  letter-spacing: 0.02em;
+  font-size: 1.18rem !important;
 }
 
 .sidebar,
 .sidebar-scrollbox {
-  font-size: 1.14rem !important;
+  font-size: 1.02rem !important;
 }
 
 #searchbar {
-  font-size: 1.08rem !important;
+  font-size: 1.02rem !important;
+  border-radius: 10px;
 }
 
 .content pre,
 .content code {
-  font-family: "Fira Code", "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.chapter-item.expanded > a,
+.chapter-item > a.active {
+  color: var(--sidebar-active) !important;
+  font-weight: 650;
+}
+
+.content table {
+  border-radius: var(--ota-radius);
+  overflow: hidden;
+}
+
+.content blockquote {
+  border-left: 4px solid var(--quote-border);
+  background: var(--quote-bg);
+  border-radius: 0 10px 10px 0;
+  padding: 0.85rem 1rem;
+}
+
+.content hr {
+  border-color: var(--table-border-color);
+  opacity: 0.8;
 }
