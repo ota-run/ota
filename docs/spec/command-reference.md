@@ -197,7 +197,7 @@ Current behavior:
 - when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the local `docker` CLI
 - when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
 - supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
-- current shipped remote providers are `daytona` and `ssh`
+- current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values
@@ -224,7 +224,7 @@ Current behavior:
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
 - checks configured env requirements
-- checks preferred execution backend prerequisites such as `docker`, `daytona`, or `ssh` when backend-backed execution is configured
+- checks preferred execution backend prerequisites such as `docker`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
 - warns when a required service has no healthcheck, because readiness cannot be verified

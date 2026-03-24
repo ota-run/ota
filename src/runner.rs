@@ -517,6 +517,8 @@ fn execute_remote_task_command(
     let mut remote_command = match provider {
         "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
         "ssh" => ssh_remote_command(target, cwd, command, env_overrides),
+        "tsh" => tsh_remote_command(target, cwd, command, env_overrides),
+        "kubectl" => kubectl_remote_command(target, cwd, command, env_overrides),
         other => {
             return Err(RunError::UnsupportedRemoteProvider {
                 task: task_name.to_string(),
@@ -598,6 +600,40 @@ fn ssh_remote_command(
     let mut remote = Command::new("ssh");
     remote
         .arg(target)
+        .arg("sh")
+        .arg("-lc")
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+    remote
+}
+
+fn tsh_remote_command(
+    target: &str,
+    cwd: Option<&str>,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Command {
+    let mut remote = Command::new("tsh");
+    remote
+        .arg("ssh")
+        .arg(target)
+        .arg("--")
+        .arg("sh")
+        .arg("-lc")
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+    remote
+}
+
+fn kubectl_remote_command(
+    target: &str,
+    cwd: Option<&str>,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+) -> Command {
+    let mut remote = Command::new("kubectl");
+    remote
+        .arg("exec")
+        .arg(target)
+        .arg("--")
         .arg("sh")
         .arg("-lc")
         .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
@@ -905,19 +941,17 @@ mod tests {
     use std::env;
     use std::fs;
     use std::path::Path;
-    use std::sync::Mutex;
 
     use tempfile::TempDir;
 
     use crate::parser::parse_contract_str;
+    use crate::test_support::ENV_MUTEX;
 
     use super::{
         CapturedRunOutcome, ExecutionOverrides, RunError, clean_execution, plan_task_execution,
         resolve_task_env, run_task, run_task_captured, run_task_with_overrides,
         run_task_with_progress,
     };
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
@@ -1532,6 +1566,174 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn runs_tasks_in_tsh_remote_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let log_path = dir.path().join("tsh-log.txt");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let tsh_path = bin_dir.join("tsh");
+        install_fake_tsh(&tsh_path);
+        let mut permissions = fs::metadata(&tsh_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&tsh_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_TSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_TSH_LOG", &log_path);
+        }
+
+        let outcome = run_task(&contract, &file_path, "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_TSH_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_TSH_LOG");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_tasks_in_kubectl_remote_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("ota.yaml");
+        let log_path = dir.path().join("kubectl-log.txt");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: pod/ota-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+            dir.path().display()
+        );
+        fs::write(&file_path, contents.trim_start()).unwrap();
+        let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let kubectl_path = bin_dir.join("kubectl");
+        install_fake_kubectl(&kubectl_path);
+        let mut permissions = fs::metadata(&kubectl_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&kubectl_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_KUBECTL_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_KUBECTL_LOG", &log_path);
+        }
+
+        let outcome = run_task(&contract, &file_path, "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_KUBECTL_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_KUBECTL_LOG");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec pod/ota-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn cleans_persistent_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -1634,7 +1836,7 @@ case "$command" in
     host_dir=$(cat "$state_dir/$name.path")
     printf "exec\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
   run)
     detached=0
@@ -1680,7 +1882,7 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
   rm)
     shift
@@ -1721,7 +1923,7 @@ case "$command" in
     [ -n "$cwd" ] || exit 1
     printf "exec %s\n" "$target" >> "$cwd/daytona-log.txt"
     cd "$cwd" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
 esac
 
@@ -1742,7 +1944,49 @@ shift
 [ "$1" = "-lc" ] || exit 1
 shift
 printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
-exec sh -lc "$1"
+exec /bin/sh -lc "$1"
+"#,
+        )
+        .unwrap();
+    }
+
+    fn install_fake_tsh(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+[ "$1" = "ssh" ] || exit 1
+shift
+target="$1"
+shift
+[ "$1" = "--" ] || exit 1
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_TSH_LOG"
+exec /bin/sh -lc "$1"
+"#,
+        )
+        .unwrap();
+    }
+
+    fn install_fake_kubectl(path: &Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+[ "$1" = "exec" ] || exit 1
+shift
+target="$1"
+shift
+[ "$1" = "--" ] || exit 1
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_KUBECTL_LOG"
+exec /bin/sh -lc "$1"
 "#,
         )
         .unwrap();

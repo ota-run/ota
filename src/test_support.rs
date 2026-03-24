@@ -20,14 +20,6 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-pub mod cli;
-pub mod detector;
-pub mod doctor;
-pub mod output;
-pub mod parser;
-pub mod runner;
-pub mod schema;
-#[cfg(test)]
-pub mod test_support;
-pub mod validator;
-pub mod workspace;
+use std::sync::Mutex;
+
+pub static ENV_MUTEX: Mutex<()> = Mutex::new(());

@@ -476,6 +476,9 @@ mod tests {
     use serde_json::Value;
     use tempfile::TempDir;
 
+    #[cfg(unix)]
+    use crate::test_support::ENV_MUTEX;
+
     use super::run_with;
 
     #[cfg(unix)]
@@ -522,7 +525,7 @@ case "$command" in
     host_dir=$(cat "$state_dir/$name.path")
     printf "exec\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
   run)
     detached=0
@@ -568,7 +571,7 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
   rm)
     shift
@@ -610,7 +613,7 @@ case "$command" in
     [ -n "$cwd" ] || exit 1
     printf "exec %s\n" "$target" >> "$cwd/daytona-log.txt"
     cd "$cwd" || exit 1
-    exec sh -lc "$3"
+    exec /bin/sh -lc "$3"
     ;;
 esac
 
@@ -632,7 +635,51 @@ shift
 [ "$1" = "-lc" ] || exit 1
 shift
 printf "exec %s\n" "$target" >> "$OTA_SSH_LOG"
-exec sh -lc "$1"
+exec /bin/sh -lc "$1"
+"#,
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn install_fake_tsh(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+[ "$1" = "ssh" ] || exit 1
+shift
+target="$1"
+shift
+[ "$1" = "--" ] || exit 1
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_TSH_LOG"
+exec /bin/sh -lc "$1"
+"#,
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn install_fake_kubectl(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+[ "$1" = "exec" ] || exit 1
+shift
+target="$1"
+shift
+[ "$1" = "--" ] || exit 1
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+printf "exec %s\n" "$target" >> "$OTA_KUBECTL_LOG"
+exec /bin/sh -lc "$1"
 "#,
         )
         .unwrap();
@@ -1662,6 +1709,7 @@ project:
     #[cfg(unix)]
     #[test]
     fn clean_reports_persistent_container_cleanup() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -1843,6 +1891,7 @@ project:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_ephemeral_container_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -1915,6 +1964,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_ssh_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -1999,7 +2049,180 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn up_runs_setup_in_tsh_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let tsh_path = bin_dir.join("tsh");
+        install_fake_tsh(&tsh_path);
+        let log_path = fixture.dir.path().join("tsh-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&tsh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&tsh_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_TSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_TSH_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_TSH_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_TSH_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn up_runs_setup_in_kubectl_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: pod/ota-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let kubectl_path = bin_dir.join("kubectl");
+        install_fake_kubectl(&kubectl_path);
+        let log_path = fixture.dir.path().join("kubectl-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&kubectl_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&kubectl_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_KUBECTL_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_KUBECTL_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_KUBECTL_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_KUBECTL_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("READY"));
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec pod/ota-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn up_overrides_native_contract_to_use_ephemeral_container_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -2079,6 +2302,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_daytona_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -2152,6 +2376,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_ssh_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -2235,7 +2460,178 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_uses_tsh_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let tsh_path = bin_dir.join("tsh");
+        install_fake_tsh(&tsh_path);
+        let log_path = fixture.dir.path().join("tsh-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&tsh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&tsh_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_TSH_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_TSH_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_TSH_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_TSH_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_uses_kubectl_remote_backend() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: pod/ota-dev
+      cwd: {}
+env:
+  OTA_REMOTE_ENV:
+    default: remote
+tasks:
+  setup:
+    run: printf "$OTA_REMOTE_ENV" > prepared.txt
+"#,
+                fixture.path()
+            ),
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let kubectl_path = bin_dir.join("kubectl");
+        install_fake_kubectl(&kubectl_path);
+        let log_path = fixture.dir.path().join("kubectl-log.txt");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&kubectl_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&kubectl_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_KUBECTL_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_KUBECTL_LOG", &log_path);
+        }
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_KUBECTL_LOG", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_KUBECTL_LOG");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "remote"
+        );
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec pod/ota-dev")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_remote_failure_preserves_child_exit_code() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -4483,6 +4879,68 @@ repos:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["repos"][0]["name"], "db");
         assert_eq!(json["repos"][1]["name"], "api");
+    }
+
+    #[test]
+    fn workspace_parallel_commands_preserve_dependency_order_in_json() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let doctor = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+        assert_eq!(doctor.exit_code, 0);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(doctor_json["repos"][0]["name"], "db");
+        assert_eq!(doctor_json["repos"][1]["name"], "api");
+
+        let check = run_with([
+            "ota",
+            "workspace",
+            "check",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+        assert_eq!(check.exit_code, 0);
+        let check_json: Value = serde_json::from_str(&check.stdout).unwrap();
+        assert_eq!(check_json["repos"][0]["name"], "db");
+        assert_eq!(check_json["repos"][1]["name"], "api");
+
+        let up = run_with([
+            "ota",
+            "workspace",
+            "up",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+        assert_eq!(up.exit_code, 0);
+        let up_json: Value = serde_json::from_str(&up.stdout).unwrap();
+        assert_eq!(up_json["repos"][0]["name"], "db");
+        assert_eq!(up_json["repos"][1]["name"], "api");
+
+        let run = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--json",
+            "--jobs",
+            "2",
+            fixture.path(),
+        ]);
+        assert_eq!(run.exit_code, 0);
+        let run_json: Value = serde_json::from_str(&run.stdout).unwrap();
+        assert_eq!(run_json["repos"][0]["name"], "db");
+        assert_eq!(run_json["repos"][1]["name"], "api");
     }
 
     #[test]

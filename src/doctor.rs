@@ -182,15 +182,17 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
             let cli = match provider {
                 "daytona" => "daytona",
                 "ssh" => "ssh",
+                "tsh" => "tsh",
+                "kubectl" => "kubectl",
                 other => {
                     findings.push(Finding {
                         severity: FindingSeverity::Error,
                         summary: format!("Unsupported remote execution backend provider: {other}"),
                         why: format!(
-                            "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports `daytona` and `ssh`"
+                            "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports `daytona`, `ssh`, `tsh`, and `kubectl`"
                         ),
                         next: String::from(
-                            "change `execution.backends.remote.provider` to `daytona` or `ssh`",
+                            "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`",
                         ),
                     });
                     return;
@@ -621,16 +623,14 @@ fn shell_command(command: &str) -> Command {
 mod tests {
     use std::env;
     use std::path::Path;
-    use std::sync::Mutex;
 
     use crate::parser::parse_contract_str;
+    use crate::test_support::ENV_MUTEX;
 
     use super::{
         FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
         version_matches,
     };
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
@@ -814,6 +814,100 @@ tasks:
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Missing execution backend CLI: ssh")
+        );
+    }
+
+    #[test]
+    fn reports_missing_tsh_remote_backend_cli() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "/definitely-not-a-real-bin");
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: tsh
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing execution backend CLI: tsh")
+        );
+    }
+
+    #[test]
+    fn reports_missing_kubectl_remote_backend_cli() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "/definitely-not-a-real-bin");
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: kubectl
+      target: pod/ota-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing execution backend CLI: kubectl")
         );
     }
 
