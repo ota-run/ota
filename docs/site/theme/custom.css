@@ -101,7 +101,8 @@
 html,
 body {
   font-family: "Fira Code", "IBM Plex Sans", "Avenir Next", "Segoe UI", monospace;
-  font-size: 17px;
+  font-size: 19px;
+  font-weight: 500;
 }
 
 .content {
@@ -111,7 +112,7 @@ body {
 .content main {
   line-height: 1.78;
   letter-spacing: 0.01em;
-  font-size: 1.03rem;
+  font-size: 1.1rem;
 }
 
 .content h1,
@@ -123,15 +124,20 @@ body {
 }
 
 .content h1 {
-  font-size: clamp(2rem, 4vw, 2.75rem);
+  font-size: clamp(2.25rem, 4.2vw, 3rem);
   margin-top: 0.4rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.15rem;
 }
 
 .content h2 {
+  font-size: 1.55rem;
   margin-top: 2.1rem;
-  padding-top: 0.5rem;
+  padding-top: 0.6rem;
   border-top: 1px solid var(--table-border-color);
+}
+
+.content h3 {
+  font-size: 1.28rem;
 }
 
 .content p code,
@@ -140,7 +146,7 @@ body {
   border: 1px solid var(--table-border-color);
   border-radius: 6px;
   padding: 0.12em 0.38em;
-  font-size: 0.98em;
+  font-size: 1.02em;
 }
 
 .content pre code {
@@ -151,6 +157,7 @@ body {
   border: 1px solid var(--table-border-color);
   border-radius: 12px;
   box-shadow: 0 8px 28px rgba(9, 30, 66, 0.08);
+  font-size: 1rem;
 }
 
 .light .content pre {
@@ -162,7 +169,7 @@ body {
 }
 
 .content ul li {
-  margin: 0.32rem 0;
+  margin: 0.42rem 0;
 }
 
 .content img[alt="Ota Logo"] {
@@ -176,10 +183,10 @@ body {
 .chapter li a {
   border-radius: 8px;
   transition: background-color 140ms ease, color 140ms ease;
-  font-size: 0.98rem;
-  line-height: 1.45;
-  padding-top: 0.18rem;
-  padding-bottom: 0.18rem;
+  font-size: 1.06rem;
+  line-height: 1.5;
+  padding-top: 0.24rem;
+  padding-bottom: 0.24rem;
 }
 
 .chapter li a:hover {
@@ -195,16 +202,16 @@ body {
   font-family: "Fira Code", "Sora", "IBM Plex Sans", monospace;
   font-weight: 700;
   letter-spacing: 0.01em;
-  font-size: 1.02rem;
+  font-size: 1.14rem;
 }
 
 .sidebar,
 .sidebar-scrollbox {
-  font-size: 0.99rem;
+  font-size: 1.07rem;
 }
 
 #searchbar {
-  font-size: 0.96rem;
+  font-size: 1.02rem;
 }
 
 .content pre,
