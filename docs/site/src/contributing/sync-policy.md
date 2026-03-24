@@ -41,4 +41,3 @@ Drift prevention:
 - do not duplicate long field-by-field tables in site pages unless necessary
 - use summary + canonical link when details are already maintained in spec docs
 - treat stale examples as bugs and fix them in the same change that detects drift
-

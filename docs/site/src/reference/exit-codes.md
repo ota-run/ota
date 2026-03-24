@@ -36,4 +36,3 @@ For full command-by-command semantics, use the canonical reference in:
 
 - `docs/spec/exit-codes.md` in the repository
 - <https://github.com/ota-run/ota/blob/main/docs/spec/exit-codes.md>
-

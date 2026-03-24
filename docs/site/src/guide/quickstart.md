@@ -30,7 +30,7 @@
 ota --version
 ```
 
-2. In a repository with `ota.yaml`:
+1. In a repository with `ota.yaml`:
 
 ```bash
 ota validate
@@ -39,20 +39,20 @@ ota doctor
 ota up
 ```
 
-3. Run a task:
+1. Run a task:
 
 ```bash
 ota run test
 ```
 
-4. If you do not have a contract yet:
+1. If you do not have a contract yet:
 
 ```bash
 ota init
 ota detect --dry-run /path/to/repo
 ```
 
-5. Write only after review:
+1. Write only after review:
 
 ```bash
 ota detect /path/to/repo

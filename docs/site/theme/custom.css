@@ -1,0 +1,190 @@
+/*
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+*/
+
+:root {
+  --ota-accent: #0f766e;
+  --ota-accent-soft: #14b8a6;
+  --ota-ink: #0b1728;
+  --ota-surface: #f7fafc;
+  --ota-card-border: #dce6f0;
+}
+
+.light {
+  --bg: linear-gradient(180deg, #f4f8fb 0%, #f9fbfd 30%, #ffffff 100%);
+  --fg: var(--ota-ink);
+  --sidebar-bg: #edf3f8;
+  --sidebar-fg: #213044;
+  --sidebar-non-existant: #63748b;
+  --sidebar-active: var(--ota-accent);
+  --sidebar-spacer: #ced9e5;
+  --scrollbar: #bcc9d9;
+  --searchresults-header-fg: #2f3f53;
+  --searchresults-border-color: #d4dfeb;
+  --searchbar-bg: #ffffff;
+  --searchbar-fg: #10233b;
+  --searchbar-shadow-color: rgba(9, 30, 66, 0.08);
+  --searchresults-bg: #ffffff;
+  --searchresults-fg: #122131;
+  --searchresults-li-bg: #f8fbff;
+  --search-mark-bg: #fff2a9;
+  --links: #0f6c9a;
+  --inline-code-color: #0f1f35;
+  --theme-popup-bg: #ffffff;
+  --theme-popup-border: #d4dfeb;
+  --theme-hover: #f3f7fc;
+  --quote-bg: #f2f7fb;
+  --quote-border: #8ecae6;
+  --table-border-color: #d6e1ec;
+  --table-header-bg: #eff5fb;
+  --table-alternate-bg: #f8fbfe;
+  --code-bg: #eff4fa;
+  --code-hl-bg: #e5edf8;
+  --warning-border: #b7791f;
+}
+
+.navy {
+  --bg: linear-gradient(180deg, #0b1525 0%, #0f1b31 45%, #111f38 100%);
+  --fg: #deebfa;
+  --sidebar-bg: #0a1628;
+  --sidebar-fg: #c8d9ef;
+  --sidebar-non-existant: #7c93b2;
+  --sidebar-active: #39d2c0;
+  --sidebar-spacer: #223750;
+  --scrollbar: #395172;
+  --searchresults-header-fg: #b8cee9;
+  --searchresults-border-color: #2a4060;
+  --searchbar-bg: #0f223b;
+  --searchbar-fg: #deebfa;
+  --searchbar-shadow-color: rgba(0, 0, 0, 0.4);
+  --searchresults-bg: #0f223b;
+  --searchresults-fg: #deebfa;
+  --searchresults-li-bg: #183452;
+  --search-mark-bg: #7f5f1d;
+  --links: #59c7ff;
+  --inline-code-color: #d9edff;
+  --theme-popup-bg: #10243f;
+  --theme-popup-border: #2a4060;
+  --theme-hover: #173553;
+  --quote-bg: #13263f;
+  --quote-border: #39d2c0;
+  --table-border-color: #2b4161;
+  --table-header-bg: #142b47;
+  --table-alternate-bg: #12263f;
+  --code-bg: #142741;
+  --code-hl-bg: #1a3152;
+  --warning-border: #d9a441;
+}
+
+html,
+body {
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+}
+
+.content {
+  max-width: 980px;
+}
+
+.content main {
+  line-height: 1.72;
+  letter-spacing: 0.01em;
+}
+
+.content h1,
+.content h2,
+.content h3,
+.content h4 {
+  font-family: "Sora", "IBM Plex Sans", "Avenir Next", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.content h1 {
+  font-size: clamp(2rem, 4vw, 2.75rem);
+  margin-top: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.content h2 {
+  margin-top: 2.1rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--table-border-color);
+}
+
+.content p code,
+.content li code {
+  background: var(--code-bg);
+  border: 1px solid var(--table-border-color);
+  border-radius: 6px;
+  padding: 0.12em 0.38em;
+  font-size: 0.93em;
+}
+
+.content pre code {
+  border: none;
+}
+
+.content pre {
+  border: 1px solid var(--table-border-color);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(9, 30, 66, 0.08);
+}
+
+.light .content pre {
+  background: #f2f7fc;
+}
+
+.navy .content pre {
+  background: #0f233c;
+}
+
+.content ul li {
+  margin: 0.32rem 0;
+}
+
+.content img[alt="Ota Logo"] {
+  width: 88px;
+  height: 88px;
+  display: block;
+  margin: 0.4rem 0 1.2rem;
+  filter: drop-shadow(0 8px 20px rgba(15, 118, 110, 0.22));
+}
+
+.chapter li a {
+  border-radius: 8px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.chapter li a:hover {
+  background: var(--theme-hover);
+  text-decoration: none;
+}
+
+.right-buttons button {
+  border-radius: 8px;
+}
+
+.menu-title {
+  font-family: "Sora", "IBM Plex Sans", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}

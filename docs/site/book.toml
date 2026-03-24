@@ -29,3 +29,6 @@ src = "src"
 [output.html]
 git-repository-url = "https://github.com/ota-run/ota"
 edit-url-template = "https://github.com/ota-run/ota/edit/main/docs/site/{path}"
+additional-css = ["theme/custom.css"]
+default-theme = "light"
+preferred-dark-theme = "navy"
