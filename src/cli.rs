@@ -1191,7 +1191,7 @@ tasks:
         assert!(output.stdout.contains("[member api]"));
         assert!(output.stdout.contains("setup"));
         assert!(output.stdout.contains("test"));
-        assert!(output.stdout.contains("\n---\n"));
+        assert!(output.stdout.contains("\n\n"));
     }
 
     #[test]
@@ -1585,7 +1585,7 @@ env:
                 .stdout
                 .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
         );
-        assert!(output.stdout.contains("\n---\n"));
+        assert!(output.stdout.contains("\n\n"));
     }
 
     #[test]
@@ -1752,7 +1752,7 @@ env:
                 .stdout
                 .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
         );
-        assert!(output.stdout.contains("\n---\n"));
+        assert!(output.stdout.contains("\n\n"));
     }
 
     #[test]
@@ -1934,7 +1934,7 @@ project:
             "NO CLEANUP NEEDED {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("\n---\n"));
+        assert!(output.stdout.contains("\n\n"));
     }
 
     #[test]
@@ -3202,7 +3202,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(normalized.starts_with("🦦  TASKS "));
-        assert!(normalized.contains("/ota.yaml\n---\n✦ build"));
+        assert!(normalized.contains("/ota.yaml\n\n✦ build"));
         assert!(normalized.contains("\n✦ build"));
         assert!(normalized.contains("\n✦ dev"));
         assert!(!normalized.contains("- Task:"));
@@ -3229,7 +3229,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("🦦  TASKS "));
-        assert!(output.stdout.contains("\n---\n✦ dev `ota run dev`"));
+        assert!(output.stdout.contains("\n\n✦ dev `ota run dev`"));
         assert!(output.stdout.contains("\n✦ start `ota run start`"));
         assert!(output.stdout.contains("\n✦ typecheck `ota run typecheck`"));
         assert!(!output.stdout.contains("Command Preview:"));
@@ -4090,7 +4090,7 @@ checks:
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("NOT READY"));
         assert!(output.stdout.contains("Check failed: api-health"));
-        assert!(output.stdout.contains("\n---\n"));
+        assert!(output.stdout.contains("\n\n"));
     }
 
     #[test]
