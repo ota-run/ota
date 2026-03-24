@@ -101,7 +101,7 @@
 html,
 body {
   font-family: "Fira Code", "IBM Plex Sans", "Avenir Next", "Segoe UI", monospace;
-  font-size: 19px;
+  font-size: 21px !important;
   font-weight: 500;
 }
 
@@ -112,7 +112,14 @@ body {
 .content main {
   line-height: 1.78;
   letter-spacing: 0.01em;
-  font-size: 1.1rem;
+  font-size: 1.18rem !important;
+}
+
+.content p,
+.content li,
+.content td,
+.content th {
+  font-size: 1.12rem !important;
 }
 
 .content h1,
@@ -130,14 +137,14 @@ body {
 }
 
 .content h2 {
-  font-size: 1.55rem;
+  font-size: 1.72rem;
   margin-top: 2.1rem;
   padding-top: 0.6rem;
   border-top: 1px solid var(--table-border-color);
 }
 
 .content h3 {
-  font-size: 1.28rem;
+  font-size: 1.42rem;
 }
 
 .content p code,
@@ -157,7 +164,7 @@ body {
   border: 1px solid var(--table-border-color);
   border-radius: 12px;
   box-shadow: 0 8px 28px rgba(9, 30, 66, 0.08);
-  font-size: 1rem;
+  font-size: 1.06rem !important;
 }
 
 .light .content pre {
@@ -183,10 +190,10 @@ body {
 .chapter li a {
   border-radius: 8px;
   transition: background-color 140ms ease, color 140ms ease;
-  font-size: 1.06rem;
+  font-size: 1.14rem !important;
   line-height: 1.5;
-  padding-top: 0.24rem;
-  padding-bottom: 0.24rem;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
 }
 
 .chapter li a:hover {
@@ -202,16 +209,16 @@ body {
   font-family: "Fira Code", "Sora", "IBM Plex Sans", monospace;
   font-weight: 700;
   letter-spacing: 0.01em;
-  font-size: 1.14rem;
+  font-size: 1.22rem !important;
 }
 
 .sidebar,
 .sidebar-scrollbox {
-  font-size: 1.07rem;
+  font-size: 1.14rem !important;
 }
 
 #searchbar {
-  font-size: 1.02rem;
+  font-size: 1.08rem !important;
 }
 
 .content pre,
