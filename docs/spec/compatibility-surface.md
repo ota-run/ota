@@ -64,9 +64,44 @@ For each command above, V4 must preserve:
 ## Baseline tests that must remain green
 
 - parser/validator semantic tests
-- command JSON stability tests in `src/cli.rs`
+- command compatibility lock tests in `src/cli.rs`:
+- `repo_commands_json_success_contract_is_stable`
+- `repo_commands_json_validation_failure_contract_is_stable`
+- `repo_commands_text_status_contract_is_stable`
+- `doctor_not_ready_text_status_contract_is_stable`
+- `repo_commands_exit_code_contract_is_stable`
+- `workspace_commands_json_success_contract_is_stable`
+- `workspace_commands_json_validation_failure_contract_is_stable`
+- `workspace_doctor_text_status_contract_is_stable`
+- `workspace_up_text_status_contract_is_stable`
+- `workspace_commands_exit_code_contract_is_stable`
+- `monorepo_member_json_contract_is_stable`
+- `monorepo_member_text_status_contract_is_stable`
+- `monorepo_member_exit_code_contract_is_stable`
 - monorepo and workspace command behavior tests in `src/cli.rs`
 - detector confidence/provenance tests in `src/detector.rs`
+
+## Fast compatibility gate
+
+Run this before merging behavior changes in V4:
+
+```bash
+./scripts/test-compat.sh
+```
+
+The repository contract also exposes this as a task:
+
+```bash
+ota run compat
+```
+
+Equivalent expanded command set:
+
+```bash
+cargo test contract_is_stable
+cargo test --test json_schema_contracts
+cargo test --test detect_fixtures
+```
 
 ## V4 change rule
 

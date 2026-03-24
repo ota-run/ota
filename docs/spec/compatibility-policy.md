@@ -14,6 +14,7 @@ Current V1 policy is strict:
 
 - unknown keys fail parsing
 - there is no warning-only unknown-key mode in the current implementation
+- this currently includes top-level `extensions` until V6 extension-contract slices are active
 
 This favors contract clarity over permissive parsing.
 

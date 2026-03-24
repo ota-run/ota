@@ -34,6 +34,8 @@ For service behavior across commands, see [service-behavior.md](service-behavior
 For platform shell behavior, see [shell-semantics.md](shell-semantics.md).
 For text rendering and plain-mode behavior, see [output-style.md](output-style.md).
 For visual identity tokens and CLI/docs branding, see [brand-style.md](brand-style.md).
+For compatibility boundaries in the active version, see [compatibility-surface.md](compatibility-surface.md).
+For extension execution staging, see [extension-execution-boundary.md](extension-execution-boundary.md).
 
 ## Global
 
@@ -393,6 +395,7 @@ JSON output:
 - `task` when a task failure occurs
 - `exit_code` when a child command failure occurs
 - monorepo root and repeated `--member` summaries include grouped per-member results in `members`
+- contract load/validation failures return the same failure envelope as `ota validate --json` (`ok`, `path`, and either `errors` or `error`)
 
 ## `ota clean`
 

@@ -133,6 +133,10 @@ Root monorepo summary output can also include grouped member results:
 }
 ```
 
+Finding objects may include additive policy context keys when policy-aware diagnosis is surfaced:
+`policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
+These keys are optional and backward-compatible.
+
 Root monorepo summary output can also include grouped member findings under `members`.
 
 Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious
@@ -329,6 +333,11 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 ## `ota up --json`
 
+`ota up --json` has two failure classes:
+
+- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, `findings`, optional `service`/`task`/`exit_code`)
+- contract load/validation failed before the `up` pipeline: returns `ValidateFailure` shape (`ok`, `path`, and either `errors` or `error`)
+
 ```json
 {
   "ok": true,
@@ -357,6 +366,18 @@ Example service-start failure:
   "findings": [],
   "service": "postgres",
   "exit_code": 9
+}
+```
+
+Example contract-validation failure (before `up` execution starts):
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "errors": [
+    "tasks.build.run must not be empty"
+  ]
 }
 ```
 

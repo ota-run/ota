@@ -72,6 +72,18 @@ fn detect_schema_includes_comparison_preview() {
 }
 
 #[test]
+fn shared_finding_schema_includes_optional_policy_context() {
+    let schema = load_schema("docs/spec/json-schemas/shared.json");
+    let finding = &schema["$defs"]["finding"]["properties"];
+
+    assert!(finding.get("policy_outcome").is_some());
+    assert!(finding.get("policy_reason").is_some());
+    assert!(finding.get("policy_source").is_some());
+    assert!(finding.get("install_scope").is_some());
+    assert!(finding.get("mutation_allowed").is_some());
+}
+
+#[test]
 fn init_schema_includes_optional_next_on_failures() {
     let schema = load_schema("docs/spec/json-schemas/init.json");
     let failure = &schema["oneOf"][1]["properties"];
@@ -152,11 +164,15 @@ fn check_schema_includes_member_grouping() {
 #[test]
 fn up_schema_includes_member_grouping() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
-    let properties = &schema["properties"];
-    let member_properties = &properties["members"]["items"]["properties"];
+    let runtime_properties = &schema["oneOf"][0]["properties"];
+    let member_properties = &runtime_properties["members"]["items"]["properties"];
+    let validate_failure_ref = schema["oneOf"][1]["$ref"]
+        .as_str()
+        .expect("up schema should include validate failure shape");
 
-    assert!(properties.get("members").is_some());
+    assert!(runtime_properties.get("members").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("status").is_some());
     assert!(member_properties.get("phase").is_some());
+    assert_eq!(validate_failure_ref, "./validate.json#/oneOf/1");
 }
