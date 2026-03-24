@@ -2722,6 +2722,45 @@ pub fn workspace_doctor(
     finalize_debug(
         match load_and_diagnose_workspace(&resolved_path, jobs) {
             Ok(report) => {
+                if let Some(target_repo) = filters.repo.as_deref() {
+                    let known_repos = report
+                        .repos
+                        .iter()
+                        .map(|repo| repo.name.as_str())
+                        .collect::<Vec<_>>();
+                    if !known_repos.iter().any(|name| *name == target_repo) {
+                        let known_list = if known_repos.is_empty() {
+                            String::from("none")
+                        } else {
+                            known_repos.join(", ")
+                        };
+                        let suggested = known_repos
+                            .first()
+                            .map(|name| format!("ota workspace doctor --repo {name}"))
+                            .unwrap_or_else(|| String::from("ota workspace doctor"));
+                        let error = format!(
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\n  Known repos: {known_list}\n{} `{suggested}`",
+                            render_severity(FindingSeverity::Error),
+                            paint("Workspace doctor filter failed", "1;37"),
+                            paint_key("Where:"),
+                            paint_code(&compact_path_display),
+                            paint_key("Why:"),
+                            paint_key("Next:")
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: Vec::new(),
+                                    error: Some(error),
+                                }))
+                            }
+                        };
+                    }
+                }
+
                 let report = apply_workspace_doctor_filters(report, &filters);
                 match format {
                     OutputFormat::Text => {
