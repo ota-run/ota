@@ -3105,7 +3105,7 @@ fn render_workspace_doctor_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "{}\n{}",
+        "{}\n\n{}",
         format_command_header("WORKSPACE DOCTOR", path),
         render_readiness_status(report.ok)
     );
@@ -3181,7 +3181,7 @@ fn render_workspace_check_text(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
     let mut stdout = format!(
-        "{}\n{}",
+        "{}\n\n{}",
         format_command_header("WORKSPACE CHECK", path),
         render_readiness_status(report.ok)
     );
@@ -3273,7 +3273,7 @@ fn render_report_section(
     report: &DoctorReport,
 ) -> String {
     let mut stdout = format!(
-        "{}\n{}",
+        "{}\n\n{}",
         format_command_header(command, path),
         render_readiness_status(report.ok)
     );
@@ -3632,9 +3632,9 @@ fn render_up_section_from_parts(
     exit_code: Option<i32>,
 ) -> String {
     let mut stdout = format!(
-        "{}\n{}\n{} {phase}",
+        "{}\n\n{}\n{} {phase}",
         format_command_header("UP", path),
-        status,
+        render_status_line(status),
         paint_key("Phase:")
     );
     if let Some(service) = service {
@@ -3711,7 +3711,7 @@ fn render_workspace_up(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "{}\n{}",
+                "{}\n\n{}",
                 format_command_header("WORKSPACE UP", path),
                 render_readiness_status(report.ok)
             );
@@ -3821,7 +3821,7 @@ fn render_workspace_run(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "{}\n{}",
+                "{}\n\n{}",
                 format_command_header("WORKSPACE RUN", &format!("{task} {path}")),
                 render_readiness_status(report.ok)
             );
@@ -3909,7 +3909,7 @@ fn render_workspace_run(
 
 fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
     let mut stdout = format!(
-        "{}\n{}",
+        "{}\n\n{}",
         format_command_header("WORKSPACE TASKS", path),
         render_readiness_status(true)
     );
@@ -4119,6 +4119,14 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!("{} {}", paint("◉", "1;93"), paint("NOT READY", "1;93"))
         }
+    }
+}
+
+fn render_status_line(status: &str) -> String {
+    match status {
+        "READY" => render_readiness_status(true),
+        "NOT READY" => render_readiness_status(false),
+        other => other.to_string(),
     }
 }
 
