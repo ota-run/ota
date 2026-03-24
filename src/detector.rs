@@ -210,6 +210,31 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_build_sbt(&root, &mut builder)?;
     detect_package_swift(&root, &mut builder)?;
     detect_pubspec_yaml(&root, &mut builder)?;
+    detect_cmake(&root, &mut builder)?;
+    detect_makefile(&root, &mut builder)?;
+    detect_clojure_markers(&root, &mut builder)?;
+    detect_haskell_markers(&root, &mut builder)?;
+    detect_lua_markers(&root, &mut builder)?;
+    detect_julia_markers(&root, &mut builder)?;
+    detect_r_markers(&root, &mut builder)?;
+    detect_ocaml_markers(&root, &mut builder)?;
+    detect_nim_markers(&root, &mut builder)?;
+    detect_erlang_markers(&root, &mut builder)?;
+    detect_zig_markers(&root, &mut builder)?;
+    detect_d_markers(&root, &mut builder)?;
+    detect_fortran_markers(&root, &mut builder)?;
+    detect_crystal_markers(&root, &mut builder)?;
+    detect_elm_markers(&root, &mut builder)?;
+    detect_perl_markers(&root, &mut builder)?;
+    detect_haxe_markers(&root, &mut builder)?;
+    detect_gleam_markers(&root, &mut builder)?;
+    detect_v_markers(&root, &mut builder)?;
+    detect_ada_markers(&root, &mut builder)?;
+    detect_foundry_markers(&root, &mut builder)?;
+    detect_kotlin_markers(&root, &mut builder)?;
+    detect_fsharp_markers(&root, &mut builder)?;
+    detect_tcl_markers(&root, &mut builder)?;
+    detect_racket_markers(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -1403,6 +1428,1224 @@ fn detect_pubspec_yaml(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     Ok(())
 }
 
+fn detect_cmake(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("CMakeLists.txt");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "cmake".to_string(),
+        "*".to_string(),
+        "CMakeLists.txt".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = extract_cmake_project_name(&contents) {
+        builder.set_project_name(
+            name,
+            "CMakeLists.txt#project".to_string(),
+            Confidence::High,
+        );
+    }
+    if let Some(version) = extract_cmake_standard(&contents, "CMAKE_C_STANDARD") {
+        builder.set_runtime(
+            "c".to_string(),
+            version,
+            "CMakeLists.txt#CMAKE_C_STANDARD".to_string(),
+            Confidence::Medium,
+        );
+    }
+    if let Some(version) = extract_cmake_standard(&contents, "CMAKE_CXX_STANDARD") {
+        builder.set_runtime(
+            "cpp".to_string(),
+            version,
+            "CMakeLists.txt#CMAKE_CXX_STANDARD".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "cmake -S . -B build && cmake --build build".to_string(),
+        "CMakeLists.txt".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "ctest --test-dir build".to_string(),
+        "CMakeLists.txt".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_makefile(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let source = ["Makefile", "GNUmakefile", "makefile"]
+        .into_iter()
+        .find(|name| root.join(name).exists());
+    let Some(source) = source else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "make".to_string(),
+        "*".to_string(),
+        source.to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "build".to_string(),
+        "make".to_string(),
+        source.to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "make test".to_string(),
+        source.to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_clojure_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let project_path = root.join("project.clj");
+    if project_path.exists() {
+        let contents = read_file(&project_path)?;
+        builder.set_tool(
+            "leiningen".to_string(),
+            "*".to_string(),
+            "project.clj".to_string(),
+            Confidence::High,
+        );
+        if let Some(name) = extract_clojure_defproject_name(&contents) {
+            builder.set_project_name(name, "project.clj#defproject".to_string(), Confidence::High);
+        }
+        builder.set_task(
+            "build".to_string(),
+            "lein uberjar".to_string(),
+            "project.clj".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "lein test".to_string(),
+            "project.clj".to_string(),
+            Confidence::High,
+        );
+    }
+
+    let deps_path = root.join("deps.edn");
+    if deps_path.exists() {
+        builder.set_tool(
+            "clojure".to_string(),
+            "*".to_string(),
+            "deps.edn".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "clojure -T:test".to_string(),
+            "deps.edn".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_haskell_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    if root.join("stack.yaml").exists() {
+        builder.set_tool(
+            "stack".to_string(),
+            "*".to_string(),
+            "stack.yaml".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "build".to_string(),
+            "stack build".to_string(),
+            "stack.yaml".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "stack test".to_string(),
+            "stack.yaml".to_string(),
+            Confidence::High,
+        );
+    }
+
+    let mut cabal_name = None;
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cabal"))
+        {
+            cabal_name = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string);
+            break;
+        }
+    }
+
+    if let Some(name) = cabal_name {
+        builder.set_project_name(name, "cabal-file".to_string(), Confidence::High);
+        builder.set_tool(
+            "cabal".to_string(),
+            "*".to_string(),
+            "cabal-file".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "build".to_string(),
+            "cabal build".to_string(),
+            "cabal-file".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "cabal test".to_string(),
+            "cabal-file".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_lua_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let mut rockspec_name = None;
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("rockspec"))
+        {
+            rockspec_name = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(ToString::to_string);
+            break;
+        }
+    }
+
+    let Some(name) = rockspec_name else {
+        return Ok(());
+    };
+
+    builder.set_project_name(name, "rockspec".to_string(), Confidence::High);
+    builder.set_tool(
+        "luarocks".to_string(),
+        "*".to_string(),
+        "rockspec".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "build".to_string(),
+        "luarocks make".to_string(),
+        "rockspec".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "luarocks test".to_string(),
+        "rockspec".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_julia_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("Project.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "julia".to_string(),
+        "*".to_string(),
+        "Project.toml".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = document.get("name").and_then(TomlValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name.trim().to_string(), "Project.toml#name".to_string(), Confidence::High);
+    }
+    if let Some(version) = document
+        .get("compat")
+        .and_then(|compat| compat.get("julia"))
+        .and_then(TomlValue::as_str)
+        && !version.trim().is_empty()
+    {
+        builder.set_runtime(
+            "julia".to_string(),
+            version.trim().to_string(),
+            "Project.toml#compat.julia".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "julia --project=. -e 'using Pkg; Pkg.build()'".to_string(),
+        "Project.toml".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "julia --project=. -e 'using Pkg; Pkg.test()'".to_string(),
+        "Project.toml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_r_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("DESCRIPTION");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "r".to_string(),
+        "*".to_string(),
+        "DESCRIPTION".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = extract_dcf_value(&contents, "Package")
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name.trim().to_string(), "DESCRIPTION#Package".to_string(), Confidence::High);
+    }
+    if let Some(depends) = extract_dcf_value(&contents, "Depends")
+        && let Some(version) = extract_r_depends_version(&depends)
+    {
+        builder.set_runtime(
+            "r".to_string(),
+            version,
+            "DESCRIPTION#Depends.R".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "R CMD build .".to_string(),
+        "DESCRIPTION".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "check".to_string(),
+        "R CMD check .".to_string(),
+        "DESCRIPTION".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_ocaml_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let dune_path = root.join("dune-project");
+    let opam_file = find_extension_file(root, "opam")?;
+    let ocaml_version_path = root.join(".ocaml-version");
+
+    if !dune_path.exists() && opam_file.is_none() && !ocaml_version_path.exists() {
+        return Ok(());
+    }
+
+    if dune_path.exists() {
+        let contents = read_file(&dune_path)?;
+        builder.set_tool(
+            "dune".to_string(),
+            "*".to_string(),
+            "dune-project".to_string(),
+            Confidence::High,
+        );
+        if let Some(name) = extract_dune_project_name(&contents)
+            && !name.trim().is_empty()
+        {
+            builder.set_project_name(
+                name.trim().to_string(),
+                "dune-project#name".to_string(),
+                Confidence::High,
+            );
+        }
+        builder.set_task(
+            "build".to_string(),
+            "dune build".to_string(),
+            "dune-project".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "dune runtest".to_string(),
+            "dune-project".to_string(),
+            Confidence::High,
+        );
+    }
+
+    if opam_file.is_some() {
+        builder.set_tool(
+            "opam".to_string(),
+            "*".to_string(),
+            "opam-file".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    if ocaml_version_path.exists() {
+        let version = read_file(&ocaml_version_path)?.trim().to_string();
+        if !version.is_empty() {
+            builder.set_runtime(
+                "ocaml".to_string(),
+                version,
+                ".ocaml-version".to_string(),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_nim_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let Some(path) = find_extension_file(root, "nimble")? else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "nimble".to_string(),
+        "*".to_string(),
+        "nimble-file".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = path.file_stem().and_then(|stem| stem.to_str())
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name.trim().to_string(), "nimble-file".to_string(), Confidence::High);
+    }
+
+    let contents = read_file(&path)?;
+    if let Some(version) = extract_nimble_requires_version(&contents) {
+        builder.set_runtime(
+            "nim".to_string(),
+            version,
+            "nimble-file#requires.nim".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "nimble build".to_string(),
+        "nimble-file".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "nimble test".to_string(),
+        "nimble-file".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_erlang_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("rebar.config");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "rebar3".to_string(),
+        "*".to_string(),
+        "rebar.config".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = extract_rebar_app_name(&contents)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "rebar.config#app".to_string(),
+            Confidence::High,
+        );
+    }
+    builder.set_task(
+        "build".to_string(),
+        "rebar3 compile".to_string(),
+        "rebar.config".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "rebar3 eunit".to_string(),
+        "rebar.config".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_zig_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("build.zig");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "zig".to_string(),
+        "*".to_string(),
+        "build.zig".to_string(),
+        Confidence::High,
+    );
+    if let Some(version) = extract_zig_build_api_version(&contents) {
+        builder.set_runtime(
+            "zig".to_string(),
+            version,
+            "build.zig#std.Build".to_string(),
+            Confidence::Medium,
+        );
+    }
+    builder.set_task(
+        "build".to_string(),
+        "zig build".to_string(),
+        "build.zig".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "zig build test".to_string(),
+        "build.zig".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_d_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let dub_json = root.join("dub.json");
+    let dub_sdl = root.join("dub.sdl");
+
+    if dub_json.exists() {
+        let contents = read_file(&dub_json)?;
+        let document: JsonValue =
+            serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+                path: dub_json.display().to_string(),
+                message: source.to_string(),
+            })?;
+
+        builder.set_tool(
+            "dub".to_string(),
+            "*".to_string(),
+            "dub.json".to_string(),
+            Confidence::High,
+        );
+        if let Some(name) = document.get("name").and_then(JsonValue::as_str)
+            && !name.trim().is_empty()
+        {
+            builder.set_project_name(
+                name.trim().to_string(),
+                "dub.json#name".to_string(),
+                Confidence::High,
+            );
+        }
+        builder.set_task(
+            "build".to_string(),
+            "dub build".to_string(),
+            "dub.json".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "dub test".to_string(),
+            "dub.json".to_string(),
+            Confidence::High,
+        );
+        return Ok(());
+    }
+
+    if dub_sdl.exists() {
+        let contents = read_file(&dub_sdl)?;
+        builder.set_tool(
+            "dub".to_string(),
+            "*".to_string(),
+            "dub.sdl".to_string(),
+            Confidence::High,
+        );
+        if let Some(name) = extract_dub_sdl_name(&contents)
+            && !name.trim().is_empty()
+        {
+            builder.set_project_name(
+                name.trim().to_string(),
+                "dub.sdl#name".to_string(),
+                Confidence::High,
+            );
+        }
+        builder.set_task(
+            "build".to_string(),
+            "dub build".to_string(),
+            "dub.sdl".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "dub test".to_string(),
+            "dub.sdl".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_fortran_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("fpm.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "fpm".to_string(),
+        "*".to_string(),
+        "fpm.toml".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = document
+        .get("project")
+        .and_then(|project| project.get("name"))
+        .and_then(TomlValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "fpm.toml#project.name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "fpm build".to_string(),
+        "fpm.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "fpm test".to_string(),
+        "fpm.toml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_crystal_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("shard.yml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let shard: YamlValue = serde_yaml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "crystal".to_string(),
+        "*".to_string(),
+        "shard.yml".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(name) = yaml_key_str(&shard, "name")
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "shard.yml#name".to_string(),
+            Confidence::High,
+        );
+    }
+    if let Some(version) = yaml_key_str(&shard, "crystal")
+        && !version.trim().is_empty()
+    {
+        builder.set_runtime(
+            "crystal".to_string(),
+            version.trim().to_string(),
+            "shard.yml#crystal".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "shards build".to_string(),
+        "shard.yml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "crystal spec".to_string(),
+        "shard.yml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_elm_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("elm.json");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let elm: JsonValue = serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "elm".to_string(),
+        "*".to_string(),
+        "elm.json".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = elm.get("name").and_then(JsonValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "elm.json#name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "elm make src/Main.elm".to_string(),
+        "elm.json".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "elm-test".to_string(),
+        "elm.json".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_perl_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let cpanfile = root.join("cpanfile");
+    if cpanfile.exists() {
+        builder.set_tool(
+            "cpanm".to_string(),
+            "*".to_string(),
+            "cpanfile".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "setup".to_string(),
+            "cpanm --installdeps .".to_string(),
+            "cpanfile".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "prove -lr t".to_string(),
+            "cpanfile".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    let makefile_pl = root.join("Makefile.PL");
+    if makefile_pl.exists() {
+        builder.set_tool(
+            "perl".to_string(),
+            "*".to_string(),
+            "Makefile.PL".to_string(),
+            Confidence::High,
+        );
+        if let Ok(contents) = read_file(&makefile_pl)
+            && let Some(name) = extract_makefile_pl_name(&contents)
+            && !name.trim().is_empty()
+        {
+            builder.set_project_name(
+                name.trim().to_string(),
+                "Makefile.PL#name".to_string(),
+                Confidence::Medium,
+            );
+        }
+        builder.set_task(
+            "build".to_string(),
+            "perl Makefile.PL && make".to_string(),
+            "Makefile.PL".to_string(),
+            Confidence::High,
+        );
+        builder.set_task(
+            "test".to_string(),
+            "make test".to_string(),
+            "Makefile.PL".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_haxe_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let Some(hxml) = find_extension_file(root, "hxml")? else {
+        return Ok(());
+    };
+
+    builder.set_tool(
+        "haxe".to_string(),
+        "*".to_string(),
+        "hxml".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = hxml.file_stem().and_then(|stem| stem.to_str())
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name.trim().to_string(), "hxml".to_string(), Confidence::Medium);
+        builder.set_task(
+            "build".to_string(),
+            format!("haxe {}.hxml", name.trim()),
+            "hxml".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_gleam_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("gleam.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "gleam".to_string(),
+        "*".to_string(),
+        "gleam.toml".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = document.get("name").and_then(TomlValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "gleam.toml#name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "gleam build".to_string(),
+        "gleam.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "gleam test".to_string(),
+        "gleam.toml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_v_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("v.mod");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    builder.set_tool(
+        "v".to_string(),
+        "*".to_string(),
+        "v.mod".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = extract_v_mod_name(&contents)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "v.mod#name".to_string(),
+            Confidence::High,
+        );
+    }
+    builder.set_task(
+        "build".to_string(),
+        "v .".to_string(),
+        "v.mod".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "v test .".to_string(),
+        "v.mod".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_ada_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("alire.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "alr".to_string(),
+        "*".to_string(),
+        "alire.toml".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = document
+        .get("project")
+        .and_then(|project| project.get("name"))
+        .and_then(TomlValue::as_str)
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(
+            name.trim().to_string(),
+            "alire.toml#project.name".to_string(),
+            Confidence::High,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "alr build".to_string(),
+        "alire.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "alr test".to_string(),
+        "alire.toml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_foundry_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("foundry.toml");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let document: TomlValue = toml::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "forge".to_string(),
+        "*".to_string(),
+        "foundry.toml".to_string(),
+        Confidence::High,
+    );
+    if let Some(version) = document
+        .get("profile")
+        .and_then(|profile| profile.get("default"))
+        .and_then(|default| default.get("solc_version"))
+        .and_then(TomlValue::as_str)
+        && !version.trim().is_empty()
+    {
+        builder.set_runtime(
+            "solidity".to_string(),
+            version.trim().to_string(),
+            "foundry.toml#profile.default.solc_version".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    builder.set_task(
+        "build".to_string(),
+        "forge build".to_string(),
+        "foundry.toml".to_string(),
+        Confidence::High,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "forge test".to_string(),
+        "foundry.toml".to_string(),
+        Confidence::High,
+    );
+
+    Ok(())
+}
+
+fn detect_kotlin_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("pom.xml");
+    if path.exists() {
+        let contents = read_file(&path)?;
+        if contents.contains("kotlin-maven-plugin")
+            || contents.contains("<kotlin.version>")
+            || contents.contains("org.jetbrains.kotlin")
+        {
+            builder.set_runtime(
+                "kotlin".to_string(),
+                extract_xml_tag(&contents, "kotlin.version").unwrap_or_else(|| "*".to_string()),
+                "pom.xml#kotlin.version".to_string(),
+                Confidence::Medium,
+            );
+        }
+    }
+
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("kts"))
+        {
+            builder.set_tool(
+                "kotlin".to_string(),
+                "*".to_string(),
+                "kotlin-script".to_string(),
+                Confidence::High,
+            );
+            if let Some(name) = path.file_stem().and_then(|stem| stem.to_str())
+                && !name.trim().is_empty()
+            {
+                builder.set_project_name(
+                    name.trim().to_string(),
+                    "kotlin-script".to_string(),
+                    Confidence::Medium,
+                );
+            }
+            let script = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("main.kts");
+            builder.set_task(
+                "run".to_string(),
+                format!("kotlin {script}"),
+                "kotlin-script".to_string(),
+                Confidence::High,
+            );
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_fsharp_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let mut has_fsharp = false;
+    let mut project_name = None;
+
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("fsproj"))
+        {
+            has_fsharp = true;
+            if project_name.is_none() {
+                project_name = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .map(ToString::to_string);
+            }
+        }
+    }
+
+    if !has_fsharp {
+        return Ok(());
+    }
+
+    builder.set_tool(
+        "dotnet".to_string(),
+        "*".to_string(),
+        "fsharp-project".to_string(),
+        Confidence::High,
+    );
+    if let Some(name) = project_name
+        && !name.trim().is_empty()
+    {
+        builder.set_project_name(name, "fsharp-project".to_string(), Confidence::Medium);
+    }
+    builder.set_runtime(
+        "fsharp".to_string(),
+        "*".to_string(),
+        "fsharp-project".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "build".to_string(),
+        "dotnet build".to_string(),
+        "fsharp-project".to_string(),
+        Confidence::Medium,
+    );
+    builder.set_task(
+        "test".to_string(),
+        "dotnet test".to_string(),
+        "fsharp-project".to_string(),
+        Confidence::Medium,
+    );
+
+    Ok(())
+}
+
+fn detect_tcl_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let tclapp = root.join("tclapp.tcl");
+    let pkg_index = root.join("pkgIndex.tcl");
+    if !tclapp.exists() && !pkg_index.exists() {
+        return Ok(());
+    }
+
+    builder.set_tool(
+        "tclsh".to_string(),
+        "*".to_string(),
+        if tclapp.exists() {
+            "tclapp.tcl".to_string()
+        } else {
+            "pkgIndex.tcl".to_string()
+        },
+        Confidence::High,
+    );
+    if tclapp.exists() {
+        builder.set_project_name(
+            "tclapp".to_string(),
+            "tclapp.tcl".to_string(),
+            Confidence::Low,
+        );
+        builder.set_task(
+            "run".to_string(),
+            "tclsh tclapp.tcl".to_string(),
+            "tclapp.tcl".to_string(),
+            Confidence::High,
+        );
+    }
+
+    Ok(())
+}
+
+fn detect_racket_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let info = root.join("info.rkt");
+    let main = root.join("main.rkt");
+    if !info.exists() && !main.exists() {
+        return Ok(());
+    }
+
+    builder.set_tool(
+        "racket".to_string(),
+        "*".to_string(),
+        if info.exists() {
+            "info.rkt".to_string()
+        } else {
+            "main.rkt".to_string()
+        },
+        Confidence::High,
+    );
+
+    if main.exists() {
+        builder.set_task(
+            "run".to_string(),
+            "racket main.rkt".to_string(),
+            "main.rkt".to_string(),
+            Confidence::High,
+        );
+    }
+    if info.exists() {
+        builder.set_task(
+            "test".to_string(),
+            "raco test .".to_string(),
+            "info.rkt".to_string(),
+            Confidence::Medium,
+        );
+    }
+
+    Ok(())
+}
+
 fn extract_ruby_gemfile_version(contents: &str) -> Option<String> {
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -1750,6 +2993,210 @@ fn extract_gradle_wrapper_version(contents: &str) -> Option<String> {
     })
 }
 
+fn extract_cmake_project_name(contents: &str) -> Option<String> {
+    let start = contents.find("project(")? + "project(".len();
+    let end = contents[start..].find(')')? + start;
+    let inside = contents[start..end].trim();
+    let first = inside.split_whitespace().next()?.trim_matches('"').trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.to_string())
+    }
+}
+
+fn extract_cmake_standard(contents: &str, key: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.contains(key) {
+            return None;
+        }
+        line.split(|ch: char| !ch.is_ascii_digit())
+            .find(|part| !part.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn extract_clojure_defproject_name(contents: &str) -> Option<String> {
+    let start = contents.find("(defproject ")? + "(defproject ".len();
+    let tail = contents[start..].trim_start();
+    let token = tail
+        .split(|ch: char| ch.is_whitespace() || ch == ')' || ch == '[' || ch == '(')
+        .next()?
+        .trim_matches('"')
+        .trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+fn extract_dcf_value(contents: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}:");
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        line.strip_prefix(&prefix).map(|value| value.trim().to_string())
+    })
+}
+
+fn extract_r_depends_version(depends: &str) -> Option<String> {
+    let start = depends.find("R (")?;
+    let after = &depends[start + 3..];
+    let end = after.find(')')?;
+    let token = after[..end].trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+fn extract_dune_project_name(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        let inside = line.strip_prefix("(name ")?.strip_suffix(')')?.trim();
+        if inside.is_empty() {
+            None
+        } else {
+            Some(inside.to_string())
+        }
+    })
+}
+
+fn extract_nimble_requires_version(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with("requires") || !line.contains("nim") {
+            return None;
+        }
+        let quote = if line.contains('"') { '"' } else { '\'' };
+        let start = line.find(quote)? + 1;
+        let end = line[start..].find(quote)? + start;
+        let value = line[start..end].trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn extract_rebar_app_name(contents: &str) -> Option<String> {
+    let start = contents.find("{app,")? + "{app,".len();
+    let rest = contents[start..].trim_start();
+    let end = rest.find('}')?;
+    let token = rest[..end]
+        .split(',')
+        .next()
+        .map(str::trim)?
+        .trim_start_matches('\'')
+        .trim_start_matches("<<")
+        .trim_end_matches(">>")
+        .trim_end_matches('\'')
+        .trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+fn extract_zig_build_api_version(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.contains("std.Build") {
+            return None;
+        }
+        let digits = line
+            .split(|ch: char| !ch.is_ascii_digit() && ch != '.')
+            .find(|part| part.contains('.') && part.chars().any(|ch| ch.is_ascii_digit()))?;
+        let digits = digits.trim_start_matches('.');
+        if digits.is_empty() {
+            None
+        } else {
+            Some(digits.to_string())
+        }
+    })
+}
+
+fn extract_dub_sdl_name(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with("name") {
+            return None;
+        }
+        let quote = if line.contains('"') { '"' } else { '\'' };
+        let start = line.find(quote)? + 1;
+        let end = line[start..].find(quote)? + start;
+        let value = line[start..end].trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn extract_makefile_pl_name(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.to_ascii_lowercase().contains("name") {
+            return None;
+        }
+        let quote = if line.contains('"') { '"' } else { '\'' };
+        let start = line.find(quote)? + 1;
+        let end = line[start..].find(quote)? + start;
+        let value = line[start..end].trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn extract_v_mod_name(contents: &str) -> Option<String> {
+    contents.lines().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with("name:") {
+            return None;
+        }
+        let value = line
+            .trim_start_matches("name:")
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
+    })
+}
+
+fn find_extension_file(root: &Path, extension: &str) -> Result<Option<PathBuf>, DetectError> {
+    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
+        path: root.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: root.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+        {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
 fn extract_xml_tag(contents: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -1967,12 +3414,33 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "pubspec.yaml#name" => 4,
             "build.sbt#name" => 4,
             "Package.swift#name" => 4,
+            "CMakeLists.txt#project" => 4,
+            "project.clj#defproject" => 4,
+            "Project.toml#name" => 4,
+            "DESCRIPTION#Package" => 4,
+            "dune-project#name" => 4,
+            "rebar.config#app" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
             "pom.xml#artifactId" => 3,
             "composer.json#name" => 3,
             "mix.exs#project.app" => 3,
+            "cabal-file" => 3,
+            "rockspec" => 3,
+            "nimble-file" => 3,
+            "dub.json#name" => 3,
+            "dub.sdl#name" => 3,
+            "fpm.toml#project.name" => 3,
+            "shard.yml#name" => 3,
+            "elm.json#name" => 3,
+            "Makefile.PL#name" => 3,
+            "gleam.toml#name" => 3,
+            "v.mod#name" => 3,
+            "alire.toml#project.name" => 3,
+            "fsharp-project" => 3,
             "dotnet-project" => 2,
             "go.mod#module" => 2,
+            "hxml" => 2,
+            "kotlin-script" => 2,
             "directory-name" => 1,
             _ => 0,
         },
@@ -2047,9 +3515,54 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "pubspec.yaml#environment.sdk" => 2,
             _ => 0,
         },
+        "runtimes.julia" => match source {
+            "Project.toml#compat.julia" => 2,
+            _ => 0,
+        },
+        "runtimes.r" => match source {
+            "DESCRIPTION#Depends.R" => 2,
+            _ => 0,
+        },
+        "runtimes.ocaml" => match source {
+            ".ocaml-version" => 2,
+            _ => 0,
+        },
+        "runtimes.nim" => match source {
+            "nimble-file#requires.nim" => 2,
+            _ => 0,
+        },
+        "runtimes.zig" => match source {
+            "build.zig#std.Build" => 2,
+            _ => 0,
+        },
+        "runtimes.crystal" => match source {
+            "shard.yml#crystal" => 2,
+            _ => 0,
+        },
+        "runtimes.solidity" => match source {
+            "foundry.toml#profile.default.solc_version" => 2,
+            _ => 0,
+        },
+        "runtimes.fsharp" => match source {
+            "fsharp-project" => 2,
+            _ => 0,
+        },
+        "runtimes.kotlin" => match source {
+            "pom.xml#kotlin.version" => 2,
+            _ => 0,
+        },
+        "runtimes.c" => match source {
+            "CMakeLists.txt#CMAKE_C_STANDARD" => 2,
+            _ => 0,
+        },
+        "runtimes.cpp" => match source {
+            "CMakeLists.txt#CMAKE_CXX_STANDARD" => 2,
+            _ => 0,
+        },
         _ if field.starts_with("tools.") => match source {
             "gradle/wrapper/gradle-wrapper.properties#distributionUrl" => 3,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
+            "stack.yaml" => 3,
             "package.json#packageManager" => 2,
             "composer.json" => 2,
             "Gemfile" => 2,
@@ -2059,6 +3572,36 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "Package.swift" => 2,
             "pubspec.yaml" => 2,
             "pubspec.yaml#flutter" => 2,
+            "CMakeLists.txt" => 2,
+            "project.clj" => 2,
+            "deps.edn" => 2,
+            "cabal-file" => 2,
+            "rockspec" => 2,
+            "Project.toml" => 2,
+            "DESCRIPTION" => 2,
+            "dune-project" => 2,
+            "opam-file" => 2,
+            "nimble-file" => 2,
+            "rebar.config" => 2,
+            "build.zig" => 2,
+            "dub.json" => 2,
+            "dub.sdl" => 2,
+            "fpm.toml" => 2,
+            "shard.yml" => 2,
+            "elm.json" => 2,
+            "cpanfile" => 2,
+            "Makefile.PL" => 2,
+            "hxml" => 2,
+            "gleam.toml" => 2,
+            "v.mod" => 2,
+            "alire.toml" => 2,
+            "foundry.toml" => 2,
+            "fsharp-project" => 2,
+            "kotlin-script" => 2,
+            "tclapp.tcl" => 2,
+            "pkgIndex.tcl" => 2,
+            "info.rkt" => 2,
+            "main.rkt" => 2,
             "pnpm-workspace.yaml" => 2,
             "pnpm-lock.yaml" => 2,
             "yarn.lock" => 2,
@@ -2478,6 +4021,700 @@ flutter:
                 .get("run")
                 .map(|task| task.run.as_str()),
             Some("flutter run")
+        );
+    }
+
+    #[test]
+    fn detects_cmake_cpp_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "CMakeLists.txt",
+            r#"cmake_minimum_required(VERSION 3.25)
+project(qredex-cpp)
+set(CMAKE_CXX_STANDARD 20)
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex-cpp")
+        );
+        assert_eq!(report.contract.tools.get("cmake"), Some(&"*".to_string()));
+        assert_eq!(report.contract.runtimes.get("cpp"), Some(&"20".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("cmake -S . -B build && cmake --build build")
+        );
+    }
+
+    #[test]
+    fn detects_clojure_project_clj_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "project.clj",
+            r#"(defproject qredex-clj "0.1.0-SNAPSHOT"
+  :dependencies [[org.clojure/clojure "1.12.0"]])
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex-clj")
+        );
+        assert_eq!(
+            report.contract.tools.get("leiningen"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("lein test")
+        );
+    }
+
+    #[test]
+    fn detects_haskell_stack_and_cabal_signals() {
+        let fixture = Fixture::new();
+        fixture.write("stack.yaml", "resolver: lts-22.11\n");
+        fixture.write("qredex-hs.cabal", "name: qredex-hs\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex-hs")
+        );
+        assert_eq!(report.contract.tools.get("stack"), Some(&"*".to_string()));
+        assert_eq!(report.contract.tools.get("cabal"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("stack build")
+        );
+    }
+
+    #[test]
+    fn detects_lua_rockspec_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "qredex-lua-1.0.0-1.rockspec",
+            r#"package = "qredex-lua"
+version = "1.0.0-1"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex-lua-1.0.0-1")
+        );
+        assert_eq!(report.contract.tools.get("luarocks"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("luarocks make")
+        );
+    }
+
+    #[test]
+    fn detects_julia_project_toml_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Project.toml",
+            r#"name = "QredexJulia"
+[compat]
+julia = "1.10"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("QredexJulia")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("julia"),
+            Some(&"1.10".to_string())
+        );
+        assert_eq!(report.contract.tools.get("julia"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("julia --project=. -e 'using Pkg; Pkg.test()'")
+        );
+    }
+
+    #[test]
+    fn detects_r_description_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "DESCRIPTION",
+            r#"Package: qredexr
+Version: 0.1.0
+Depends: R (>= 4.3.0)
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredexr")
+        );
+        assert_eq!(report.contract.runtimes.get("r"), Some(&">= 4.3.0".to_string()));
+        assert_eq!(report.contract.tools.get("r"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("check")
+                .map(|task| task.run.as_str()),
+            Some("R CMD check .")
+        );
+    }
+
+    #[test]
+    fn detects_ocaml_dune_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "dune-project",
+            r#"(lang dune 3.10)
+(name qredex_ocaml)
+"#,
+        );
+        fixture.write(".ocaml-version", "5.2.0\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_ocaml")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("ocaml"),
+            Some(&"5.2.0".to_string())
+        );
+        assert_eq!(report.contract.tools.get("dune"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("dune runtest")
+        );
+    }
+
+    #[test]
+    fn detects_nim_nimble_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "qredexnim.nimble",
+            r#"version       = "0.1.0"
+requires "nim >= 2.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredexnim")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("nim"),
+            Some(&"nim >= 2.0".to_string())
+        );
+        assert_eq!(report.contract.tools.get("nimble"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("nimble build")
+        );
+    }
+
+    #[test]
+    fn detects_erlang_rebar_signals() {
+        let fixture = Fixture::new();
+        fixture.write("rebar.config", "{erl_opts, [debug_info]}.\n{app, qredex_erlang}.\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_erlang")
+        );
+        assert_eq!(report.contract.tools.get("rebar3"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("rebar3 compile")
+        );
+    }
+
+    #[test]
+    fn detects_zig_build_zig_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "build.zig",
+            "const std = @import(\"std\");\npub fn build(b: *std.Build.0.13.0) void {}\n",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("zig"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("zig"),
+            Some(&"0.13.0".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("zig build test")
+        );
+    }
+
+    #[test]
+    fn detects_d_dub_json_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "dub.json",
+            r#"{
+  "name": "qredex_d",
+  "description": "qredex d app"
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_d")
+        );
+        assert_eq!(report.contract.tools.get("dub"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("dub build")
+        );
+    }
+
+    #[test]
+    fn detects_fortran_fpm_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "fpm.toml",
+            r#"[project]
+name = "qredex_fortran"
+version = "0.1.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_fortran")
+        );
+        assert_eq!(report.contract.tools.get("fpm"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("fpm test")
+        );
+    }
+
+    #[test]
+    fn detects_crystal_shard_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "shard.yml",
+            r#"name: qredex_crystal
+version: 0.1.0
+crystal: ">= 1.11.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_crystal")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("crystal"),
+            Some(&">= 1.11.0".to_string())
+        );
+        assert_eq!(report.contract.tools.get("crystal"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("shards build")
+        );
+    }
+
+    #[test]
+    fn detects_elm_json_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "elm.json",
+            r#"{
+  "type": "application",
+  "name": "qredex/elm-app",
+  "source-directories": ["src"]
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex/elm-app")
+        );
+        assert_eq!(report.contract.tools.get("elm"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("elm make src/Main.elm")
+        );
+    }
+
+    #[test]
+    fn detects_perl_makefile_pl_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Makefile.PL",
+            r#"use ExtUtils::MakeMaker;
+WriteMakefile(
+    NAME => 'Qredex::Perl',
+);
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("Qredex::Perl")
+        );
+        assert_eq!(report.contract.tools.get("perl"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("make test")
+        );
+    }
+
+    #[test]
+    fn detects_haxe_hxml_signals() {
+        let fixture = Fixture::new();
+        fixture.write("build.hxml", "-cp src\n-main Main\n-js out/main.js\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("haxe"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("build")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("haxe build.hxml")
+        );
+    }
+
+    #[test]
+    fn detects_gleam_toml_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "gleam.toml",
+            r#"name = "qredex_gleam"
+version = "1.0.0"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_gleam")
+        );
+        assert_eq!(report.contract.tools.get("gleam"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("gleam test")
+        );
+    }
+
+    #[test]
+    fn detects_v_mod_signals() {
+        let fixture = Fixture::new();
+        fixture.write("v.mod", "Module {\nname: 'qredex_v'\n}\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_v")
+        );
+        assert_eq!(report.contract.tools.get("v"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("v .")
+        );
+    }
+
+    #[test]
+    fn detects_ada_alire_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "alire.toml",
+            r#"[project]
+name = "qredex_ada"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("qredex_ada")
+        );
+        assert_eq!(report.contract.tools.get("alr"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("alr test")
+        );
+    }
+
+    #[test]
+    fn detects_foundry_solidity_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "foundry.toml",
+            r#"[profile.default]
+solc_version = "0.8.25"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("forge"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.runtimes.get("solidity"),
+            Some(&"0.8.25".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("build")
+                .map(|task| task.run.as_str()),
+            Some("forge build")
+        );
+    }
+
+    #[test]
+    fn detects_kotlin_script_signals() {
+        let fixture = Fixture::new();
+        fixture.write("app.kts", "println(\"hello\")\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("kotlin"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("app")
+        );
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("kotlin app.kts")
+        );
+    }
+
+    #[test]
+    fn detects_fsharp_project_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "Qredex.App.fsproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert_eq!(report.contract.runtimes.get("fsharp"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("Qredex.App")
+        );
+    }
+
+    #[test]
+    fn detects_tcl_markers() {
+        let fixture = Fixture::new();
+        fixture.write("tclapp.tcl", "puts \"hello\"\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("tclsh"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("tclsh tclapp.tcl")
+        );
+    }
+
+    #[test]
+    fn detects_racket_markers() {
+        let fixture = Fixture::new();
+        fixture.write("main.rkt", "#lang racket\n(displayln \"hello\")\n");
+        fixture.write("info.rkt", "#lang info\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+        assert_eq!(report.contract.tools.get("racket"), Some(&"*".to_string()));
+        assert_eq!(
+            report.contract.tasks.get("run").map(|task| task.run.as_str()),
+            Some("racket main.rkt")
+        );
+        assert_eq!(
+            report.contract.tasks.get("test").map(|task| task.run.as_str()),
+            Some("raco test .")
         );
     }
 

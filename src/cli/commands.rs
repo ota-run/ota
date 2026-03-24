@@ -2969,92 +2969,57 @@ fn render_tasks_text(
         }
     }
 
+    output.push_str("\n---\nTasks:");
     if tasks.is_empty() {
         output.push_str("\n- none");
         return output;
     }
 
-    for task in tasks {
-        output.push_str("\n- ");
-        output.push_str(task.name);
+    for (index, task) in tasks.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        let command_preview = task
+            .run
+            .map(str::to_string)
+            .or_else(|| task.script.map(|script| script.lines().next().unwrap_or(script).trim().to_string()))
+            .unwrap_or_else(|| String::from("-"));
 
-        let mut details = Vec::new();
-        details.push(format!("kind={}", task.kind));
-        if let Some(os) = task.selected_variant_os {
-            details.push(format!("os={os}"));
-        }
-        if let Some(category) = task.category {
-            details.push(format!("category={category}"));
-        }
-        if !task.depends_on.is_empty() {
-            details.push(format!("depends_on={}", task.depends_on.join(",")));
-        }
-        if task.safe_for_agent {
-            details.push(String::from("safe_for_agent=true"));
-        }
-        if !task.variants.is_empty() {
-            details.push(format!("variants={}", task.variants.len()));
-        }
-
-        if !details.is_empty() {
-            output.push_str(" (");
-            output.push_str(&details.join(", "));
-            output.push(')');
-        }
-
+        output.push_str(&format!("\n- {} {}", paint_key("Task:"), task.name));
+        output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Selected OS:"),
+            task.selected_variant_os.unwrap_or("-")
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Depends On:"),
+            if task.depends_on.is_empty() {
+                String::from("-")
+            } else {
+                task.depends_on.join(",")
+            }
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Safe For Agent:"),
+            if task.safe_for_agent { "true" } else { "false" }
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Command Preview:"),
+            command_preview
+        ));
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Use:"),
+            paint_code(&format!("ota run {}", task.name))
+        ));
         if let Some(description) = task.description {
-            output.push_str(": ");
-            output.push_str(description);
-        }
-
-        if let Some(run) = task.run {
-            output.push_str(&format!("\n  run: {run}"));
-        } else if let Some(script) = task.script {
-            let preview = script.lines().next().unwrap_or(script).trim();
-            output.push_str(&format!("\n  script: {preview}"));
+            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
     }
-
-    append_markdown_table(
-        &mut output,
-        "Tasks",
-        &[
-            "Task",
-            "Kind",
-            "Selected OS",
-            "Depends On",
-            "Safe For Agent",
-            "Command Preview",
-            "Use",
-        ],
-        tasks.iter().map(|task| {
-            let command_preview = task
-                .run
-                .map(str::to_string)
-                .or_else(|| {
-                    task.script
-                        .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
-                })
-                .unwrap_or_else(|| String::from("-"));
-            vec![
-                task.name.to_string(),
-                task.kind.to_string(),
-                task.selected_variant_os.unwrap_or("-").to_string(),
-                if task.depends_on.is_empty() {
-                    String::from("-")
-                } else {
-                    task.depends_on.join(",")
-                },
-                if task.safe_for_agent {
-                    String::from("true")
-                } else {
-                    String::from("false")
-                },
-                command_preview,
-                format!("`ota run {}`", task.name),
-            ]
-        }),
-    );
 
     output
 }

@@ -461,6 +461,14 @@ Current detect sources:
 - `global.json`
 - `*.sln` / `*.csproj` / `*.fsproj`
 - `mix.exs`
+- `rebar.config`
+- `build.zig`
+- `dub.json` / `dub.sdl`
+- `fpm.toml`
+- `shard.yml`
+- `elm.json`
+- `cpanfile` / `Makefile.PL`
+- `*.hxml`
 - `docker-compose.yml` / `docker-compose.yaml`
 - `compose.yml` / `compose.yaml`
 
