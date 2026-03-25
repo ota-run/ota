@@ -899,6 +899,7 @@ Prepare every repo in an Ota workspace contract.
 ota workspace up [PATH]
 ota workspace up --json [PATH]
 ota workspace up --jobs 4 [PATH]
+ota workspace up --quiet [PATH]
 ota workspace up --stream [PATH]
 ```
 
@@ -914,6 +915,7 @@ Current behavior:
 - aggregates per-repo status, phase, findings, and exit details
 - captures repo child stdout and stderr per repo so text and JSON output remain deterministic
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
+- `--quiet` suppresses live progress output and prints only the final workspace report
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`
 - `--stream` opts into raw live child process output instead of buffered per-repo output

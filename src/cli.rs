@@ -412,6 +412,9 @@ enum WorkspaceCommands {
         /// Maximum number of independent repos to prepare at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
+        /// Suppress live progress output and print only the final workspace report.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "stream")]
+        quiet: bool,
         /// Stream raw child process output live instead of buffering it into the final report.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
@@ -514,7 +517,8 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                         | WorkspaceCommands::List { .. }
                         | WorkspaceCommands::Doctor { stream: false, .. }
                         | WorkspaceCommands::Detect { .. }
-                        | WorkspaceCommands::Init { .. },
+                        | WorkspaceCommands::Init { .. }
+                        | WorkspaceCommands::Up { quiet: false, .. },
                 }
         )
 }
@@ -886,12 +890,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
             WorkspaceCommands::Up {
                 json,
                 jobs,
+                quiet,
                 stream,
                 path,
             } => commands::workspace_up(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                quiet,
                 stream,
                 format_from_json(json),
                 debug,
@@ -8238,6 +8244,22 @@ repos:
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("Phase: post-setup diagnosis"));
         assert!(!stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn workspace_up_quiet_suppresses_progress_output() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "up", "--quiet", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains(&format!(
+            "WORKSPACE UP {}",
+            compact_workspace(&fixture.workspace_file())
+        )));
+        assert!(stdout.contains("READY"));
+        assert!(output.stderr.is_none());
     }
 
     #[test]

@@ -4054,6 +4054,7 @@ pub fn workspace_up(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    quiet: bool,
     stream: bool,
     format: OutputFormat,
     debug: bool,
@@ -4112,6 +4113,7 @@ pub fn workspace_up(
         String::from("DEBUG command=workspace.up"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG quiet={quiet}"),
         format!("DEBUG stream={stream}"),
     ];
 
@@ -4119,7 +4121,7 @@ pub fn workspace_up(
         match load_and_run_workspace_up(
             &resolved_path,
             jobs,
-            matches!(format, OutputFormat::Text),
+            matches!(format, OutputFormat::Text) && !quiet,
             stream,
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format),
