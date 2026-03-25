@@ -103,6 +103,14 @@ Global output modifiers:
 - `--verbose`: preserve full explanatory text output
 - `--json`: unaffected by `--concise`/`--verbose`
 
+Current progress behavior:
+
+- quiet blocking commands show a delayed spinner in interactive terminals
+- `ota doctor` and `ota check` keep their own check/progress handling
+- `ota run` and `ota up` keep streaming/progress-focused behavior instead of the shared spinner
+- `ota workspace doctor` uses the shared spinner
+- `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
+
 ## Current exit semantics
 
 - `0`: success, ready state, or warning-only diagnosis
