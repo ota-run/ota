@@ -97,6 +97,7 @@ pub struct WorkspaceRepoListReport {
     pub contract_present: bool,
     pub required: bool,
     pub acquired: bool,
+    pub status: String,
     pub depends_on: Vec<String>,
 }
 
