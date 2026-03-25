@@ -79,4 +79,4 @@ ota --plain workspace up .
 - `--plain` behavior must be tested for:
   - no `🦦 `
   - no `▸`
-  - ASCII `-` bullets in `Next:` blocks
+  - ASCII `-` bullets for list/next blocks

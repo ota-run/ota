@@ -44,6 +44,8 @@ ota --help
 ota --version
 ota --debug <command>
 ota --plain <command>
+ota --concise <command>
+ota --verbose <command>
 ota --file /path/to/ota.yaml <command>
 ```
 
@@ -92,6 +94,12 @@ When the discovered `ota.yaml` is a declared monorepo member contract, Ota now l
 member contract automatically from that member path.
 
 `ota detect` is different. Its `PATH` is a repo root to inspect.
+
+Global output modifiers:
+
+- `--concise`: reduce high-noise text output while preserving decisions and actions
+- `--verbose`: preserve full explanatory text output
+- `--json`: unaffected by `--concise`/`--verbose`
 
 ## Current exit semantics
 
@@ -259,6 +267,7 @@ Text output:
 
 - header: `DOCTOR <path>`
 - status line: `READY` or `NOT READY`
+- with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
 
 JSON output:
 
@@ -756,6 +765,7 @@ Text output:
 - header: `WORKSPACE CHECK <path>`
 - status line: `READY` or `NOT READY`
 - each repo includes required/optional status, contract path, and findings
+- with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
 JSON output:
 
@@ -795,6 +805,7 @@ Text output:
 - header: `WORKSPACE DOCTOR <path>`
 - status line: `READY` or `NOT READY`
 - each repo includes required/optional status, contract path, and findings
+- with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
 JSON output:
 

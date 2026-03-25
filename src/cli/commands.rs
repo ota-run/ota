@@ -4168,31 +4168,43 @@ fn render_workspace_doctor_text(
             } else {
                 "optional"
             },
-            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
+                render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Path:"),
-            compact_repo_path(Path::new(&repo.path))
-        ));
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Contract:"),
-            compact_contract_path(Path::new(&repo.contract_path))
-        ));
+        if !concise_mode() {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Path:"),
+                compact_repo_path(Path::new(&repo.path))
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Contract:"),
+                compact_contract_path(Path::new(&repo.contract_path))
+            ));
+        }
 
         for finding in &repo.findings {
-            let why = compact_backticked_paths(&finding.why);
             let next = compact_backticked_paths(&finding.next);
-            stdout.push_str(&format!(
-                "\n\n{}  {}\n{} {}\n{} {}",
-                render_severity(finding.severity),
-                finding.summary,
-                finding_detail_key(finding.severity, "Why:"),
-                why,
-                finding_detail_key(finding.severity, "Next:"),
-                next
-            ));
+            if concise_mode() {
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}",
+                    render_severity(finding.severity),
+                    finding.summary,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            } else {
+                let why = compact_backticked_paths(&finding.why);
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}\n{} {}",
+                    render_severity(finding.severity),
+                    finding.summary,
+                    finding_detail_key(finding.severity, "Why:"),
+                    why,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            }
         }
     }
 
@@ -4272,31 +4284,43 @@ fn render_workspace_check_text(
             } else {
                 "optional"
             },
-            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
+                render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Path:"),
-            compact_repo_path(Path::new(&repo.path))
-        ));
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Contract:"),
-            compact_contract_path(Path::new(&repo.contract_path))
-        ));
+        if !concise_mode() {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Path:"),
+                compact_repo_path(Path::new(&repo.path))
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Contract:"),
+                compact_contract_path(Path::new(&repo.contract_path))
+            ));
+        }
 
         for finding in &repo.findings {
-            let why = compact_backticked_paths(&finding.why);
             let next = compact_backticked_paths(&finding.next);
-            stdout.push_str(&format!(
-                "\n\n{}  {}\n{} {}\n{} {}",
-                render_severity(finding.severity),
-                finding.summary,
-                finding_detail_key(finding.severity, "Why:"),
-                why,
-                finding_detail_key(finding.severity, "Next:"),
-                next
-            ));
+            if concise_mode() {
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}",
+                    render_severity(finding.severity),
+                    finding.summary,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            } else {
+                let why = compact_backticked_paths(&finding.why);
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}\n{} {}",
+                    render_severity(finding.severity),
+                    finding.summary,
+                    finding_detail_key(finding.severity, "Why:"),
+                    why,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            }
         }
     }
 
@@ -4340,18 +4364,29 @@ fn render_report_section(
     }
 
     for finding in &report.findings {
-        let why = compact_backticked_paths(&finding.why);
         let next = compact_backticked_paths(&finding.next);
-        stdout.push_str("\n\n");
-        stdout.push_str(&format!(
-            "{}  {}\n{} {}\n{} {}",
-            render_severity(finding.severity),
-            finding.summary,
-            finding_detail_key(finding.severity, "Why:"),
-            why,
-            finding_detail_key(finding.severity, "Next:"),
-            next
-        ));
+        if concise_mode() {
+            stdout.push_str("\n\n");
+            stdout.push_str(&format!(
+                "{}  {}\n{} {}",
+                render_severity(finding.severity),
+                finding.summary,
+                finding_detail_key(finding.severity, "Next:"),
+                next
+            ));
+        } else {
+            let why = compact_backticked_paths(&finding.why);
+            stdout.push_str("\n\n");
+            stdout.push_str(&format!(
+                "{}  {}\n{} {}\n{} {}",
+                render_severity(finding.severity),
+                finding.summary,
+                finding_detail_key(finding.severity, "Why:"),
+                why,
+                finding_detail_key(finding.severity, "Next:"),
+                next
+            ));
+        }
     }
 
     stdout

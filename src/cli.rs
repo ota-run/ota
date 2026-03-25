@@ -185,6 +185,12 @@ enum Commands {
         /// Preview how detected fields would merge into an existing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         merge: bool,
+        /// Replace an existing ota.yaml with a regenerated detected contract.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "merge")]
+        rewrite: bool,
+        /// Confirm destructive rewrite mode.
+        #[arg(long, action = ArgAction::SetTrue, requires = "rewrite")]
+        yes: bool,
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
@@ -293,6 +299,12 @@ enum WorkspaceCommands {
         /// Merge missing discovered repos into an existing ota.workspace.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         merge: bool,
+        /// Replace an existing ota.workspace.yaml with a regenerated detected contract.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "merge")]
+        rewrite: bool,
+        /// Confirm destructive rewrite mode.
+        #[arg(long, action = ArgAction::SetTrue, requires = "rewrite")]
+        yes: bool,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
@@ -538,6 +550,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             write,
             dry_run,
             merge,
+            rewrite,
+            yes,
             path,
         } => {
             if file.is_some() {
@@ -553,6 +567,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 write,
                 dry_run,
                 merge,
+                rewrite,
+                yes,
                 format_from_json(json),
                 debug,
             )
@@ -578,6 +594,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         path.as_deref(),
                         !dry_run,
                         true,
+                        false,
+                        false,
                         commands::WorkspaceScaffoldSurface::Detect,
                         format_from_json(json),
                         debug,
@@ -585,6 +603,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 } else if dry_run {
                     commands::workspace_init(
                         path.as_deref(),
+                        false,
+                        false,
                         false,
                         false,
                         commands::WorkspaceScaffoldSurface::Init,
@@ -596,6 +616,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         path.as_deref(),
                         true,
                         false,
+                        false,
+                        false,
                         commands::WorkspaceScaffoldSurface::Init,
                         format_from_json(json),
                         debug,
@@ -606,6 +628,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 write,
                 dry_run,
                 merge,
+                rewrite,
+                yes,
                 json,
                 path,
             } => {
@@ -617,11 +641,17 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         2,
                     );
                 }
-                let write = if merge { !dry_run } else { write && !dry_run };
+                let write = if merge || rewrite {
+                    !dry_run
+                } else {
+                    write && !dry_run
+                };
                 commands::workspace_init(
                     path.as_deref(),
                     write,
                     merge,
+                    rewrite,
+                    yes,
                     commands::WorkspaceScaffoldSurface::Detect,
                     format_from_json(json),
                     debug,
@@ -6840,6 +6870,120 @@ repos:
         assert!(!body.contains("Path:"));
         assert!(!body.contains("Contract:"));
         assert!(!body.contains("Depends On:"));
+    }
+
+    #[test]
+    fn doctor_concise_keeps_next_but_omits_why_lines() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: no-tasks
+"#,
+        );
+
+        let output = run_with(["ota", "--concise", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("DOCTOR"));
+        assert!(body.contains("NOT READY"));
+        assert!(body.contains("Next:"));
+        assert!(!body.contains("Why:"));
+    }
+
+    #[test]
+    fn workspace_doctor_concise_omits_path_contract_and_why() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        let db_contract = fixture.dir.path().join("services").join("db").join("ota.yaml");
+        fs::write(
+            db_contract,
+            r#"
+version: 1
+project:
+  name: db
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "--concise", "workspace", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE DOCTOR"));
+        assert!(body.contains("db [required] (NOT READY)"));
+        assert!(body.contains("Next:"));
+        assert!(!body.contains("Path:"));
+        assert!(!body.contains("Contract:"));
+        assert!(!body.contains("Why:"));
+    }
+
+    #[test]
+    fn check_concise_keeps_next_but_omits_why_lines() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: failing-check
+checks:
+  - name: smoke
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        );
+
+        let output = run_with(["ota", "--concise", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("CHECK"));
+        assert!(body.contains("NOT READY"));
+        assert!(body.contains("Next:"));
+        assert!(!body.contains("Why:"));
+    }
+
+    #[test]
+    fn workspace_check_concise_omits_path_contract_and_why() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "--concise", "workspace", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE CHECK"));
+        assert!(body.contains("web [required] (NOT READY)"));
+        assert!(body.contains("Next:"));
+        assert!(!body.contains("Path:"));
+        assert!(!body.contains("Contract:"));
+        assert!(!body.contains("Why:"));
     }
 
     #[test]
