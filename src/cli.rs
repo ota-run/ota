@@ -5472,7 +5472,7 @@ project:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("MERGED"));
-        assert!(output.stdout.contains("Applied high-confidence additions:"));
+        assert!(output.stdout.contains("Applied selected high-confidence changes:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
@@ -5511,13 +5511,51 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("MERGED"));
-        assert!(output.stdout.contains("Applied selected high-confidence changes:"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("MERGED"));
+        assert!(stdout.contains("Applied selected high-confidence changes:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
         assert!(!written.contains("node: 22"));
         assert!(!written.contains("name: ota-web"));
+    }
+
+    #[test]
+    fn detect_merge_apply_dot_writes_all_eligible_high_confidence_changes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--merge",
+            "--apply",
+            ".",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Applied high-confidence additions:"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+        assert!(!written.contains("name: existing"));
+        assert!(written.contains("name: ota-web"));
     }
 
     #[test]
