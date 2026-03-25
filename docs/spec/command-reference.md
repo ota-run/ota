@@ -563,7 +563,7 @@ Current merge-write behavior:
 - `ota detect --merge` requires an existing `ota.yaml`
 - it applies only `high` confidence missing fields
 - `ota detect --merge --apply FIELD` applies only the selected high-confidence detected changes whose field paths match the provided values
-- `ota detect --merge --apply-all` applies all eligible high-confidence detected changes without rewriting the rest of `ota.yaml`
+- `ota detect --merge --apply-all` applies all eligible high-confidence detected changes
 - it does not overwrite conflicting existing values
 - it validates the merged contract before writing
 - it is additive only in the current implementation
