@@ -6670,7 +6670,9 @@ project:
         assert!(body.contains("workspace init could not find any repos with `ota.yaml`"));
         assert!(body.contains("create repo contracts with `ota init <repo-path>`"));
         assert!(body.contains("preview repo contracts with `ota detect --dry-run <repo-path>`"));
-        assert!(body.contains("re-run `ota workspace init` after repo contracts exist"));
+        assert!(body.contains(
+            "then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"
+        ));
         assert!(body.contains("Next:"));
     }
 
