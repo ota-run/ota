@@ -5343,7 +5343,7 @@ tasks:
         assert!(
             output
                 .stdout
-                .contains("ota detect --merge --apply project.name")
+                .contains("ota detect --merge --apply <field name>")
         );
         assert!(output.stdout.contains("ota detect --rewrite --yes"));
     }
@@ -5495,6 +5495,41 @@ project:
         assert!(written.contains("run: pnpm dev"));
         assert!(!written.contains("node: 22"));
         assert!(!written.contains("name: ota-web"));
+    }
+
+    #[test]
+    fn detect_merge_apply_reports_actionable_next_when_existing_contract_is_invalid() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo:
+"#,
+        );
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota"
+version = "0.1.0"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--merge",
+            "--apply",
+            "tools.cargo",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("failed to parse contract"));
+        assert!(stderr.contains("ota validate"));
+        assert!(stderr.contains("ota detect --merge --apply <field name>"));
     }
 
     #[test]
