@@ -2281,6 +2281,7 @@ pub fn detect(
     write: bool,
     dry_run: bool,
     merge: bool,
+    apply: &[String],
     rewrite: bool,
     yes: bool,
     format: OutputFormat,
@@ -2296,6 +2297,7 @@ pub fn detect(
         format!("DEBUG write={write}"),
         format!("DEBUG dry_run={dry_run}"),
         format!("DEBUG merge={merge}"),
+        format!("DEBUG apply={}", apply.join(",")),
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
     ];
@@ -2402,6 +2404,12 @@ pub fn detect(
             Ok(report) if dry_run => {
                 let compact_root_display = compact_repo_path(&report.root);
                 let comparison = compare_detected_contract(&contract_path, &report.contract);
+                let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
+                let comparison = selected_detect_comparison(
+                    comparison.as_ref(),
+                    &report,
+                    &selected_fields,
+                );
                 let yaml = serde_yaml::to_string(&report.contract)
                     .expect("serializing detected contract should not fail");
                 match format {
@@ -2438,6 +2446,20 @@ pub fn detect(
                             report.inferences.iter(),
                         );
                         render_detect_comparison_section(&mut stdout, comparison.as_ref());
+                        if let Some(comparison) = comparison.as_ref() {
+                            if let Some(first_change) = comparison.changes.first() {
+                                stdout.push_str(&format_next_timeline(&[
+                                    format!(
+                                        "run `ota detect --merge --apply {} {}` to apply one selected field",
+                                        first_change.field, compact_root_display
+                                    ),
+                                    format!(
+                                        "run `ota detect --rewrite --yes {}` to replace the full detected contract",
+                                        compact_root_display
+                                    ),
+                                ]));
+                            }
+                        }
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -2450,7 +2472,7 @@ pub fn detect(
                     })),
                 }
             }
-            Ok(report) if merge => write_detected_merge(report, format),
+            Ok(report) if merge => write_detected_merge(report, apply, format),
             Ok(report) if rewrite => write_detected_rewrite(report, format),
             Ok(report) => write_detected_contract(report, format),
             Err(error) => {
@@ -4140,7 +4162,11 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     }
 }
 
-fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOutput {
+fn write_detected_merge(
+    report: DetectReport,
+    apply: &[String],
+    format: OutputFormat,
+) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
@@ -4167,11 +4193,17 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         error: None,
     };
 
-    let addable_fields = comparison
+    let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
+    let selected_changes = comparison
         .changes
         .iter()
-        .filter(|change| change.status == "add")
         .filter(|change| {
+            if selected_fields.is_empty() && change.status != "add" {
+                return false;
+            }
+            if !selected_fields.is_empty() && !selected_fields.contains(&change.field) {
+                return false;
+            }
             report
                 .inferences
                 .iter()
@@ -4180,7 +4212,7 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         })
         .collect::<Vec<_>>();
 
-    if addable_fields.is_empty() {
+    if selected_changes.is_empty() {
         return match format {
             OutputFormat::Text => {
                 let mut stdout = format_command_header("NO CHANGES", &compact_path_display);
@@ -4236,8 +4268,8 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
     };
 
     let mut applied = Vec::new();
-    for change in addable_fields {
-        if apply_detect_addition(&mut document, change) {
+    for change in selected_changes {
+        if apply_detect_change(&mut document, change) {
             applied.push(DetectComparisonChange {
                 field: change.field.clone(),
                 status: change.status,
@@ -4287,9 +4319,14 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
         Ok(()) => match format {
             OutputFormat::Text => {
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
+                let applied_title = if selected_fields.is_empty() {
+                    "Applied high-confidence additions"
+                } else {
+                    "Applied selected high-confidence changes"
+                };
                 render_detect_change_section(
                     &mut stdout,
-                    "Applied high-confidence additions",
+                    applied_title,
                     &applied,
                 );
                 render_detect_comparison_section(&mut stdout, Some(&comparison));
@@ -4819,23 +4856,61 @@ fn render_detect_change_section(
     }
 }
 
-fn apply_detect_addition(document: &mut YamlValue, change: &DetectComparisonChange) -> bool {
+fn selected_detect_comparison(
+    comparison: Option<&DetectComparison>,
+    report: &DetectReport,
+    selected_fields: &BTreeSet<String>,
+) -> Option<DetectComparison> {
+    let Some(comparison) = comparison else {
+        return None;
+    };
+
+    if selected_fields.is_empty() {
+        return Some(DetectComparison {
+            existing_contract: comparison.existing_contract,
+            changes: comparison.changes.clone(),
+            error: comparison.error.clone(),
+        });
+    }
+
+    let changes = comparison
+        .changes
+        .iter()
+        .filter(|change| selected_fields.contains(&change.field))
+        .filter(|change| {
+            report
+                .inferences
+                .iter()
+                .find(|inference| inference.field == change.field)
+                .is_some_and(|inference| inference.confidence == Confidence::High)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Some(DetectComparison {
+        existing_contract: comparison.existing_contract,
+        changes,
+        error: comparison.error.clone(),
+    })
+}
+
+fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange) -> bool {
     let Some(root) = document.as_mapping_mut() else {
         return false;
     };
 
     let segments = change.field.split('.').collect::<Vec<_>>();
     match segments.as_slice() {
-        ["project", "name"] => add_string_field(root, &segments, &change.detected),
-        ["runtimes", _] | ["tools", _] => add_string_field(root, &segments, &change.detected),
-        ["services", _, _] => add_string_field(root, &segments, &change.detected),
-        ["tasks", _, "run"] => add_string_field(root, &segments, &change.detected),
-        ["tasks", _, "safe_for_agent"] => add_bool_field(root, &segments, &change.detected),
+        ["project", "name"] => set_string_field(root, &segments, &change.detected),
+        ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
+        ["services", _, _] => set_string_field(root, &segments, &change.detected),
+        ["tasks", _, "run"] => set_string_field(root, &segments, &change.detected),
+        ["tasks", _, "safe_for_agent"] => set_bool_field(root, &segments, &change.detected),
         _ => false,
     }
 }
 
-fn add_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+fn set_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
     if segments.len() < 2 {
         return false;
     }
@@ -4853,15 +4928,11 @@ fn add_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool 
     }
 
     let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
-    if current.contains_key(&final_key) {
-        return false;
-    }
-
     current.insert(final_key, YamlValue::String(value.to_string()));
     true
 }
 
-fn add_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+fn set_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
     if segments.len() < 2 {
         return false;
     }
@@ -4884,10 +4955,6 @@ fn add_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
     }
 
     let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
-    if current.contains_key(&final_key) {
-        return false;
-    }
-
     current.insert(final_key, YamlValue::Bool(parsed));
     true
 }
