@@ -554,7 +554,7 @@ fn map_check_severity(severity: CheckSeverity) -> FindingSeverity {
 }
 
 fn command_version(name: &str) -> Option<String> {
-    let output = Command::new(name).arg("--version").output().ok()?;
+    let output = version_command(name).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -569,7 +569,17 @@ fn command_version(name: &str) -> Option<String> {
 }
 
 fn command_available(name: &str) -> bool {
-    Command::new(name).arg("--version").output().is_ok()
+    version_command(name).output().is_ok()
+}
+
+fn version_command(name: &str) -> Command {
+    let mut command = Command::new(name);
+    if name == "go" {
+        command.arg("version");
+    } else {
+        command.arg("--version");
+    }
+    command
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -994,6 +1004,12 @@ tasks:
                 .iter()
                 .any(|finding| finding.summary == "Missing execution backend CLI: kubectl")
         );
+    }
+
+    #[test]
+    fn command_version_handles_go_subcommand() {
+        let version = super::command_version("go");
+        assert!(version.as_deref().is_some_and(|value| value.contains("1.24")));
     }
 
     #[test]
