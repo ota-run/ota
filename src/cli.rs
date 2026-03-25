@@ -794,7 +794,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     let suggestion = match command {
         Commands::Validate { .. } => REPO_SETUP_SUGGESTION,
         Commands::Tasks { .. } => "ota tasks",
-        Commands::Run { .. } => "ota tasks --use",
+        Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
         Commands::Init { .. } => "ota init --dry-run",
         Commands::Check { .. } => "ota check",
@@ -3398,7 +3398,9 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
-        assert!(stderr.contains("Next: `ota tasks --use`"));
+        assert!(stderr.contains(
+            "Next: run `ota tasks --use` to see available task names and usage"
+        ));
     }
 
     #[test]
