@@ -298,8 +298,9 @@ Current behavior:
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
-- in `detected` mode, write behavior is conservative and writes only the `high` confidence projection when it is sufficient
-- in `detected` mode, write fails rather than silently writing an invalid contract when medium/low confidence fields would be required
+- in `detected` mode, write behavior is onboarding-focused and writes the smallest valid starter contract for the repo
+- in `detected` mode, medium-confidence fields may be written when they are required to produce a valid starter contract
+- low-confidence fields remain excluded from `ota init` writes
 
 Modes:
 
@@ -313,7 +314,7 @@ Text output:
 - includes `Mode: blank` or `Mode: detected`
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
-- `detected` mode write output explicitly calls out the conservative write policy and any excluded fields
+- `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
 - includes inferred-field annotations with source and confidence
 
 JSON output:
@@ -510,6 +511,7 @@ Dry-run behavior:
 Current write behavior:
 
 - `ota detect --write` writes using only `high` confidence fields
+- `ota detect --write` remains conservative even when `ota init` can write a valid starter
 - validates the generated contract before writing
 - refuses to overwrite an existing `ota.yaml`
 
