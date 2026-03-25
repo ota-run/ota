@@ -114,7 +114,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     );
     out.push_str(&format!(
         "\n{} {}",
-        error_key("Where:"),
+        paint_key("Where:"),
         paint_code(&where_value)
     ));
 
@@ -170,7 +170,7 @@ fn render_missing_contract_guidance(
     out.push_str(&format!("\n{} {}", error_key("Why:"), message));
     match context {
         MissingContractContext::Repo => {
-            out.push_str(&format!("\n\n{}", error_key("Next:")));
+            out.push_str(&format!("\n\n{}", error_next_key("Next:")));
             out.push_str(&format!(
                 "\n{}  setup repo with {}",
                 next_bullet(),
@@ -190,7 +190,7 @@ fn render_missing_contract_guidance(
         MissingContractContext::Workspace => {
             out.push_str(&format!(
                 "\n{} setup workspace with {}",
-                error_key("Next:"),
+                error_next_key("Next:"),
                 paint_code("`ota workspace init`")
             ));
         }
@@ -2014,7 +2014,7 @@ fn render_workspace_validate_failure(
     );
     out.push_str(&format!(
         "\n{} {}",
-        error_key("Where:"),
+        paint_key("Where:"),
         paint_code(workspace_path)
     ));
 
@@ -2057,7 +2057,7 @@ fn render_workspace_validate_failure(
 
     out.push_str(&format!(
         "\n{} repair the listed issue(s), then re-run `{}`",
-        error_key("Next:"),
+        error_next_key("Next:"),
         paint_code("ota workspace validate")
     ));
     out
@@ -2815,10 +2815,10 @@ pub fn workspace_list(
                             "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace list filter failed", "1;37"),
-                            error_key("Where:"),
+                            paint_key("Where:"),
                             paint_code(&compact_path_display),
                             error_key("Why:"),
-                            error_key("Next:")
+                            error_next_key("Next:")
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error),
@@ -2937,10 +2937,10 @@ pub fn workspace_doctor(
                             "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`; run `{}`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace doctor filter failed", "1;37"),
-                            error_key("Where:"),
+                            paint_key("Where:"),
                             paint_code(&compact_path_display),
                             error_key("Why:"),
-                            error_key("Next:"),
+                            error_next_key("Next:"),
                             paint_code("ota workspace list")
                         );
                         return match format {
@@ -5860,12 +5860,22 @@ fn error_key(key: &str) -> String {
     paint(key, "1;38;2;255;150;150")
 }
 
+fn error_next_key(key: &str) -> String {
+    paint(key, "1;38;2;242;209;170")
+}
+
 fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
     if plain_mode() {
         return key.to_string();
     }
     match severity {
-        FindingSeverity::Error => error_key(key),
+        FindingSeverity::Error => {
+            if key == "Next:" {
+                error_next_key(key)
+            } else {
+                error_key(key)
+            }
+        }
         _ => paint_key(key),
     }
 }
@@ -5960,7 +5970,7 @@ fn paint_next_header() -> String {
 }
 
 pub fn paint_next_label() -> String {
-    paint_key("Next:")
+    error_next_key("Next:")
 }
 
 fn paint_mode_value(value: &str) -> String {
