@@ -355,6 +355,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Filter output to repositories with a specific readiness status.
+        #[arg(long, value_enum)]
+        status: Option<WorkspaceDoctorStatusArg>,
         /// Filter output to one workspace repo by name.
         #[arg(long)]
         repo: Option<String>,
@@ -828,9 +831,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::List { json, repo, path } => commands::workspace_list(
+            WorkspaceCommands::List { json, status, repo, path } => commands::workspace_list(
                 path.as_deref(),
                 file.as_deref(),
+                status.map(Into::into),
                 repo.as_deref(),
                 format_from_json(json),
                 debug,
@@ -7397,6 +7401,86 @@ tasks:
         assert_eq!(body["repos"][0]["status"], "READY");
         assert_eq!(body["repos"][1]["name"], "api");
         assert_eq!(body["repos"][1]["status"], "READY");
+    }
+
+    #[test]
+    fn workspace_list_status_filter_limits_repos() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("ready")).unwrap();
+        fs::create_dir_all(fixture.path().join("not-ready")).unwrap();
+
+        fs::write(
+            fixture.path().join("ready").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ready
+tasks:
+  ok:
+    run: 'true'
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            fixture.path().join("not-ready").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: not-ready
+env:
+  REQUIRED_VALUE:
+    required: true
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  ready:
+    path: ready
+    required: true
+  not-ready:
+    path: not-ready
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let ready = run_with([
+            "ota",
+            "workspace",
+            "list",
+            "--json",
+            "--status",
+            "ready",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(ready.exit_code, 0);
+        let ready_json: Value = serde_json::from_str(&ready.stdout).unwrap();
+        assert_eq!(ready_json["repos"].as_array().unwrap().len(), 1);
+        assert_eq!(ready_json["repos"][0]["name"], "ready");
+        assert_eq!(ready_json["repos"][0]["status"], "READY");
+
+        let not_ready = run_with([
+            "ota",
+            "workspace",
+            "list",
+            "--json",
+            "--status",
+            "not-ready",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(not_ready.exit_code, 0);
+        let not_ready_json: Value = serde_json::from_str(&not_ready.stdout).unwrap();
+        assert_eq!(not_ready_json["repos"].as_array().unwrap().len(), 1);
+        assert_eq!(not_ready_json["repos"][0]["name"], "not-ready");
+        assert_eq!(not_ready_json["repos"][0]["status"], "NOT READY");
     }
 
     #[test]

@@ -3559,6 +3559,7 @@ pub fn workspace_tasks(
 pub fn workspace_list(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    status_filter: Option<WorkspaceDoctorStatusFilter>,
     repo_filter: Option<&str>,
     format: OutputFormat,
     debug: bool,
@@ -3644,6 +3645,26 @@ pub fn workspace_list(
                     .filter(|repo| match repo_filter {
                         Some(target) => repo.name == target,
                         None => true,
+                    })
+                    .filter(|repo| match status_filter {
+                        Some(WorkspaceDoctorStatusFilter::Ready) => {
+                            repo.present && repo.contract_path.is_file()
+                                && load_contract(&repo.contract_path)
+                                    .map(|contract| {
+                                        diagnose_preconditions(&contract, &repo.contract_path).ok
+                                    })
+                                    .unwrap_or(false)
+                        }
+                        Some(WorkspaceDoctorStatusFilter::NotReady) => {
+                            !(repo.present
+                                && repo.contract_path.is_file()
+                                && load_contract(&repo.contract_path)
+                                    .map(|contract| {
+                                        diagnose_preconditions(&contract, &repo.contract_path).ok
+                                    })
+                                    .unwrap_or(false))
+                        }
+                        Some(WorkspaceDoctorStatusFilter::All) | None => true,
                     })
                     .map(|repo| WorkspaceRepoListReport {
                         status: if repo.present && repo.contract_path.is_file() {
