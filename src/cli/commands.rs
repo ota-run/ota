@@ -139,12 +139,132 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
+    if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
+        if why.is_empty() {
+            out.push_str(&format!(
+                "\n{} command failed with no additional details",
+                error_key("Why:")
+            ));
+        } else {
+            let why_lines = why
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .collect::<Vec<_>>();
+            if why_lines.is_empty() {
+                out.push_str(&format!(
+                    "\n{} command failed with no additional details",
+                    error_key("Why:")
+                ));
+            } else {
+                out.push_str(&format!("\n{} {}", error_key("Why:"), why_lines.join(" | ")));
+            }
+        }
+        if !next_steps.is_empty() {
+            if next_steps.len() == 1 {
+                out.push_str(&format!(
+                    "\n\n{} {}",
+                    error_next_key("Next:"),
+                    stylize_inline_text(&next_steps[0])
+                ));
+            } else {
+                out.push_str(&format!("\n\n{}", error_next_key("Next:")));
+                for step in next_steps {
+                    out.push_str(&format!("\n{}  {}", next_bullet(), stylize_inline_text(&step)));
+                }
+            }
+        }
+        return out;
+    }
+
     if lines.len() == 1 {
         out.push_str(&format!("\n{} {}", error_key("Why:"), lines[0]));
         return out;
     }
 
     out.push_str(&format!("\n{} {}", error_key("Why:"), lines.join(" | ")));
+    out
+}
+
+fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
+    let plain = strip_ansi_codes(message);
+
+    if let Some((why, next)) = plain.split_once(" | Next: | ") {
+        let next_steps = next
+            .split(" | ")
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                line.trim_start_matches('▸')
+                    .trim_start_matches('-')
+                    .trim_start_matches('*')
+                    .trim()
+                    .to_string()
+            })
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        return Some((why.trim().to_string(), next_steps));
+    }
+
+    let lines = plain
+        .replace("\r\n", "\n")
+        .lines()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let marker_idx = lines
+        .iter()
+        .position(|line| line.trim() == "Next:" || line.trim_start().starts_with("Next:"))?;
+    let mut next_steps = Vec::new();
+
+    let marker_line = lines[marker_idx].trim_start();
+    if let Some(rest) = marker_line.strip_prefix("Next:") {
+        let value = rest.trim();
+        if !value.is_empty() {
+            next_steps.push(value.to_string());
+        }
+    }
+
+    for line in lines.iter().skip(marker_idx + 1) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let item = trimmed
+            .trim_start_matches('▸')
+            .trim_start_matches('-')
+            .trim_start_matches('*')
+            .trim();
+        if !item.is_empty() {
+            next_steps.push(item.to_string());
+        }
+    }
+
+    let why = lines
+        .iter()
+        .take(marker_idx)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some((why, next_steps))
+}
+
+fn strip_ansi_codes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            let _ = chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+
     out
 }
 
@@ -2483,7 +2603,7 @@ pub fn workspace_init(
                             &compact_workspace_path(&workspace_path),
                         );
                         stdout.push_str(&format!(
-                            "\n{}",
+                            "\n\n{}",
                             format_result_line(&format!(
                                 "wrote {}",
                                 paint_code(&compact_workspace_path(&workspace_path))
@@ -3632,7 +3752,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 let highlighted_doctor =
                     paint_code(&command_for_contract("ota doctor", &contract_path));
                 let mut stdout = format!(
-                    "{}\n{}\nPolicy: only high-confidence fields are written automatically{}",
+                    "{}\n\n{}\nPolicy: only high-confidence fields are written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
                     format_result_line(&format!("wrote {highlighted_written}")),
                     format_next_timeline(&[
@@ -3915,7 +4035,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
             OutputFormat::Text => {
                 let mut stdout = format_command_header("REWRITTEN", &compact_path_display);
                 stdout.push_str(&format!(
-                    "\n{}",
+                    "\n\n{}",
                     format_result_line(&format!(
                         "wrote {}",
                         paint_code(&compact_contract_path(&contract_path))
@@ -4052,7 +4172,7 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
-                        "{}\n{}\n\n{}{}",
+                        "{}\n\n{}\n\n{}{}",
                         format_command_header("INIT WRITE", &compact_root_display),
                         format_result_line(&format!("wrote {highlighted_written}")),
                         format_mode_line(mode),
@@ -4606,7 +4726,7 @@ fn render_workspace_doctor_text(
                 stdout.push_str(&format!(
                     "\n\n{}  {}\n{} {}",
                     render_severity(finding.severity),
-                    finding.summary,
+                    render_finding_summary(finding.severity, &finding.summary),
                     finding_detail_key(finding.severity, "Next:"),
                     next
                 ));
@@ -4615,7 +4735,7 @@ fn render_workspace_doctor_text(
                 stdout.push_str(&format!(
                     "\n\n{}  {}\n{} {}\n{} {}",
                     render_severity(finding.severity),
-                    finding.summary,
+                    render_finding_summary(finding.severity, &finding.summary),
                     finding_detail_key(finding.severity, "Why:"),
                     why,
                     finding_detail_key(finding.severity, "Next:"),
@@ -4722,7 +4842,7 @@ fn render_workspace_check_text(
                 stdout.push_str(&format!(
                     "\n\n{}  {}\n{} {}",
                     render_severity(finding.severity),
-                    finding.summary,
+                    render_finding_summary(finding.severity, &finding.summary),
                     finding_detail_key(finding.severity, "Next:"),
                     next
                 ));
@@ -4731,7 +4851,7 @@ fn render_workspace_check_text(
                 stdout.push_str(&format!(
                     "\n\n{}  {}\n{} {}\n{} {}",
                     render_severity(finding.severity),
-                    finding.summary,
+                    render_finding_summary(finding.severity, &finding.summary),
                     finding_detail_key(finding.severity, "Why:"),
                     why,
                     finding_detail_key(finding.severity, "Next:"),
@@ -4787,7 +4907,7 @@ fn render_report_section(
             stdout.push_str(&format!(
                 "{}  {}\n{} {}",
                 render_severity(finding.severity),
-                finding.summary,
+                render_finding_summary(finding.severity, &finding.summary),
                 finding_detail_key(finding.severity, "Next:"),
                 next
             ));
@@ -4797,7 +4917,7 @@ fn render_report_section(
             stdout.push_str(&format!(
                 "{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
-                finding.summary,
+                render_finding_summary(finding.severity, &finding.summary),
                 finding_detail_key(finding.severity, "Why:"),
                 why,
                 finding_detail_key(finding.severity, "Next:"),
@@ -5882,7 +6002,7 @@ fn render_up_section_from_parts(
         stdout.push_str(&format!(
             "{}  {}\n{} {}\n{} {}",
             render_severity(finding.severity),
-            finding.summary,
+            render_finding_summary(finding.severity, &finding.summary),
             finding_detail_key(finding.severity, "Why:"),
             why,
             finding_detail_key(finding.severity, "Next:"),
@@ -5970,7 +6090,7 @@ fn render_workspace_up(
                     stdout.push_str(&format!(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
-                        finding.summary,
+                        render_finding_summary(finding.severity, &finding.summary),
                         finding_detail_key(finding.severity, "Why:"),
                         why,
                         finding_detail_key(finding.severity, "Next:"),
@@ -6045,7 +6165,7 @@ fn render_workspace_run(
                     stdout.push_str(&format!(
                         "\n\n{}  {}\n{} {}\n{} {}",
                         render_severity(finding.severity),
-                        finding.summary,
+                        render_finding_summary(finding.severity, &finding.summary),
                         finding_detail_key(finding.severity, "Why:"),
                         why,
                         finding_detail_key(finding.severity, "Next:"),
@@ -6373,11 +6493,22 @@ fn render_severity(severity: FindingSeverity) -> String {
     }
 }
 
+fn render_finding_summary(severity: FindingSeverity, summary: &str) -> String {
+    match severity {
+        FindingSeverity::Error => paint(summary, "1"),
+        _ => summary.to_string(),
+    }
+}
+
 fn render_valid_status() -> String {
     if plain_mode() {
         String::from("VALID")
     } else {
-        format!("{} {}", paint("✓", "1;32"), paint("VALID", "1;32"))
+        format!(
+            "{} {}",
+            paint("✓", "1;38;2;0;255;120"),
+            paint("VALID", "1;38;2;0;255;120")
+        )
     }
 }
 
@@ -6386,13 +6517,21 @@ fn render_readiness_status(ready: bool) -> String {
         if plain_mode() {
             String::from("READY")
         } else {
-            format!("{} {}", paint("✓", "1;32"), paint("READY", "1;32"))
+            format!(
+                "{} {}",
+                paint("✓", "1;38;2;0;255;120"),
+                paint("READY", "1;38;2;0;255;120")
+            )
         }
     } else {
         if plain_mode() {
             String::from("NOT READY")
         } else {
-            format!("{} {}", paint("◉", "1;93"), paint("NOT READY", "1;93"))
+            format!(
+                "{} {}",
+                paint("◉", "1;38;2;255;235;59"),
+                paint("NOT READY", "1;38;2;255;235;59")
+            )
         }
     }
 }
@@ -6412,9 +6551,9 @@ fn render_status_word(status: &str) -> String {
         return trimmed.to_string();
     }
     match trimmed {
-        "READY" => paint("READY", "1;32"),
-        "NOT READY" => paint("NOT READY", "1;93"),
-        "VALID" => paint("VALID", "1;32"),
+        "READY" => paint("READY", "1;38;2;0;255;120"),
+        "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
+        "VALID" => paint("VALID", "1;38;2;0;255;120"),
         other => other.to_string(),
     }
 }
@@ -7524,9 +7663,9 @@ fn workspace_progress_line(
 fn workspace_progress_icon(status: &str) -> String {
     match status.trim() {
         "RUN" => paint("▶", "1;36"),
-        "READY" => paint("✓", "1;32"),
-        "NOT READY" => paint("◉", "1;93"),
-        "BLOCKED" => paint("◉", "1;93"),
+        "READY" => paint("✓", "1;38;2;0;255;120"),
+        "NOT READY" => paint("◉", "1;38;2;255;235;59"),
+        "BLOCKED" => paint("◉", "1;38;2;255;235;59"),
         "ACQUIRE" => paint("↓", "1;35"),
         value if value.contains("FAILED") => paint("◉", "1;31"),
         _ => paint("•", "1;37"),
@@ -7536,9 +7675,9 @@ fn workspace_progress_icon(status: &str) -> String {
 fn workspace_progress_status(status: &str) -> String {
     match status.trim() {
         "RUN" => paint("RUN", "1;36"),
-        "READY" => paint("READY", "1;32"),
-        "NOT READY" => paint("NOT READY", "1;93"),
-        "BLOCKED" => paint("BLOCKED", "1;93"),
+        "READY" => paint("READY", "1;38;2;0;255;120"),
+        "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
+        "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
         "ACQUIRE" => paint("ACQUIRE", "1;35"),
         value if value.contains("FAILED") => paint(value, "1;31"),
         value => paint(value, "1;37"),

@@ -894,7 +894,7 @@ mod tests {
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
 
-    use super::{collapse_blank_lines, run_with};
+    use super::{collapse_blank_lines, commands, run_with};
 
     #[cfg(unix)]
     fn install_fake_docker(path: &std::path::Path) {
@@ -4212,20 +4212,14 @@ agent:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .starts_with("detected starter includes medium or low confidence fields that are required for a valid contract\n\nNext:\n▸  review `ota init` output\n▸  use `ota detect --dry-run` before writing")
-        );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("Excluded from automatic write:")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains(
+            "detected starter includes medium or low confidence fields that are required for a valid contract"
+        ));
+        assert!(stderr.contains("review `ota init` output"));
+        assert!(stderr.contains("use `ota detect --dry-run` before writing"));
+        assert!(stderr.contains("Excluded from automatic write:"));
         assert!(!fixture.file_path().exists());
     }
 
@@ -5530,6 +5524,44 @@ tasks:
         assert_eq!(test_safe, Some(true));
         assert_eq!(typecheck_safe, Some(true));
         assert!(!build_safe_present);
+    }
+
+    #[test]
+    fn detect_write_existing_contract_renders_next_as_section_not_inline() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web"
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Why:"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("Next: review detected changes with `ota detect --merge --dry-run"));
+        assert!(stderr.contains("review detected changes with `ota detect --merge --dry-run"));
+        assert!(!stderr.contains("| Next: |"));
+        assert!(!stderr.contains("\n▸  review detected changes with `ota detect --merge --dry-run"));
+    }
+
+    #[test]
+    fn stylize_failure_splits_ansi_next_block() {
+        let message = "`./ota.yaml` already exists; refusing to overwrite an existing contract | \x1b[1;38;2;242;209;170mNext:\x1b[0m | ▸  review detected changes with `ota detect --merge --dry-run .`";
+        let styled = commands::stylize_text_failure("ota detect", message);
+        let plain = strip_ansi(&styled);
+        assert!(plain.contains("Why:"));
+        assert!(plain.contains("Next:"));
+        assert!(!plain.contains("| Next: |"));
     }
 
     #[test]
