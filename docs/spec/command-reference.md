@@ -60,6 +60,7 @@ Ota currently ships these commands:
 
 - `ota validate`
 - `ota tasks`
+- `ota services`
 - `ota run <task>`
 - `ota doctor`
 - `ota init`
@@ -191,6 +192,38 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
+- failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota services`
+
+List declared services from a validated contract.
+
+```bash
+ota services [PATH]
+ota services --json [PATH]
+ota services --member api [PATH]
+ota services --member api --member web --json [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota services` lists root services and grouped summaries for each declared member
+- when `--member` is set, lists services from the merged member contract
+- repeated `--member` values list services for those members in the provided order
+- prints declared service fields in deterministic order
+- services are not direct task entrypoints; they are managed by `ota doctor` and `ota up`
+
+Text output:
+
+- header: `SERVICES <path>`
+- each service may include `required`, `provider`, `depends_on`, `start`, `stop`, `healthcheck`, `timeout`, and a management note
+
+JSON output:
+
+- success: `ok`, `path`, `services`
+- monorepo root summaries include grouped per-member results in `members`
+- repeated `--member` values return grouped per-member results in `members`
 - failure: `ok`, `path`, and either `errors` or `error`
 
 ## `ota run`

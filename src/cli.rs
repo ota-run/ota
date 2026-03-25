@@ -94,6 +94,17 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// List declared services from an Ota contract.
+    Services {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Run the command against one or more monorepo members declared by the root contract.
+        #[arg(long)]
+        member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
@@ -458,6 +469,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         &cli.command,
         Commands::Validate { json: true, .. }
             | Commands::Tasks { json: true, .. }
+            | Commands::Services { json: true, .. }
             | Commands::Doctor { json: true, .. }
             | Commands::Check { json: true, .. }
             | Commands::Init { json: true, .. }
@@ -484,6 +496,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             &member,
             use_cmd,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Services { json, member, path } => commands::services(
+            path.as_deref(),
+            file.as_deref(),
+            &member,
             format_from_json(json),
             debug,
         ),
@@ -794,6 +813,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     let suggestion = match command {
         Commands::Validate { .. } => REPO_SETUP_SUGGESTION,
         Commands::Tasks { .. } => "ota tasks",
+        Commands::Services { .. } => REPO_SETUP_SUGGESTION,
         Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
         Commands::Init { .. } => "ota init --dry-run",
@@ -841,6 +861,7 @@ fn command_requests_json(command: &Commands) -> bool {
     match command {
         Commands::Validate { json, .. }
         | Commands::Tasks { json, .. }
+        | Commands::Services { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Init { json, .. }
         | Commands::Check { json, .. }
@@ -865,6 +886,7 @@ fn command_where_label(command: &Commands) -> &'static str {
     match command {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
+        Commands::Services { .. } => "ota services",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Init { .. } => "ota init",
@@ -3753,6 +3775,65 @@ tasks:
         assert!(output.stdout.contains("\n✦ start `ota run start`"));
         assert!(output.stdout.contains("\n✦ typecheck `ota run typecheck`"));
         assert!(!output.stdout.contains("Command Preview:"));
+    }
+
+    #[test]
+    fn services_text_lists_service_details() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -U qredex -d qredex
+    timeout: 30
+"#,
+        );
+
+        let output = run_with(["ota", "services", fixture.path()]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(body.contains("SERVICES "));
+        assert!(body.contains("postgres [required]"));
+        assert!(body.contains("Provider: docker-compose"));
+        assert!(body.contains("Start: docker compose up -d postgres"));
+        assert!(body.contains("Stop: docker compose stop postgres"));
+        assert!(body.contains("Healthcheck: pg_isready -U qredex -d qredex"));
+        assert!(body.contains("Timeout: 30s"));
+        assert!(body.contains("Managed By:"));
+    }
+
+    #[test]
+    fn services_json_reports_service_summaries() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    provider: docker-compose
+    start: docker compose up -d postgres
+    healthcheck: pg_isready -U qredex -d qredex
+"#,
+        );
+
+        let output = run_with(["ota", "services", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["services"][0]["name"], "postgres");
+        assert_eq!(json["services"][0]["provider"], "docker-compose");
+        assert_eq!(json["services"][0]["required"], true);
     }
 
     #[test]

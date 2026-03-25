@@ -42,11 +42,12 @@ use crate::doctor::{
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, OutputFormat, TaskSummary,
-    TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
-    WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceUpSuccess,
+    DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceListSuccess,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -765,6 +766,330 @@ pub fn tasks(
         debug,
         debug_lines,
     )
+}
+
+pub fn services(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=services")],
+        );
+    }
+
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=services")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=services"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    for member in members {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) if members.is_empty() || members.len() == 1 => {
+                let service_summaries = target
+                    .contract
+                    .services
+                    .iter()
+                    .map(|(name, service)| ServiceSummary::from_spec(name, service))
+                    .collect::<Vec<_>>();
+
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let mut text_sections = vec![render_services_output_text(
+                        &text_path_display,
+                        &service_summaries,
+                    )];
+                    let mut member_results = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => {
+                                                    CommandOutput::failure(to_json(
+                                                        &ServicesFailure {
+                                                            ok: false,
+                                                            path: &path_display,
+                                                            errors: errors
+                                                                .errors()
+                                                                .iter()
+                                                                .map(ToString::to_string)
+                                                                .collect(),
+                                                            error: None,
+                                                        },
+                                                    ))
+                                                }
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => {
+                                                    CommandOutput::failure(to_json(
+                                                        &ServicesFailure {
+                                                            ok: false,
+                                                            path: &path_display,
+                                                            errors: Vec::new(),
+                                                            error: Some(error.to_string()),
+                                                        },
+                                                    ))
+                                                }
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            let member_services = member_target
+                                .contract
+                                .services
+                                .iter()
+                                .map(|(name, service)| {
+                                    ServiceSummary::from_spec(name, service)
+                                })
+                                .collect::<Vec<_>>();
+                            text_sections.push(render_services_output_text(
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
+                                &member_services,
+                            ));
+                            member_results.push(MemberServicesSuccess {
+                                member: member.to_string(),
+                                services: member_services,
+                            });
+                        }
+                    }
+
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                        OutputFormat::Json => CommandOutput::success(to_json(&ServicesSuccess {
+                            ok: true,
+                            path: &path_display,
+                            members: member_results,
+                            services: service_summaries,
+                        })),
+                    }
+                } else {
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(render_services_output_text(
+                            &text_path_display,
+                            &service_summaries,
+                        )),
+                        OutputFormat::Json => CommandOutput::success(to_json(&ServicesSuccess {
+                            ok: true,
+                            path: &path_display,
+                            members: Vec::new(),
+                            services: service_summaries,
+                        })),
+                    }
+                }
+            }
+            Ok(_) => {
+                let mut text_sections = Vec::new();
+                let mut member_results = Vec::new();
+                for member in members {
+                    let target =
+                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                            Ok(target) => target,
+                            Err(ContractProblem::Validation(errors)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(errors.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ServicesFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: errors
+                                                    .errors()
+                                                    .iter()
+                                                    .map(ToString::to_string)
+                                                    .collect(),
+                                                error: None,
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                            Err(ContractProblem::Load(error)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(error.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ServicesFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: Vec::new(),
+                                                error: Some(error.to_string()),
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                    let services = target
+                        .contract
+                        .services
+                        .iter()
+                        .map(|(name, service)| ServiceSummary::from_spec(name, service))
+                        .collect::<Vec<_>>();
+                    text_sections.push(render_services_output_text(
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
+                        &services,
+                    ));
+                    member_results.push(MemberServicesSuccess {
+                        member: member.to_string(),
+                        services,
+                    });
+                }
+
+                match format {
+                    OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                    OutputFormat::Json => CommandOutput::success(to_json(&ServicesSuccess {
+                        ok: true,
+                        path: &path_display,
+                        members: member_results,
+                        services: Vec::new(),
+                    })),
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ServicesFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ServicesFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> String {
+    let mut output = format_command_header("SERVICES", path);
+    output.push('\n');
+
+    if services.is_empty() {
+        output.push_str(&format!("\n{} none", list_bullet()));
+        return output;
+    }
+
+    for (index, service) in services.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+
+        output.push_str(&format!(
+            "\n{} {} [{}]",
+            list_bullet(),
+            paint(&service.name, "1"),
+            if service.required {
+                "required"
+            } else {
+                "optional"
+            }
+        ));
+
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Provider:"),
+            service.provider.as_deref().unwrap_or("-")
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Depends On:"),
+            if service.depends_on.is_empty() {
+                String::from("-")
+            } else {
+                service.depends_on.join(", ")
+            }
+        ));
+
+        if let Some(start) = service.start.as_deref() {
+            output.push_str(&format!("\n  {} {start}", paint_key("Start:")));
+        }
+        if let Some(stop) = service.stop.as_deref() {
+            output.push_str(&format!("\n  {} {stop}", paint_key("Stop:")));
+        }
+        if let Some(healthcheck) = service.healthcheck.as_deref() {
+            output.push_str(&format!("\n  {} {healthcheck}", paint_key("Healthcheck:")));
+        }
+        if let Some(timeout) = service.timeout {
+            output.push_str(&format!("\n  {} {timeout}s", paint_key("Timeout:")));
+        }
+
+        output.push_str(&format!(
+            "\n  {} {}, {}",
+            paint_key("Managed By:"),
+            paint_code("ota doctor"),
+            paint_code("ota up")
+        ));
+    }
+
+    output
 }
 
 pub fn run_command(

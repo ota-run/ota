@@ -190,6 +190,35 @@ ota tasks --json > .ota-tasks.json
 cat .ota-tasks.json
 ```
 
+### `ota services`
+
+When to use:
+
+- to inspect declared services and the contract fields that manage them
+
+Why:
+
+- services are readiness and startup dependencies, not direct task entrypoints
+
+Use-case:
+
+- confirm what `ota doctor` and `ota up` will manage before running them
+
+```bash
+ota services
+ota services --json
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota services --json > .ota-services.json
+cat .ota-services.json
+```
+
 ### `ota check`
 
 When to use:

@@ -24,7 +24,7 @@ use serde::Serialize;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
-use crate::schema::{AgentConfig, TaskSpec, TaskVariantView};
+use crate::schema::{AgentConfig, ServiceSpec, TaskSpec, TaskVariantView};
 use crate::workspace::WorkspaceRepoDoctorReport;
 
 fn slice_is_empty<T>(value: &[T]) -> bool {
@@ -326,6 +326,31 @@ pub struct TasksFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ServicesSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<MemberServicesSuccess>,
+    pub services: Vec<ServiceSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MemberServicesSuccess {
+    pub member: String,
+    pub services: Vec<ServiceSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServicesFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct AgentSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<&'a str>,
@@ -413,6 +438,38 @@ impl<'a> TaskSummary<'a> {
                     script: variant.script.as_deref(),
                 })
                 .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceSummary {
+    pub name: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub healthcheck: Option<String>,
+    pub depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+impl ServiceSummary {
+    pub fn from_spec(name: &str, service: &ServiceSpec) -> Self {
+        Self {
+            name: name.to_string(),
+            required: service.required,
+            provider: service.provider.clone(),
+            start: service.start.clone(),
+            stop: service.stop.clone(),
+            healthcheck: service.healthcheck.clone(),
+            depends_on: service.depends_on.clone(),
+            timeout: service.timeout,
         }
     }
 }
