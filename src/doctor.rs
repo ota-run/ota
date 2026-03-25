@@ -132,8 +132,14 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
         return;
     }
 
+    let severity = if project_type_allows_no_tasks(contract) {
+        FindingSeverity::Warn
+    } else {
+        FindingSeverity::Error
+    };
+
     findings.push(Finding {
-        severity: FindingSeverity::Error,
+        severity,
         summary: String::from("No tasks defined in contract"),
         why: String::from(
             "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
@@ -142,6 +148,21 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
             "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate",
         ),
     });
+}
+
+fn project_type_allows_no_tasks(contract: &Contract) -> bool {
+    let project_type = contract
+        .project
+        .project_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+
+    match project_type.as_deref() {
+        Some("sdk" | "library" | "lib" | "package" | "module" | "plugin") => true,
+        _ => false,
+    }
 }
 
 fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -1313,6 +1334,46 @@ project:
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(report.findings[0].summary, "No tasks defined in contract");
+    }
+
+    #[test]
+    fn warns_missing_tasks_for_sdk_type() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-sdk
+  type: sdk
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(report.findings[0].summary, "No tasks defined in contract");
+    }
+
+    #[test]
+    fn warns_missing_tasks_for_library_type_case_insensitive() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-lib
+  type: Library
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(report.findings[0].summary, "No tasks defined in contract");
     }
 

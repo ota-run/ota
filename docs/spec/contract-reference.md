@@ -106,6 +106,12 @@ Use `project` for stable repo identity only. Churn-heavy descriptive fields such
 `created_at`, or publishing metadata should live under `metadata` unless Ota grows a dedicated
 package or distribution contract later.
 
+Readiness note:
+
+- set `project.type` to library-style values such as `sdk` or `library` when the repo is not meant
+  to expose runnable entrypoint tasks; in that case, `ota doctor` treats missing `tasks` as a warning
+  instead of a blocking error.
+
 ## `workspace`
 
 Optional.

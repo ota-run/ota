@@ -87,6 +87,8 @@ Prefer explicitness:
 - name tasks by intent (`setup`, `test`, `lint`, `dev`)
 - keep checks actionable and bounded
 - avoid hidden side effects in task commands
+- for SDK/library repos without runnable entrypoints, set `project.type: sdk` (or `library`) so
+  `ota doctor` treats missing `tasks` as a warning instead of a blocking error
 
 Canonical contract reference in repository:
 
