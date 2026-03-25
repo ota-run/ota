@@ -26,6 +26,7 @@ At least one actionable field is required:
 Current behavior:
 
 - runs declared service `healthcheck` commands
+- for `provider: docker-compose`, runs the healthcheck inside the service container via `docker compose exec -T <service> sh -lc <healthcheck>`
 - reports failed required service healthchecks as blocking errors
 - reports failed optional service healthchecks as warnings
 - reports timed out required service healthchecks as blocking errors

@@ -304,7 +304,7 @@ fn diagnose_services(contract: &Contract, contract_path: &Path, findings: &mut V
 
 fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Option<Finding> {
     if let Some(healthcheck) = service.healthcheck.as_deref() {
-        return match run_check(healthcheck, working_dir, service.timeout) {
+        return match run_service_healthcheck(name, service, working_dir, healthcheck) {
             CheckStatus::Passed => None,
             CheckStatus::Failed => Some(Finding {
                 severity: if service.required {
@@ -364,6 +364,28 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
     None
 }
 
+fn run_service_healthcheck(
+    name: &str,
+    service: &ServiceSpec,
+    working_dir: &Path,
+    healthcheck: &str,
+) -> CheckStatus {
+    match service.provider.as_deref() {
+        Some("docker-compose") => {
+            let command = compose_service_healthcheck_command(name, healthcheck);
+            run_check(&command, working_dir, service.timeout)
+        }
+        _ => run_check(healthcheck, working_dir, service.timeout),
+    }
+}
+
+fn compose_service_healthcheck_command(name: &str, healthcheck: &str) -> String {
+    format!(
+        "docker compose exec -T {name} sh -lc {}",
+        shell_single_quote(healthcheck)
+    )
+}
+
 fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
     for (name, requirement) in &contract.env {
         let value = std::env::var(name)
@@ -398,7 +420,7 @@ fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
 
 fn diagnose_runtimes(contract: &Contract, findings: &mut Vec<Finding>) {
     for (name, requirement) in &contract.runtimes {
-        diagnose_command_version("runtime", name, requirement.version(), true, findings);
+        diagnose_command_version("runtime", name, name, requirement.version(), true, findings);
     }
 }
 
@@ -409,27 +431,37 @@ fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
             crate::schema::ToolRequirement::Detailed(detail) => detail.required,
         };
 
-        diagnose_command_version("tool", name, requirement.version(), required, findings);
+        diagnose_command_version(
+            "tool",
+            name,
+            tool_executable_name(name),
+            requirement.version(),
+            required,
+            findings,
+        );
     }
 }
 
 fn diagnose_command_version(
     kind: &str,
-    name: &str,
+    display_name: &str,
+    executable_name: &str,
     requirement: &str,
     required: bool,
     findings: &mut Vec<Finding>,
 ) {
-    let Some(actual) = command_version(name) else {
+    let Some(actual) = command_version(executable_name) else {
         findings.push(Finding {
             severity: if required {
                 FindingSeverity::Error
             } else {
                 FindingSeverity::Warn
             },
-            summary: format!("Missing {kind}: {name}"),
-            why: format!("{name} is declared in the contract but is not available on PATH"),
-            next: format!("install {name} and make it available on PATH"),
+            summary: format!("Missing {kind}: {display_name}"),
+            why: format!(
+                "{display_name} is declared in the contract but is not available on PATH"
+            ),
+            next: format!("install {display_name} and make it available on PATH"),
         });
         return;
     };
@@ -444,9 +476,13 @@ fn diagnose_command_version(
         } else {
             FindingSeverity::Warn
         },
-        summary: format!("Version mismatch for {kind}: {name}"),
-        why: format!("{name} resolved to `{actual}` but the contract requires `{requirement}`"),
-        next: format!("install a compatible {name} version that satisfies `{requirement}`"),
+        summary: format!("Version mismatch for {kind}: {display_name}"),
+        why: format!(
+            "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
+        ),
+        next: format!(
+            "install a compatible {display_name} version that satisfies `{requirement}`"
+        ),
     });
 }
 
@@ -461,6 +497,13 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
         why: format!("{backend} requires `{name}` to be available on PATH"),
         next: format!("install {name} and make it available on PATH"),
     });
+}
+
+fn tool_executable_name(name: &str) -> &str {
+    match name {
+        "maven" => "mvn",
+        _ => name,
+    }
 }
 
 fn diagnose_checks(
@@ -712,6 +755,11 @@ fn shell_command(command: &str) -> Command {
     shell
 }
 
+fn shell_single_quote(command: &str) -> String {
+    let escaped = command.replace('\'', r"'\''");
+    format!("'{}'", escaped)
+}
+
 #[cfg(test)]
 mod tests {
     use std::env;
@@ -721,8 +769,8 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{
-        FindingSeverity, diagnose_checks_only, diagnose_contract, diagnose_preconditions,
-        version_matches,
+        FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
+        diagnose_contract, diagnose_preconditions, tool_executable_name, version_matches,
     };
 
     #[test]
@@ -1488,6 +1536,20 @@ tasks:
         assert!(version_matches("^0.6.0", "0.6.4"));
         assert!(!version_matches("^0.6.0", "0.7.0"));
         assert!(version_matches(">=go1.2.1", "go1.24.2"));
+    }
+
+    #[test]
+    fn maps_maven_tool_to_mvn_executable() {
+        assert_eq!(tool_executable_name("maven"), "mvn");
+        assert_eq!(tool_executable_name("cargo"), "cargo");
+    }
+
+    #[test]
+    fn composes_docker_compose_healthcheck_command_inside_container() {
+        assert_eq!(
+            compose_service_healthcheck_command("postgres", "pg_isready -U qredex -d qredex"),
+            "docker compose exec -T postgres sh -lc 'pg_isready -U qredex -d qredex'"
+        );
     }
 
     #[cfg(unix)]

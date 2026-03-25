@@ -256,6 +256,7 @@ Current behavior:
 - service dependency cycles are invalid
 - `timeout` must be greater than zero when set
 - `ota doctor` runs declared service `healthcheck` commands
+- for `provider: docker-compose`, `ota doctor` runs the healthcheck inside the service container via `docker compose exec -T <service> sh -lc <healthcheck>`
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
 - timed out required service healthchecks are blocking errors
@@ -337,6 +338,7 @@ Rules:
 - tool names must not be empty
 - versions must not be empty
 - `required` defaults to `true`
+- some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 
 ## `env`
 
