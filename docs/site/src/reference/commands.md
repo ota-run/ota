@@ -302,7 +302,7 @@ ota detect --dry-run .
 ota detect --write .
 ota detect --merge --dry-run .
 ota detect --merge --apply tools.cargo --apply tasks.build.run .
-ota detect --merge --apply .
+ota detect --merge --apply-all .
 ota detect --merge .
 ota detect --rewrite --dry-run .
 ota detect --rewrite --yes .
@@ -327,7 +327,7 @@ ota detect --merge --dry-run
 ota detect --merge --apply tools.cargo --apply tasks.build.run
 
 # apply all eligible detected suggestions without rewriting the rest of ota.yaml
-ota detect --merge --apply .
+ota detect --merge --apply-all
 
 # if manual edits drift badly, preview full regenerate and then apply with confirmation
 ota detect --rewrite --dry-run .

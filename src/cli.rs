@@ -199,6 +199,9 @@ enum Commands {
         /// Select detected field paths to apply when merging into an existing ota.yaml.
         #[arg(long, action = ArgAction::Append, value_name = "FIELD", requires = "merge")]
         apply: Vec<String>,
+        /// Apply all eligible detected changes when merging into an existing ota.yaml.
+        #[arg(long, action = ArgAction::SetTrue, requires = "merge")]
+        apply_all: bool,
         /// Replace an existing ota.yaml with a regenerated detected contract.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "merge")]
         rewrite: bool,
@@ -602,6 +605,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             dry_run,
             merge,
             apply,
+            apply_all,
             rewrite,
             yes,
             path,
@@ -620,6 +624,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 dry_run,
                 merge,
                 &apply,
+                apply_all,
                 rewrite,
                 yes,
                 format_from_json(json),
@@ -5543,8 +5548,7 @@ project:
             "ota",
             "detect",
             "--merge",
-            "--apply",
-            ".",
+            "--apply-all",
             fixture.path(),
         ]);
 
