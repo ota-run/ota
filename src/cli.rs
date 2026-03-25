@@ -6437,6 +6437,7 @@ project:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("WORKSPACE DETECT REWRITTEN"));
         assert!(body.contains("Backup:"));
+        assert!(!body.contains("Included repos:"));
 
         let backups = fs::read_dir(fixture.path())
             .unwrap()
@@ -6486,6 +6487,14 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT REWRITTEN"));
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
+
+        let validate = run_with([
+            "ota",
+            "workspace",
+            "validate",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(validate.exit_code, 0);
     }
 
     #[test]
