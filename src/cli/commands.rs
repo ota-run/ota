@@ -2448,16 +2448,20 @@ pub fn detect(
                         render_detect_comparison_section(&mut stdout, comparison.as_ref());
                         if let Some(comparison) = comparison.as_ref() {
                             if !comparison.changes.is_empty() {
-                                stdout.push_str(&format_next_timeline(&[
-                                    format!(
-                                        "run `ota detect --merge --apply <field name> {}` to apply selected fields",
-                                        compact_root_display
-                                    ),
-                                    format!(
-                                        "run `ota detect --rewrite --yes {}` to replace the full detected contract",
-                                        compact_root_display
-                                    ),
-                                ]));
+                                stdout.push_str(&format!(
+                                    "\n\n{}",
+                                    error_next_key("Next:")
+                                ));
+                                stdout.push_str(&format!(
+                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields",
+                                    next_bullet(),
+                                    compact_root_display
+                                ));
+                                stdout.push_str(&format!(
+                                    "\n{}  run `ota detect --rewrite --yes {}` to replace the full detected contract",
+                                    next_bullet(),
+                                    compact_root_display
+                                ));
                             }
                         }
                         CommandOutput::success(stdout)
@@ -4204,6 +4208,39 @@ fn write_detected_merge(
     };
 
     let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
+    let comparison_fields = comparison
+        .changes
+        .iter()
+        .map(|change| change.field.clone())
+        .collect::<BTreeSet<_>>();
+    if !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields) {
+        let requested = selected_fields.iter().cloned().collect::<Vec<_>>().join(", ");
+        let available = comparison_fields.iter().cloned().collect::<Vec<_>>().join(", ");
+        let error = format!(
+            "selected field(s) not present in current detect comparison: {requested}{}",
+            format_next_timeline(&[
+                String::from("run `ota detect --dry-run .` to review available detected changes"),
+                if available.is_empty() {
+                    String::from("run `ota detect --merge .` to apply eligible mergeable fields")
+                } else {
+                    format!(
+                        "run `ota detect --merge --apply <field name> .` for one of: {available}"
+                    )
+                },
+            ])
+        );
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: Some("ota detect --dry-run ."),
+            })),
+        };
+    }
+
     let selected_changes = comparison
         .changes
         .iter()
