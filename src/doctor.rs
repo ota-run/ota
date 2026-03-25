@@ -642,8 +642,6 @@ impl CheckSpinner {
                 index += 1;
                 thread::sleep(Duration::from_millis(90));
             }
-            let _ = writeln!(stderr);
-            let _ = stderr.flush();
         });
 
         Self {
@@ -656,6 +654,11 @@ impl CheckSpinner {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
+        }
+        if io::stderr().is_terminal() {
+            let mut stderr = io::stderr();
+            let _ = write!(stderr, "\r\x1b[2K\r");
+            let _ = stderr.flush();
         }
     }
 }
