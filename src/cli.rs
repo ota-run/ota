@@ -21,7 +21,11 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::ffi::OsString;
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use clap::{error::ErrorKind, ArgAction, Parser, Subcommand, ValueEnum};
 
@@ -447,7 +451,7 @@ where
     }
 
     match Cli::try_parse_from(args.clone()) {
-        Ok(cli) => dispatch(cli),
+        Ok(cli) => run_cli(cli),
         Err(error) => {
             let mut stderr = error.render().to_string().trim_end().to_string();
             if error.kind() == ErrorKind::InvalidSubcommand
@@ -466,6 +470,103 @@ where
             }
 
             CommandOutput::failure_with_code(stderr, 2)
+        }
+    }
+}
+
+fn run_cli(cli: Cli) -> CommandOutput {
+    if should_show_command_spinner(&cli) {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(dispatch(cli));
+        });
+        return wait_with_spinner(rx);
+    }
+
+    dispatch(cli)
+}
+
+fn should_show_command_spinner(cli: &Cli) -> bool {
+    io::stderr().is_terminal()
+        && !cli.plain
+        && !cli.debug
+        && !command_requests_json(&cli.command)
+        && matches!(
+            &cli.command,
+            Commands::Validate { .. }
+                | Commands::Tasks { .. }
+                | Commands::Services { .. }
+                | Commands::Init { .. }
+                | Commands::Detect { .. }
+                | Commands::Workspace {
+                    command: WorkspaceCommands::Validate { .. }
+                        | WorkspaceCommands::Tasks { .. }
+                        | WorkspaceCommands::List { .. }
+                        | WorkspaceCommands::Detect { .. }
+                        | WorkspaceCommands::Init { .. },
+                }
+        )
+}
+
+fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
+    let delay = Duration::from_millis(120);
+    let start = Instant::now();
+
+    loop {
+        match rx.recv_timeout(Duration::from_millis(20)) {
+            Ok(output) => return output,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return CommandOutput::failure(String::from("command execution failed"));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if start.elapsed() >= delay {
+                    break;
+                }
+            }
+        }
+    }
+
+    let spinner = CommandSpinner::start();
+    let output = rx.recv().expect("command worker should send a report");
+    spinner.stop();
+    output
+}
+
+struct CommandSpinner {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl CommandSpinner {
+    fn start() -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_stop = std::sync::Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let frames = ["◐", "◓", "◑", "◒"];
+            let mut index = 0usize;
+            let mut stderr = io::stderr();
+            while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let frame = frames[index % frames.len()];
+                let _ = write!(stderr, "\r🦦  {frame}");
+                let _ = stderr.flush();
+                index += 1;
+                thread::sleep(Duration::from_millis(90));
+            }
+            let _ = writeln!(stderr);
+            let _ = stderr.flush();
+        });
+
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop(mut self) {
+        self.stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
         }
     }
 }
