@@ -29,6 +29,12 @@ and a practical use-case.
 
 Doctor first, contract second.
 
+Global output modifiers:
+
+- `--concise`: shorter text output for high-noise commands while preserving decisions/actions.
+- `--verbose`: full explanatory text output.
+- `--json`: stable machine output; not affected by concise/verbose text shaping.
+
 ## Start with this flow
 
 1. `ota doctor` to understand readiness blockers.
@@ -76,6 +82,7 @@ When to use:
 Why:
 
 - shows actionable blockers and warnings with explicit next steps
+- `--concise` keeps severity/summary/next action and omits `Why` detail
 
 Use-case:
 
@@ -445,6 +452,7 @@ When to use:
 Why:
 
 - central view of blockers without hiding per-repo context
+- `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 
 ```bash
 ota workspace doctor
@@ -472,6 +480,7 @@ When to use:
 Why:
 
 - lightweight CI signal across multiple repositories
+- `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 
 ```bash
 ota workspace check

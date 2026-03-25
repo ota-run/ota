@@ -26,7 +26,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - command failures may still use stderr when the command cannot produce its normal JSON result
 - some JSON failures include an optional `next` string when Ota can point to one safe follow-up command
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
-- `path` always refers to the resolved contract path
+- `path` refers to the resolved contract path as rendered by current CLI path compaction (often cwd-relative such as `./ota.yaml`)
 
 ## `ota validate --json`
 
@@ -380,10 +380,10 @@ Failure example:
 ```json
 {
   "ok": false,
-  "path": "/abs/path/to/ota.yaml",
+  "path": "./ota.yaml",
   "written": false,
-  "error": "`/abs/path/to/ota.yaml` already exists; `ota init` is only for repos without an Ota contract\nNext: review the existing contract with `ota validate /abs/path/to/ota.yaml` or `ota doctor /abs/path/to/ota.yaml`\nNext: if you want to compare detected repo signals against it, run `ota detect --merge --dry-run /abs/path/to/ota.yaml`",
-  "next": "ota detect --merge --dry-run /abs/path/to/ota.yaml"
+  "error": "`./ota.yaml` already exists; ota init is only for repos without an Ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  compare detected repo signals with `ota detect --merge --dry-run`\n▸  apply detected add-only high-confidence fields now with `ota detect --merge`",
+  "next": "ota detect --merge --dry-run"
 }
 ```
 
@@ -510,10 +510,10 @@ Failure example:
 ```json
 {
   "ok": false,
-  "path": "/abs/path/to/ota.yaml",
+  "path": "./ota.yaml",
   "written": false,
-  "error": "`/abs/path/to/ota.yaml` already exists; refusing to overwrite an existing contract\nNext: review detected changes with `ota detect --merge --dry-run /abs/path/to/repo`",
-  "next": "ota detect --merge --dry-run /abs/path/to/repo"
+  "error": "`./ota.yaml` already exists; refusing to overwrite an existing contract\n\nNext:\n▸  review detected changes with `ota detect --merge --dry-run .`",
+  "next": "ota detect --merge --dry-run ."
 }
 ```
 

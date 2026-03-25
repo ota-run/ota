@@ -24,7 +24,7 @@
 
 # V5 Plan
 
-Status: planned (not started).
+Status: completed.
 
 Source direction:
 - [10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/10-v5-spec.md)
@@ -106,3 +106,20 @@ V5 theme:
 - enterprise artifact policy/provisioning enforcement layer
 - major schema family expansion beyond current compatibility boundaries
 - introducing new core command families not required for UX/flow hardening
+
+## Completion summary
+
+- unified trust-sensitive text error envelopes around consistent `Where` / `Why` / `Next` usage
+- removed circular/self-referential next-step guidance in repo/workspace failures
+- standardized path/recommendation rendering to current-working-directory-relative output where applicable
+- completed concise-mode hardening for high-noise readiness surfaces (`doctor`, `check`, `workspace doctor`, `workspace check`, `workspace list`)
+- aligned spec/site command docs and JSON reference examples with shipped behavior
+- preserved compatibility baseline with a green `./scripts/test-compat.sh` gate
+
+## Execution slices status
+
+1. Error-envelope normalization: completed
+2. Path rendering standardization: completed
+3. Concise-mode finishing pass: completed
+4. Docs and help conformance: completed
+5. Compatibility gate + release readiness: completed
