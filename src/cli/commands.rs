@@ -2457,7 +2457,7 @@ pub fn detect(
                                     error_next_key("Next:")
                                 ));
                                 stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields",
+                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields without rewriting the rest of `ota.yaml`",
                                     next_bullet(),
                                     compact_root_display
                                 ));
@@ -4187,7 +4187,7 @@ fn write_detected_merge(
                 format_next_timeline(&[
                     format!("run `ota validate {compact_path_display}` to repair the existing contract"),
                     format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields after the contract is valid",
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields without replacing the rest of `ota.yaml`",
                         compact_path_display
                     ),
                 ])
@@ -4308,7 +4308,7 @@ fn write_detected_merge(
                 format_next_timeline(&[
                     format!("run `ota validate {compact_path_display}` to repair the existing contract"),
                     format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields after the contract is valid",
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields without replacing the rest of `ota.yaml`",
                         compact_path_display
                     ),
                 ]),
