@@ -296,6 +296,15 @@ Rules:
 - `provider`, when set, must not be empty
 - `distribution`, when set, must not be empty
 
+Version syntax examples:
+
+- `8` is an example of an exact required version
+- `>=8` is an example of accepting any version at or above `8`
+- `^8` is an example of a compatible version range, usually the same major line
+- Ota compares numeric version parts and accepts common prefixes such as `go1.24.2` or `v1.24.2`
+- use `>=` when you want to accept newer versions explicitly
+- use `^` when you want to express compatibility rather than a strict floor
+
 Runtime detail fields:
 
 - `provider`: optional runtime manager or provisioning source hint such as `volta`
