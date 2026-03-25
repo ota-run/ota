@@ -94,11 +94,24 @@ Start minimal, then expand:
 Prefer explicitness:
 
 - name tasks by intent (`setup`, `test`, `lint`, `dev`)
+- use `depends_on` to reuse task steps instead of calling `ota run` from inside another task script
 - keep checks actionable and bounded
 - avoid hidden side effects in task commands
 - for SDK/library repos without runnable entrypoints, set `project.type: sdk` (or `library`) so
   `ota doctor` treats missing `tasks` as a warning instead of a blocking error
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
+
+Script examples:
+
+```yaml
+tasks:
+  build:
+    run: mvn package
+  dev:
+    script: |
+      lsof -ti:8080 | xargs kill -9 || true
+      mvn spring-boot:run
+```
 
 Canonical contract reference in repository:
 

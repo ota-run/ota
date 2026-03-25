@@ -380,11 +380,16 @@ tasks:
     run: pnpm install
     safe_for_agent: true
   dev:
-    script: |
-      export APP_ENV=development
-      pnpm dev
     depends_on:
       - setup
+    script: pnpm dev
+  dev_clean:
+    depends_on:
+      - setup
+      - reset_db
+    script: pnpm dev
+  reset_db:
+    run: docker compose down -v
   bootstrap:
     run: ./scripts/bootstrap.sh
     variants:
@@ -403,6 +408,23 @@ Fields:
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
 
+Use cases:
+
+- use `run` for one command you would normally type in a shell
+- use `script` when the task needs multiple lines, shell setup, or cleanup steps
+
+Example script forms:
+
+```yaml
+tasks:
+  build:
+    run: mvn package
+  dev:
+    script: |
+      lsof -ti:8080 | xargs kill -9 || true
+      mvn spring-boot:run
+```
+
 Variant fields:
 
 - `when.os`: required for each current variant entry; supported values are `linux`, `macos`, and `windows`
@@ -419,6 +441,7 @@ Rules:
 - duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
 - task dependency cycles are rejected
+- `depends_on` is the canonical way to reuse task steps instead of calling `ota run` from inside another task script
 
 Current execution model:
 
@@ -426,6 +449,7 @@ Current execution model:
 - when variants are declared, Ota resolves the best matching `when.os` entry first and falls back to the default execution
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
+- use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
 
 ## `checks`
 
