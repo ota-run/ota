@@ -524,6 +524,7 @@ Why:
 
 - central view of blockers without hiding per-repo context
 - `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
+- `--stream` is text-only and emits repo completion updates while the final report is being built
 
 ```bash
 ota workspace doctor
@@ -531,6 +532,7 @@ ota workspace doctor --json
 ota workspace doctor --repo api
 ota workspace doctor --status not-ready
 ota workspace doctor --severity error
+ota workspace doctor --stream
 ```
 
 Script example:

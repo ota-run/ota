@@ -3843,6 +3843,7 @@ pub fn workspace_doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    stream: bool,
     filters: WorkspaceDoctorFilters,
     format: OutputFormat,
     debug: bool,
@@ -3874,6 +3875,7 @@ pub fn workspace_doctor(
         String::from("DEBUG command=workspace.doctor"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG stream={stream}"),
         format!("DEBUG filter_status={:?}", filters.status),
         format!("DEBUG filter_severity={:?}", filters.severity),
         format!(
@@ -3882,8 +3884,23 @@ pub fn workspace_doctor(
         ),
     ];
 
+    if stream && matches!(format, OutputFormat::Json) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for text output"),
+                2,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
-        match load_and_diagnose_workspace(&resolved_path, jobs) {
+        match if stream {
+            load_and_diagnose_workspace_streaming(&resolved_path, jobs, true)
+        } else {
+            load_and_diagnose_workspace(&resolved_path, jobs)
+        } {
             Ok(report) => {
                 if let Some(target_repo) = filters.repo.as_deref() {
                     let known_repos = report
@@ -3923,9 +3940,7 @@ pub fn workspace_doctor(
 
                 let report = apply_workspace_doctor_filters(report, &filters);
                 match format {
-                    OutputFormat::Text => {
-                        render_workspace_doctor_text(&compact_path_display, &report)
-                    }
+                    OutputFormat::Text => render_workspace_doctor_text(&compact_path_display, &report),
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json(&WorkspaceDoctorSuccess {
                             ok: report.ok,
@@ -9344,6 +9359,89 @@ fn load_and_diagnose_workspace(
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     diagnose_workspace_contract_with_jobs(path, &workspace, jobs)
         .map_err(WorkspaceProblem::Validation)
+}
+
+fn load_and_diagnose_workspace_streaming(
+    path: &Path,
+    jobs: usize,
+    emit_progress: bool,
+) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    let mut repos = BTreeMap::new();
+    let mut ok = true;
+    let mut completed = BTreeSet::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, repo))| {
+                repo.depends_on
+                    .iter()
+                    .all(|dependency| completed.contains(dependency))
+            })
+            .map(|(pending_index, _)| pending_index)
+            .take(jobs)
+            .collect::<Vec<_>>();
+
+        debug_assert!(
+            !ready.is_empty(),
+            "validated workspace repos should remain schedulable"
+        );
+
+        let (tx, rx) = mpsc::channel();
+        let mut handles = Vec::new();
+        for pending_index in ready.into_iter().rev() {
+            let (order, repo) = pending.remove(pending_index);
+            if emit_progress {
+                eprintln!(
+                    "{}",
+                    workspace_progress_line(&workspace_name, "RUN", &repo.name, None)
+                );
+            }
+            let tx = tx.clone();
+            handles.push(thread::spawn(move || {
+                let report = crate::workspace::diagnose_workspace_repo(repo);
+                let _ = tx.send((order, report));
+            }));
+        }
+        drop(tx);
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace doctor worker should send a report");
+            if emit_progress {
+                let status = if report.ok { "READY" } else { "NOT READY" };
+                eprintln!(
+                    "{}",
+                    workspace_progress_line(&workspace_name, status, &report.name, None)
+                );
+                eprintln!();
+            }
+            if report.required && !report.ok {
+                ok = false;
+            }
+            completed.insert(report.name.clone());
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace doctor thread should not panic");
+        }
+    }
+
+    Ok(crate::workspace::WorkspaceDoctorReport {
+        ok,
+        repos: repos.into_values().collect(),
+    })
 }
 
 fn render_run_error(error: RunError) -> String {

@@ -856,6 +856,7 @@ ota workspace doctor --jobs 4 [PATH]
 ota workspace doctor --repo <name> [PATH]
 ota workspace doctor --status ready|not-ready [PATH]
 ota workspace doctor --severity error|warn|info [PATH]
+ota workspace doctor --stream [PATH]
 ```
 
 Current behavior:
@@ -871,6 +872,7 @@ Current behavior:
 - downgrades findings for optional repos to warnings
 - rejects required repos that depend on optional repos
 - supports repo/status/severity filtering for focused diagnosis views
+- `--stream` is text-only and emits repo completion updates while the final report is being built
 
 Text output:
 
