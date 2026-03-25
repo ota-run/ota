@@ -67,6 +67,44 @@ policies:
     require_agents_md: true
 ```
 
+## Adoption walk-through
+
+For a team that wants a quick rollout, the practical path is:
+
+1. add `.ota/org-policy.yaml` at the org root or repo root
+2. start with a small set of required sections and files
+3. run `ota doctor` in one repo and compare the output before and after
+4. expand policy only after the first rules are easy to understand
+
+Example policy pack:
+
+```yaml
+policies:
+  required_sections:
+    - runtimes
+    - tasks
+  required_files:
+    - AGENTS.md
+  agent:
+    require_safe_tasks: true
+```
+
+Before the policy pack exists, `ota doctor` only reports repo-local readiness.
+
+After the policy pack is added, a repo missing `tasks` or `AGENTS.md` will show an org policy finding like:
+
+```text
+◉ ERROR  Repo does not satisfy org policy pack
+Why: `./.ota/org-policy.yaml` requires missing contract sections: tasks and missing files: AGENTS.md
+Next: add the missing items or update `./.ota/org-policy.yaml`
+```
+
+That makes the value visible immediately:
+
+- the repo contract stays local and explicit
+- the org policy stays shared and reusable
+- `ota doctor` becomes the review point for both
+
 ## Semantics
 
 - `required_sections` defines contract sections that every governed repo must provide.

@@ -33,6 +33,7 @@ Source direction:
 - [Conventions and templates](/Users/bobai/Workspace/Ota.run/ota/docs/spec/conventions-and-templates.md)
 - [Audit and provenance](/Users/bobai/Workspace/Ota.run/ota/docs/spec/audit-and-provenance.md)
 - [Remote runner metadata and editor surface](/Users/bobai/Workspace/Ota.run/ota/docs/spec/remote-runner-and-editor-surface.md)
+- [Mutation controls and caching](/Users/bobai/Workspace/Ota.run/ota/docs/spec/mutation-controls-and-caching.md)
 
 V5 theme:
 

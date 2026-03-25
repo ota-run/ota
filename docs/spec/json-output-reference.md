@@ -138,6 +138,12 @@ Finding objects may include additive policy context keys when policy-aware diagn
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
 
+`ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
+additive policy keys may appear there as well.
+
+`ota doctor --json` may also include an `execution` object when the contract declares execution
+metadata that editors and remote-runner tooling can consume.
+
 Root monorepo summary output can also include grouped member findings under `members`.
 
 Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious

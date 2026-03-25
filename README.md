@@ -159,6 +159,7 @@ Current planning state:
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
 - Active version: [docs/planning/v5/plan.md](docs/planning/v5/plan.md)
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
+- V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
 
 ## Installation
 
