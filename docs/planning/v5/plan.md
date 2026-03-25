@@ -30,6 +30,9 @@ Source direction:
 - [/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md)
 - [/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md)
 - [Policy pack model](/Users/bobai/Workspace/Ota.run/ota/docs/spec/policy-packs.md)
+- [Conventions and templates](/Users/bobai/Workspace/Ota.run/ota/docs/spec/conventions-and-templates.md)
+- [Audit and provenance](/Users/bobai/Workspace/Ota.run/ota/docs/spec/audit-and-provenance.md)
+- [Remote runner metadata and editor surface](/Users/bobai/Workspace/Ota.run/ota/docs/spec/remote-runner-and-editor-surface.md)
 
 V5 theme:
 
@@ -66,14 +69,17 @@ V5 theme:
 2. Conventions and templates
 - standardize shared repo templates and org conventions
 - keep template application auditable and non-magical
+- align the target contract to `docs/spec/conventions-and-templates.md`
 
 3. Audit and provenance
 - make machine output suitable for auditing and traceability
 - surface signed config/provenance in a stable way
+- align the target contract to `docs/spec/audit-and-provenance.md`
 
 4. Remote runner and editor surface
 - standardize remote runner metadata
 - keep editor/IDE integrations on the documented contract surface
+- align the target contract to `docs/spec/remote-runner-and-editor-surface.md`
 
 5. Mutation controls and caching
 - keep mutation paths explicit and enterprise-safe
