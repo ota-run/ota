@@ -4195,7 +4195,7 @@ agent:
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("INIT WRITE"));
         assert!(output.stdout.contains(
-            "Write policy: detected mode writes only high-confidence fields automatically"
+            "Write policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded"
         ));
         assert!(output.stdout.contains("Next:\n▸  run `ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
@@ -4205,22 +4205,20 @@ agent:
     }
 
     #[test]
-    fn init_refuses_default_write_when_high_confidence_fields_are_insufficient() {
+    fn init_writes_medium_confidence_starter_when_it_is_valid() {
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
 
         let output = run_with(["ota", "init", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Where:"));
-        assert!(stderr.contains(
-            "detected starter includes medium or low confidence fields that are required for a valid contract"
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("INIT WRITE"));
+        assert!(output.stdout.contains(
+            "Write policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded"
         ));
-        assert!(stderr.contains("review `ota init` output"));
-        assert!(stderr.contains("use `ota detect --dry-run` before writing"));
-        assert!(stderr.contains("Excluded from automatic write:"));
-        assert!(!fixture.file_path().exists());
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("name: go-service"));
+        assert!(written.contains("go: 1.24.0"));
     }
 
     #[test]
@@ -4269,7 +4267,7 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .contains("only for repos without an Ota contract")
+                .contains("use `ota detect --merge` to update the existing contract")
         );
         assert!(
             output
@@ -4283,7 +4281,14 @@ project:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .contains("ota detect --merge --dry-run")
+                .contains("compare detected repo signals with `ota detect --merge --dry-run")
+        );
+        assert!(
+            output
+                .stderr
+                .as_deref()
+                .unwrap()
+                .contains("update the existing contract with `ota detect --merge")
         );
     }
 
@@ -4305,10 +4310,7 @@ project:
         assert_eq!(json["written"], false);
         assert_eq!(
             json["next"],
-            format!(
-                "ota detect --merge --dry-run {}",
-                compact_path(fixture.dir.path(), ".")
-            )
+            format!("ota detect --merge {}", compact_path(fixture.dir.path(), "."))
         );
     }
 
