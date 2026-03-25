@@ -114,7 +114,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     );
     out.push_str(&format!(
         "\n{} {}",
-        paint_key("Where:"),
+        error_key("Where:"),
         paint_code(&where_value)
     ));
 
@@ -127,7 +127,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     if lines.is_empty() {
         out.push_str(&format!(
             "\n{} command failed with no additional details",
-            paint_key("Why:")
+            error_key("Why:")
         ));
         return out;
     }
@@ -138,14 +138,11 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     }
 
     if lines.len() == 1 {
-        out.push_str(&format!("\n{} {}", paint_key("Why:"), lines[0]));
+        out.push_str(&format!("\n{} {}", error_key("Why:"), lines[0]));
         return out;
     }
 
-    out.push_str(&format!("\n{}", paint_key("Why:")));
-    for line in lines {
-        out.push_str(&format!("\n{}  {}", info_bullet(), line));
-    }
+    out.push_str(&format!("\n{} {}", error_key("Why:"), lines.join(" | ")));
     out
 }
 
@@ -170,10 +167,10 @@ fn render_missing_contract_guidance(
     message: &str,
     context: MissingContractContext,
 ) {
-    out.push_str(&format!("\n{} {}", paint_key("Why:"), message));
+    out.push_str(&format!("\n{} {}", error_key("Why:"), message));
     match context {
         MissingContractContext::Repo => {
-            out.push_str(&format!("\n\n{}", paint_next_header()));
+            out.push_str(&format!("\n\n{}", error_key("Next:")));
             out.push_str(&format!(
                 "\n{}  setup repo with {}",
                 next_bullet(),
@@ -193,7 +190,7 @@ fn render_missing_contract_guidance(
         MissingContractContext::Workspace => {
             out.push_str(&format!(
                 "\n{} setup workspace with {}",
-                paint_next_label(),
+                error_key("Next:"),
                 paint_code("`ota workspace init`")
             ));
         }
@@ -2017,7 +2014,7 @@ fn render_workspace_validate_failure(
     );
     out.push_str(&format!(
         "\n{} {}",
-        paint_key("Where:"),
+        error_key("Where:"),
         paint_code(workspace_path)
     ));
 
@@ -2029,7 +2026,7 @@ fn render_workspace_validate_failure(
             } else {
                 out.push_str(&format!(
                     "\n{} {}",
-                    paint_key("Why:"),
+                    error_key("Why:"),
                     compact_error
                 ));
             }
@@ -2037,28 +2034,30 @@ fn render_workspace_validate_failure(
         None if errors.is_empty() => {
             out.push_str(&format!(
                 "\n{} workspace validation returned an unknown error",
-                paint_key("Why:")
+                error_key("Why:")
             ));
         }
         None => {
             if errors.len() == 1 {
                 out.push_str(&format!(
                     "\n{} {}",
-                    paint_key("Why:"),
+                    error_key("Why:"),
                     compact_backticked_paths(&errors[0])
                 ));
             } else {
-                out.push_str(&format!("\n{}", paint_key("Why:")));
-                for error in errors {
-                    out.push_str(&format!("\n  {}", compact_backticked_paths(error)));
-                }
+                let joined = errors
+                    .iter()
+                    .map(|error| compact_backticked_paths(error))
+                    .collect::<Vec<_>>()
+                    .join(" | ");
+                out.push_str(&format!("\n{} {}", error_key("Why:"), joined));
             }
         }
     }
 
     out.push_str(&format!(
         "\n{} repair the listed issue(s), then re-run `{}`",
-        paint_key("Next:"),
+        error_key("Next:"),
         paint_code("ota workspace validate")
     ));
     out
@@ -2816,10 +2815,10 @@ pub fn workspace_list(
                             "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace list filter failed", "1;37"),
-                            paint_key("Where:"),
+                            error_key("Where:"),
                             paint_code(&compact_path_display),
-                            paint_key("Why:"),
-                            paint_key("Next:")
+                            error_key("Why:"),
+                            error_key("Next:")
                         );
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error),
@@ -2938,10 +2937,10 @@ pub fn workspace_doctor(
                             "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`; run `{}`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace doctor filter failed", "1;37"),
-                            paint_key("Where:"),
+                            error_key("Where:"),
                             paint_code(&compact_path_display),
-                            paint_key("Why:"),
-                            paint_key("Next:"),
+                            error_key("Why:"),
+                            error_key("Next:"),
                             paint_code("ota workspace list")
                         );
                         return match format {
@@ -5857,16 +5856,16 @@ fn paint_key(key: &str) -> String {
     paint(key, "38;2;102;217;255")
 }
 
+fn error_key(key: &str) -> String {
+    paint(key, "1;38;2;255;150;150")
+}
+
 fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
     if plain_mode() {
         return key.to_string();
     }
     match severity {
-        FindingSeverity::Error => match key {
-            "Why:" => paint(key, "1;38;2;255;150;150"),
-            "Next:" => paint(key, "1;38;2;242;209;170"),
-            _ => paint_key(key),
-        },
+        FindingSeverity::Error => error_key(key),
         _ => paint_key(key),
     }
 }
