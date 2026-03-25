@@ -732,7 +732,7 @@ JSON output:
 
 ## `ota workspace list`
 
-List workspace repos and contract presence without running readiness diagnosis.
+List workspace repos, contract presence, and lightweight readiness status without running workspace doctor.
 
 ```bash
 ota workspace list [PATH]
@@ -746,20 +746,22 @@ Current behavior:
 - validates workspace shape for deterministic repo ordering
 - lists all declared repos (or one repo with `--repo`)
 - reports acquisition state per repo (`ACQUIRED` vs `NOT ACQUIRED`)
+- reports lightweight readiness status per repo (`READY` vs `NOT READY`)
 - reports contract presence per repo (`contract_present`)
 - for missing contracts in text output, embeds a repo-specific setup hint using `ota init <repo-path>`
 
 Text output:
 
 - header: `WORKSPACE LIST <path>`
-- each repo includes required/optional status, acquisition status, path, contract path state, and dependencies
+- each repo includes required/optional status, acquisition status, readiness status, path, contract path state, and dependencies
+- each repo shows acquisition on the summary line and readiness on a dedicated `Status:` line
 
 JSON output:
 
 - `ok`
 - `path`
 - `repos`
-- each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `depends_on`
+- each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `status`, `depends_on`
 
 ## `ota workspace run`
 

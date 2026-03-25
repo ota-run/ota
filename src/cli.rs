@@ -7285,6 +7285,7 @@ tasks:
         let text_body = strip_ansi(&text.stdout);
         assert!(text_body.contains("WORKSPACE LIST"));
         assert!(text_body.contains("db [required] (ACQUIRED)"));
+        assert!(text_body.contains("Status: READY"));
         assert!(text_body.contains("api [required] (ACQUIRED)"));
 
         let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
@@ -7292,7 +7293,9 @@ tasks:
         let body: Value = serde_json::from_str(&json.stdout).unwrap();
         assert_eq!(body["ok"], true);
         assert_eq!(body["repos"][0]["name"], "db");
+        assert_eq!(body["repos"][0]["status"], "READY");
         assert_eq!(body["repos"][1]["name"], "api");
+        assert_eq!(body["repos"][1]["status"], "READY");
     }
 
     #[test]
@@ -7337,6 +7340,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("api [required] (ACQUIRED)"));
+        assert!(body.contains("Status: NOT READY"));
         assert!(body.contains("Contract: missing (setup repo with"));
         assert!(body.contains("ota init"));
     }
@@ -7413,6 +7417,7 @@ repos:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("WORKSPACE LIST"));
         assert!(body.contains("db [required] (ACQUIRED)"));
+        assert!(body.contains("Status: READY"));
         assert!(!body.contains("Path:"));
         assert!(!body.contains("Contract:"));
         assert!(!body.contains("Depends On:"));

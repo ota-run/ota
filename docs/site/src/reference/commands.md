@@ -479,11 +479,12 @@ ota workspace tasks --json > .ota-workspace-tasks.json
 
 When to use:
 
-- inventory workspace repos and contract presence without running diagnosis
+- inventory workspace repos, contract presence, and lightweight readiness status without running workspace doctor
 
 Why:
 
-- gives a fast, non-readiness view of required/optional repos, acquisition state, and missing contracts
+- gives a fast view of required/optional repos, acquisition state, lightweight readiness, and missing contracts
+- shows acquisition in the repo summary and readiness on a dedicated `Status:` line
 
 ```bash
 ota workspace list

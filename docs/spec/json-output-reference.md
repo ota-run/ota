@@ -293,6 +293,7 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
       "contract_present": true,
       "required": true,
       "acquired": true,
+      "status": "READY",
       "depends_on": ["db"]
     }
   ]

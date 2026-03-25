@@ -3646,6 +3646,20 @@ pub fn workspace_list(
                         None => true,
                     })
                     .map(|repo| WorkspaceRepoListReport {
+                        status: if repo.present && repo.contract_path.is_file() {
+                            match load_contract(&repo.contract_path) {
+                                Ok(contract) => {
+                                    if diagnose_preconditions(&contract, &repo.contract_path).ok {
+                                        String::from("READY")
+                                    } else {
+                                        String::from("NOT READY")
+                                    }
+                                }
+                                Err(_) => String::from("NOT READY"),
+                            }
+                        } else {
+                            String::from("NOT READY")
+                        },
                         name: repo.name,
                         path: repo.path.display().to_string(),
                         contract_path: repo.contract_path.display().to_string(),
@@ -6871,6 +6885,11 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 line.push_str(&format!(" depends_on={}", repo.depends_on.join(",")));
             }
             stdout.push_str(&format!("\n\n{line}"));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Status:"),
+                render_status_word(&repo.status)
+            ));
         }
         return CommandOutput::success(stdout);
     }
@@ -6922,6 +6941,11 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 repo.depends_on.join(", ")
             ));
         }
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Status:"),
+            render_status_word(&repo.status)
+        ));
     }
 
     CommandOutput::success(stdout)
