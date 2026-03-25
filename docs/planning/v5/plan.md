@@ -29,6 +29,7 @@ Status: active.
 Source direction:
 - [/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md)
 - [/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md)
+- [Policy pack model](/Users/bobai/Workspace/Ota.run/ota/docs/spec/policy-packs.md)
 
 V5 theme:
 
@@ -60,6 +61,7 @@ V5 theme:
 1. Policy pack model
 - define an org-level policy contract that applies across repos
 - keep policy evaluation deterministic and explicit
+- align the target contract to `docs/spec/policy-packs.md`
 
 2. Conventions and templates
 - standardize shared repo templates and org conventions

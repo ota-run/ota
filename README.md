@@ -239,6 +239,7 @@ Example contracts:
 - [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
+- [Policy packs](docs/spec/policy-packs.md)
 - [Workspace reference](docs/spec/workspace-reference.md)
 - [Service behavior](docs/spec/service-behavior.md)
 - [Shell semantics](docs/spec/shell-semantics.md)
