@@ -98,6 +98,7 @@ Prefer explicitness:
 - avoid hidden side effects in task commands
 - for SDK/library repos without runnable entrypoints, set `project.type: sdk` (or `library`) so
   `ota doctor` treats missing `tasks` as a warning instead of a blocking error
+- some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 
 Canonical contract reference in repository:
 
