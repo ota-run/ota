@@ -642,7 +642,7 @@ impl CheckSpinner {
                 index += 1;
                 thread::sleep(Duration::from_millis(90));
             }
-            let _ = write!(stderr, "\r{}\r", " ".repeat(24));
+            let _ = writeln!(stderr);
             let _ = stderr.flush();
         });
 
