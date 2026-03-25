@@ -2,6 +2,8 @@
 
 This page describes the current shipped service behavior across `ota doctor`, `ota up`, and `ota detect`.
 
+`ota services` is the list command for declared services. It reports the service contract surface without pretending services are direct task entrypoints.
+
 ## Contract surface
 
 Current service fields:
@@ -32,6 +34,15 @@ Current behavior:
 - reports timed out required service healthchecks as blocking errors
 - reports timed out optional service healthchecks as warnings
 - warns when a required service has no `healthcheck`, because readiness cannot be verified
+
+## `ota services`
+
+Current behavior:
+
+- lists declared services from the validated contract
+- when the root contract declares `workspace.type: monorepo`, lists root services and grouped member summaries
+- shows the service fields that matter for readiness and startup management
+- does not run services directly like `ota run` runs tasks
 
 ## `ota up`
 
