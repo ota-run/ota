@@ -61,6 +61,8 @@ pub struct PolicyRules {
     #[serde(default)]
     pub required_sections: Vec<String>,
     #[serde(default)]
+    pub required_files: Vec<String>,
+    #[serde(default)]
     pub strict_versions: bool,
     #[serde(default)]
     pub agent: Option<PolicyAgentRules>,
@@ -90,6 +92,15 @@ impl OrgPolicyPack {
             .required_sections
             .iter()
             .filter(|section| !section_present(contract, section))
+            .cloned()
+            .collect()
+    }
+
+    pub fn missing_required_files(&self, contract_root: &Path) -> Vec<String> {
+        self.policies
+            .required_files
+            .iter()
+            .filter(|file| !contract_root.join(file).is_file())
             .cloned()
             .collect()
     }
@@ -195,6 +206,8 @@ policies:
 policies:
   required_sections:
     - tasks
+  required_files:
+    - AGENTS.md
   strict_versions: true
   agent:
     require_safe_tasks: true
@@ -207,5 +220,6 @@ policies:
 
         assert!(policy.policies.strict_versions);
         assert!(policy.policies.agent.as_ref().unwrap().require_safe_tasks);
+        assert_eq!(policy.policies.required_files, vec![String::from("AGENTS.md")]);
     }
 }

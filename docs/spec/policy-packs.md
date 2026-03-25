@@ -35,6 +35,7 @@ Policy packs let a platform team define shared standards once and apply them det
 They are intended to support:
 
 - required contract sections
+- required files
 - safer agent task execution
 - org-level template and convention enforcement
 - audit-friendly machine output
@@ -56,6 +57,8 @@ policies:
     - runtimes
     - tasks
     - agent
+  required_files:
+    - AGENTS.md
   strict_versions: true
   agent:
     require_safe_tasks: true
@@ -67,6 +70,7 @@ policies:
 ## Semantics
 
 - `required_sections` defines contract sections that every governed repo must provide.
+- `required_files` defines files that every governed repo must keep at the repo root or under the governed repo directory.
 - `strict_versions` requires the repo contract to stay on the declared contract version family.
 - `agent.require_safe_tasks` requires agent-visible execution surfaces to be explicitly marked safe.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
@@ -91,6 +95,7 @@ It constrains and interprets it at the org layer.
 
 - the policy pack cannot be read or parsed
 - required sections declared by the policy pack are missing from the repo contract
+- required files declared by the policy pack are missing from the repo root
 
 The current implementation is read-only. It does not mutate repo contracts or apply policy remediation automatically.
 
