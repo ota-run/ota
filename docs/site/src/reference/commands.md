@@ -301,6 +301,7 @@ Use-case:
 ota detect --dry-run .
 ota detect --write .
 ota detect --merge --dry-run .
+ota detect --merge --apply tools.cargo --apply tasks.build.run .
 ota detect --merge .
 ota detect --rewrite --dry-run .
 ota detect --rewrite --yes .
@@ -319,6 +320,10 @@ ota detect --write .
 # later, add high-confidence missing fields only
 ota detect --merge --dry-run .
 ota detect --merge .
+
+# selectively apply only some detected fields
+ota detect --merge --dry-run
+ota detect --merge --apply tools.cargo --apply tasks.build.run
 
 # if manual edits drift badly, preview full regenerate and then apply with confirmation
 ota detect --rewrite --dry-run .

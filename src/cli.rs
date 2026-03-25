@@ -196,6 +196,9 @@ enum Commands {
         /// Preview how detected fields would merge into an existing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         merge: bool,
+        /// Select detected field paths to apply when merging into an existing ota.yaml.
+        #[arg(long, action = ArgAction::Append, value_name = "FIELD", requires = "merge")]
+        apply: Vec<String>,
         /// Replace an existing ota.yaml with a regenerated detected contract.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "merge")]
         rewrite: bool,
@@ -598,6 +601,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             write,
             dry_run,
             merge,
+            apply,
             rewrite,
             yes,
             path,
@@ -615,6 +619,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 write,
                 dry_run,
                 merge,
+                &apply,
                 rewrite,
                 yes,
                 format_from_json(json),
@@ -4379,6 +4384,9 @@ agent:
 version: 1
 project:
   name: existing
+tasks:
+  dev:
+    run: npm run dev
 "#,
         );
 
@@ -5332,6 +5340,12 @@ tasks:
                 .stdout
                 .contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`")
         );
+        assert!(
+            output
+                .stdout
+                .contains("ota detect --merge --apply project.name")
+        );
+        assert!(output.stdout.contains("ota detect --rewrite --yes"));
     }
 
     #[test]
@@ -5440,6 +5454,46 @@ project:
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("name: existing"));
+        assert!(!written.contains("name: ota-web"));
+    }
+
+    #[test]
+    fn detect_merge_apply_writes_only_selected_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--merge",
+            "--apply",
+            "tools.pnpm",
+            "--apply",
+            "tasks.dev.run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("MERGED"));
+        assert!(output.stdout.contains("Applied selected high-confidence changes:"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("run: pnpm dev"));
+        assert!(!written.contains("node: 22"));
         assert!(!written.contains("name: ota-web"));
     }
 

@@ -474,6 +474,7 @@ ota detect --json --dry-run [PATH]
 ota detect --write [PATH]
 ota detect --json --write [PATH]
 ota detect --merge --dry-run [PATH]
+ota detect --merge --apply FIELD [PATH]
 ota detect --merge [PATH]
 ota detect --rewrite --dry-run [PATH]
 ota detect --rewrite --yes [PATH]
@@ -560,6 +561,7 @@ Current merge-write behavior:
 
 - `ota detect --merge` requires an existing `ota.yaml`
 - it applies only `high` confidence missing fields
+- `ota detect --merge --apply FIELD` applies only the selected high-confidence detected changes whose field paths match the provided values
 - it does not overwrite conflicting existing values
 - it validates the merged contract before writing
 - it is additive only in the current implementation

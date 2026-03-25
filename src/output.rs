@@ -203,7 +203,7 @@ pub struct DetectFailure<'a> {
     pub next: Option<&'a str>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DetectComparison {
     pub existing_contract: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -212,7 +212,7 @@ pub struct DetectComparison {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DetectComparisonChange {
     pub field: String,
     pub status: &'static str,
