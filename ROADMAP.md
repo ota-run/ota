@@ -29,7 +29,9 @@
 V1 is complete and frozen.
 V2 is complete and archived.
 V2.1 is complete and archived.
-V3 is active.
+V3 is complete.
+V4 is complete.
+V5 is active.
 
 ## V1 archive
 
@@ -42,8 +44,8 @@ V3 is active.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- ship V3 in narrow, real slices
-- start with monorepo/root-member support before backend expansion
+- ship the V5 governance/policy slice in narrow, real slices
+- keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
 
@@ -52,7 +54,7 @@ V3 is active.
 
 ## Active version
 
-- [V3 plan](docs/planning/v3/plan.md)
+- [V5 plan](docs/planning/v5/plan.md)
 
 ## Implemented foundation
 
@@ -63,11 +65,11 @@ V3 is active.
 
 ## Near-term next steps
 
-- keep the V2 trust/adoption baseline stable
-- ship root/member monorepo support across repo commands
-- keep extending fixtures only when they expose real gaps
-- avoid V3 scope that weakens V1, V2, or V2.1 trust or determinism
-- keep exports optional unless one exact target proves real duplicated-truth pain
+- keep the V5 governance/policy slice narrow and explicit
+- preserve the shipped repo/workspace trust baseline
+- keep docs and active planning aligned with the canonical spec repo
+- avoid widening into generic policy-engine scope
+- keep extension and editor surfaces contract-bound
 
 ## Archived V2 shape
 
@@ -88,8 +90,8 @@ The repo-first bridge work beyond that foundation focused on:
 
 ## Product direction
 
-V3 themes build on the fully closed V2.1 foundation with:
-- monorepo and workspace maturity
-- first-class backend execution beyond native-only operation
-- stable machine-readable diagnostics and richer operational policy
-- serious multi-package and remote/container team workflows
+V5 themes build on the shipped repo/workspace foundation with:
+- organizations and governance
+- policy packs and org conventions
+- audit-friendly machine output and provenance
+- editor/IDE integration and enterprise-safe mutation controls

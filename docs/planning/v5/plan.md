@@ -24,102 +24,62 @@
 
 # V5 Plan
 
-Status: completed.
+Status: active.
 
 Source direction:
-- [10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/10-v5-spec.md)
-- [ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/new/ACTIVE_VERSION.md)
+- [/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md)
+- [/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md)
 
 V5 theme:
 
-- trustworthy operator UX
-- real-repo/workspace readiness flow hardening
-- stronger human/agent usability without semantic drift
+- organizations
+- governance
+- standardization at scale
 
 ## Included capabilities
 
-### 1. UX contract consistency hardening
+- policy packs applied across repos in an org
+- org-level conventions and templates
+- signed config and provenance options
+- team-level templates
+- audit-friendly machine output
+- remote runner metadata standard
+- editor/IDE integration spec
+- advanced caching
+- enterprise-safe mutation controls
 
-- normalize `Where/Why/Next` behavior across all repo/workspace commands
-- remove circular or conflicting `Next` guidance
-- keep status semantics strict (`VALID`/`READY`/`NOT READY` only where meaningful)
-- keep list/inventory commands non-readiness by default
+## Priorities
 
-### 2. Path and command recommendation correctness
-
-- make displayed/suggested paths current-directory-relative when possible
-- keep fallback path rendering deterministic when relative conversion is not possible
-- ensure repo-scoped recommendations use correct repo-local targets
-
-### 3. Command help and docs parity
-
-- ensure `--help` surfaces reflect shipped flags/filters
-- sync command reference, JSON reference, exit-codes, and site docs for new/changed behavior
-- keep docs adoption-first (when/why/use-case), not list-only
-
-### 4. Concise/verbose behavioral split
-
-- make `--concise` materially shorter on high-noise commands while preserving decisions/actions
-- keep `--verbose` as full explanatory surface
-- add tests to lock concise-vs-default output intent
-
-### 5. Output-stability tests for UX surfaces
-
-- add/extend text-output contract tests for trust-sensitive UX paths
-- lock known failure envelopes (`Where/Why/Next`) for top commands
-- preserve compatibility baseline from V4 (`scripts/test-compat.sh`)
+1. Make Ota viable for organizations that need consistent standards across many repos
+2. Enable platform teams to define and enforce policy once
+3. Provide audit trails that stay useful under review and compliance pressure
+4. Stabilize the editor integration surface for IDE adoption
 
 ## Execution slices
 
-1. Error-envelope normalization
-- consolidate no-contract/no-workspace failure wording across repo/workspace commands
-- enforce single authoritative `Next` behavior per failure case
+1. Policy pack model
+- define an org-level policy contract that applies across repos
+- keep policy evaluation deterministic and explicit
 
-2. Path rendering standardization
-- apply cwd-relative path rendering consistently to text outputs and recommended commands
-- add regression tests for common cwd combinations
+2. Conventions and templates
+- standardize shared repo templates and org conventions
+- keep template application auditable and non-magical
 
-3. Concise-mode finishing pass
-- identify highest-noise command outputs and trim non-essential detail in concise mode
-- add output tests to prevent accidental regressions
+3. Audit and provenance
+- make machine output suitable for auditing and traceability
+- surface signed config/provenance in a stable way
 
-4. Docs and help conformance
-- sync command docs/spec docs with implemented UX/output behavior
-- verify command help examples and flags are current
+4. Remote runner and editor surface
+- standardize remote runner metadata
+- keep editor/IDE integrations on the documented contract surface
 
-5. Compatibility gate + release readiness
-- run compatibility gate and targeted UX tests
-- document any intentional contract shifts in same change
+5. Mutation controls and caching
+- keep mutation paths explicit and enterprise-safe
+- use caching only where it preserves determinism and trust
 
-## Acceptance criteria
+## Success criteria
 
-- no circular/conflicting `Next` guidance in top repo/workspace commands
-- missing-contract/missing-workspace failures provide actionable and consistent `Where/Why/Next`
-- path and recommendation rendering is accurate from common operator cwd contexts
-- concise mode is measurably leaner on selected high-noise commands
-- docs and help reflect shipped behavior for all changed command surfaces
-- V4 compatibility gate remains green
-
-## Out of scope for V5
-
-- new backend provider architecture or isolation runtime expansion
-- enterprise artifact policy/provisioning enforcement layer
-- major schema family expansion beyond current compatibility boundaries
-- introducing new core command families not required for UX/flow hardening
-
-## Completion summary
-
-- unified trust-sensitive text error envelopes around consistent `Where` / `Why` / `Next` usage
-- removed circular/self-referential next-step guidance in repo/workspace failures
-- standardized path/recommendation rendering to current-working-directory-relative output where applicable
-- completed concise-mode hardening for high-noise readiness surfaces (`doctor`, `check`, `workspace doctor`, `workspace check`, `workspace list`)
-- aligned spec/site command docs and JSON reference examples with shipped behavior
-- preserved compatibility baseline with a green `./scripts/test-compat.sh` gate
-
-## Execution slices status
-
-1. Error-envelope normalization: completed
-2. Path rendering standardization: completed
-3. Concise-mode finishing pass: completed
-4. Docs and help conformance: completed
-5. Compatibility gate + release readiness: completed
+- a platform team can define a policy pack that applies consistently across many repos
+- audit logs remain useful for review and compliance use cases
+- editor integrations can discover tasks and readiness without custom reverse-engineering
+- signed `ota.yaml` is a viable option for security-sensitive environments
