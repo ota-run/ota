@@ -325,6 +325,7 @@ ota detect --merge .
 # selectively apply only some detected fields
 ota detect --merge --dry-run
 ota detect --merge --apply tools.cargo --apply tasks.build.run
+# leaves the rest of ota.yaml unchanged
 
 # apply all eligible detected suggestions
 ota detect --merge --apply-all

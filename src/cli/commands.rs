@@ -70,6 +70,15 @@ const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
+    static FAILURE_LOCUS: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+pub fn set_failure_locus(label: Option<String>) {
+    FAILURE_LOCUS.with(|value| *value.borrow_mut() = label);
+}
+
+pub fn take_failure_locus() -> Option<String> {
+    FAILURE_LOCUS.with(|value| value.borrow_mut().take())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4200,7 +4209,10 @@ fn write_detected_merge(
                 ])
             );
             return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => {
+                    set_failure_locus(Some(String::from("ota detect --merge --apply")));
+                    CommandOutput::failure(error)
+                }
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
@@ -4246,7 +4258,10 @@ fn write_detected_merge(
             ])
         );
         return match format {
-            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Text => {
+                set_failure_locus(Some(String::from("ota detect --merge --apply")));
+                CommandOutput::failure(error)
+            }
             OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                 ok: false,
                 path: &path_display,
@@ -4298,7 +4313,10 @@ fn write_detected_merge(
         Err(error) => {
             let error = format!("failed to read `{}`: {}", compact_path_display, error);
             return match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => {
+                    set_failure_locus(Some(String::from("ota detect --merge --apply")));
+                    CommandOutput::failure(error)
+                }
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
