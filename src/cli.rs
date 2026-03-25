@@ -5542,6 +5542,41 @@ version = "0.1.0"
     }
 
     #[test]
+    fn detect_merge_apply_reports_when_selected_field_is_not_in_current_comparison() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  cargo: '*'
+"#,
+        );
+        fixture.write(
+            "Cargo.toml",
+            r#"[package]
+name = "ota-web"
+version = "0.1.0"
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--merge",
+            "--apply",
+            "tools.cargo",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("selected field(s) not present in current detect comparison"));
+        assert!(stderr.contains("tools.cargo"));
+        assert!(stderr.contains("ota detect --dry-run ."));
+    }
+
+    #[test]
     fn detect_rewrite_requires_yes() {
         let fixture = ContractFixture::new(
             r#"
