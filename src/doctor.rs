@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
+use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -111,6 +112,7 @@ fn diagnose_contract_with_scope(
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
+        diagnose_org_policy(contract, contract_path, &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
@@ -444,6 +446,45 @@ fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
             required,
             findings,
         );
+    }
+}
+
+fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut Vec<Finding>) {
+    let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
+        Ok(Some(policy_pack)) => policy_pack,
+        Ok(None) => return,
+        Err(err) => {
+            findings.push(policy_error_finding(err));
+            return;
+        }
+    };
+
+    let missing_sections = policy_pack.missing_required_sections(contract);
+    if missing_sections.is_empty() {
+        return;
+    }
+
+    let missing_sections = missing_sections.join(", ");
+    findings.push(Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Repo does not satisfy org policy pack"),
+        why: format!(
+            "`{}` requires these contract sections, but they are missing or empty: {missing_sections}",
+            policy_path.display()
+        ),
+        next: format!(
+            "add the missing sections to `ota.yaml` or update `{}`",
+            policy_path.display()
+        ),
+    });
+}
+
+fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Invalid org policy pack"),
+        why: err.to_string(),
+        next: format!("repair `{}` and re-run `ota doctor`", err.path()),
     }
 }
 
@@ -843,11 +884,13 @@ fn shell_single_quote(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::env;
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
     use crate::test_support::ENV_MUTEX;
+    use tempfile::TempDir;
 
     use super::{
         FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
@@ -1631,6 +1674,82 @@ tasks:
             compose_service_healthcheck_command("postgres", "pg_isready -U qredex -d qredex"),
             "docker compose exec -T postgres sh -lc 'pg_isready -U qredex -d qredex'"
         );
+    }
+
+    #[test]
+    fn reports_invalid_org_policy_pack() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+unexpected: true
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].summary, "Invalid org policy pack");
+        assert!(report.findings[0].why.contains("org-policy.yaml"));
+    }
+
+    #[test]
+    fn reports_missing_policy_required_sections() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Repo does not satisfy org policy pack"
+        );
+        assert!(report.findings[0].why.contains("tasks"));
     }
 
     #[cfg(unix)]

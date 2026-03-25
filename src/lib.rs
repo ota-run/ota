@@ -25,6 +25,7 @@ pub mod detector;
 pub mod doctor;
 pub mod output;
 pub mod parser;
+pub mod policy_pack;
 pub mod runner;
 pub mod schema;
 #[cfg(test)]
