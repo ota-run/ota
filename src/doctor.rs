@@ -569,7 +569,7 @@ fn command_version(name: &str) -> Option<String> {
 }
 
 fn command_available(name: &str) -> bool {
-    version_command(name).output().is_ok()
+    Command::new(name).output().is_ok()
 }
 
 fn version_command(name: &str) -> Command {
@@ -680,11 +680,11 @@ fn compare_parts(left: &[u64], right: &[u64]) -> i8 {
 fn parse_version_parts(input: &str) -> Option<Vec<u64>> {
     let parts = input
         .trim()
-        .trim_start_matches('v')
         .split('.')
         .map(|part| {
             let digits = part
                 .chars()
+                .skip_while(|ch| !ch.is_ascii_digit())
                 .take_while(|ch| ch.is_ascii_digit())
                 .collect::<String>();
             if digits.is_empty() {
@@ -1487,6 +1487,7 @@ tasks:
         assert!(!version_matches("^3.11", "4.0.0"));
         assert!(version_matches("^0.6.0", "0.6.4"));
         assert!(!version_matches("^0.6.0", "0.7.0"));
+        assert!(version_matches(">=go1.2.1", "go1.24.2"));
     }
 
     #[cfg(unix)]
