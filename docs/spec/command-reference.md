@@ -628,9 +628,10 @@ Current behavior:
 - infers workspace repos by scanning common local repo roots (top-level plus containers like `apps/`, `services/`, `repos/`, `packages/`)
 - includes only repos that already have `ota.yaml`
 - skips candidate repos that do not yet have `ota.yaml`
+- `ota workspace init --write` can auto-provision missing repo contracts from detected repo signals before writing `ota.workspace.yaml`
 - writes `ota.workspace.yaml`
 - refuses to overwrite an existing `ota.workspace.yaml`
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
+- when no repos are available to bootstrap, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
 - when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
 - supports JSON for machine-readable write outcomes
 
