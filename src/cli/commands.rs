@@ -2447,11 +2447,11 @@ pub fn detect(
                         );
                         render_detect_comparison_section(&mut stdout, comparison.as_ref());
                         if let Some(comparison) = comparison.as_ref() {
-                            if let Some(first_change) = comparison.changes.first() {
+                            if !comparison.changes.is_empty() {
                                 stdout.push_str(&format_next_timeline(&[
                                     format!(
-                                        "run `ota detect --merge --apply {} {}` to apply one selected field",
-                                        first_change.field, compact_root_display
+                                        "run `ota detect --merge --apply <field name> {}` to apply selected fields",
+                                        compact_root_display
                                     ),
                                     format!(
                                         "run `ota detect --rewrite --yes {}` to replace the full detected contract",
@@ -4173,7 +4173,17 @@ fn write_detected_merge(
     let existing_contract = match load_contract(&contract_path) {
         Ok(contract) => contract,
         Err(error) => {
-            let error = error.to_string();
+            let error = format!(
+                "{}{}",
+                error,
+                format_next_timeline(&[
+                    format!("run `ota validate {compact_path_display}` to repair the existing contract"),
+                    format!(
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields after the contract is valid",
+                        compact_path_display
+                    ),
+                ])
+            );
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -4251,8 +4261,16 @@ fn write_detected_merge(
         Ok(document) => document,
         Err(error) => {
             let error = format!(
-                "failed to parse existing contract `{}` for merge: {}",
-                compact_path_display, error
+                "failed to parse existing contract `{}` for merge: {}{}",
+                compact_path_display,
+                error,
+                format_next_timeline(&[
+                    format!("run `ota validate {compact_path_display}` to repair the existing contract"),
+                    format!(
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields after the contract is valid",
+                        compact_path_display
+                    ),
+                ]),
             );
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
