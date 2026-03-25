@@ -6870,7 +6870,7 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 paint(&repo.name, "1"),
                 if repo.required { "required" } else { "optional" },
                 if repo.acquired {
-                    paint("ACQUIRED", "1;38;2;173;216;230")
+                    paint("ACQUIRED", "1;38;2;192;192;192")
                 } else {
                     paint("NOT ACQUIRED", "1;93")
                 }
@@ -6905,7 +6905,7 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 "optional"
             },
             if repo.acquired {
-                paint("ACQUIRED", "1;38;2;173;216;230")
+                paint("ACQUIRED", "1;38;2;192;192;192")
             } else {
                 paint("NOT ACQUIRED", "1;93")
             }
