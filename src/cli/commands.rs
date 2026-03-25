@@ -2458,12 +2458,12 @@ pub fn detect(
                                     error_next_key("Next:")
                                 ));
                                 stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields without rewriting the rest of `ota.yaml`",
+                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields",
                                     next_bullet(),
                                     compact_root_display
                                 ));
                                 stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply-all {}` to apply all eligible detected suggestions without rewriting the rest of `ota.yaml`",
+                                    "\n{}  run `ota detect --merge --apply-all {}` to apply all eligible suggestions",
                                     next_bullet(),
                                     compact_root_display
                                 ));
@@ -4194,7 +4194,7 @@ fn write_detected_merge(
                 format_next_timeline(&[
                     format!("run `ota validate {compact_path_display}` to repair the existing contract"),
                     format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields without replacing the rest of `ota.yaml`",
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
                         compact_path_display
                     ),
                 ])
@@ -4320,7 +4320,7 @@ fn write_detected_merge(
                 format_next_timeline(&[
                     format!("run `ota validate {compact_path_display}` to repair the existing contract"),
                     format!(
-                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields without replacing the rest of `ota.yaml`",
+                        "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
                         compact_path_display
                     ),
                 ]),
@@ -4389,6 +4389,7 @@ fn write_detected_merge(
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
+                let post_write_comparison = compare_detected_contract(&contract_path, &report.contract);
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
@@ -4400,7 +4401,7 @@ fn write_detected_merge(
                     applied_title,
                     &applied,
                 );
-                render_detect_comparison_section(&mut stdout, Some(&comparison));
+                render_detect_comparison_section(&mut stdout, Some(&post_write_comparison));
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -4409,7 +4410,7 @@ fn write_detected_merge(
                 written: true,
                 config: &report.contract,
                 inferred: &report.inferences,
-                comparison: Some(&comparison),
+                comparison: Some(&compare_detected_contract(&contract_path, &report.contract)),
             })),
         },
         Err(error) => {
