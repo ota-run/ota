@@ -14,3 +14,9 @@
 - Pattern: A schema-valid contract can still be operationally incomplete (for example no runnable tasks), which can produce misleading `doctor` readiness.
 - Correction: Add explicit readiness checks for operational surface (at minimum one task for repo execution workflows).
 - Rule: Treat schema validity and operational readiness as separate checks; `doctor` must fail on missing core execution entrypoints.
+
+## 2026-03-25
+
+- Pattern: A user asking for status or clarification may not be asking for implementation.
+- Correction: Answer the status directly first, and only change code when the user explicitly asks to do so.
+- Rule: Do not turn a confirmation question into a code change without a clear request to implement.
