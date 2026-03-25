@@ -29,19 +29,45 @@
         "notes": { "type": "string" }
       }
     },
-    "findings": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["severity", "summary", "why", "next"],
-        "properties": {
-          "severity": { "enum": ["error", "warn", "info"] },
-          "summary": { "type": "string" },
-          "why": { "type": "string" },
-          "next": { "type": "string" }
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preferred": { "enum": ["native", "container", "remote"] },
+        "supported": {
+          "type": "array",
+          "items": { "enum": ["native", "container", "remote"] }
+        },
+        "lifecycle": { "enum": ["persistent", "ephemeral"] },
+        "backends": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "container": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image"],
+              "properties": {
+                "image": { "type": "string" }
+              }
+            },
+            "remote": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider"],
+              "properties": {
+                "provider": { "type": "string" },
+                "target": { "type": "string" },
+                "cwd": { "type": "string" }
+              }
+            }
+          }
         }
       }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/finding" }
     },
     "members": {
       "type": "array",
@@ -75,17 +101,7 @@
           },
           "findings": {
             "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["severity", "summary", "why", "next"],
-              "properties": {
-                "severity": { "enum": ["error", "warn", "info"] },
-                "summary": { "type": "string" },
-                "why": { "type": "string" },
-                "next": { "type": "string" }
-              }
-            }
+            "items": { "$ref": "./shared.json#/$defs/finding" }
           }
         }
       }
