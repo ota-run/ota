@@ -489,6 +489,7 @@ Why:
 ```bash
 ota workspace list
 ota workspace list --status ready
+ota workspace list --status not-ready
 ota workspace list --repo api
 ota workspace list --json
 ```
