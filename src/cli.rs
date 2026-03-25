@@ -845,7 +845,16 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
         Commands::Clean { .. } => "ota clean --help",
-        Commands::Detect { .. } => "ota detect --dry-run",
+        Commands::Detect { .. } => {
+            if stderr.contains("failed to parse contract")
+                || stderr.contains("failed to parse existing contract")
+                || stderr.contains("failed to load existing contract for comparison")
+            {
+                "run `ota validate` to repair the existing contract, then rerun `ota detect --merge --apply <field name>` to apply selected fields"
+            } else {
+                "ota detect --dry-run"
+            }
+        }
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => WORKSPACE_INIT_HELP_SUGGESTION,
             WorkspaceCommands::Detect { .. } => WORKSPACE_DETECT_DRY_RUN_SUGGESTION,
