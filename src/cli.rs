@@ -374,6 +374,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Stream repo completion updates while building the final report.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
         /// Maximum number of independent repos to diagnose at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -509,7 +512,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                     command: WorkspaceCommands::Validate { .. }
                         | WorkspaceCommands::Tasks { .. }
                         | WorkspaceCommands::List { .. }
-                        | WorkspaceCommands::Doctor { .. }
+                        | WorkspaceCommands::Doctor { stream: false, .. }
                         | WorkspaceCommands::Detect { .. }
                         | WorkspaceCommands::Init { .. },
                 }
@@ -854,6 +857,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ),
             WorkspaceCommands::Doctor {
                 json,
+                stream,
                 jobs,
                 status,
                 severity,
@@ -863,6 +867,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                stream,
                 commands::WorkspaceDoctorFilters {
                     status: status.into(),
                     severity: severity.into(),
@@ -8191,6 +8196,31 @@ repos:
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn workspace_doctor_stream_emits_progress_updates() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", "--stream", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("WORKSPACE DOCTOR"));
+        assert!(stdout.contains("NOT READY"));
     }
 
     #[test]

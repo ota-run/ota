@@ -457,7 +457,7 @@ fn take_ready_workspace_repo_batch(
     batch
 }
 
-fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
+pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
     if !repo.present {
         let findings = vec![repo_finding(
             repo.required,
