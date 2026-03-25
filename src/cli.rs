@@ -23,7 +23,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use clap::{error::ErrorKind, ArgAction, Parser, Subcommand, ValueEnum};
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
@@ -283,6 +283,7 @@ impl From<WorkspaceDoctorSeverityArg> for commands::WorkspaceDoctorSeverityFilte
 #[derive(Debug, Clone, Subcommand)]
 enum WorkspaceCommands {
     /// Create a starter ota.workspace.yaml from local repo structure.
+    /// Use `ota services` for repo-level service listing and `ota workspace doctor` for workspace readiness.
     Init {
         /// Compatibility flag; init writes by default.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -300,6 +301,7 @@ enum WorkspaceCommands {
         path: Option<PathBuf>,
     },
     /// Infer workspace contract shape and merge-ready additions.
+    /// Use `ota services` for repo-level service listing and `ota workspace doctor` for workspace readiness.
     Detect {
         /// Write inferred workspace contract.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
@@ -350,6 +352,7 @@ enum WorkspaceCommands {
         path: Option<PathBuf>,
     },
     /// Diagnose workspace repo readiness from an ota.workspace.yaml contract.
+    /// Use `ota services` for repo-level service listing.
     Doctor {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -381,6 +384,7 @@ enum WorkspaceCommands {
         path: Option<PathBuf>,
     },
     /// Prepare every repo in an ota.workspace.yaml contract.
+    /// Use `ota services` for repo-level service listing.
     Up {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -436,10 +440,26 @@ where
         return CommandOutput::success(format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
     }
 
-    match Cli::try_parse_from(args) {
+    match Cli::try_parse_from(args.clone()) {
         Ok(cli) => dispatch(cli),
         Err(error) => {
-            CommandOutput::failure_with_code(error.render().to_string().trim_end().to_string(), 2)
+            let mut stderr = error.render().to_string().trim_end().to_string();
+            if error.kind() == ErrorKind::InvalidSubcommand
+                && args
+                    .get(1)
+                    .map(|value| value.to_string_lossy() == "workspace")
+                    .unwrap_or(false)
+                && args
+                    .get(2)
+                    .map(|value| value.to_string_lossy() == "services")
+                    .unwrap_or(false)
+            {
+                stderr.push_str(
+                    "\n\nNext:\n▸ use `ota services` to list repo services\n▸ use `ota workspace doctor` to review workspace readiness",
+                );
+            }
+
+            CommandOutput::failure_with_code(stderr, 2)
         }
     }
 }
@@ -3401,6 +3421,17 @@ tasks:
             .expect("help text should be present in stderr");
         assert!(help.contains("--rewrite"));
         assert!(help.contains("--yes"));
+    }
+
+    #[test]
+    fn workspace_services_typo_points_to_repo_services_and_workspace_doctor() {
+        let output = run_with(["ota", "workspace", "services"]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("unrecognized subcommand 'services'"));
+        assert!(stderr.contains("ota services"));
+        assert!(stderr.contains("ota workspace doctor"));
     }
 
     #[test]
