@@ -5843,16 +5843,16 @@ fn render_workspace_init_discovery_sections(
             }
             stdout.push_str(&format_next_timeline(&[
                 String::from(
-                "or run `ota workspace init --bootstrap` to auto-provision missing repo contracts and write `ota.workspace.yaml`",
-            ),
+                    "or run `ota workspace init --bootstrap` on first workspace creation to auto-provision missing repo contracts and write `ota.workspace.yaml`",
+                ),
                 String::from(
                     "run `ota workspace detect --write` after repo contracts exist to refresh `ota.workspace.yaml`",
                 ),
-            String::from("or create missing repo contracts with `ota init <repo-path>`"),
-            String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
-        ]));
+                String::from("or create missing repo contracts with `ota init <repo-path>`"),
+                String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
+            ]));
+        }
     }
-}
 
 fn render_workspace_auto_provision_sections(
     stdout: &mut String,
