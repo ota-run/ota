@@ -440,6 +440,8 @@ ota detect --write [PATH]
 ota detect --json --write [PATH]
 ota detect --merge --dry-run [PATH]
 ota detect --merge [PATH]
+ota detect --rewrite --dry-run [PATH]
+ota detect --rewrite --yes [PATH]
 ota detect [PATH]
 ```
 
@@ -528,6 +530,14 @@ Current merge-write behavior:
 - on mixed repos, lower-confidence fields can still appear in `comparison` without being written
 - if nothing eligible can be added, it returns success with `written: false` and leaves `ota.yaml` unchanged
 
+Current rewrite behavior:
+
+- `ota detect --rewrite` targets existing contracts only and is destructive
+- `ota detect --rewrite --dry-run` previews replacement without writing
+- `ota detect --rewrite --yes` replaces the existing `ota.yaml` with the regenerated detected contract
+- rewrite creates a timestamped backup file (`ota.yaml.bak-<timestamp>`) before writing
+- rewrite validates the regenerated contract before replacing the existing file
+
 Example dry-run annotations for detected Compose services:
 
 ```text
@@ -602,6 +612,8 @@ ota workspace detect --write [PATH]
 ota workspace detect --dry-run [PATH]
 ota workspace detect --merge [PATH]
 ota workspace detect --merge --dry-run [PATH]
+ota workspace detect --rewrite --dry-run [PATH]
+ota workspace detect --rewrite --yes [PATH]
 ota workspace detect --json [PATH]
 ```
 
@@ -614,6 +626,9 @@ Current behavior:
 - `--write` writes `ota.workspace.yaml` only for first contract creation
 - `--merge` requires an existing `ota.workspace.yaml` and adds only missing discovered repo entries under `repos`
 - merge is additive-only and does not overwrite existing repo entries
+- `--rewrite --dry-run` previews full replacement of an existing `ota.workspace.yaml`
+- `--rewrite --yes` fully replaces existing `ota.workspace.yaml` with regenerated detected workspace contract
+- rewrite creates a timestamped backup file (`ota.workspace.yaml.bak-<timestamp>`) before writing
 - supports JSON for machine-readable preview/write outcomes
 
 ## `ota workspace validate`

@@ -269,6 +269,8 @@ ota detect --dry-run .
 ota detect --write .
 ota detect --merge --dry-run .
 ota detect --merge .
+ota detect --rewrite --dry-run .
+ota detect --rewrite --yes .
 ```
 
 Script example:
@@ -284,6 +286,10 @@ ota detect --write .
 # later, add high-confidence missing fields only
 ota detect --merge --dry-run .
 ota detect --merge .
+
+# if manual edits drift badly, preview full regenerate and then apply with confirmation
+ota detect --rewrite --dry-run .
+ota detect --rewrite --yes .
 ```
 
 ### `ota clean`
@@ -356,6 +362,8 @@ ota workspace detect --dry-run
 ota workspace detect --write
 ota workspace detect --merge --dry-run
 ota workspace detect --merge
+ota workspace detect --rewrite --dry-run
+ota workspace detect --rewrite --yes
 ota workspace detect --json
 ```
 
@@ -368,6 +376,10 @@ set -euo pipefail
 ota workspace detect --dry-run > /dev/null
 ota workspace detect --merge --dry-run > /dev/null
 ota workspace detect --merge
+
+# when workspace contract is broken by manual edits, rewrite with confirmation
+ota workspace detect --rewrite --dry-run > /dev/null
+ota workspace detect --rewrite --yes
 ```
 
 ### `ota workspace validate`
