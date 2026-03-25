@@ -3347,6 +3347,32 @@ tasks:
     }
 
     #[test]
+    fn detect_help_lists_rewrite_flags() {
+        let output = run_with(["ota", "detect", "--help"]);
+
+        assert_eq!(output.exit_code, 2);
+        let help = output
+            .stderr
+            .as_deref()
+            .expect("help text should be present in stderr");
+        assert!(help.contains("--rewrite"));
+        assert!(help.contains("--yes"));
+    }
+
+    #[test]
+    fn workspace_detect_help_lists_rewrite_flags() {
+        let output = run_with(["ota", "workspace", "detect", "--help"]);
+
+        assert_eq!(output.exit_code, 2);
+        let help = output
+            .stderr
+            .as_deref()
+            .expect("help text should be present in stderr");
+        assert!(help.contains("--rewrite"));
+        assert!(help.contains("--yes"));
+    }
+
+    #[test]
     fn failure_adds_try_footer_when_next_is_not_present() {
         let fixture = ContractFixture::new(
             r#"
@@ -5109,16 +5135,18 @@ edition = "2024"
         );
 
         let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("🦦 DETECT PREVIEW "));
-        assert!(output.stdout.contains("\n\nMode: dry-run (no write)"));
-        assert!(output.stdout.contains("\n\nContract:\nversion: 1"));
-        assert!(output.stdout.contains("\n\nAnnotations:\n✦  Field: "));
-        assert!(output.stdout.contains("\n   Value: "));
-        assert!(output.stdout.contains("\n   Source: "));
-        assert!(output.stdout.contains("\n   Confidence: "));
-        assert!(!output.stdout.contains("\n---\n"));
+        assert!(stdout.contains("DETECT PREVIEW "));
+        assert!(stdout.contains("dry-run (no write)"));
+        assert!(stdout.contains("Contract:\nversion: 1"));
+        assert!(stdout.contains("Annotations:"));
+        assert!(stdout.contains("Field: "));
+        assert!(stdout.contains("Value: "));
+        assert!(stdout.contains("Source: "));
+        assert!(stdout.contains("Confidence: "));
+        assert!(!stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5220,12 +5248,11 @@ project:
         let output = run_with(["ota", "detect", "--merge", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert_eq!(
-            output.stderr.as_deref(),
-            Some(
-                "`ota detect --merge` requires an existing `ota.yaml`\n\nNext:\n▸  use `ota detect --write` to write a first contract\n▸  use `ota detect --dry-run` to review one",
-            )
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("`ota detect --merge` requires an existing `ota.yaml`"));
+        assert!(stderr.contains("use `ota detect --write` to write a first contract"));
+        assert!(stderr.contains("use `ota detect --dry-run` to review one"));
     }
 
     #[test]
@@ -5258,12 +5285,12 @@ project:
         let output = run_with(["ota", "detect", "--merge", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert_eq!(
-            output.stderr.as_deref(),
-            Some(
-                "`ota detect --merge --dry-run` requires an existing `ota.yaml`\n\nNext:\n▸  use `ota detect --dry-run` to review a first contract"
-            )
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains(
+            "`ota detect --merge --dry-run` requires an existing `ota.yaml`"
+        ));
+        assert!(stderr.contains("use `ota detect --dry-run` to review a first contract"));
     }
 
     #[test]
@@ -5295,6 +5322,68 @@ project:
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("name: existing"));
         assert!(!written.contains("name: ota-web"));
+    }
+
+    #[test]
+    fn detect_rewrite_requires_yes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0"
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--rewrite", fixture.path()]);
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+                .contains("requires `--yes`")
+        );
+    }
+
+    #[test]
+    fn detect_rewrite_writes_and_creates_timestamped_backup() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  namex: broken
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--rewrite", "--yes", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("REWRITTEN"));
+        assert!(body.contains("Backup:"));
+
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("name: ota-web"));
+        assert!(written.contains("pnpm: 10.1.0"));
+
+        let backups = fs::read_dir(fixture.dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("ota.yaml.bak-"))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
     }
 
     #[test]
@@ -5520,22 +5609,16 @@ project:
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert_eq!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .starts_with("detected high-confidence fields are not sufficient to produce a valid contract\n\nNext:\n▸  use `ota detect --dry-run` to review medium and low confidence fields"),
-            true
-        );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("Excluded from automatic write:")
-        );
-        assert!(output.stderr.as_deref().unwrap().contains("project.name"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains(
+            "detected high-confidence fields are not sufficient to produce a valid contract"
+        ));
+        assert!(stderr.contains(
+            "use `ota detect --dry-run` to review medium and low confidence fields"
+        ));
+        assert!(stderr.contains("Excluded from automatic write:"));
+        assert!(stderr.contains("project.name"));
         assert!(!fixture.file_path().exists());
     }
 
@@ -6303,6 +6386,106 @@ project:
                 .unwrap_or("")
                 .contains("requires an existing `ota.workspace.yaml`")
         );
+    }
+
+    #[test]
+    fn workspace_detect_rewrite_requires_yes() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            "version: 1\nworkspace:\n  name: demo\nrepos:\n  web:\n    path: apps/web\n    required: true\n",
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--rewrite",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("requires `--yes`")
+        );
+    }
+
+    #[test]
+    fn workspace_detect_rewrite_writes_and_creates_timestamped_backup() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            "version: 1\nworkspace:\n  namex: broken\nrepos:\n  web:\n    path: apps/web\n    required: true\n",
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--rewrite",
+            "--yes",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE DETECT REWRITTEN"));
+        assert!(body.contains("Backup:"));
+
+        let backups = fs::read_dir(fixture.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("ota.workspace.yaml.bak-"))
+            .collect::<Vec<_>>();
+        assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn workspace_detect_rewrite_ignores_invalid_repo_contracts() {
+        let fixture = TempDir::new().unwrap();
+        let broken_dir = fixture.path().join("qredex-resources");
+        fs::create_dir_all(&broken_dir).unwrap();
+        fs::write(
+            broken_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  namex: broken
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: existing
+repos:
+  qredex-resources:
+    path: qredex-resources
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--rewrite",
+            "--yes",
+            fixture.path().to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE DETECT REWRITTEN"));
+        assert!(fixture.path().join("ota.workspace.yaml").is_file());
     }
 
     #[test]

@@ -32,6 +32,8 @@ use std::thread;
 use serde::Serialize;
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
+use time::OffsetDateTime;
+use time::macros::format_description;
 
 use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
@@ -1811,6 +1813,8 @@ pub fn detect(
     write: bool,
     dry_run: bool,
     merge: bool,
+    rewrite: bool,
+    yes: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -1824,8 +1828,10 @@ pub fn detect(
         format!("DEBUG write={write}"),
         format!("DEBUG dry_run={dry_run}"),
         format!("DEBUG merge={merge}"),
+        format!("DEBUG rewrite={rewrite}"),
+        format!("DEBUG yes={yes}"),
     ];
-    let dry_run = if merge { dry_run } else { dry_run || !write };
+    let dry_run = if merge || rewrite { dry_run } else { dry_run || !write };
     if merge && !contract_path.exists() {
         let error = if dry_run {
             format!(
@@ -1863,6 +1869,66 @@ pub fn detect(
             debug_lines,
         );
     }
+    if rewrite && !contract_path.exists() {
+        let error = if dry_run {
+            format!(
+                "`ota detect --rewrite --dry-run` requires an existing `ota.yaml`{}",
+                format_next_timeline(&[String::from(
+                    "use `ota detect --dry-run` to review a first contract",
+                )]),
+            )
+        } else {
+            format!(
+                "`ota detect --rewrite` requires an existing `ota.yaml`{}",
+                format_next_timeline(&[
+                    String::from("use `ota detect --write` to write a first contract"),
+                    String::from("use `ota detect --dry-run` to review one"),
+                ]),
+            )
+        };
+        let next = if dry_run {
+            format!("ota detect --dry-run {}", root.display())
+        } else {
+            format!("ota detect --write {}", root.display())
+        };
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: Some(&next),
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+    if rewrite && !dry_run && !yes {
+        let error = format!(
+            "`ota detect --rewrite` is destructive and requires `--yes`{}",
+            format_next_timeline(&[
+                String::from("run `ota detect --rewrite --dry-run` to preview replacement"),
+                String::from("run `ota detect --rewrite --yes` to apply replacement"),
+            ]),
+        );
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: Some("ota detect --rewrite --dry-run"),
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
     finalize_debug(
         match detect_repo(&root) {
             Ok(report) if dry_run => {
@@ -1874,6 +1940,8 @@ pub fn detect(
                     OutputFormat::Text => {
                         let mut stdout = if merge {
                             format_command_header("DETECT MERGE PREVIEW", &compact_root_display)
+                        } else if rewrite {
+                            format_command_header("DETECT REWRITE PREVIEW", &compact_root_display)
                         } else {
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
@@ -1881,6 +1949,11 @@ pub fn detect(
                         if merge {
                             stdout.push_str(&format_next_timeline(&[format!(
                                 "run `ota detect --merge {}` to apply add-only high-confidence fields",
+                                compact_root_display
+                            )]));
+                        } else if rewrite {
+                            stdout.push_str(&format_next_timeline(&[format!(
+                                "run `ota detect --rewrite --yes {}` to replace the existing contract",
                                 compact_root_display
                             )]));
                         } else {
@@ -1910,6 +1983,7 @@ pub fn detect(
                 }
             }
             Ok(report) if merge => write_detected_merge(report, format),
+            Ok(report) if rewrite => write_detected_rewrite(report, format),
             Ok(report) => write_detected_contract(report, format),
             Err(error) => {
                 let error = error.to_string();
@@ -2145,6 +2219,8 @@ pub fn workspace_init(
     path: Option<&Path>,
     write: bool,
     merge: bool,
+    rewrite: bool,
+    yes: bool,
     surface: WorkspaceScaffoldSurface,
     format: OutputFormat,
     debug: bool,
@@ -2169,6 +2245,8 @@ pub fn workspace_init(
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG write={write}"),
         format!("DEBUG merge={merge}"),
+        format!("DEBUG rewrite={rewrite}"),
+        format!("DEBUG yes={yes}"),
     ];
     let command_name = match surface {
         WorkspaceScaffoldSurface::Init => "ota workspace init",
@@ -2217,9 +2295,205 @@ pub fn workspace_init(
             debug_lines,
         );
     }
+    if rewrite && !workspace_path.exists() {
+        let error = if write {
+            format!(
+                "`{command_name} --rewrite` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                format_next_timeline(&[
+                    format!("use `{command_name} --write` to write a first workspace contract"),
+                    format!("use `{command_name} --dry-run` to review one"),
+                ]),
+            )
+        } else {
+            format!(
+                "`{command_name} --rewrite --dry-run` requires an existing `{DEFAULT_WORKSPACE_FILE}`{}",
+                format_next_timeline(&[format!(
+                    "use `{command_name} --dry-run` to preview a first workspace contract",
+                )]),
+            )
+        };
+        let next = if write {
+            format!("{command_name} {}", workspace_root.display())
+        } else {
+            format!("{command_name} --dry-run {}", workspace_root.display())
+        };
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "error": error,
+                    "next": next,
+                }))),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+    if rewrite && write && !yes {
+        let error = format!(
+            "`{command_name} --rewrite` is destructive and requires `--yes`{}",
+            format_next_timeline(&[
+                format!("run `{command_name} --rewrite --dry-run` to preview replacement"),
+                format!("run `{command_name} --rewrite --yes` to apply replacement"),
+            ]),
+        );
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "error": error,
+                    "next": format!("{command_name} --rewrite --dry-run"),
+                }))),
+            },
+            debug,
+            debug_lines,
+        );
+    }
 
     finalize_debug(
         match build_workspace_init_draft(&workspace_root) {
+            Ok(draft) if rewrite && !write => match format {
+                OutputFormat::Text => {
+                    let yaml = match serde_yaml::to_string(&draft.contract) {
+                        Ok(yaml) => yaml,
+                        Err(error) => {
+                            return CommandOutput::failure(format!(
+                                "failed to serialize workspace contract for `{}`: {error}",
+                                compact_path_display
+                            ));
+                        }
+                    };
+                    let mut stdout = format_command_header(
+                        &format!("WORKSPACE {command_label} REWRITE PREVIEW"),
+                        &compact_root_display,
+                    );
+                    stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
+                    stdout.push_str(&format_next_timeline(&[format!(
+                        "run `{command_name} --rewrite --yes {compact_root_display}` to replace the existing workspace contract",
+                    )]));
+                    stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
+                    stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
+                    render_workspace_init_discovery_sections(
+                        &mut stdout,
+                        &draft.included,
+                        &draft.missing_contract,
+                    );
+                    CommandOutput::success(stdout)
+                }
+                OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                    "ok": true,
+                    "path": path_display,
+                    "written": false,
+                    "mode": "scaffold",
+                    "config": draft.contract,
+                    "included": draft.included,
+                    "missing_contract": draft.missing_contract,
+                }))),
+            },
+            Ok(draft) if rewrite => {
+                let yaml = match serde_yaml::to_string(&draft.contract) {
+                    Ok(yaml) => yaml,
+                    Err(error) => {
+                        return CommandOutput::failure(format!(
+                            "failed to serialize workspace contract for `{}`: {error}",
+                            compact_path_display
+                        ));
+                    }
+                };
+                if let Err(error) =
+                    parse_workspace_contract_str(&workspace_path, &yaml).map_err(|error| error.to_string())
+                {
+                    let error = error;
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(error),
+                        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                            "ok": false,
+                            "path": path_display,
+                            "written": false,
+                            "mode": "scaffold",
+                            "error": error,
+                        }))),
+                    };
+                }
+                let backup_path = match create_timestamped_backup(&workspace_path) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                "ok": false,
+                                "path": path_display,
+                                "written": false,
+                                "mode": "scaffold",
+                                "error": error,
+                            }))),
+                        };
+                    }
+                };
+                if let Err(error) = fs::write(&workspace_path, yaml) {
+                    return match format {
+                        OutputFormat::Text => CommandOutput::failure(format!(
+                            "failed to write `{}`: {}",
+                            compact_workspace_path(&workspace_path),
+                            error
+                        )),
+                        OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                            "ok": false,
+                            "path": path_display,
+                            "written": false,
+                            "mode": "scaffold",
+                            "error": format!(
+                                "failed to write `{}`: {}",
+                                compact_workspace_path(&workspace_path),
+                                error
+                            ),
+                        }))),
+                    };
+                }
+                match format {
+                    OutputFormat::Text => {
+                        let mut stdout = format_command_header(
+                            &format!("WORKSPACE {command_label} REWRITTEN"),
+                            &compact_workspace_path(&workspace_path),
+                        );
+                        stdout.push_str(&format!(
+                            "\n{}",
+                            format_result_line(&format!(
+                                "wrote {}",
+                                paint_code(&compact_workspace_path(&workspace_path))
+                            ))
+                        ));
+                        stdout.push_str(&format!(
+                            "\n{} {}",
+                            backup_label(),
+                            paint_code(&compact_workspace_path(&backup_path))
+                        ));
+                        render_workspace_init_discovery_sections(
+                            &mut stdout,
+                            &draft.included,
+                            &draft.missing_contract,
+                        );
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "written": true,
+                        "mode": "scaffold",
+                        "config": draft.contract,
+                        "included": draft.included,
+                        "missing_contract": draft.missing_contract,
+                    }))),
+                }
+            }
             Ok(draft) if merge && !write => {
                 let comparison = match compare_workspace_init_merge(&workspace_path, &draft) {
                     Ok(comparison) => comparison,
@@ -3558,6 +3832,131 @@ fn write_detected_merge(report: DetectReport, format: OutputFormat) -> CommandOu
             }
         }
     }
+}
+
+fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> CommandOutput {
+    let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
+    let path_display = contract_path.display().to_string();
+    let compact_path_display = compact_contract_path(&contract_path);
+    let comparison = compare_detected_contract(&contract_path, &report.contract);
+
+    let yaml = match serde_yaml::to_string(&report.contract) {
+        Ok(yaml) => yaml,
+        Err(error) => {
+            let error = format!(
+                "failed to serialize rewritten contract `{}`: {}",
+                compact_path_display, error
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+
+    if let Err(error) = parse_contract_str(&contract_path, &yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+    {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+
+    let backup_path = match create_timestamped_backup(&contract_path) {
+        Ok(path) => path,
+        Err(error) => {
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+
+    match fs::write(&contract_path, yaml) {
+        Ok(()) => match format {
+            OutputFormat::Text => {
+                let mut stdout = format_command_header("REWRITTEN", &compact_path_display);
+                stdout.push_str(&format!(
+                    "\n{}",
+                    format_result_line(&format!(
+                        "wrote {}",
+                        paint_code(&compact_contract_path(&contract_path))
+                    ))
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    backup_label(),
+                    paint_code(&compact_contract_path(&backup_path))
+                ));
+                render_detect_comparison_section(&mut stdout, comparison.as_ref());
+                CommandOutput::success(stdout)
+            }
+            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
+                ok: true,
+                path: &path_display,
+                written: true,
+                config: &report.contract,
+                inferred: &report.inferences,
+                comparison: comparison.as_ref(),
+            })),
+        },
+        Err(error) => {
+            let error = format!("failed to write `{}`: {}", compact_path_display, error);
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            }
+        }
+    }
+}
+
+fn create_timestamped_backup(path: &Path) -> Result<PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("failed to create backup name for `{}`", path.display()))?;
+    let now = OffsetDateTime::now_utc();
+    let stamp = now
+        .format(&format_description!(
+            "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
+        ))
+        .map_err(|error| format!("failed to format backup timestamp: {error}"))?;
+    let backup_name = format!("{file_name}.bak-{stamp}");
+    let backup_path = path.with_file_name(backup_name);
+    fs::copy(path, &backup_path).map_err(|error| {
+        format!(
+            "failed to create backup `{}`: {}",
+            compact_path(&backup_path, "path"),
+            error
+        )
+    })?;
+    Ok(backup_path)
 }
 
 fn render_init(
@@ -5889,6 +6288,13 @@ fn render_status_word(status: &str) -> String {
 
 fn paint_key(key: &str) -> String {
     paint(key, "38;2;102;217;255")
+}
+
+fn backup_label() -> String {
+    if plain_mode() {
+        return String::from("Backup:");
+    }
+    format!("{} {}", "𖦹", paint_key("Backup:"))
 }
 
 fn error_key(key: &str) -> String {
