@@ -350,6 +350,10 @@ pub fn stylize_inline_text(value: &str) -> String {
 }
 
 fn infer_failure_where(default: &str, message: &str) -> String {
+    if default == "ota detect --merge --apply" {
+        return default.to_string();
+    }
+
     if let Some(from_idx) = message.find("from `") {
         let after_from = &message[from_idx + 6..];
         if let Some(end_idx) = after_from.find('`') {
