@@ -85,6 +85,15 @@ Policy packs are intended to be:
 The policy pack does not replace `ota.yaml`.
 It constrains and interprets it at the org layer.
 
+## Current implementation
+
+`ota doctor` reads `.ota/org-policy.yaml` when it exists, validates the file shape, and reports a finding if:
+
+- the policy pack cannot be read or parsed
+- required sections declared by the policy pack are missing from the repo contract
+
+The current implementation is read-only. It does not mutate repo contracts or apply policy remediation automatically.
+
 ## Scope
 
 Policy packs are for:
@@ -100,4 +109,3 @@ They are not for:
 - arbitrary org RBAC design
 - ticketing or approval orchestration
 - hidden mutation behavior
-
