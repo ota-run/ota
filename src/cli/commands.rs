@@ -4784,7 +4784,11 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
     }
 
     for change in &comparison.changes {
-        stdout.push_str(&format!("\n{}  {}", list_bullet(), change.field));
+        stdout.push_str(&format!(
+            "\n{}  {}",
+            list_bullet(),
+            paint(&change.field, "1;38;2;102;217;255")
+        ));
         match change.status {
             "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
             "update" => stdout.push_str(&format!(
