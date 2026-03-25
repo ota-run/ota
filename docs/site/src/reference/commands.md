@@ -227,6 +227,8 @@ When to use:
 Why:
 
 - provides safe onboarding entry before full manual authoring
+- writes the smallest valid starter contract for the repo
+- may include medium-confidence fields when needed for a valid starter, while still excluding low-confidence fields
 
 Use-case:
 
@@ -259,10 +261,12 @@ When to use:
 Why:
 
 - speeds adoption while preserving trust with confidence/provenance model
+- `--write` stays conservative and only writes high-confidence fields
 
 Use-case:
 
 - infer runtimes/tools/services from manifests and version files
+- refresh an existing contract with `--merge` instead of rerunning `init`
 
 ```bash
 ota detect --dry-run .
