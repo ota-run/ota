@@ -42,10 +42,10 @@ use crate::doctor::{
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DoctorSuccess, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceListSuccess,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
+    DetectSuccess, DoctorSuccess, ExecutionSummary, InitFailure, InitSuccess, MemberServicesSuccess,
+    OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure,
+    TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
+    WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
     WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
     WorkspaceUpSuccess,
 };
@@ -412,6 +412,20 @@ fn backticked_tokens(value: &str) -> Vec<&str> {
         rest = &after_start[end + 1..];
     }
     tokens
+}
+
+fn policy_finding_source(summary: &str, why: &str) -> Option<String> {
+    if summary != "Repo does not satisfy org policy pack"
+        && summary != "Invalid org policy pack"
+    {
+        return None;
+    }
+
+    let source = backticked_tokens(why)
+        .into_iter()
+        .find(|token| token.contains("org-policy.yaml"))?;
+
+    Some(format!("org policy pack {}", stylize_inline_text(source)))
 }
 
 pub fn validate(
@@ -1346,12 +1360,13 @@ pub fn doctor(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                                stdout: to_json(&DoctorSuccess {
-                                    ok: report.ok,
-                                    path: &path_display,
-                                    agent: agent_summary,
-                                    findings: &report.findings,
-                                }),
+                            stdout: to_json(&DoctorSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                agent: agent_summary,
+                                execution: ExecutionSummary::from_contract(&target.contract),
+                                findings: &report.findings,
+                            }),
                                 stderr: None,
                                 exit_code,
                             }
@@ -1630,12 +1645,13 @@ pub fn check(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                                stdout: to_json(&DoctorSuccess {
-                                    ok: report.ok,
-                                    path: &path_display,
-                                    agent: None,
-                                    findings: &report.findings,
-                                }),
+                            stdout: to_json(&DoctorSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                agent: None,
+                                execution: ExecutionSummary::from_contract(&target.contract),
+                                findings: &report.findings,
+                            }),
                                 stderr: None,
                                 exit_code,
                             }
@@ -2736,6 +2752,7 @@ pub enum WorkspaceScaffoldSurface {
 pub fn workspace_init(
     path: Option<&Path>,
     write: bool,
+    bootstrap: bool,
     merge: bool,
     rewrite: bool,
     yes: bool,
@@ -2762,6 +2779,7 @@ pub fn workspace_init(
         format!("DEBUG workspace_root={}", workspace_root.display()),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG write={write}"),
+        format!("DEBUG bootstrap={bootstrap}"),
         format!("DEBUG merge={merge}"),
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
@@ -3194,19 +3212,23 @@ pub fn workspace_init(
             Ok(_draft) if write && workspace_path.exists() => {
                 let error = match surface {
                     WorkspaceScaffoldSurface::Init => {
-                        let next_validate =
-                            command_for_workspace("ota workspace validate", &workspace_path);
-                        let next_doctor =
-                            command_for_workspace("ota workspace doctor", &workspace_path);
+                        let next_detect_merge = command_for_workspace(
+                            "ota workspace detect --merge",
+                            &workspace_path,
+                        );
+                        let next_detect_rewrite = command_for_workspace(
+                            "ota workspace detect --rewrite --yes",
+                            &workspace_path,
+                        );
                         format!(
                             "`{}` already exists; refusing to overwrite an existing workspace contract{}\n{}",
                             compact_workspace_path(&workspace_path),
                             format_next_timeline(&[
                                 format!(
-                                    "review the existing workspace contract with `{next_validate}`"
+                                    "use `{next_detect_merge}` to apply additive workspace updates"
                                 ),
                                 format!(
-                                    "diagnose current workspace readiness with `{next_doctor}`"
+                                    "use `{next_detect_rewrite}` to replace the workspace contract"
                                 ),
                             ]),
                             ""
@@ -3236,11 +3258,102 @@ pub fn workspace_init(
                         "written": false,
                         "mode": "scaffold",
                         "error": error.trim_end(),
-                        "next": command_for_workspace("ota workspace validate", &workspace_path),
+                        "next": command_for_workspace("ota workspace detect --merge", &workspace_path),
                     }))),
                 }
             }
             Ok(draft) if write => {
+                let mut draft = draft;
+                let mut auto_provision = WorkspaceAutoProvisionResult {
+                    provisioned: Vec::new(),
+                    skipped: Vec::new(),
+                };
+                if matches!(surface, WorkspaceScaffoldSurface::Init)
+                    && bootstrap
+                    && !draft.missing_contract.is_empty()
+                {
+                    auto_provision = auto_provision_workspace_repo_contracts(
+                        &workspace_root,
+                        &draft.missing_contract,
+                    );
+                    if !auto_provision.provisioned.is_empty() {
+                        draft = match build_workspace_init_draft(&workspace_root) {
+                            Ok(updated) => updated,
+                            Err(error) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => CommandOutput::failure(error),
+                                        OutputFormat::Json => CommandOutput::failure(
+                                            to_json_value(json!({
+                                                "ok": false,
+                                                "path": path_display,
+                                                "written": false,
+                                                "mode": "scaffold",
+                                                "error": error,
+                                            })),
+                                        ),
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                    }
+                }
+
+                if draft.included.is_empty() {
+                    let error = if matches!(surface, WorkspaceScaffoldSurface::Init) && bootstrap {
+                        format!(
+                            "workspace init could not bootstrap any repo contracts from `{}`{}",
+                            compact_root_display,
+                            format_next_timeline(&[
+                                String::from("create repo contracts with `ota init <repo-path>`"),
+                                String::from(
+                                    "or preview repo contracts with `ota detect --dry-run <repo-path>`",
+                                ),
+                            ]),
+                        )
+                    } else if matches!(surface, WorkspaceScaffoldSurface::Init) {
+                        format!(
+                            "workspace init could not find any repos with `ota.yaml`{}",
+                            format_next_timeline(&[
+                                String::from(
+                                    "run `ota workspace init --bootstrap` to scaffold missing repo contracts",
+                                ),
+                                String::from("or create repo contracts with `ota init <repo-path>`"),
+                                String::from(
+                                    "or preview repo contracts with `ota detect --dry-run <repo-path>`",
+                                ),
+                            ]),
+                        )
+                    } else {
+                        format!(
+                            "workspace init could not bootstrap any repo contracts from `{}`{}",
+                            compact_root_display,
+                            format_next_timeline(&[
+                                String::from("create repo contracts with `ota init <repo-path>`"),
+                                String::from(
+                                    "or preview repo contracts with `ota detect --dry-run <repo-path>`",
+                                ),
+                            ]),
+                        )
+                    };
+                    return finalize_debug(
+                        match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                                "ok": false,
+                                "path": path_display,
+                                "written": false,
+                                "mode": "scaffold",
+                                "error": error,
+                            }))),
+                        },
+                        debug,
+                        debug_lines,
+                    );
+                }
+
                 let yaml = match serde_yaml::to_string(&draft.contract) {
                     Ok(yaml) => yaml,
                     Err(error) => {
@@ -3306,6 +3419,13 @@ pub fn workspace_init(
                             ))
                         ));
                         stdout.push_str(&format!("\n\n{}", format_mode_line("scaffold")));
+                        if bootstrap {
+                            render_workspace_auto_provision_sections(
+                                &mut stdout,
+                                &auto_provision.provisioned,
+                                &auto_provision.skipped,
+                            );
+                        }
                         stdout.push_str(&format_next_timeline(&[
                             format!("run `{next_validate}`"),
                             format!("run `{next_doctor}`"),
@@ -3347,7 +3467,11 @@ pub fn workspace_init(
                     stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
                     let write_command = match surface {
                         WorkspaceScaffoldSurface::Init => {
-                            format!("{command_name} {compact_root_display}")
+                            if bootstrap {
+                                format!("{command_name} --bootstrap {compact_root_display}")
+                            } else {
+                                format!("{command_name} {compact_root_display}")
+                            }
                         }
                         WorkspaceScaffoldSurface::Detect => {
                             format!("{command_name} --write {compact_root_display}")
@@ -5449,12 +5573,19 @@ fn render_report_section(
 
     for finding in &report.findings {
         let next = compact_backticked_paths(&finding.next);
+        let source_line = policy_finding_source(&finding.summary, &finding.why)
+            .map(|value| format!("{} {}", finding_detail_key(finding.severity, "Source:"), value));
+        let source_block = source_line
+            .as_ref()
+            .map(|value| format!("\n{}", value))
+            .unwrap_or_default();
         if concise_mode() {
             stdout.push_str("\n\n");
             stdout.push_str(&format!(
-                "{}  {}\n{} {}",
+                "{}  {}{}\n{} {}",
                 render_severity(finding.severity),
                 render_finding_summary(finding.severity, &finding.summary),
+                source_block,
                 finding_detail_key(finding.severity, "Next:"),
                 next
             ));
@@ -5462,11 +5593,12 @@ fn render_report_section(
             let why = compact_backticked_paths(&finding.why);
             stdout.push_str("\n\n");
             stdout.push_str(&format!(
-                "{}  {}\n{} {}\n{} {}",
+                "{}  {}\n{} {}{}\n{} {}",
                 render_severity(finding.severity),
                 render_finding_summary(finding.severity, &finding.summary),
                 finding_detail_key(finding.severity, "Why:"),
                 why,
+                source_block,
                 finding_detail_key(finding.severity, "Next:"),
                 next
             ));
@@ -5700,19 +5832,22 @@ fn render_workspace_init_discovery_sections(
     ));
     if missing_contract.is_empty() {
         stdout.push_str(&format!("\n{}  none", info_bullet()));
-    } else {
-        for repo in missing_contract {
-            stdout.push_str(&format!(
-                "\n{}  {} ({})",
-                info_bullet(),
-                repo.name,
-                repo.path
-            ));
-        }
-        stdout.push_str(&format_next_timeline(&[
-            String::from(
-                "run `ota workspace detect --write` after repo contracts exist to refresh `ota.workspace.yaml`",
+        } else {
+            for repo in missing_contract {
+                stdout.push_str(&format!(
+                    "\n{}  {} ({})",
+                    info_bullet(),
+                    repo.name,
+                    repo.path
+                ));
+            }
+            stdout.push_str(&format_next_timeline(&[
+                String::from(
+                "or run `ota workspace init --bootstrap` to auto-provision missing repo contracts and write `ota.workspace.yaml`",
             ),
+                String::from(
+                    "run `ota workspace detect --write` after repo contracts exist to refresh `ota.workspace.yaml`",
+                ),
             String::from("or create missing repo contracts with `ota init <repo-path>`"),
             String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
         ]));
@@ -5982,6 +6117,7 @@ fn resolve_workspace_init_target(path: Option<&Path>) -> Result<(PathBuf, PathBu
 
 fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraft, String> {
     let mut candidates = discover_workspace_candidates(workspace_root)?;
+    let has_any_candidates = !candidates.is_empty();
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
 
     let mut included = Vec::new();
@@ -6000,9 +6136,9 @@ fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraf
         }
     }
 
-    if included.is_empty() {
+    if !has_any_candidates {
         return Err(format!(
-            "workspace init could not find any repos with `ota.yaml`; add repo contracts first before writing `ota.workspace.yaml`{}",
+            "workspace init could not find any repos to bootstrap; add repo contracts first before writing `ota.workspace.yaml`{}",
             format_next_timeline(&[
                 String::from("create repo contracts with `ota init <repo-path>`"),
                 String::from("or preview repo contracts with `ota detect --dry-run <repo-path>`"),

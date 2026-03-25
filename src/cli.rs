@@ -293,11 +293,15 @@ impl From<WorkspaceDoctorSeverityArg> for commands::WorkspaceDoctorSeverityFilte
 #[derive(Debug, Clone, Subcommand)]
 enum WorkspaceCommands {
     /// Create a starter ota.workspace.yaml from local repo structure.
+    /// Use --bootstrap to scaffold missing child repo ota.yaml files.
     /// Use `ota services` for repo-level service listing and `ota workspace doctor` for workspace readiness.
     Init {
         /// Compatibility flag; init writes by default.
         #[arg(long, action = ArgAction::SetTrue)]
         write: bool,
+        /// Bootstrap missing child repo ota.yaml files before writing ota.workspace.yaml.
+        #[arg(long, action = ArgAction::SetTrue)]
+        bootstrap: bool,
         /// Compatibility alias for preview; equivalent outcome to workspace detect dry-run.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
         dry_run: bool,
@@ -741,6 +745,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init {
                 write: _write,
+                bootstrap,
                 dry_run,
                 merge,
                 json,
@@ -758,6 +763,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     commands::workspace_init(
                         path.as_deref(),
                         !dry_run,
+                        bootstrap,
                         true,
                         false,
                         false,
@@ -772,6 +778,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         false,
                         false,
                         false,
+                        false,
                         commands::WorkspaceScaffoldSurface::Init,
                         format_from_json(json),
                         debug,
@@ -780,6 +787,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     commands::workspace_init(
                         path.as_deref(),
                         true,
+                        bootstrap,
                         false,
                         false,
                         false,
@@ -814,6 +822,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 commands::workspace_init(
                     path.as_deref(),
                     write,
+                    false,
                     merge,
                     rewrite,
                     yes,
@@ -4076,6 +4085,77 @@ tasks:
     }
 
     #[test]
+    fn doctor_json_includes_policy_provenance() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = &json["findings"][0];
+        assert_eq!(finding["summary"], "Repo does not satisfy org policy pack");
+        assert_eq!(finding["policy_outcome"], "blocked_by_policy");
+        assert_eq!(finding["policy_reason"], "missing_required_sections");
+        assert_eq!(finding["policy_source"], "org");
+        assert_eq!(finding["install_scope"], "repo_local");
+        assert_eq!(finding["mutation_allowed"], false);
+    }
+
+    #[test]
+    fn doctor_json_includes_execution_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: remote
+  supported:
+    - remote
+  lifecycle: ephemeral
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["execution"]["preferred"], "remote");
+        assert_eq!(json["execution"]["supported"][0], "remote");
+        assert_eq!(json["execution"]["lifecycle"], "ephemeral");
+        assert_eq!(json["execution"]["backends"]["remote"]["provider"], "ssh");
+        assert_eq!(json["execution"]["backends"]["remote"]["target"], "user@host");
+        assert_eq!(json["execution"]["backends"]["remote"]["cwd"], "/workspace");
+    }
+
+    #[test]
     fn doctor_json_includes_agent_summary() {
         let fixture = ContractFixture::new(
             r#"
@@ -6667,13 +6747,158 @@ project:
         );
 
         assert_eq!(output.exit_code, 1);
-        assert!(body.contains("workspace init could not find any repos with `ota.yaml`"));
+        assert!(body.contains("workspace init could not find any repos to bootstrap"));
         assert!(body.contains("create repo contracts with `ota init <repo-path>`"));
         assert!(body.contains("preview repo contracts with `ota detect --dry-run <repo-path>`"));
         assert!(body.contains(
             "then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"
         ));
         assert!(body.contains("Next:"));
+    }
+
+    #[test]
+    fn workspace_init_bootstrap_auto_provisions_missing_repo_contracts() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("Cargo.toml"),
+            r#"[package]
+name = "web"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--bootstrap",
+            fixture.path().to_str().unwrap(),
+        ]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.path().join("ota.workspace.yaml").is_file());
+        assert!(repo_dir.join("ota.yaml").is_file());
+        assert!(body.contains("Auto-provisioned repo contracts"));
+        assert!(body.contains("web (apps/web)"));
+    }
+
+    #[test]
+    fn workspace_init_without_bootstrap_recommends_bootstrap_for_missing_repo_contracts() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("Cargo.toml"),
+            r#"[package]
+name = "web"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "init", fixture.path().to_str().unwrap()]);
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or(""))
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(body.contains("workspace init could not find any repos with `ota.yaml`"));
+        assert!(body.contains("run `ota workspace init --bootstrap` to scaffold missing repo contracts"));
+        assert!(!repo_dir.join("ota.yaml").exists());
+    }
+
+    #[test]
+    fn workspace_init_bootstrap_refuses_to_overwrite_existing_workspace_contract() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("Cargo.toml"),
+            r#"[package]
+name = "web"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "init",
+            "--bootstrap",
+            fixture.path().to_str().unwrap(),
+        ]);
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or(""))
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(fixture.path().join("ota.workspace.yaml").is_file());
+        assert!(!repo_dir.join("ota.yaml").exists());
+        assert!(body.contains("already exists; refusing to overwrite an existing workspace contract"));
+        assert!(body.contains("use `ota workspace detect --merge"));
+        assert!(body.contains("use `ota workspace detect --rewrite --yes"));
+    }
+
+    #[test]
+    fn workspace_init_writes_without_bootstrapping_missing_repo_contracts() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("Cargo.toml"),
+            r#"[package]
+name = "api"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "init", fixture.path().to_str().unwrap()]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.path().join("ota.workspace.yaml").is_file());
+        assert!(web_dir.join("ota.yaml").is_file());
+        assert!(!api_dir.join("ota.yaml").exists());
+        assert!(!body.contains("Auto-provisioned repo contracts"));
     }
 
     #[test]
@@ -6815,8 +7040,8 @@ repos:
         assert!(
             body.contains("already exists; refusing to overwrite an existing workspace contract")
         );
-        assert!(body.contains("ota workspace validate"));
-        assert!(body.contains("ota workspace doctor"));
+        assert!(body.contains("ota workspace detect --merge"));
+        assert!(body.contains("ota workspace detect --rewrite --yes"));
     }
 
     #[test]
@@ -8024,6 +8249,56 @@ env:
             json["repos"][0]["findings"][0]["summary"],
             "Missing environment variable: OTA_WORKSPACE_REQUIRED"
         );
+    }
+
+    #[test]
+    fn workspace_doctor_json_includes_policy_provenance() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web").join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join("web").join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", "--json", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let finding = &json["repos"][0]["findings"][0];
+        assert_eq!(finding["summary"], "Repo does not satisfy org policy pack");
+        assert_eq!(finding["policy_outcome"], "blocked_by_policy");
+        assert_eq!(finding["policy_reason"], "missing_required_sections");
+        assert_eq!(finding["policy_source"], "org");
+        assert_eq!(finding["install_scope"], "repo_local");
+        assert_eq!(finding["mutation_allowed"], false);
     }
 
     #[test]
