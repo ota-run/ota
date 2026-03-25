@@ -1769,7 +1769,13 @@ pub fn check(
     )
 }
 
-pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool) -> CommandOutput {
+pub fn init(
+    path: Option<&Path>,
+    write: bool,
+    bootstrap: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
@@ -1779,6 +1785,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
         format!("DEBUG repo_root={}", root.display()),
         format!("DEBUG contract_path={path_display}"),
         format!("DEBUG write={write}"),
+        format!("DEBUG bootstrap={bootstrap}"),
     ];
 
     if contract_path.exists() {
@@ -1816,7 +1823,7 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
 
     finalize_debug(
         match detect_repo(&root) {
-            Ok(report) => render_init(report, &contract_path, write, format),
+            Ok(report) => render_init(report, &contract_path, write, bootstrap, format),
             Err(error) => {
                 let error = error.to_string();
                 match format {
@@ -4755,6 +4762,7 @@ fn render_init(
     report: DetectReport,
     contract_path: &Path,
     write: bool,
+    bootstrap: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     let mode = init_mode(&report);
@@ -4782,7 +4790,11 @@ fn render_init(
 
     if write {
         let write_contract = if mode == "detected" {
-            report.contract_with_min_confidence(Confidence::Medium)
+            if bootstrap {
+                report.contract.clone()
+            } else {
+                report.contract_with_min_confidence(Confidence::Medium)
+            }
         } else {
             report.contract.clone()
         };
@@ -4840,14 +4852,32 @@ fn render_init(
                             "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
                         );
                     } else {
-                        stdout.push_str(
-                            "\nWrite policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded",
-                        );
+                        if bootstrap {
+                            stdout.push_str(
+                                "\nBootstrap policy: detected mode writes the full detected starter contract, including lower-confidence fields",
+                            );
+                        } else {
+                            stdout.push_str(
+                                "\nWrite policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded",
+                            );
+                        }
                         let excluded = report
                             .inferences
                             .iter()
-                            .filter(|inference| inference.confidence == Confidence::Low);
-                        render_inference_section(&mut stdout, "Excluded from automatic write", excluded);
+                            .filter(|inference| {
+                                if bootstrap {
+                                    false
+                                } else {
+                                    inference.confidence == Confidence::Low
+                                }
+                            });
+                        if !bootstrap {
+                            render_inference_section(
+                                &mut stdout,
+                                "Excluded from automatic write",
+                                excluded,
+                            );
+                        }
                     }
                     render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
                     CommandOutput::success(stdout)

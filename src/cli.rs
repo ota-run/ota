@@ -141,6 +141,9 @@ enum Commands {
         /// Compatibility flag; writing is now the default.
         #[arg(long, action = ArgAction::SetTrue)]
         write: bool,
+        /// Bootstrap a fuller starter contract when the detector has enough confidence.
+        #[arg(long, action = ArgAction::SetTrue)]
+        bootstrap: bool,
         /// Preview inferred contract output without writing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
         dry_run: bool,
@@ -704,6 +707,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         }
         Commands::Init {
             write: _write,
+            bootstrap,
             dry_run,
             json,
             path,
@@ -716,7 +720,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     2,
                 );
             }
-            commands::init(path.as_deref(), !dry_run, format_from_json(json), debug)
+            commands::init(
+                path.as_deref(),
+                !dry_run,
+                bootstrap,
+                format_from_json(json),
+                debug,
+            )
         }
         Commands::Detect {
             json,
@@ -4562,6 +4572,25 @@ agent:
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: go-service"));
         assert!(written.contains("go: 1.24.0"));
+    }
+
+    #[test]
+    fn init_bootstrap_writes_full_detected_starter_contract() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("tclapp.tcl", "puts \"hello\"\n");
+
+        let output = run_with(["ota", "init", "--bootstrap", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("INIT WRITE"));
+        assert!(output
+            .stdout
+            .contains("Bootstrap policy: detected mode writes the full detected starter contract"));
+        assert!(!output.stdout.contains("Excluded from automatic write:"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("name: tclapp"));
+        assert!(written.contains("tclsh: '*"));
+        assert!(written.contains("run: tclsh tclapp.tcl"));
     }
 
     #[test]

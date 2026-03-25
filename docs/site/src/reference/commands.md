@@ -265,7 +265,8 @@ Why:
 
 - provides safe onboarding entry before full manual authoring
 - writes the smallest valid starter contract for the repo
-- may include medium-confidence fields when needed for a valid starter, while still excluding low-confidence fields
+- `ota init --bootstrap` writes the fuller detected starter contract when the detector has enough confidence
+- plain `ota init` still excludes low-confidence fields
 
 Use-case:
 
@@ -273,6 +274,7 @@ Use-case:
 
 ```bash
 ota init
+ota init --bootstrap
 ota init --dry-run
 ota init --json
 ```
@@ -286,6 +288,7 @@ set -euo pipefail
 # preview first, then write
 ota init --dry-run
 ota init
+ota init --bootstrap
 ota validate
 ```
 
