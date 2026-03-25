@@ -607,6 +607,7 @@ Why:
 ```bash
 ota workspace up
 ota workspace up --json
+ota workspace up --quiet
 ```
 
 Script example:
