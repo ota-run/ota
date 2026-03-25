@@ -2210,6 +2210,11 @@ struct WorkspaceAutoProvisionResult {
     skipped: Vec<(WorkspaceInitRepoSummary, String)>,
 }
 
+struct WorkspaceRepoRewriteResult {
+    rewritten: Vec<WorkspaceInitRepoSummary>,
+    skipped: Vec<(WorkspaceInitRepoSummary, String)>,
+}
+
 pub enum WorkspaceScaffoldSurface {
     Init,
     Detect,
@@ -2399,6 +2404,19 @@ pub fn workspace_init(
                 }))),
             },
             Ok(draft) if rewrite => {
+                let mut draft = draft;
+                let rewrite_result = rewrite_workspace_repo_contracts(
+                    &workspace_root,
+                    &draft.included,
+                    &draft.missing_contract,
+                );
+                if !rewrite_result.rewritten.is_empty() {
+                    draft = match build_workspace_init_draft(&workspace_root) {
+                        Ok(updated) => updated,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                }
+
                 let yaml = match serde_yaml::to_string(&draft.contract) {
                     Ok(yaml) => yaml,
                     Err(error) => {
@@ -2476,10 +2494,10 @@ pub fn workspace_init(
                             backup_label(),
                             paint_code(&compact_workspace_path(&backup_path))
                         ));
-                        render_workspace_init_discovery_sections(
+                        render_workspace_repo_rewrite_sections(
                             &mut stdout,
-                            &draft.included,
-                            &draft.missing_contract,
+                            &rewrite_result.rewritten,
+                            &rewrite_result.skipped,
                         );
                         CommandOutput::success(stdout)
                     }
@@ -5077,6 +5095,49 @@ fn render_workspace_auto_provision_sections(
     }
 }
 
+fn render_workspace_repo_rewrite_sections(
+    stdout: &mut String,
+    rewritten: &[WorkspaceInitRepoSummary],
+    skipped: &[(WorkspaceInitRepoSummary, String)],
+) {
+    if rewritten.is_empty() && skipped.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}:",
+        paint_section_title("Rewritten repo contracts")
+    ));
+    if rewritten.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+    } else {
+        for repo in rewritten {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+    }
+
+    if !skipped.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}:",
+            paint_section_title("Repo rewrite skipped")
+        ));
+        for (repo, reason) in skipped {
+            stdout.push_str(&format!(
+                "\n{}  {} ({}): {}",
+                info_bullet(),
+                repo.name,
+                repo.path,
+                reason
+            ));
+        }
+    }
+}
+
 fn render_workspace_init_merge_section(
     stdout: &mut String,
     title: &str,
@@ -5367,6 +5428,78 @@ fn auto_provision_workspace_repo_contracts(
             continue;
         }
         result.provisioned.push(repo.clone());
+    }
+
+    result
+}
+
+fn rewrite_workspace_repo_contracts(
+    workspace_root: &Path,
+    included: &[WorkspaceInitRepoSummary],
+    missing_contract: &[WorkspaceInitRepoSummary],
+) -> WorkspaceRepoRewriteResult {
+    let mut result = WorkspaceRepoRewriteResult {
+        rewritten: Vec::new(),
+        skipped: Vec::new(),
+    };
+    let repos = included
+        .iter()
+        .chain(missing_contract.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+
+    for repo in repos {
+        let repo_root = workspace_root.join(&repo.path);
+        let contract_path = repo_root.join(DEFAULT_CONTRACT_FILE);
+        let report = match detect_repo(&repo_root) {
+            Ok(report) => report,
+            Err(error) => {
+                result
+                    .skipped
+                    .push((repo.clone(), format!("detect failed: {error}")));
+                continue;
+            }
+        };
+
+        let high_confidence = report.high_confidence_contract();
+        let high_confidence_yaml = match serde_yaml::to_string(&high_confidence) {
+            Ok(yaml) => yaml,
+            Err(error) => {
+                result
+                    .skipped
+                    .push((repo.clone(), format!("serialize failed: {error}")));
+                continue;
+            }
+        };
+
+        let yaml_to_write = if contract_yaml_valid(&contract_path, &high_confidence_yaml) {
+            high_confidence_yaml
+        } else {
+            match minimal_repo_contract_yaml(&repo.name) {
+                Ok(yaml) => yaml,
+                Err(error) => {
+                    result.skipped.push((repo.clone(), error));
+                    continue;
+                }
+            }
+        };
+
+        if contract_path.is_file()
+            && let Err(error) = create_timestamped_backup(&contract_path)
+        {
+            result
+                .skipped
+                .push((repo.clone(), format!("backup failed: {error}")));
+            continue;
+        }
+
+        if let Err(error) = fs::write(&contract_path, yaml_to_write) {
+            result
+                .skipped
+                .push((repo.clone(), format!("write failed: {error}")));
+            continue;
+        }
+        result.rewritten.push(repo);
     }
 
     result
