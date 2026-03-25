@@ -630,7 +630,7 @@ Current behavior:
 - skips candidate repos that do not yet have `ota.yaml`
 - writes `ota.workspace.yaml`
 - refuses to overwrite an existing `ota.workspace.yaml`
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace init`
+- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
 - when overwrite is refused, points to `ota workspace validate` and `ota workspace doctor`
 - supports JSON for machine-readable write outcomes
 
@@ -670,7 +670,7 @@ Current behavior:
 - `--rewrite --dry-run` previews full replacement of an existing `ota.workspace.yaml`
 - `--rewrite --yes` fully replaces existing `ota.workspace.yaml` with regenerated detected workspace contract
 - rewrite creates a timestamped backup file (`ota.workspace.yaml.bak-<timestamp>`) before writing
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace init`
+- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
 - supports JSON for machine-readable preview/write outcomes
 
 ## `ota workspace validate`

@@ -374,7 +374,7 @@ When to use:
 Why:
 
 - gives one deterministic workspace contract without hand-writing repo entries
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace init`
+- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
 
 ```bash
 ota workspace init
@@ -400,7 +400,7 @@ When to use:
 Why:
 
 - keeps inferred/merge behavior explicit and reviewable, separate from init write
-- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace init`
+- when no repo contracts are found, points to `ota init <repo-path>`, `ota detect --dry-run <repo-path>`, and `ota workspace detect --write` or `ota workspace init` after repo contracts exist
 
 ```bash
 ota workspace detect --dry-run

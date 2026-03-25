@@ -85,6 +85,12 @@ V5 theme:
 - keep mutation paths explicit and enterprise-safe
 - use caching only where it preserves determinism and trust
 
+## Current progress
+
+- policy-pack read path implemented in `ota doctor` for `.ota/org-policy.yaml`
+- malformed policy packs now surface as doctor findings
+- policy-required sections now surface as doctor findings when missing from `ota.yaml`
+
 ## Success criteria
 
 - a platform team can define a policy pack that applies consistently across many repos
