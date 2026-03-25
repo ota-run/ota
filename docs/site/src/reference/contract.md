@@ -74,6 +74,15 @@ Trust and behavior rules:
 - `ota detect` writes conservatively from high-confidence fields only.
 - `ota detect --merge` applies additive high-confidence fields only.
 
+Runtime version syntax examples:
+
+- `8` is an example of an exact required version
+- `>=8` is an example of accepting any version at or above `8`
+- `^8` is an example of a compatible version range, usually the same major line
+- Ota compares numeric version parts and accepts common prefixes such as `go1.24.2` or `v1.24.2`
+- use `>=` when a newer runtime is acceptable
+- use `^` when compatibility is acceptable but exact equivalence is not required
+
 ## Authoring guidance
 
 Start minimal, then expand:

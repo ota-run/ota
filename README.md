@@ -243,6 +243,7 @@ Example contracts:
 - [Shell semantics](docs/spec/shell-semantics.md)
 - [JSON output reference](docs/spec/json-output-reference.md)
 - [Exit codes](docs/spec/exit-codes.md)
+- [Docs clarity spec](docs/spec/docs-clarity-spec.md)
 
 ### Core concepts
 - [Philosophy](docs/philosophy.md)
