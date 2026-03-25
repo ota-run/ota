@@ -199,7 +199,7 @@ pub fn validate_workspace_contract(
             }
             Err(LoadContractError::Read { .. }) => {
                 errors.push(WorkspaceValidationError::new(format!(
-                    "workspace repo `{}` contract was not found: {}",
+                    "workspace repo `{}` contract was not found: `{}`",
                     repo.name,
                     repo.contract_path.display()
                 )));
