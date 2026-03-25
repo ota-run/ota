@@ -3739,7 +3739,7 @@ pub fn workspace_doctor(
                             known_repos.join(", ")
                         };
                         let error = format!(
-                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`; run `{}`",
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} use `{}` to see known repos",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace doctor filter failed", "1;37"),
                             paint_key("Where:"),
