@@ -736,6 +736,8 @@ List workspace repos, contract presence, and lightweight readiness status withou
 
 ```bash
 ota workspace list [PATH]
+ota workspace list --status ready [PATH]
+ota workspace list --status not-ready [PATH]
 ota workspace list --repo <name> [PATH]
 ota workspace list --json [PATH]
 ```
@@ -744,7 +746,7 @@ Current behavior:
 
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace shape for deterministic repo ordering
-- lists all declared repos (or one repo with `--repo`)
+- lists all declared repos (or filters by `--repo` / `--status`)
 - reports acquisition state per repo (`ACQUIRED` vs `NOT ACQUIRED`)
 - reports lightweight readiness status per repo (`READY` vs `NOT READY`)
 - reports contract presence per repo (`contract_present`)
