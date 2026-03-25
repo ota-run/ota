@@ -1403,22 +1403,20 @@ pub fn init(path: Option<&Path>, write: bool, format: OutputFormat, debug: bool)
     ];
 
     if contract_path.exists() {
-        let next = command_for_repo("ota detect --merge --dry-run", &root);
+        let next = command_for_repo("ota detect --merge", &root);
         let highlighted_path = paint_code(&compact_path_display);
         let highlighted_validate = paint_code("ota validate");
         let highlighted_doctor = paint_code("ota doctor");
         let highlighted_detect_merge_dry = paint_code("ota detect --merge --dry-run");
         let highlighted_detect_merge = paint_code("ota detect --merge");
         let error = format!(
-            "`{}` already exists; ota init is only for repos without an Ota contract{}",
+            "`{}` already exists; use `{highlighted_detect_merge}` to update the existing contract{}",
             highlighted_path,
             format_next_timeline(&[
                 format!("review the existing contract with `{highlighted_validate}`"),
                 format!("review the existing contract with `{highlighted_doctor}`"),
                 format!("compare detected repo signals with `{highlighted_detect_merge_dry}`"),
-                format!(
-                    "apply detected add-only high-confidence fields now with `{highlighted_detect_merge}`"
-                ),
+                format!("update the existing contract with `{highlighted_detect_merge}`"),
             ]),
         );
         return finalize_debug(
@@ -4128,7 +4126,7 @@ fn render_init(
 
     if write {
         let write_contract = if mode == "detected" {
-            report.high_confidence_contract()
+            report.contract_with_min_confidence(Confidence::Medium)
         } else {
             report.contract.clone()
         };
@@ -4187,13 +4185,13 @@ fn render_init(
                         );
                     } else {
                         stdout.push_str(
-                            "\nWrite policy: detected mode writes only high-confidence fields automatically",
+                            "\nWrite policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded",
                         );
-                        render_inference_section(
-                            &mut stdout,
-                            "Excluded from automatic write",
-                            excluded_write_inferences(&report),
-                        );
+                        let excluded = report
+                            .inferences
+                            .iter()
+                            .filter(|inference| inference.confidence == Confidence::Low);
+                        render_inference_section(&mut stdout, "Excluded from automatic write", excluded);
                     }
                     render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
                     CommandOutput::success(stdout)
@@ -8652,8 +8650,8 @@ fn render_run_error(error: RunError) -> String {
 
 fn render_confidence(confidence: Confidence) -> String {
     match confidence {
-        Confidence::High => paint("high", "1;32"),
-        Confidence::Medium => paint("medium", "1;33"),
+        Confidence::High => paint("high", "1;38;2;0;255;120"),
+        Confidence::Medium => paint("medium", "1;38;2;255;235;59"),
         Confidence::Low => paint("low", "1;31"),
     }
 }

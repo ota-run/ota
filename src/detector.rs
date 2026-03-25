@@ -93,13 +93,17 @@ pub struct DetectReport {
 
 impl DetectReport {
     pub fn high_confidence_contract(&self) -> DetectContract {
+        self.contract_with_min_confidence(Confidence::High)
+    }
+
+    pub fn contract_with_min_confidence(&self, min_confidence: Confidence) -> DetectContract {
         let mut contract = DetectContract {
             version: 1,
             ..DetectContract::default()
         };
 
         for inference in &self.inferences {
-            if inference.confidence != Confidence::High {
+            if inference.confidence < min_confidence {
                 continue;
             }
 
