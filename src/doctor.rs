@@ -21,7 +21,12 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::path::Path;
+use std::io::{self, IsTerminal, Write};
 use std::process::Command;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -550,19 +555,41 @@ enum CheckStatus {
 }
 
 fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> CheckStatus {
-    let Some(timeout_ms) = timeout_ms else {
-        let status = shell_command(command).current_dir(working_dir).status();
-        return if matches!(status, Ok(status) if status.success()) {
-            CheckStatus::Passed
-        } else {
-            CheckStatus::Failed
-        };
-    };
-
-    let Ok(mut child) = shell_command(command).current_dir(working_dir).spawn() else {
+    let Ok(mut child) = shell_command(command)
+        .current_dir(working_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    else {
         return CheckStatus::Failed;
     };
 
+    let spinner = CheckSpinner::start();
+    let status = match timeout_ms {
+        Some(timeout_ms) => wait_for_child_with_timeout(&mut child, timeout_ms),
+        None => wait_for_child(&mut child),
+    };
+    spinner.stop();
+
+    match status {
+        CheckStatus::Passed | CheckStatus::Failed | CheckStatus::TimedOut(_) => status,
+    }
+}
+
+fn wait_for_child(child: &mut std::process::Child) -> CheckStatus {
+    match child.wait() {
+        Ok(status) => {
+            if status.success() {
+                CheckStatus::Passed
+            } else {
+                CheckStatus::Failed
+            }
+        }
+        Err(_) => CheckStatus::Failed,
+    }
+}
+
+fn wait_for_child_with_timeout(child: &mut std::process::Child, timeout_ms: u64) -> CheckStatus {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         match child.try_wait() {
@@ -586,6 +613,57 @@ fn run_check(command: &str, working_dir: &Path, timeout_ms: Option<u64>) -> Chec
             }
         }
     }
+}
+
+struct CheckSpinner {
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl CheckSpinner {
+    fn start() -> Self {
+        if !should_show_spinner() {
+            return Self {
+                stop: Arc::new(AtomicBool::new(true)),
+                handle: None,
+            };
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
+            let frames = ["◐", "◓", "◑", "◒"];
+            let mut index = 0usize;
+            let mut stderr = io::stderr();
+            while !thread_stop.load(Ordering::Relaxed) {
+                let frame = frames[index % frames.len()];
+                let _ = write!(stderr, "\r🦦  {frame}");
+                let _ = stderr.flush();
+                index += 1;
+                thread::sleep(Duration::from_millis(90));
+            }
+            let _ = write!(stderr, "\r{}\r", " ".repeat(24));
+            let _ = stderr.flush();
+        });
+
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn should_show_spinner() -> bool {
+    io::stderr().is_terminal()
+        && std::env::var_os("OTA_PLAIN_MODE").is_none()
+        && std::env::var_os("OTA_JSON_MODE").is_none()
 }
 
 fn map_check_severity(severity: CheckSeverity) -> FindingSeverity {
