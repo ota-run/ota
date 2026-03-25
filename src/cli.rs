@@ -740,6 +740,7 @@ fn finalize_cli_output(
 }
 
 fn append_try_footer(stderr: String, command: &Commands) -> String {
+    const REPO_SETUP_SUGGESTION: &str = "setup repo with `ota init`";
     const WORKSPACE_SETUP_SUGGESTION: &str = "setup workspace with `ota workspace init`";
     const WORKSPACE_TASKS_SUGGESTION: &str = "ota workspace tasks";
     const WORKSPACE_CHECK_SUGGESTION: &str = "ota workspace check";
@@ -751,18 +752,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         return stderr;
     }
 
-    if matches!(
-        command,
-        Commands::Validate { .. }
-    ) {
-        return stderr;
-    }
-
     let suggestion = match command {
-        Commands::Validate { .. } => "ota init",
+        Commands::Validate { .. } => REPO_SETUP_SUGGESTION,
         Commands::Tasks { .. } => "ota tasks",
         Commands::Run { .. } => "ota tasks --use",
-        Commands::Doctor { .. } => "ota doctor",
+        Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
         Commands::Init { .. } => "ota init --dry-run",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
