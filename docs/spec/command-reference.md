@@ -328,6 +328,7 @@ Create a starter Ota contract for a repo that does not yet have one.
 
 ```bash
 ota init [PATH]
+ota init --bootstrap [PATH]
 ota init --dry-run [PATH]
 ota init --json [PATH]
 ```
@@ -336,13 +337,14 @@ Current behavior:
 
 - inspects the repo using the detection engine
 - writes by default
+- `--bootstrap` writes the fuller detected starter contract when it is safe to do so
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
-- in `detected` mode, write behavior is onboarding-focused and writes the smallest valid starter contract for the repo
-- in `detected` mode, medium-confidence fields may be written when they are required to produce a valid starter contract
-- low-confidence fields remain excluded from `ota init` writes
+- in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
+- in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
+- low-confidence fields remain excluded from plain `ota init` writes
 
 Modes:
 
