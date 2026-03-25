@@ -78,7 +78,7 @@ conventions:
 - `required_files` defines baseline files that should exist for governed repos.
 - `starter_contract` defines the repo contract shape that a template targets.
 - `templates.repo` and `templates.workspace` are derived scaffolds, not sources of truth.
-- policy packs may require a repo to conform to one or more conventions.
+- policy packs may require a repo to conform to one or more conventions, including required files like `AGENTS.md`.
 
 ## Scope
 
@@ -95,4 +95,3 @@ They are not for:
 - broad workflow orchestration
 - replacing `ota.yaml`
 - turning Ota into a generic project generator
-

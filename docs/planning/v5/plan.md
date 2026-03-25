@@ -89,7 +89,7 @@ V5 theme:
 
 - policy-pack read path implemented in `ota doctor` for `.ota/org-policy.yaml`
 - malformed policy packs now surface as doctor findings
-- policy-required sections now surface as doctor findings when missing from `ota.yaml`
+- policy-required sections and required files now surface as doctor findings when missing from `ota.yaml` or the repo root
 
 ## Success criteria
 

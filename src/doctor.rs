@@ -459,23 +459,30 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
         }
     };
 
+    let contract_root = contract_working_dir(contract_path);
+
     let missing_sections = policy_pack.missing_required_sections(contract);
-    if missing_sections.is_empty() {
+    let missing_files = policy_pack.missing_required_files(contract_root);
+    if missing_sections.is_empty() && missing_files.is_empty() {
         return;
     }
 
-    let missing_sections = missing_sections.join(", ");
+    let mut why_parts = Vec::new();
+    if !missing_sections.is_empty() {
+        why_parts.push(format!(
+            "missing contract sections: {}",
+            missing_sections.join(", ")
+        ));
+    }
+    if !missing_files.is_empty() {
+        why_parts.push(format!("missing files: {}", missing_files.join(", ")));
+    }
+
     findings.push(Finding {
         severity: FindingSeverity::Error,
         summary: String::from("Repo does not satisfy org policy pack"),
-        why: format!(
-            "`{}` requires these contract sections, but they are missing or empty: {missing_sections}",
-            policy_path.display()
-        ),
-        next: format!(
-            "add the missing sections to `ota.yaml` or update `{}`",
-            policy_path.display()
-        ),
+        why: format!("`{}` requires {}", policy_path.display(), why_parts.join(" and ")),
+        next: format!("add the missing items or update `{}`", policy_path.display()),
     });
 }
 
@@ -1750,6 +1757,48 @@ policies:
             "Repo does not satisfy org policy pack"
         );
         assert!(report.findings[0].why.contains("tasks"));
+    }
+
+    #[test]
+    fn reports_missing_policy_required_files() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_files:
+    - AGENTS.md
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Repo does not satisfy org policy pack"
+        );
+        assert!(report.findings[0].why.contains("AGENTS.md"));
     }
 
     #[cfg(unix)]
