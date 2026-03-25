@@ -2462,6 +2462,11 @@ pub fn detect(
                                     compact_root_display
                                 ));
                                 stdout.push_str(&format!(
+                                    "\n{}  run `ota detect --merge --apply . {}` to apply all eligible detected suggestions without rewriting the rest of `ota.yaml`",
+                                    next_bullet(),
+                                    compact_root_display
+                                ));
+                                stdout.push_str(&format!(
                                     "\n{}  run `ota detect --rewrite --yes {}` to replace the full detected contract",
                                     next_bullet(),
                                     compact_root_display
@@ -4211,13 +4216,18 @@ fn write_detected_merge(
         error: None,
     };
 
-    let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
+    let apply_all = apply.iter().any(|field| field == ".");
+    let selected_fields = apply
+        .iter()
+        .filter(|field| field.as_str() != ".")
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let comparison_fields = comparison
         .changes
         .iter()
         .map(|change| change.field.clone())
         .collect::<BTreeSet<_>>();
-    if !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields) {
+    if !apply_all && !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields) {
         let requested = selected_fields.iter().cloned().collect::<Vec<_>>().join(", ");
         let available = comparison_fields.iter().cloned().collect::<Vec<_>>().join(", ");
         let error = format!(
@@ -4249,10 +4259,10 @@ fn write_detected_merge(
         .changes
         .iter()
         .filter(|change| {
-            if selected_fields.is_empty() && change.status != "add" {
+            if !apply_all && selected_fields.is_empty() && change.status != "add" {
                 return false;
             }
-            if !selected_fields.is_empty() && !selected_fields.contains(&change.field) {
+            if !apply_all && !selected_fields.is_empty() && !selected_fields.contains(&change.field) {
                 return false;
             }
             report
