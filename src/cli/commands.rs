@@ -95,10 +95,35 @@ pub struct WorkspaceDoctorFilters {
 
 pub fn set_plain_mode(enabled: bool) {
     PLAIN_MODE.with(|value| value.set(enabled));
+    if enabled {
+        // SAFETY: this is only set during CLI startup before worker threads are spawned.
+        unsafe {
+            std::env::set_var("OTA_PLAIN_MODE", "1");
+        }
+    } else {
+        // SAFETY: this is only mutated during CLI startup before worker threads are spawned.
+        unsafe {
+            std::env::remove_var("OTA_PLAIN_MODE");
+        }
+    }
 }
 
 pub fn set_concise_mode(enabled: bool) {
     CONCISE_MODE.with(|value| value.set(enabled));
+}
+
+pub fn set_json_mode(enabled: bool) {
+    if enabled {
+        // SAFETY: this is only set during CLI startup before worker threads are spawned.
+        unsafe {
+            std::env::set_var("OTA_JSON_MODE", "1");
+        }
+    } else {
+        // SAFETY: this is only mutated during CLI startup before worker threads are spawned.
+        unsafe {
+            std::env::remove_var("OTA_JSON_MODE");
+        }
+    }
 }
 
 pub fn stylize_text_failure(where_label: &str, message: &str) -> String {

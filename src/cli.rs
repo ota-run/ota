@@ -454,6 +454,15 @@ fn is_version_request(args: &[OsString]) -> bool {
 fn dispatch(cli: Cli) -> CommandOutput {
     commands::set_plain_mode(cli.plain);
     commands::set_concise_mode(cli.concise);
+    commands::set_json_mode(matches!(
+        &cli.command,
+        Commands::Validate { json: true, .. }
+            | Commands::Tasks { json: true, .. }
+            | Commands::Doctor { json: true, .. }
+            | Commands::Check { json: true, .. }
+            | Commands::Init { json: true, .. }
+            | Commands::Detect { json: true, .. }
+    ));
     let debug = cli.debug;
     let file = cli.file;
     let command_for_footer = cli.command.clone();
@@ -856,7 +865,7 @@ fn command_where_label(command: &Commands) -> &'static str {
     match command {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
-        Commands::Run { .. } => "ota run",
+        Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Init { .. } => "ota init",
         Commands::Check { .. } => "ota check",
