@@ -30,6 +30,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
 
 use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
@@ -43,12 +44,82 @@ pub enum FindingSeverity {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub severity: FindingSeverity,
     pub summary: String,
     pub why: String,
     pub next: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PolicyFindingContext<'a> {
+    outcome: &'a str,
+    reason: &'a str,
+    source: &'a str,
+    install_scope: &'a str,
+    mutation_allowed: bool,
+}
+
+impl Finding {
+    fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
+        match self.summary.as_str() {
+            "Repo does not satisfy org policy pack" => {
+                let has_sections = self.why.contains("missing contract sections:");
+                let has_files = self.why.contains("missing files:");
+                let reason = match (has_sections, has_files) {
+                    (true, true) => "missing_required_sections_and_files",
+                    (true, false) => "missing_required_sections",
+                    (false, true) => "missing_required_files",
+                    (false, false) => "org_policy_pack_violation",
+                };
+
+                Some(PolicyFindingContext {
+                    outcome: "blocked_by_policy",
+                    reason,
+                    source: "org",
+                    install_scope: "repo_local",
+                    mutation_allowed: false,
+                })
+            }
+            "Invalid org policy pack" => Some(PolicyFindingContext {
+                outcome: "blocked_by_integrity_policy",
+                reason: "invalid_org_policy_pack",
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for Finding {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let policy = self.policy_context();
+        let mut state = serializer.serialize_struct(
+            "Finding",
+            4 + policy.map(|_| 5).unwrap_or_default(),
+        )?;
+
+        state.serialize_field("severity", &self.severity)?;
+        state.serialize_field("summary", &self.summary)?;
+        state.serialize_field("why", &self.why)?;
+        state.serialize_field("next", &self.next)?;
+
+        if let Some(policy) = policy {
+            state.serialize_field("policy_outcome", policy.outcome)?;
+            state.serialize_field("policy_reason", policy.reason)?;
+            state.serialize_field("policy_source", policy.source)?;
+            state.serialize_field("install_scope", policy.install_scope)?;
+            state.serialize_field("mutation_allowed", &policy.mutation_allowed)?;
+        }
+
+        state.end()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]

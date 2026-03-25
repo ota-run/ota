@@ -24,7 +24,7 @@ use serde::Serialize;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
-use crate::schema::{AgentConfig, ServiceSpec, TaskSpec, TaskVariantView};
+use crate::schema::{AgentConfig, Backend, Contract, Lifecycle, ServiceSpec, TaskSpec, TaskVariantView};
 use crate::workspace::WorkspaceRepoDoctorReport;
 
 fn slice_is_empty<T>(value: &[T]) -> bool {
@@ -50,6 +50,8 @@ pub struct DoctorSuccess<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ExecutionSummary<'a>>,
     pub findings: &'a [Finding],
 }
 
@@ -58,6 +60,77 @@ pub struct WorkspaceDoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub repos: &'a [WorkspaceRepoDoctorReport],
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionContainerSummary<'a> {
+    pub image: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionRemoteSummary<'a> {
+    pub provider: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionBackendsSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<ExecutionContainerSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<ExecutionRemoteSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supported: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backends: Option<ExecutionBackendsSummary<'a>>,
+}
+
+impl<'a> ExecutionSummary<'a> {
+    pub fn from_contract(contract: &'a Contract) -> Option<Self> {
+        let execution = contract.execution.as_ref()?;
+
+        Some(Self {
+            preferred: execution.preferred.map(format_backend),
+            supported: execution.supported.iter().map(|backend| format_backend(*backend)).collect(),
+            lifecycle: execution.lifecycle.map(format_lifecycle),
+            backends: execution.backends.as_ref().map(|backends| ExecutionBackendsSummary {
+                container: backends.container.as_ref().map(|container| ExecutionContainerSummary {
+                    image: &container.image,
+                }),
+                remote: backends.remote.as_ref().map(|remote| ExecutionRemoteSummary {
+                    provider: &remote.provider,
+                    target: remote.target.as_deref(),
+                    cwd: remote.cwd.as_deref(),
+                }),
+            }),
+        })
+    }
+}
+
+fn format_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
+}
+
+fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Persistent => "persistent",
+        Lifecycle::Ephemeral => "ephemeral",
+    }
 }
 
 #[derive(Debug, Serialize)]
