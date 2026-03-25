@@ -810,9 +810,10 @@ fn finalize_cli_output(
     let json_requested = command_requests_json(command);
 
     if output.exit_code != 0 && output.exit_code != 2 && !json_requested {
+        let where_label = commands::take_failure_locus()
+            .unwrap_or_else(|| command_where_label(command).to_string());
         if let Some(stderr) = output.stderr.take() {
-            let structured =
-                commands::stylize_text_failure(command_where_label(command, stderr.as_str()), stderr.as_str());
+            let structured = commands::stylize_text_failure(where_label.as_str(), stderr.as_str());
             output.stderr = Some(append_try_footer(structured, command));
         }
     }
@@ -921,7 +922,7 @@ fn command_requests_json(command: &Commands) -> bool {
     }
 }
 
-fn command_where_label(command: &Commands, stderr: &str) -> &'static str {
+fn command_where_label(command: &Commands) -> &'static str {
     match command {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
@@ -932,21 +933,7 @@ fn command_where_label(command: &Commands, stderr: &str) -> &'static str {
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
-        Commands::Detect { .. } => {
-            if let Commands::Detect { apply, .. } = command {
-                if !apply.is_empty() {
-                    return "ota detect --merge --apply";
-                }
-            }
-            if stderr.contains("selected field(s) not present in current detect comparison")
-                || stderr.contains("run `ota validate` to repair the existing contract")
-                || stderr.contains("ota detect --merge --apply <field name>")
-            {
-                "ota detect --merge --apply"
-            } else {
-                "ota detect"
-            }
-        }
+        Commands::Detect { .. } => "ota detect",
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => "ota workspace init",
             WorkspaceCommands::Detect { .. } => "ota workspace detect",
