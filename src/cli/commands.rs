@@ -4401,17 +4401,20 @@ fn write_detected_merge(
                     applied_title,
                     &applied,
                 );
-                render_detect_comparison_section(&mut stdout, Some(&post_write_comparison));
+                render_detect_comparison_section(&mut stdout, post_write_comparison.as_ref());
                 CommandOutput::success(stdout)
             }
-            OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
-                ok: true,
-                path: &path_display,
-                written: true,
-                config: &report.contract,
-                inferred: &report.inferences,
-                comparison: Some(&compare_detected_contract(&contract_path, &report.contract)),
-            })),
+            OutputFormat::Json => {
+                let post_write_comparison = compare_detected_contract(&contract_path, &report.contract);
+                CommandOutput::success(to_json(&DetectSuccess {
+                    ok: true,
+                    path: &path_display,
+                    written: true,
+                    config: &report.contract,
+                    inferred: &report.inferences,
+                    comparison: post_write_comparison.as_ref(),
+                }))
+            }
         },
         Err(error) => {
             let error = format!("failed to write `{}`: {}", compact_path_display, error);
