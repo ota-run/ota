@@ -509,6 +509,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                     command: WorkspaceCommands::Validate { .. }
                         | WorkspaceCommands::Tasks { .. }
                         | WorkspaceCommands::List { .. }
+                        | WorkspaceCommands::Doctor { .. }
                         | WorkspaceCommands::Detect { .. }
                         | WorkspaceCommands::Init { .. },
                 }
@@ -8334,7 +8335,7 @@ env:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (✓ READY)"));
+        assert!(output.stdout.contains("web [optional] (READY)"));
         assert!(
             output
                 .stdout
@@ -8590,7 +8591,7 @@ checks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (✓ READY)"));
+        assert!(output.stdout.contains("web [optional] (READY)"));
         assert!(output.stdout.contains("WARN  Check failed: health-check"));
     }
 
