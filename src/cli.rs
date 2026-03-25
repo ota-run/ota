@@ -6339,6 +6339,25 @@ project:
     }
 
     #[test]
+    fn workspace_init_empty_root_provides_clear_next_steps() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "workspace", "init", fixture.path().to_str().unwrap()]);
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or(""))
+        );
+
+        assert_eq!(output.exit_code, 1);
+        assert!(body.contains("workspace init could not find any repos with `ota.yaml`"));
+        assert!(body.contains("create repo contracts with `ota init <repo-path>`"));
+        assert!(body.contains("preview repo contracts with `ota detect --dry-run <repo-path>`"));
+        assert!(body.contains("re-run `ota workspace init` after repo contracts exist"));
+        assert!(body.contains("Next:"));
+    }
+
+    #[test]
     fn workspace_validate_failure_does_not_append_try_footer() {
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("repo");

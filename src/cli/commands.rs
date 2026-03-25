@@ -5802,8 +5802,13 @@ fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraf
     }
 
     if included.is_empty() {
-        return Err(String::from(
-            "workspace init could not find any repos with `ota.yaml`; add repo contracts first or run from a workspace root that already contains initialized repos",
+        return Err(format!(
+            "workspace init could not find any repos with `ota.yaml`; add repo contracts first or run from a workspace root that already contains initialized repos{}",
+            format_next_timeline(&[
+                String::from("create repo contracts with `ota init <repo-path>`"),
+                String::from("or preview repo contracts with `ota detect --dry-run <repo-path>`"),
+                String::from("or re-run `ota workspace init` after repo contracts exist"),
+            ]),
         ));
     }
 
