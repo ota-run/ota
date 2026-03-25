@@ -1107,7 +1107,9 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
 
     let contents = read_file(&path)?;
 
-    if let Some(name) = extract_xml_tag(&contents, "artifactId") {
+    if let Some(name) = extract_xml_tag(&contents, "name") {
+        builder.set_project_name(name, "pom.xml#name".to_string(), Confidence::High);
+    } else if let Some(name) = extract_xml_tag(&contents, "artifactId") {
         builder.set_project_name(name, "pom.xml#artifactId".to_string(), Confidence::High);
     }
 
@@ -3621,6 +3623,7 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "dune-project#name" => 4,
             "rebar.config#app" => 4,
             "pyproject.toml#tool.poetry.name" => 3,
+            "pom.xml#name" => 3,
             "pom.xml#artifactId" => 3,
             "composer.json#name" => 3,
             "mix.exs#project.app" => 3,
@@ -5255,6 +5258,45 @@ channel = "1.85.0"
 
     #[test]
     fn detects_maven_java_signals() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pom.xml",
+            r#"<project>
+  <name>Qredex Core</name>
+  <artifactId>ota-maven-service</artifactId>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+  </properties>
+</project>"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("Qredex Core")
+        );
+        assert_eq!(
+            report.contract.runtimes.get("java"),
+            Some(&"21".to_string())
+        );
+        assert_eq!(report.contract.tools.get("maven"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.run.as_str()),
+            Some("mvn test")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_maven_artifact_id_when_name_is_missing() {
         let fixture = Fixture::new();
         fixture.write(
             "pom.xml",
