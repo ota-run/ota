@@ -2286,6 +2286,7 @@ pub fn detect(
     dry_run: bool,
     merge: bool,
     apply: &[String],
+    apply_all: bool,
     rewrite: bool,
     yes: bool,
     format: OutputFormat,
@@ -2462,7 +2463,7 @@ pub fn detect(
                                     compact_root_display
                                 ));
                                 stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply . {}` to apply all eligible detected suggestions without rewriting the rest of `ota.yaml`",
+                                    "\n{}  run `ota detect --merge --apply-all {}` to apply all eligible detected suggestions without rewriting the rest of `ota.yaml`",
                                     next_bullet(),
                                     compact_root_display
                                 ));
@@ -2485,7 +2486,7 @@ pub fn detect(
                     })),
                 }
             }
-            Ok(report) if merge => write_detected_merge(report, apply, format),
+            Ok(report) if merge => write_detected_merge(report, apply, apply_all, format),
             Ok(report) if rewrite => write_detected_rewrite(report, format),
             Ok(report) => write_detected_contract(report, format),
             Err(error) => {
@@ -4178,6 +4179,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
 fn write_detected_merge(
     report: DetectReport,
     apply: &[String],
+    apply_all: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
@@ -4216,7 +4218,7 @@ fn write_detected_merge(
         error: None,
     };
 
-    let apply_all = apply.iter().any(|field| field == ".");
+    let apply_all = apply_all || apply.iter().any(|field| field == ".");
     let selected_fields = apply
         .iter()
         .filter(|field| field.as_str() != ".")
