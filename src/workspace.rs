@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
 use crate::parser::{LoadContractError, load_contract};
+use crate::schema::{Backend, Contract, Lifecycle};
 use crate::validator::validate_contract;
 
 pub const DEFAULT_WORKSPACE_FILE: &str = "ota.workspace.yaml";
@@ -89,12 +90,98 @@ pub struct WorkspaceRepoRef {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceExecutionContainerSummary {
+    pub image: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceExecutionRemoteSummary {
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceExecutionBackendsSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<WorkspaceExecutionContainerSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<WorkspaceExecutionRemoteSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceExecutionSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supported: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backends: Option<WorkspaceExecutionBackendsSummary>,
+}
+
+impl WorkspaceExecutionSummary {
+    pub(crate) fn from_contract(contract: &Contract) -> Option<Self> {
+        let execution = contract.execution.as_ref()?;
+
+        Some(Self {
+            preferred: execution.preferred.map(format_backend).map(str::to_string),
+            supported: execution
+                .supported
+                .iter()
+                .map(|backend| format_backend(*backend).to_string())
+                .collect(),
+            lifecycle: execution
+                .lifecycle
+                .map(format_lifecycle)
+                .map(str::to_string),
+            backends: execution.backends.as_ref().map(|backends| {
+                WorkspaceExecutionBackendsSummary {
+                    container: backends.container.as_ref().map(|container| {
+                        WorkspaceExecutionContainerSummary {
+                            image: container.image.clone(),
+                        }
+                    }),
+                    remote: backends.remote.as_ref().map(|remote| {
+                        WorkspaceExecutionRemoteSummary {
+                            provider: remote.provider.clone(),
+                            target: remote.target.clone(),
+                            cwd: remote.cwd.clone(),
+                        }
+                    }),
+                }
+            }),
+        })
+    }
+}
+
+fn format_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
+}
+
+fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
+    match lifecycle {
+        Lifecycle::Persistent => "persistent",
+        Lifecycle::Ephemeral => "ephemeral",
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceRepoDoctorReport {
     pub name: String,
     pub path: String,
     pub contract_path: String,
     pub required: bool,
     pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<WorkspaceExecutionSummary>,
     pub findings: Vec<Finding>,
 }
 
@@ -485,13 +572,16 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             contract_path: repo.contract_path.display().to_string(),
             required: repo.required,
             ok: !repo.required,
+            execution: None,
             findings,
         };
     }
 
+    let mut execution = None;
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
+                execution = WorkspaceExecutionSummary::from_contract(&contract);
                 adjust_repo_findings(
                     diagnose_contract(&contract, &repo.contract_path),
                     repo.required,
@@ -558,6 +648,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
         contract_path: repo.contract_path.display().to_string(),
         required: repo.required,
         ok,
+        execution,
         findings,
     }
 }

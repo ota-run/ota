@@ -61,7 +61,7 @@ use crate::runner::{
 use crate::schema::{Contract, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
-    DEFAULT_WORKSPACE_FILE, WorkspaceRepoRef, WorkspaceValidationErrors,
+    DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
     diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
     parse_workspace_contract_str, validate_workspace_contract,
 };
@@ -9188,6 +9188,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             contract_path: contract_path_display,
             required: repo.required,
             ok: !repo.required,
+            execution: None,
             findings: vec![Finding {
                 severity: if repo.required {
                     FindingSeverity::Error
@@ -9225,6 +9226,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     contract_path: contract_path_display.clone(),
                     required: repo.required,
                     ok: !repo.required,
+                    execution: WorkspaceExecutionSummary::from_contract(&contract),
                     findings: error
                         .errors()
                         .iter()
@@ -9259,6 +9261,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                 ok: !findings
                     .iter()
                     .any(|finding| finding.severity == FindingSeverity::Error),
+                execution: WorkspaceExecutionSummary::from_contract(&contract),
                 findings,
             }
         }
@@ -9268,6 +9271,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             contract_path: contract_path_display.clone(),
             required: repo.required,
             ok: !repo.required,
+            execution: None,
             findings: vec![Finding {
                 severity: if repo.required {
                     FindingSeverity::Error

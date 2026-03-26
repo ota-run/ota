@@ -144,6 +144,9 @@ additive policy keys may appear there as well.
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume.
 
+`ota workspace doctor --json` may include the same `execution` object on each repo item when the
+underlying repo contract declares execution metadata.
+
 Root monorepo summary output can also include grouped member findings under `members`.
 
 Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious
