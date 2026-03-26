@@ -303,6 +303,18 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
       "required": true,
       "acquired": true,
       "status": "READY",
+      "execution": {
+        "preferred": "remote",
+        "supported": ["remote"],
+        "lifecycle": "ephemeral",
+        "backends": {
+          "remote": {
+            "provider": "ssh",
+            "target": "user@host",
+            "cwd": "/workspace"
+          }
+        }
+      },
       "depends_on": ["db"]
     }
   ]

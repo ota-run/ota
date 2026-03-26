@@ -3770,49 +3770,42 @@ pub fn workspace_list(
                         Some(target) => repo.name == target,
                         None => true,
                     })
-                    .filter(|repo| match status_filter {
-                        Some(WorkspaceDoctorStatusFilter::Ready) => {
-                            repo.present
-                                && repo.contract_path.is_file()
-                                && load_contract(&repo.contract_path)
-                                    .map(|contract| {
-                                        diagnose_preconditions(&contract, &repo.contract_path).ok
-                                    })
-                                    .unwrap_or(false)
+                    .filter_map(|repo| {
+                        let contract = repo
+                            .present
+                            .then_some(())
+                            .filter(|_| repo.contract_path.is_file())
+                            .and_then(|_| load_contract(&repo.contract_path).ok());
+                        let ready = contract
+                            .as_ref()
+                            .map(|contract| {
+                                diagnose_preconditions(contract, &repo.contract_path).ok
+                            })
+                            .unwrap_or(false);
+
+                        match status_filter {
+                            Some(WorkspaceDoctorStatusFilter::Ready) if !ready => return None,
+                            Some(WorkspaceDoctorStatusFilter::NotReady) if ready => return None,
+                            _ => {}
                         }
-                        Some(WorkspaceDoctorStatusFilter::NotReady) => {
-                            !(repo.present
-                                && repo.contract_path.is_file()
-                                && load_contract(&repo.contract_path)
-                                    .map(|contract| {
-                                        diagnose_preconditions(&contract, &repo.contract_path).ok
-                                    })
-                                    .unwrap_or(false))
-                        }
-                        Some(WorkspaceDoctorStatusFilter::All) | None => true,
-                    })
-                    .map(|repo| WorkspaceRepoListReport {
-                        status: if repo.present && repo.contract_path.is_file() {
-                            match load_contract(&repo.contract_path) {
-                                Ok(contract) => {
-                                    if diagnose_preconditions(&contract, &repo.contract_path).ok {
-                                        String::from("READY")
-                                    } else {
-                                        String::from("NOT READY")
-                                    }
-                                }
-                                Err(_) => String::from("NOT READY"),
-                            }
-                        } else {
-                            String::from("NOT READY")
-                        },
-                        name: repo.name,
-                        path: repo.path.display().to_string(),
-                        contract_path: repo.contract_path.display().to_string(),
-                        contract_present: repo.contract_path.is_file(),
-                        required: repo.required,
-                        acquired: repo.present,
-                        depends_on: repo.depends_on,
+
+                        Some(WorkspaceRepoListReport {
+                            status: if ready {
+                                String::from("READY")
+                            } else {
+                                String::from("NOT READY")
+                            },
+                            name: repo.name,
+                            path: repo.path.display().to_string(),
+                            contract_path: repo.contract_path.display().to_string(),
+                            contract_present: repo.contract_path.is_file(),
+                            required: repo.required,
+                            acquired: repo.present,
+                            depends_on: repo.depends_on,
+                            execution: contract
+                                .as_ref()
+                                .and_then(WorkspaceExecutionSummary::from_contract),
+                        })
                     })
                     .collect::<Vec<_>>();
 

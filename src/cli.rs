@@ -7846,6 +7846,21 @@ tasks:
         assert_eq!(body["repos"][0]["status"], "READY");
         assert_eq!(body["repos"][1]["name"], "api");
         assert_eq!(body["repos"][1]["status"], "READY");
+        assert_eq!(body["repos"][1]["execution"]["preferred"], "remote");
+        assert_eq!(body["repos"][1]["execution"]["supported"][0], "remote");
+        assert_eq!(body["repos"][1]["execution"]["lifecycle"], "ephemeral");
+        assert_eq!(
+            body["repos"][1]["execution"]["backends"]["remote"]["provider"],
+            "ssh"
+        );
+        assert_eq!(
+            body["repos"][1]["execution"]["backends"]["remote"]["target"],
+            "user@host"
+        );
+        assert_eq!(
+            body["repos"][1]["execution"]["backends"]["remote"]["cwd"],
+            "/workspace"
+        );
     }
 
     #[test]
@@ -9557,6 +9572,16 @@ tasks:
 version: 1
 project:
   name: api
+execution:
+  preferred: remote
+  supported:
+    - remote
+  lifecycle: ephemeral
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 tasks:
   setup:
     run: printf "api\n" >> "{marker}"
