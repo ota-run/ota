@@ -4608,7 +4608,9 @@ agent:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap_or_default();
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("review `ota init --dry-run` output"));
+        assert!(stderr.contains("preview the exact contract Ota would write with `ota init --dry-run`"));
+        assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
+        assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
         assert!(stderr.contains("Excluded from automatic write:"));
         assert!(stderr.contains("✦  Field: project.name"));
         assert!(stderr.contains("Confidence: low\n\n✦  Field: tasks.build.run"));
