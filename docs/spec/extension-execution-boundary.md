@@ -24,7 +24,7 @@
 
 # Extension Execution Boundary
 
-This document defines the current implementation boundary for extensions during V4.
+This document defines the current implementation boundary for extensions during V6.
 
 ## Current boundary (shipped)
 
@@ -35,7 +35,7 @@ This document defines the current implementation boundary for extensions during 
 ## Why this boundary exists
 
 - preserve deterministic command behavior while compatibility contracts are locked
-- avoid hidden runtime/plugin drift during V4 standardization work
+- avoid hidden runtime/plugin drift while V6 extension work is rolling out
 - keep machine output and exit behavior stable
 
 ## Contract target
@@ -44,7 +44,7 @@ The normative extension contract target is:
 
 - [21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
 
-V4 work can prepare compatibility and protocol surfaces, but runtime extension execution is deferred until V6 implementation slices are active.
+Earlier compatibility and protocol work can prepare the surface, but runtime extension execution is deferred until V6 implementation slices are active.
 
 ## Enforcement in this repo
 
