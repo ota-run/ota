@@ -24,7 +24,7 @@
 
 # Remote Runner Metadata and Editor Surface
 
-This document defines the V5 target for remote-runner metadata and editor/IDE integration in Ota.
+This document defines the V7 target for remote-runner metadata and editor/IDE integration in Ota.
 
 The goal is to make remote execution and editor discovery use the same contract language instead of separate ad hoc surfaces.
 
@@ -80,6 +80,32 @@ The editor integration model should remain:
 - deterministic
 - usable without custom repo-specific code
 
+## Editor and CI consumption contract
+
+Editors, hosted validation systems, and CI should consume the same stable JSON surfaces as the CLI.
+
+Recommended inputs:
+
+- `ota doctor --json` for repo readiness diagnostics
+- `ota workspace doctor --json` for workspace readiness diagnostics
+- `ota workspace list --json` for repo inventory, contract presence, readiness, and execution metadata
+- `ota extensions --json` for declared adapter descriptors when a repo exposes them
+
+Recommended consumption rules:
+
+- treat `ok` and exit code together
+- surface `findings` directly without reinterpreting them
+- preserve the distinction between repo and workspace scope
+- do not infer extra execution behavior from text output
+- use `execution` metadata only as descriptive contract data unless the command explicitly runs it
+
+Typical editor behavior:
+
+- annotate missing tasks, runtimes, tools, and workspace acquisition problems inline
+- expose a readiness summary panel sourced from JSON
+- surface explicit actions that map back to Ota commands
+- avoid custom per-repo heuristics when the contract already says what to do
+
 ## Semantics
 
 - remote-runner metadata is descriptive, not magical
@@ -94,10 +120,10 @@ This surface is for:
 - editor/tool compatibility
 - remote runner discoverability
 - stable metadata shape
+- hosted validation consumption
 
 It is not for:
 
 - provider-specific runtime implementation details
 - hidden transport negotiation
 - general plugin execution policy
-

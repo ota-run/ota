@@ -24,7 +24,7 @@
 
 # V6 Plan
 
-Status: active.
+Status: complete.
 
 Source direction:
 
@@ -88,6 +88,7 @@ V6 theme:
 - compatibility policy documented
 - remote-runner/editor surface documented
 - mutation/caching target documented
+- V6 work is complete and handed off to V7
 
 ## Success criteria
 

@@ -157,7 +157,8 @@ Current planning state:
 - V1 release gate: [docs/planning/v1/release-gate.md](docs/planning/v1/release-gate.md)
 - V2 archive: [docs/planning/v2/plan.md](docs/planning/v2/plan.md)
 - V2.1 archive: [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md)
-- Active version: [docs/planning/v5/plan.md](docs/planning/v5/plan.md)
+- V6 archive: [docs/planning/v6/plan.md](docs/planning/v6/plan.md)
+- Active version: [docs/planning/v7/plan.md](docs/planning/v7/plan.md)
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
 
@@ -271,7 +272,9 @@ Example contracts:
 - [V4 plan](docs/planning/v4/plan.md)
 - [V5 plan](docs/planning/v5/plan.md)
 - [V6 plan](docs/planning/v6/plan.md)
+- [V7 plan](docs/planning/v7/plan.md)
 - [V5 UX hardening completion slice](docs/planning/v5-ux-hardening.md)
+- [Hosted validation workflow](docs/spec/hosted-validation-workflow.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)
 - [Roadmap](ROADMAP.md)
 

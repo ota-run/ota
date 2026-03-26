@@ -39,6 +39,10 @@ JSON output is part of Ota’s integration contract for:
 - editor integrations
 - agent tooling
 
+Editor and CI tooling should prefer the JSON surfaces here over parsing human-readable command
+output. The stable inputs are `ok`, `errors`, `findings`, per-repo results, `execution`, and
+declared extension descriptors.
+
 Design intent:
 
 - JSON shapes are treated as stable integration surfaces.

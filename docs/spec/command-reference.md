@@ -37,6 +37,7 @@ For visual identity tokens and CLI/docs branding, see [brand-style.md](brand-sty
 For docs clarity rules and command-UX wording standards, see [docs-clarity-spec.md](docs-clarity-spec.md).
 For compatibility boundaries in the active version, see [compatibility-surface.md](compatibility-surface.md).
 For extension execution staging, see [extension-execution-boundary.md](extension-execution-boundary.md).
+For hosted validation and PR-gating guidance, see [hosted-validation-workflow.md](hosted-validation-workflow.md).
 
 ## Global
 
@@ -112,6 +113,13 @@ Current progress behavior:
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
+
+Hosted validation guidance:
+
+- use `ota validate --json` and `ota doctor --json` for repo gating
+- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
+- use `ota workspace list --json` for preflight inventory and readiness summaries
+- do not mutate contracts during hosted validation
 
 ## Current exit semantics
 
