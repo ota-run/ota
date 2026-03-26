@@ -14,7 +14,7 @@ Current V1 policy is strict:
 
 - unknown keys fail parsing
 - there is no warning-only unknown-key mode in the current implementation
-- this currently includes top-level `extensions` until the V6 extension-contract slices land
+- top-level `extensions` is a known contract field and is parsed as inert contract data
 
 This favors contract clarity over permissive parsing.
 

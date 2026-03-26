@@ -44,6 +44,7 @@ Use it when you want:
 - `tasks`: named commands that humans and agents can run.
 - `execution`: where tasks run, such as native, container, or remote.
 - `agent`: safe-task and writable-path hints for agents.
+- `extensions`: staged extension-contract data that Ota parses but does not execute yet.
 - `workspace`: monorepo root/member mapping.
 
 ## Quick read
@@ -53,7 +54,7 @@ Think about the file in this order:
 1. `version` and `project` identify the repo.
 2. `runtimes`, `tools`, `env`, and `services` describe what the repo needs.
 3. `checks` and `tasks` describe what the repo can verify and run.
-4. `execution` and `agent` describe how Ota should run and expose those actions.
+4. `execution`, `agent`, and `extensions` describe how Ota should run, expose those actions, and stage future extension behavior.
 5. `workspace` is only for monorepo root/member orchestration.
 
 ## Example
@@ -88,6 +89,11 @@ tasks:
     safe_for_agent: true
 execution:
   preferred: native
+extensions:
+  demo:
+    kind: check_provider
+    command: ota-ext-demo
+    api_version: 1
 agent:
   default_task: setup
 workspace:
@@ -132,6 +138,11 @@ Use `tasks` for deterministic repo commands such as `setup`, `test`, `lint`, and
 
 Use `execution` to describe where Ota should run those tasks when native execution is not enough.
 
+### `extensions`
+
+Use `extensions` for staged extension-contract data. Ota parses the field, but the runtime does
+not execute extension providers yet.
+
 ### `agent`
 
 Use `agent` to tell Ota which tasks are safe for agents and which paths are writable.
@@ -149,7 +160,7 @@ Start minimal, then expand:
 3. add real `tools`, `env`, and `services`
 4. add `checks`
 5. add `tasks`
-6. add `execution`, `agent`, and `workspace` only when they are actually needed
+6. add `execution`, `agent`, `extensions`, and `workspace` only when they are actually needed
 
 ## Canonical reference
 
