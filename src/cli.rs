@@ -8178,6 +8178,9 @@ tasks:
         assert!(text_body.contains("db [required] (ACQUIRED)"));
         assert!(text_body.contains("Status: READY"));
         assert!(text_body.contains("api [required] (ACQUIRED)"));
+        assert!(text_body.contains("Execution:"));
+        assert!(text_body.contains("Remote Provider: ssh"));
+        assert!(text_body.contains("Remote Target: user@host"));
 
         let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
         assert_eq!(json.exit_code, 0);
@@ -8814,6 +8817,20 @@ tasks:
         assert!(stdout.contains("Extensions:"));
         assert!(stdout.contains("demo"));
         assert!(stdout.contains("Kind: checker"));
+    }
+
+    #[test]
+    fn workspace_doctor_text_reports_execution_metadata() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Execution:"));
+        assert!(stdout.contains("Preferred: remote"));
+        assert!(stdout.contains("Remote Provider: ssh"));
+        assert!(stdout.contains("Remote Target: user@host"));
     }
 
     #[test]
