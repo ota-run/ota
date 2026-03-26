@@ -503,33 +503,35 @@ fn run_cli(cli: Cli) -> CommandOutput {
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
+    let spinner_eligible = matches!(
+        &cli.command,
+        Commands::Validate { .. }
+            | Commands::Tasks { .. }
+            | Commands::Services { .. }
+            | Commands::Init { .. }
+            | Commands::Detect { .. }
+            | Commands::Workspace {
+                command: WorkspaceCommands::Validate { .. }
+                    | WorkspaceCommands::Tasks { .. }
+                    | WorkspaceCommands::List { .. }
+                    | WorkspaceCommands::Doctor { stream: false, .. }
+                    | WorkspaceCommands::Detect { .. }
+                    | WorkspaceCommands::Init { .. }
+                    | WorkspaceCommands::Up { quiet: false, .. },
+            }
+    );
+    let json_spinner_exception = matches!(
+        &cli.command,
+        Commands::Workspace {
+            command: WorkspaceCommands::Doctor { .. } | WorkspaceCommands::List { .. }
+        }
+    );
+
     io::stderr().is_terminal()
         && !cli.plain
         && !cli.debug
-        && matches!(
-            &cli.command,
-            Commands::Validate { .. }
-                | Commands::Tasks { .. }
-                | Commands::Services { .. }
-                | Commands::Init { .. }
-                | Commands::Detect { .. }
-                | Commands::Workspace {
-                    command: WorkspaceCommands::Validate { .. }
-                        | WorkspaceCommands::Tasks { .. }
-                        | WorkspaceCommands::List { .. }
-                        | WorkspaceCommands::Doctor { stream: false, .. }
-                        | WorkspaceCommands::Detect { .. }
-                        | WorkspaceCommands::Init { .. }
-                        | WorkspaceCommands::Up { quiet: false, .. },
-                }
-        )
-        && (!command_requests_json(&cli.command)
-            || matches!(
-                &cli.command,
-                Commands::Workspace {
-                    command: WorkspaceCommands::Doctor { .. }
-                }
-            ))
+        && spinner_eligible
+        && (!command_requests_json(&cli.command) || json_spinner_exception)
 }
 
 fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
