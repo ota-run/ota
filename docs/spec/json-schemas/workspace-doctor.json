@@ -10,21 +10,57 @@
     "path": { "type": "string" },
     "repos": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["name", "path", "contract_path", "required", "ok", "findings"],
-        "properties": {
-          "name": { "type": "string" },
-          "path": { "type": "string" },
-          "contract_path": { "type": "string" },
-          "required": { "type": "boolean" },
-          "ok": { "type": "boolean" },
-          "findings": {
-            "type": "array",
-            "items": { "$ref": "./shared.json#/$defs/finding" }
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "path", "contract_path", "required", "ok", "findings"],
+          "properties": {
+            "name": { "type": "string" },
+            "path": { "type": "string" },
+            "contract_path": { "type": "string" },
+            "required": { "type": "boolean" },
+            "ok": { "type": "boolean" },
+            "execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preferred": { "enum": ["native", "container", "remote"] },
+                "supported": {
+                  "type": "array",
+                  "items": { "enum": ["native", "container", "remote"] }
+                },
+                "lifecycle": { "enum": ["persistent", "ephemeral"] },
+                "backends": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "container": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["image"],
+                      "properties": {
+                        "image": { "type": "string" }
+                      }
+                    },
+                    "remote": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["provider"],
+                      "properties": {
+                        "provider": { "type": "string" },
+                        "target": { "type": "string" },
+                        "cwd": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "findings": {
+              "type": "array",
+              "items": { "$ref": "./shared.json#/$defs/finding" }
+            }
           }
-        }
       }
     }
   }

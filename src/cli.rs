@@ -8497,6 +8497,16 @@ repos:
 version: 1
 project:
   name: web
+execution:
+  preferred: remote
+  supported:
+    - remote
+  lifecycle: ephemeral
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 env:
   OTA_WORKSPACE_REQUIRED:
     required: true
@@ -8511,6 +8521,21 @@ env:
         assert_eq!(json["ok"], false);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["ok"], false);
+        assert_eq!(json["repos"][0]["execution"]["preferred"], "remote");
+        assert_eq!(json["repos"][0]["execution"]["supported"][0], "remote");
+        assert_eq!(json["repos"][0]["execution"]["lifecycle"], "ephemeral");
+        assert_eq!(
+            json["repos"][0]["execution"]["backends"]["remote"]["provider"],
+            "ssh"
+        );
+        assert_eq!(
+            json["repos"][0]["execution"]["backends"]["remote"]["target"],
+            "user@host"
+        );
+        assert_eq!(
+            json["repos"][0]["execution"]["backends"]["remote"]["cwd"],
+            "/workspace"
+        );
         assert_eq!(
             json["repos"][0]["findings"][0]["summary"],
             "Missing environment variable: OTA_WORKSPACE_REQUIRED"
