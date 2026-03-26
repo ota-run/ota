@@ -83,8 +83,8 @@ V6 theme:
 
 ## Current progress
 
-- extension contract is discoverable and `ota extensions --run <name>` provides the explicit
-  execution seam
+- extension contract is discoverable, typed, and `ota extensions --run <name>` /
+  `ota extensions --publish <name>` provide explicit execution seams
 - compatibility policy documented
 - remote-runner/editor surface documented
 - mutation/caching target documented

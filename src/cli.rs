@@ -4725,6 +4725,39 @@ tasks:
     }
 
     #[test]
+    fn extensions_run_rejects_publisher_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  release-upload:
+    kind: publisher
+    command: echo release-upload
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "extensions",
+            "--run",
+            "release-upload",
+            fixture.path(),
+        ]);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap());
+
+        assert_eq!(output.exit_code, 2);
+        assert!(stderr.contains("extension `release-upload` kind `publisher` is not executable"));
+        assert!(stderr.contains("ota extensions --run"));
+        assert!(stderr.contains("expected kind: `checker`"));
+    }
+
+    #[test]
     fn extensions_run_json_reports_execution_result() {
         let fixture = ContractFixture::new(
             r#"
@@ -4821,6 +4854,33 @@ tasks:
         assert!(stdout.contains("release-upload"));
         assert!(stdout.contains("Kind: publisher"));
         assert!(stdout.contains("Command: echo release-upload"));
+    }
+
+    #[test]
+    fn extensions_publish_rejects_checker_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: echo extension-run
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--publish", "demo", fixture.path()]);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap());
+
+        assert_eq!(output.exit_code, 2);
+        assert!(stderr.contains("extension `demo` kind `checker` is not executable"));
+        assert!(stderr.contains("ota extensions --publish"));
+        assert!(stderr.contains("expected kind: `publisher`"));
     }
 
     #[test]
