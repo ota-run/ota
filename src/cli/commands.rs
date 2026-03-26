@@ -42,12 +42,12 @@ use crate::doctor::{
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DoctorSuccess, ExecutionSummary, InitFailure, InitSuccess, MemberServicesSuccess,
-    OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure,
-    TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess,
-    WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
-    WorkspaceUpSuccess,
+    DetectSuccess, DoctorSuccess, ExecutionSummary, InitFailure, InitSuccess,
+    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
+    WorkspaceDoctorSuccess, WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -192,7 +192,11 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                     error_key("Why:")
                 ));
             } else {
-                out.push_str(&format!("\n{} {}", error_key("Why:"), why_lines.join(" | ")));
+                out.push_str(&format!(
+                    "\n{} {}",
+                    error_key("Why:"),
+                    why_lines.join(" | ")
+                ));
             }
         }
         if !next_steps.is_empty() {
@@ -205,7 +209,11 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
             } else {
                 out.push_str(&format!("\n\n{}", error_next_key("Next:")));
                 for step in next_steps {
-                    out.push_str(&format!("\n{}  {}", next_bullet(), stylize_inline_text(&step)));
+                    out.push_str(&format!(
+                        "\n{}  {}",
+                        next_bullet(),
+                        stylize_inline_text(&step)
+                    ));
                 }
             }
         }
@@ -415,9 +423,7 @@ fn backticked_tokens(value: &str) -> Vec<&str> {
 }
 
 fn policy_finding_source(summary: &str, why: &str) -> Option<String> {
-    if summary != "Repo does not satisfy org policy pack"
-        && summary != "Invalid org policy pack"
-    {
+    if summary != "Repo does not satisfy org policy pack" && summary != "Invalid org policy pack" {
         return None;
     }
 
@@ -868,20 +874,18 @@ pub fn services(
                                                 OutputFormat::Text => {
                                                     CommandOutput::failure(errors.to_string())
                                                 }
-                                                OutputFormat::Json => {
-                                                    CommandOutput::failure(to_json(
-                                                        &ServicesFailure {
-                                                            ok: false,
-                                                            path: &path_display,
-                                                            errors: errors
-                                                                .errors()
-                                                                .iter()
-                                                                .map(ToString::to_string)
-                                                                .collect(),
-                                                            error: None,
-                                                        },
-                                                    ))
-                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ServicesFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }),
+                                                ),
                                             },
                                             debug,
                                             debug_lines,
@@ -893,16 +897,14 @@ pub fn services(
                                                 OutputFormat::Text => {
                                                     CommandOutput::failure(error.to_string())
                                                 }
-                                                OutputFormat::Json => {
-                                                    CommandOutput::failure(to_json(
-                                                        &ServicesFailure {
-                                                            ok: false,
-                                                            path: &path_display,
-                                                            errors: Vec::new(),
-                                                            error: Some(error.to_string()),
-                                                        },
-                                                    ))
-                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ServicesFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                    }),
+                                                ),
                                             },
                                             debug,
                                             debug_lines,
@@ -913,9 +915,7 @@ pub fn services(
                                 .contract
                                 .services
                                 .iter()
-                                .map(|(name, service)| {
-                                    ServiceSummary::from_spec(name, service)
-                                })
+                                .map(|(name, service)| ServiceSummary::from_spec(name, service))
                                 .collect::<Vec<_>>();
                             text_sections.push(render_services_output_text(
                                 &display_contract_target(
@@ -1360,13 +1360,13 @@ pub fn doctor(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                            stdout: to_json(&DoctorSuccess {
-                                ok: report.ok,
-                                path: &path_display,
-                                agent: agent_summary,
-                                execution: ExecutionSummary::from_contract(&target.contract),
-                                findings: &report.findings,
-                            }),
+                                stdout: to_json(&DoctorSuccess {
+                                    ok: report.ok,
+                                    path: &path_display,
+                                    agent: agent_summary,
+                                    execution: ExecutionSummary::from_contract(&target.contract),
+                                    findings: &report.findings,
+                                }),
                                 stderr: None,
                                 exit_code,
                             }
@@ -1645,13 +1645,13 @@ pub fn check(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                            stdout: to_json(&DoctorSuccess {
-                                ok: report.ok,
-                                path: &path_display,
-                                agent: None,
-                                execution: ExecutionSummary::from_contract(&target.contract),
-                                findings: &report.findings,
-                            }),
+                                stdout: to_json(&DoctorSuccess {
+                                    ok: report.ok,
+                                    path: &path_display,
+                                    agent: None,
+                                    execution: ExecutionSummary::from_contract(&target.contract),
+                                    findings: &report.findings,
+                                }),
                                 stderr: None,
                                 exit_code,
                             }
@@ -2338,7 +2338,11 @@ pub fn detect(
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
     ];
-    let dry_run = if merge || rewrite { dry_run } else { dry_run || !write };
+    let dry_run = if merge || rewrite {
+        dry_run
+    } else {
+        dry_run || !write
+    };
     if merge && !contract_path.exists() {
         let error = if dry_run {
             format!(
@@ -2442,11 +2446,8 @@ pub fn detect(
                 let compact_root_display = compact_repo_path(&report.root);
                 let comparison = compare_detected_contract(&contract_path, &report.contract);
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
-                let comparison = selected_detect_comparison(
-                    comparison.as_ref(),
-                    &report,
-                    &selected_fields,
-                );
+                let comparison =
+                    selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
                 let yaml = serde_yaml::to_string(&report.contract)
                     .expect("serializing detected contract should not fail");
                 match format {
@@ -2485,10 +2486,7 @@ pub fn detect(
                         render_detect_comparison_section(&mut stdout, comparison.as_ref());
                         if let Some(comparison) = comparison.as_ref() {
                             if !comparison.changes.is_empty() {
-                                stdout.push_str(&format!(
-                                    "\n\n{}",
-                                    error_next_key("Next:")
-                                ));
+                                stdout.push_str(&format!("\n\n{}", error_next_key("Next:")));
                                 stdout.push_str(&format!(
                                     "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields",
                                     next_bullet(),
@@ -2634,11 +2632,7 @@ fn render_workspace_validate_failure(
             if let Some(missing) = detect_missing_contract_context(&compact_error) {
                 render_missing_contract_guidance(&mut out, &compact_error, missing);
             } else {
-                out.push_str(&format!(
-                    "\n{} {}",
-                    error_key("Why:"),
-                    compact_error
-                ));
+                out.push_str(&format!("\n{} {}", error_key("Why:"), compact_error));
             }
         }
         None if errors.is_empty() => {
@@ -2964,8 +2958,8 @@ pub fn workspace_init(
                         ));
                     }
                 };
-                if let Err(error) =
-                    parse_workspace_contract_str(&workspace_path, &yaml).map_err(|error| error.to_string())
+                if let Err(error) = parse_workspace_contract_str(&workspace_path, &yaml)
+                    .map_err(|error| error.to_string())
                 {
                     let error = error;
                     return match format {
@@ -3219,10 +3213,8 @@ pub fn workspace_init(
             Ok(_draft) if write && workspace_path.exists() => {
                 let error = match surface {
                     WorkspaceScaffoldSurface::Init => {
-                        let next_detect_merge = command_for_workspace(
-                            "ota workspace detect --merge",
-                            &workspace_path,
-                        );
+                        let next_detect_merge =
+                            command_for_workspace("ota workspace detect --merge", &workspace_path);
                         let next_detect_rewrite = command_for_workspace(
                             "ota workspace detect --rewrite --yes",
                             &workspace_path,
@@ -3290,15 +3282,15 @@ pub fn workspace_init(
                                 return finalize_debug(
                                     match format {
                                         OutputFormat::Text => CommandOutput::failure(error),
-                                        OutputFormat::Json => CommandOutput::failure(
-                                            to_json_value(json!({
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json_value(json!({
                                                 "ok": false,
                                                 "path": path_display,
                                                 "written": false,
                                                 "mode": "scaffold",
                                                 "error": error,
-                                            })),
-                                        ),
+                                            })))
+                                        }
                                     },
                                     debug,
                                     debug_lines,
@@ -3327,7 +3319,9 @@ pub fn workspace_init(
                                 String::from(
                                     "run `ota workspace init --bootstrap` to scaffold missing repo contracts",
                                 ),
-                                String::from("or create repo contracts with `ota init <repo-path>`"),
+                                String::from(
+                                    "or create repo contracts with `ota init <repo-path>`"
+                                ),
                                 String::from(
                                     "or preview repo contracts with `ota detect --dry-run <repo-path>`",
                                 ),
@@ -3779,7 +3773,8 @@ pub fn workspace_list(
                     })
                     .filter(|repo| match status_filter {
                         Some(WorkspaceDoctorStatusFilter::Ready) => {
-                            repo.present && repo.contract_path.is_file()
+                            repo.present
+                                && repo.contract_path.is_file()
                                 && load_contract(&repo.contract_path)
                                     .map(|contract| {
                                         diagnose_preconditions(&contract, &repo.contract_path).ok
@@ -3947,7 +3942,9 @@ pub fn workspace_doctor(
 
                 let report = apply_workspace_doctor_filters(report, &filters);
                 match format {
-                    OutputFormat::Text => render_workspace_doctor_text(&compact_path_display, &report),
+                    OutputFormat::Text => {
+                        render_workspace_doctor_text(&compact_path_display, &report)
+                    }
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json(&WorkspaceDoctorSuccess {
                             ok: report.ok,
@@ -4384,7 +4381,9 @@ fn write_detected_merge(
                 "{}{}",
                 error,
                 format_next_timeline(&[
-                    format!("run `ota validate {compact_path_display}` to repair the existing contract"),
+                    format!(
+                        "run `ota validate {compact_path_display}` to repair the existing contract"
+                    ),
                     format!(
                         "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
                         compact_path_display
@@ -4424,9 +4423,18 @@ fn write_detected_merge(
         .iter()
         .map(|change| change.field.clone())
         .collect::<BTreeSet<_>>();
-    if !apply_all && !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields) {
-        let requested = selected_fields.iter().cloned().collect::<Vec<_>>().join(", ");
-        let available = comparison_fields.iter().cloned().collect::<Vec<_>>().join(", ");
+    if !apply_all && !selected_fields.is_empty() && selected_fields.is_disjoint(&comparison_fields)
+    {
+        let requested = selected_fields
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let available = comparison_fields
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
         let error = format!(
             "selected field(s) not present in current detect comparison: {requested}{}",
             format_next_timeline(&[
@@ -4462,7 +4470,8 @@ fn write_detected_merge(
             if !apply_all && selected_fields.is_empty() && change.status != "add" {
                 return false;
             }
-            if !apply_all && !selected_fields.is_empty() && !selected_fields.contains(&change.field) {
+            if !apply_all && !selected_fields.is_empty() && !selected_fields.contains(&change.field)
+            {
                 return false;
             }
             report
@@ -4519,7 +4528,9 @@ fn write_detected_merge(
                 compact_path_display,
                 error,
                 format_next_timeline(&[
-                    format!("run `ota validate {compact_path_display}` to repair the existing contract"),
+                    format!(
+                        "run `ota validate {compact_path_display}` to repair the existing contract"
+                    ),
                     format!(
                         "then rerun `ota detect --merge --apply <field name> {}` to apply selected fields",
                         compact_path_display
@@ -4590,23 +4601,21 @@ fn write_detected_merge(
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let post_write_comparison = compare_detected_contract(&contract_path, &report.contract);
+                let post_write_comparison =
+                    compare_detected_contract(&contract_path, &report.contract);
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
                 } else {
                     "Applied selected high-confidence changes"
                 };
-                render_detect_change_section(
-                    &mut stdout,
-                    applied_title,
-                    &applied,
-                );
+                render_detect_change_section(&mut stdout, applied_title, &applied);
                 render_detect_comparison_section(&mut stdout, post_write_comparison.as_ref());
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => {
-                let post_write_comparison = compare_detected_contract(&contract_path, &report.contract);
+                let post_write_comparison =
+                    compare_detected_contract(&contract_path, &report.contract);
                 CommandOutput::success(to_json(&DetectSuccess {
                     ok: true,
                     path: &path_display,
@@ -4854,7 +4863,9 @@ fn render_init(
                     "bootstrap mode could not produce a valid starter contract from the detected repo signals",
                     format_error_next_timeline(&[
                         String::from("review `ota init --dry-run` output"),
-                        String::from("rerun `ota init` without `--bootstrap` for the conservative starter"),
+                        String::from(
+                            "rerun `ota init` without `--bootstrap` for the conservative starter"
+                        ),
                     ]),
                 )
             } else {
@@ -4934,16 +4945,13 @@ fn render_init(
                                 "\nWrite policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded",
                             );
                         }
-                        let excluded = report
-                            .inferences
-                            .iter()
-                            .filter(|inference| {
-                                if bootstrap {
-                                    false
-                                } else {
-                                    inference.confidence == Confidence::Low
-                                }
-                            });
+                        let excluded = report.inferences.iter().filter(|inference| {
+                            if bootstrap {
+                                false
+                            } else {
+                                inference.confidence == Confidence::Low
+                            }
+                        });
                         if !bootstrap {
                             render_inference_section(
                                 &mut stdout,
@@ -5011,7 +5019,10 @@ fn render_init(
     }
 }
 
-fn bootstrap_init_contract(report: &DetectReport, bootstrap: bool) -> crate::detector::DetectContract {
+fn bootstrap_init_contract(
+    report: &DetectReport,
+    bootstrap: bool,
+) -> crate::detector::DetectContract {
     if !bootstrap {
         return report.contract.clone();
     }
@@ -5020,9 +5031,7 @@ fn bootstrap_init_contract(report: &DetectReport, bootstrap: bool) -> crate::det
     if contract.project.is_none()
         && let Some(name) = directory_name_for_root(&report.root)
     {
-        contract.project = Some(DetectProject {
-            name,
-        });
+        contract.project = Some(DetectProject { name });
     }
     contract
 }
@@ -5530,7 +5539,7 @@ fn render_workspace_doctor_text(
             } else {
                 "optional"
             },
-                render_status_word(if repo.ok { "READY" } else { "NOT READY" })
+            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         if !concise_mode() {
             stdout.push_str(&format!(
@@ -5646,7 +5655,7 @@ fn render_workspace_check_text(
             } else {
                 "optional"
             },
-                render_status_word(if repo.ok { "READY" } else { "NOT READY" })
+            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
         ));
         if !concise_mode() {
             stdout.push_str(&format!(
@@ -5727,8 +5736,13 @@ fn render_report_section(
 
     for finding in &report.findings {
         let next = compact_backticked_paths(&finding.next);
-        let source_line = policy_finding_source(&finding.summary, &finding.why)
-            .map(|value| format!("{} {}", finding_detail_key(finding.severity, "Source:"), value));
+        let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
+            format!(
+                "{} {}",
+                finding_detail_key(finding.severity, "Source:"),
+                value
+            )
+        });
         let source_block = source_line
             .as_ref()
             .map(|value| format!("\n{}", value))
@@ -5986,16 +6000,16 @@ fn render_workspace_init_discovery_sections(
     ));
     if missing_contract.is_empty() {
         stdout.push_str(&format!("\n{}  none", info_bullet()));
-        } else {
-            for repo in missing_contract {
-                stdout.push_str(&format!(
-                    "\n{}  {} ({})",
-                    info_bullet(),
-                    repo.name,
-                    repo.path
-                ));
-            }
-            stdout.push_str(&format_next_timeline(&[
+    } else {
+        for repo in missing_contract {
+            stdout.push_str(&format!(
+                "\n{}  {} ({})",
+                info_bullet(),
+                repo.name,
+                repo.path
+            ));
+        }
+        stdout.push_str(&format_next_timeline(&[
                 String::from(
                     "or run `ota workspace init --bootstrap` on first workspace creation to auto-provision missing repo contracts and write `ota.workspace.yaml`",
                 ),
@@ -6005,8 +6019,8 @@ fn render_workspace_init_discovery_sections(
                 String::from("or create missing repo contracts with `ota init <repo-path>`"),
                 String::from("or preview repo contracts with `ota init --dry-run <repo-path>`"),
             ]));
-        }
     }
+}
 
 fn render_workspace_auto_provision_sections(
     stdout: &mut String,
@@ -6296,7 +6310,9 @@ fn build_workspace_init_draft(workspace_root: &Path) -> Result<WorkspaceInitDraf
             format_next_timeline(&[
                 String::from("create repo contracts with `ota init <repo-path>`"),
                 String::from("or preview repo contracts with `ota detect --dry-run <repo-path>`"),
-                String::from("then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"),
+                String::from(
+                    "then run `ota workspace detect --write` or `ota workspace init` after repo contracts exist"
+                ),
             ]),
         ));
     }
@@ -7179,7 +7195,11 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 "{} {} [{}] ({})",
                 list_bullet(),
                 paint(&repo.name, "1"),
-                if repo.required { "required" } else { "optional" },
+                if repo.required {
+                    "required"
+                } else {
+                    "optional"
+                },
                 if repo.acquired {
                     paint("ACQUIRED", "1;38;2;192;192;192")
                 } else {
