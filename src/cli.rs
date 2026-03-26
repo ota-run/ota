@@ -977,8 +977,10 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     const WORKSPACE_TASKS_SUGGESTION: &str = "ota workspace tasks";
     const WORKSPACE_CHECK_SUGGESTION: &str = "ota workspace check";
     const WORKSPACE_UP_SUGGESTION: &str = "ota workspace up";
-    const WORKSPACE_DETECT_DRY_RUN_SUGGESTION: &str = "ota workspace detect --dry-run";
-    const WORKSPACE_INIT_HELP_SUGGESTION: &str = "ota workspace init --help";
+    const WORKSPACE_DETECT_DRY_RUN_SUGGESTION: &str =
+        "preview the current workspace draft with `ota workspace detect --dry-run`";
+    const WORKSPACE_INIT_HELP_SUGGESTION: &str =
+        "preview the workspace starter contract with `ota workspace init --dry-run`";
 
     if stderr.contains("Try: ") || stderr.contains("Next:") {
         return stderr;
@@ -990,7 +992,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Services { .. } => REPO_SETUP_SUGGESTION,
         Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
-        Commands::Init { .. } => "ota init --dry-run",
+        Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
         Commands::Clean { .. } => "ota clean --help",
@@ -1001,12 +1003,20 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             {
                 "run `ota validate` to repair the existing contract, then rerun `ota detect --merge --apply <field name>` to apply selected fields"
             } else {
-                "ota detect --dry-run"
+                "preview the detected contract with `ota detect --dry-run`"
             }
         }
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => WORKSPACE_INIT_HELP_SUGGESTION,
-            WorkspaceCommands::Detect { .. } => WORKSPACE_DETECT_DRY_RUN_SUGGESTION,
+            WorkspaceCommands::Detect { .. } => {
+                if stderr.contains("failed to parse contract")
+                    || stderr.contains("could not be loaded")
+                {
+                    "review the failing repo contract with `ota validate` or `ota doctor`, then rerun `ota workspace detect --merge`"
+                } else {
+                    WORKSPACE_DETECT_DRY_RUN_SUGGESTION
+                }
+            }
             WorkspaceCommands::Validate { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Tasks { .. } => WORKSPACE_TASKS_SUGGESTION,
             WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
@@ -4615,9 +4625,7 @@ agent:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap_or_default();
         assert!(stderr.contains("Next:"));
-        assert!(
-            stderr.contains("preview the exact contract Ota would write with `ota init --dry-run`")
-        );
+        assert!(stderr.contains("preview the starter contract with `ota init --dry-run`"));
         assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
         assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
         assert!(stderr.contains("Excluded from automatic write:"));
@@ -4753,14 +4761,7 @@ tasks:
                 .stderr
                 .as_deref()
                 .unwrap()
-                .contains("review the existing contract with `ota validate")
-        );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("compare detected repo signals with `ota detect --merge --dry-run")
+                .contains("review the existing contract with `ota validate` or `ota doctor`")
         );
         assert!(
             output
@@ -7266,6 +7267,50 @@ project:
         assert!(
             strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("requires `--yes`")
         );
+    }
+
+    #[test]
+    fn workspace_detect_merge_parse_failure_suggests_validation_first() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("qredex-java");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+project:
+  name: qredex-java
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  qredex-java:
+    path: qredex-java
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--merge",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("review the failing repo contract"));
+        assert!(stderr.contains("ota validate"));
+        assert!(stderr.contains("ota doctor"));
+        assert!(stderr.contains("ota workspace detect --merge"));
+        assert!(!stderr.contains("ota workspace detect --dry-run"));
     }
 
     #[test]

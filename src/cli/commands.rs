@@ -1793,15 +1793,14 @@ pub fn init(
         let highlighted_path = paint_code(&compact_path_display);
         let highlighted_validate = paint_code("ota validate");
         let highlighted_doctor = paint_code("ota doctor");
-        let highlighted_detect_merge_dry = paint_code("ota detect --merge --dry-run");
         let highlighted_detect_merge = paint_code("ota detect --merge");
         let error = format!(
             "`{}` already exists; use `{highlighted_detect_merge}` to update the existing contract{}",
             highlighted_path,
             format_next_timeline(&[
-                format!("review the existing contract with `{highlighted_validate}`"),
-                format!("review the existing contract with `{highlighted_doctor}`"),
-                format!("compare detected repo signals with `{highlighted_detect_merge_dry}`"),
+                format!(
+                    "review the existing contract with `{highlighted_validate}` or `{highlighted_doctor}`"
+                ),
                 format!("update the existing contract with `{highlighted_detect_merge}`"),
             ]),
         );
@@ -4878,9 +4877,7 @@ fn render_init(
                     error_key("Why:"),
                     "detected starter includes medium or low confidence fields that are required for a valid contract",
                     format_error_next_timeline(&[
-                        String::from(
-                            "preview the exact contract Ota would write with `ota init --dry-run`",
-                        ),
+                        String::from("preview the starter contract with `ota init --dry-run`",),
                         String::from(
                             "run `ota init --bootstrap` to write the fuller starter contract, including lower-confidence fields",
                         ),
