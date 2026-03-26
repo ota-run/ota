@@ -4594,6 +4594,29 @@ agent:
     }
 
     #[test]
+    fn init_reports_excluded_write_inferences_with_clear_spacing() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "Makefile",
+            r#"build:
+	@printf "build\n"
+"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("review `ota init --dry-run` output"));
+        assert!(stderr.contains("Excluded from automatic write:"));
+        assert!(stderr.contains("✦  Field: project.name"));
+        assert!(stderr.contains("Confidence: low\n\n✦  Field: tasks.build.run"));
+        assert!(!stderr.contains("▸  Excluded from automatic write:"));
+        assert!(!stderr.contains("▸  ✦  Field: project.name"));
+    }
+
+    #[test]
     fn init_bootstrap_writes_full_detected_starter_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write("tclapp.tcl", "puts \"hello\"\n");
