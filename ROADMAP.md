@@ -31,7 +31,8 @@ V2 is complete and archived.
 V2.1 is complete and archived.
 V3 is complete.
 V4 is complete.
-V5 is active.
+V5 is complete.
+V6 is active.
 
 ## V1 archive
 
@@ -44,7 +45,7 @@ V5 is active.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- ship the V5 governance/policy slice in narrow, real slices
+- ship the V6 extension and ecosystem slice in narrow, real slices
 - keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
@@ -54,7 +55,7 @@ V5 is active.
 
 ## Active version
 
-- [V5 plan](docs/planning/v5/plan.md)
+- [V6 plan](docs/planning/v6/plan.md)
 
 ## Implemented foundation
 
@@ -65,11 +66,11 @@ V5 is active.
 
 ## Near-term next steps
 
-- keep the V5 governance/policy slice narrow and explicit
+- keep the V6 extension slice narrow and explicit
 - preserve the shipped repo/workspace trust baseline
 - keep docs and active planning aligned with the canonical spec repo
-- avoid widening into generic policy-engine scope
 - keep extension and editor surfaces contract-bound
+- avoid widening into generic plugin-runtime scope
 
 ## Archived V2 shape
 
@@ -90,8 +91,8 @@ The repo-first bridge work beyond that foundation focused on:
 
 ## Product direction
 
-V5 themes build on the shipped repo/workspace foundation with:
-- organizations and governance
-- policy packs and org conventions
-- audit-friendly machine output and provenance
-- editor/IDE integration and enterprise-safe mutation controls
+V6 themes build on the shipped repo/workspace foundation with:
+- extension and adapter readiness
+- compatibility policy and conformance
+- editor/IDE integration and remote-runner visibility
+- explicit mutation controls and trust-preserving caching

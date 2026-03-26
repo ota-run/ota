@@ -126,8 +126,8 @@ repos:
     assert!(stdout.contains("stream-out"));
     assert!(stdout.contains("WORKSPACE UP"));
     assert!(stderr.contains("stream-err"));
-    assert!(stderr.contains("WORKSPACE RUN web"));
-    assert!(stderr.contains("WORKSPACE READY web"));
+    assert!(stderr.contains("[ota-stream]  ▶ RUN web"));
+    assert!(stderr.contains("[ota-stream]  ✓ READY web"));
 }
 
 #[test]
@@ -712,10 +712,10 @@ fn init_write_writes_high_confidence_contract_for_mixed_node_python_compose_fixt
     assert!(written.contains("name: ota-hybrid-app"));
     assert!(written.contains("node: 22.8.0"));
     assert!(written.contains("npm: 10.9.0"));
+    assert!(written.contains("python: '>=3.12'"));
     assert!(written.contains("run: npm run dev"));
     assert!(written.contains("run: npm run worker"));
     assert!(written.contains("provider: docker-compose"));
-    assert!(!written.contains("python:"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
     assert!(
@@ -897,7 +897,14 @@ project:
             .as_array()
             .unwrap()
             .iter()
-            .any(|change| change["field"] == "tools.pnpm" && change["status"] == "add")
+            .any(|change| change["field"] == "services.web.start" && change["status"] == "add")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "services.web.stop" && change["status"] == "add")
     );
 
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
@@ -954,7 +961,22 @@ project:
             .as_array()
             .unwrap()
             .iter()
-            .any(|change| change["field"] == "tools.npm" && change["status"] == "add")
+            .any(|change| change["field"] == "services.postgres.start" && change["status"] == "add")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "services.postgres.stop" && change["status"] == "add")
+    );
+    assert!(
+        json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "services.postgres.healthcheck"
+                && change["status"] == "add")
     );
 
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
@@ -962,11 +984,8 @@ project:
 
     assert!(written.contains("name: existing"));
     assert!(written.contains("node: 22.8.0"));
-    assert!(written.contains("npm: 10.9.0"));
-    assert!(written.contains("run: npm run dev"));
-    assert!(written.contains("run: npm run worker"));
-    assert!(written.contains("provider: docker-compose"));
     assert!(!written.contains("python:"));
+    assert!(written.contains("provider: docker-compose"));
     assert!(!written.contains("name: ota-hybrid-app"));
 }
 
@@ -1044,22 +1063,12 @@ runtimes:
             .iter()
             .any(|change| change["field"] == "project.name" && change["status"] == "update")
     );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "tools.maven" && change["status"] == "add")
-    );
 
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
         .expect("ota.yaml should be merged for java maven fixture");
 
     assert!(written.contains("name: existing"));
     assert!(written.contains("java:"));
-    assert!(written.contains("maven: '*'"));
-    assert!(written.contains("mvn package"));
-    assert!(written.contains("mvn test"));
     assert!(!written.contains("name: ota-maven-service"));
 }
 

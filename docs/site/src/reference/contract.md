@@ -24,96 +24,134 @@
 
 # Contract (`ota.yaml`)
 
-`ota.yaml` is the canonical repo readiness contract.
+`ota.yaml` is the one file Ota uses to explain a repo to humans, CI, and agents.
 
-When to use:
+Use it when you want:
 
-- any repository that wants deterministic setup and execution behavior
+- deterministic setup instead of tribal knowledge
+- one place for runtime, tool, service, and task expectations
+- the same contract for local development and automation
 
-Why:
+## Primary sections
 
-- replaces scattered setup truth with one machine-readable contract
+- `version`: contract schema version. Today this is `1`.
+- `project`: stable repo identity and high-level classification.
+- `runtimes`: required language/runtime versions.
+- `tools`: external CLI and tool dependencies.
+- `env`: required environment variables, defaults, and allowed values.
+- `services`: supporting services such as databases or queues.
+- `checks`: explicit preconditions and health checks.
+- `tasks`: named commands that humans and agents can run.
+- `execution`: where tasks run, such as native, container, or remote.
+- `agent`: safe-task and writable-path hints for agents.
+- `workspace`: monorepo root/member mapping.
 
-Typical use-cases:
+## Quick read
 
-- onboarding new contributors without tribal setup steps
-- giving CI and agents the same execution contract as humans
-- documenting runtime/tool/service expectations in one file
+Think about the file in this order:
 
-Primary sections:
+1. `version` and `project` identify the repo.
+2. `runtimes`, `tools`, `env`, and `services` describe what the repo needs.
+3. `checks` and `tasks` describe what the repo can verify and run.
+4. `execution` and `agent` describe how Ota should run and expose those actions.
+5. `workspace` is only for monorepo root/member orchestration.
 
-- `version`
-- `project`
-- `runtimes`
-- `tools`
-- `env`
-- `services`
-- `checks`
-- `tasks`
-- `execution`
-- `agent`
-- `workspace` (for monorepo root/member model)
-
-Minimal example:
+## Example
 
 ```yaml
 version: 1
 project:
   name: example-repo
+  type: application
 runtimes:
   node: "22"
+tools:
+  pnpm: "10"
+env:
+  OTA_ENV:
+    required: true
+    default: local
+services:
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -U app -d app
+checks:
+  - name: node-installed
+    kind: precondition
+    severity: error
+    run: node --version
 tasks:
-  test:
-    run: npm test
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+execution:
+  preferred: native
+agent:
+  default_task: setup
+workspace:
+  type: monorepo
+  members:
+    - apps/web
+    - services/api
 ```
 
-Trust and behavior rules:
+## What each section means
 
-- `ota validate` enforces structural and semantic correctness.
-- `ota doctor` reports readiness findings without hidden mutation.
-- `ota detect` writes conservatively from high-confidence fields only.
-- `ota detect --merge` applies additive high-confidence fields only.
+### `project`
 
-Runtime version syntax examples:
+Use `project` for the repo’s stable identity. Keep churn-heavy metadata out of it unless the contract
+explicitly needs it.
 
-- `8` is an example of an exact required version
-- `>=8` is an example of accepting any version at or above `8`
-- `^8` is an example of a compatible version range, usually the same major line
-- Ota compares numeric version parts and accepts common prefixes such as `go1.24.2` or `v1.24.2`
-- use `>=` when a newer runtime is acceptable
-- use `^` when compatibility is acceptable but exact equivalence is not required
+### `runtimes`
 
-## Authoring guidance
+Use `runtimes` for the language/runtime versions the repo needs before it is runnable.
+
+### `tools`
+
+Use `tools` for command-line dependencies that must be present on PATH.
+
+### `env`
+
+Use `env` for required environment values, defaults, and allowed values.
+
+### `services`
+
+Use `services` for supporting infrastructure the repo expects to start, stop, or health-check.
+
+### `checks`
+
+Use `checks` for explicit preconditions and health checks that should be run and reported.
+
+### `tasks`
+
+Use `tasks` for deterministic repo commands such as `setup`, `test`, `lint`, and `dev`.
+
+### `execution`
+
+Use `execution` to describe where Ota should run those tasks when native execution is not enough.
+
+### `agent`
+
+Use `agent` to tell Ota which tasks are safe for agents and which paths are writable.
+
+### `workspace`
+
+Use `workspace` only for monorepo root/member orchestration across multiple repos.
+
+## Good starting point
 
 Start minimal, then expand:
 
-1. define `project`, `tasks`, and required runtimes
-1. add tools/env/services only when they are real blockers
-1. run `ota validate` and `ota doctor` after every change
+1. define `project`
+2. add required `runtimes`
+3. add real `tools`, `env`, and `services`
+4. add `checks`
+5. add `tasks`
+6. add `execution`, `agent`, and `workspace` only when they are actually needed
 
-Prefer explicitness:
+## Canonical reference
 
-- name tasks by intent (`setup`, `test`, `lint`, `dev`)
-- use `depends_on` to reuse task steps instead of calling `ota run` from inside another task script
-- keep checks actionable and bounded
-- avoid hidden side effects in task commands
-- for SDK/library repos without runnable entrypoints, set `project.type: sdk` (or `library`) so
-  `ota doctor` treats missing `tasks` as a warning instead of a blocking error
-- some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
-
-Script examples:
-
-```yaml
-tasks:
-  build:
-    run: mvn package
-  dev:
-    script: |
-      lsof -ti:8080 | xargs kill -9 || true
-      mvn spring-boot:run
-```
-
-Canonical contract reference in repository:
-
-- `docs/spec/contract-reference.md`
-- <https://github.com/ota-run/ota/blob/main/docs/spec/contract-reference.md>
+- [Spec contract reference](docs/spec/contract-reference.md)
+- [GitHub source](https://github.com/ota-run/ota/blob/main/docs/spec/contract-reference.md)

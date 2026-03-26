@@ -24,7 +24,7 @@
 
 # V5 Plan
 
-Status: active.
+Status: complete (started 2026-03-24, completed 2026-03-26).
 
 Source direction:
 - [/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md)

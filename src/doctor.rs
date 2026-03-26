@@ -1258,13 +1258,47 @@ tasks:
     }
 
     #[test]
+    #[cfg(unix)]
     fn command_version_handles_go_subcommand() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let go_path = bin_dir.join("go");
+        fs::write(
+            &go_path,
+            "#!/bin/sh\nprintf 'go version go1.24.2 fake/amd64\\n'\n",
+        )
+        .unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&go_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&go_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
         let version = super::command_version("go");
-        assert!(
-            version
-                .as_deref()
-                .is_some_and(|value| value.contains("1.24"))
-        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(version.as_deref(), Some("go1.24.2"));
     }
 
     #[test]
