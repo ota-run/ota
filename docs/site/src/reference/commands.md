@@ -44,6 +44,7 @@ Progress behavior:
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
+- `ota workspace list` shows execution metadata when the repo contract declares it
 
 ## Start with this flow
 
@@ -542,6 +543,7 @@ Why:
 
 - gives a fast view of required/optional repos, acquisition state, lightweight readiness, and missing contracts
 - shows acquisition in the repo summary and readiness on a dedicated `Status:` line
+- shows execution metadata in a compact `Execution:` block when the repo contract declares it
 
 ```bash
 ota workspace list

@@ -5855,6 +5855,10 @@ fn render_workspace_doctor_text(
             ));
         }
 
+        if let Some(execution) = repo.execution.as_ref() {
+            stdout.push_str(&render_workspace_execution_text(execution));
+        }
+
         if !repo.extensions.is_empty() {
             stdout.push_str(&render_extensions_text(&repo.extensions));
         }
@@ -7774,9 +7778,55 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
             paint_key("Status:"),
             render_status_word(&repo.status)
         ));
+        if let Some(execution) = repo.execution.as_ref() {
+            stdout.push_str(&render_workspace_execution_text(execution));
+        }
     }
 
     CommandOutput::success(stdout)
+}
+
+fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> String {
+    let mut stdout = String::from("\n");
+    stdout.push_str(&format!("\n{}", paint_key("Execution:")));
+
+    if let Some(preferred) = execution.preferred.as_deref() {
+        stdout.push_str(&format!("\n  {} {}", paint_key("Preferred:"), preferred));
+    }
+    if !execution.supported.is_empty() {
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Supported:"),
+            execution.supported.join(", ")
+        ));
+    }
+    if let Some(lifecycle) = execution.lifecycle.as_deref() {
+        stdout.push_str(&format!("\n  {} {}", paint_key("Lifecycle:"), lifecycle));
+    }
+    if let Some(backends) = execution.backends.as_ref() {
+        if let Some(container) = backends.container.as_ref() {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Container:"),
+                container.image
+            ));
+        }
+        if let Some(remote) = backends.remote.as_ref() {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Remote Provider:"),
+                remote.provider
+            ));
+            if let Some(target) = remote.target.as_deref() {
+                stdout.push_str(&format!("\n  {} {}", paint_key("Remote Target:"), target));
+            }
+            if let Some(cwd) = remote.cwd.as_deref() {
+                stdout.push_str(&format!("\n  {} {}", paint_key("Remote Cwd:"), cwd));
+            }
+        }
+    }
+
+    stdout
 }
 
 fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>) {
