@@ -32,7 +32,8 @@ V2.1 is complete and archived.
 V3 is complete.
 V4 is complete.
 V5 is complete.
-V6 is active.
+V6 is complete.
+V7 is active.
 
 ## V1 archive
 
@@ -45,7 +46,7 @@ V6 is active.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
-- ship the V6 extension and ecosystem slice in narrow, real slices
+- ship the V7 platform workflow slice in narrow, real slices
 - keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
@@ -53,9 +54,13 @@ V6 is active.
 - [V2 plan](docs/planning/v2/plan.md)
 - [V2.1 plan](docs/planning/v2.1/plan.md)
 
-## Active version
+## V6 archive
 
 - [V6 plan](docs/planning/v6/plan.md)
+
+## Active version
+
+- [V7 plan](docs/planning/v7/plan.md)
 
 ## Implemented foundation
 
@@ -91,8 +96,9 @@ The repo-first bridge work beyond that foundation focused on:
 
 ## Product direction
 
-V6 themes build on the shipped repo/workspace foundation with:
-- extension and adapter readiness
-- compatibility policy and conformance
-- editor/IDE integration and remote-runner visibility
-- explicit mutation controls and trust-preserving caching
+V7 themes build on the shipped repo/workspace foundation with:
+
+- editor/IDE integration contract stabilization
+- remote runner metadata standard finalization
+- hosted validation workflow shape
+- stronger machine-facing operational summaries

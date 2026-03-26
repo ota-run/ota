@@ -46,6 +46,13 @@ Progress behavior:
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
 - `ota workspace list` shows execution metadata when the repo contract declares it
 
+Hosted validation:
+
+- use `ota validate --json` and `ota doctor --json` for repo gating
+- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
+- use `ota workspace list --json` for preflight inventory and readiness summaries
+- do not mutate contracts during hosted validation
+
 ## Start with this flow
 
 1. `ota doctor` to understand readiness blockers.

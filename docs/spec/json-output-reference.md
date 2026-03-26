@@ -4,6 +4,9 @@ This document records the current machine-readable output shapes for Ota command
 
 The goal is stability for humans, CI, editors, and agents.
 
+Editor and CI integrations should treat the JSON surfaces in this document as the stable contract
+and avoid scraping human-readable text output.
+
 Canonical JSON Schema files for the current shipped shapes live in:
 
 - [json-schemas/validate.json](json-schemas/validate.json)

@@ -22,28 +22,43 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Hosted Validation
 
-This section summarizes the stable surfaces of Ota:
+Use hosted validation when Ota needs to gate a pull request or CI run without mutating the repo.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+## What to run
 
-Canonical specification files remain under `docs/spec/`.
+- `ota validate --json`
+- `ota doctor --json`
+- `ota workspace validate --json`
+- `ota workspace doctor --json`
+- `ota workspace list --json` for inventory and readiness summary
 
-Use this section when you need precision:
+## What to fail on
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+- `ok: false`
+- any `error` or `errors`
+- any `severity: error`
+- non-zero exit when validation is expected to pass
 
-## Key references
+## What not to do
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
+- do not run `ota init`
+- do not run `ota detect --write`
+- do not run `ota workspace init --bootstrap`
+- do not infer behavior from human text output
+
+## Example
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota validate --json | tee .ota-validate.json
+ota doctor --json | tee .ota-doctor.json
+ota workspace validate --json | tee .ota-workspace-validate.json
+ota workspace doctor --json | tee .ota-workspace-doctor.json
+```
+
+Hosted validation is read-only. It surfaces blockers early and leaves mutation to local,
+explicit commands.
