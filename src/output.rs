@@ -27,7 +27,7 @@ use crate::doctor::Finding;
 use crate::schema::{
     AgentConfig, Backend, Contract, Lifecycle, ServiceSpec, TaskSpec, TaskVariantView,
 };
-use crate::workspace::WorkspaceRepoDoctorReport;
+use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
 fn slice_is_empty<T>(value: &[T]) -> bool {
     value.is_empty()
@@ -186,6 +186,8 @@ pub struct WorkspaceRepoListReport {
     pub acquired: bool,
     pub status: String,
     pub depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<WorkspaceExecutionSummary>,
 }
 
 #[derive(Debug, Serialize)]
