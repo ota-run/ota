@@ -3681,7 +3681,7 @@ unexpected: true
     }
 
     #[test]
-    fn validate_rejects_extensions_top_level_until_v6() {
+    fn validate_accepts_top_level_extensions_as_inert_contract_data() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3692,19 +3692,20 @@ extensions:
     kind: check_provider
     command: ota-ext-demo
     api_version: 1
+tasks:
+  build:
+    run: cargo build
 "#,
         );
 
         let output = run_with(["ota", "validate", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap();
-        assert!(stderr.contains("extensions"));
-        assert!(stderr.contains("unknown field"));
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_none());
     }
 
     #[test]
-    fn extensions_top_level_is_rejected_consistently_across_repo_commands_until_v6() {
+    fn top_level_extensions_are_accepted_consistently_across_repo_commands() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3715,6 +3716,9 @@ extensions:
     kind: check_provider
     command: ota-ext-demo
     api_version: 1
+tasks:
+  build:
+    run: cargo build
 "#,
         );
 
@@ -3727,10 +3731,9 @@ extensions:
             vec!["ota", "run", "setup", fixture.path()],
         ] {
             let output = run_with(args);
-            assert_eq!(output.exit_code, 1);
+            assert_ne!(output.exit_code, 2);
             let stderr = output.stderr.as_deref().unwrap_or("");
-            assert!(stderr.contains("extensions"));
-            assert!(stderr.contains("unknown field"));
+            assert!(!stderr.contains("unknown field"));
         }
     }
 

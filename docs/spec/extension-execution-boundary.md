@@ -29,7 +29,8 @@ This document defines the current implementation boundary for extensions during 
 ## Current boundary (shipped)
 
 - Ota core commands do not execute extension providers at runtime.
-- Top-level `extensions` in `ota.yaml` is not part of the shipped parser/validator contract yet.
+- Top-level `extensions` in `ota.yaml` is parsed as inert contract data, but Ota does not execute
+  extension providers yet.
 - `ota doctor`, `ota check`, `ota run`, `ota up`, and `ota export` behavior remains core-only.
 
 ## Why this boundary exists
@@ -48,6 +49,6 @@ Earlier compatibility and protocol work can prepare the surface, but runtime ext
 
 ## Enforcement in this repo
 
-- validation rejects `extensions` today
+- validation accepts `extensions` as inert contract data today
 - compatibility tests guard current JSON/exit contracts
 - no command path should silently load or execute extension commands

@@ -34,6 +34,8 @@ pub struct Contract {
     #[serde(default)]
     pub execution: Option<Execution>,
     #[serde(default)]
+    pub extensions: BTreeMap<String, serde_yaml::Value>,
+    #[serde(default)]
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,

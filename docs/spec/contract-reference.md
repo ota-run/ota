@@ -62,6 +62,11 @@ execution:
   preferred: native
   supported:
     - native
+extensions:
+  demo:
+    kind: check_provider
+    command: ota-ext-demo
+    api_version: 1
 runtimes:
   node: "22"
 tools:
@@ -87,7 +92,8 @@ metadata:
   team: platform
 ```
 
-Top-level `extensions` is intentionally not accepted in the shipped V4 parser/validator yet.
+Top-level `extensions` is now recognized as inert contract data.
+Ota parses it and preserves the V6 boundary by not executing extension providers yet.
 For the staged execution boundary and V6 target contract, see
 [extension-execution-boundary.md](extension-execution-boundary.md).
 
