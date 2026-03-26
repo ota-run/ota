@@ -84,6 +84,10 @@ Allowed cache behavior:
 - derived from stable source inputs
 - never changes command semantics
 
+The current implementation uses process-local success-only caches for loaded repo and workspace
+contracts, keyed by path plus source file metadata so a rewritten file is re-read on the next
+lookup.
+
 Not allowed:
 
 - hidden stale state
@@ -106,4 +110,3 @@ It is not for:
 - invisible state machines
 - generic persistence layers
 - speculative optimization that changes observable output
-

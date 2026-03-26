@@ -20,10 +20,12 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +36,17 @@ use crate::validator::validate_contract;
 
 pub const DEFAULT_WORKSPACE_FILE: &str = "ota.workspace.yaml";
 
-#[derive(Debug, Deserialize)]
+static WORKSPACE_CACHE: OnceLock<Mutex<HashMap<WorkspaceCacheKey, WorkspaceContract>>> =
+    OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct WorkspaceCacheKey {
+    path: PathBuf,
+    len: u64,
+    modified_nanos: Option<u128>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceContract {
     pub version: u32,
@@ -42,7 +54,7 @@ pub struct WorkspaceContract {
     pub repos: BTreeMap<String, WorkspaceRepoSpec>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceInfo {
     pub name: String,
@@ -52,7 +64,7 @@ pub struct WorkspaceInfo {
     pub git_base: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRepoSpec {
     pub path: String,
@@ -66,7 +78,7 @@ pub struct WorkspaceRepoSpec {
     pub source: Option<WorkspaceRepoSourceSpec>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceRepoSourceSpec {
     #[serde(default)]
@@ -243,12 +255,22 @@ impl WorkspaceValidationErrors {
 }
 
 pub fn load_workspace_contract(path: &Path) -> Result<WorkspaceContract, LoadWorkspaceError> {
+    let key = workspace_cache_key(path)?;
+    if let Some(contract) = workspace_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(contract);
+    }
+
     let contents = fs::read_to_string(path).map_err(|source| LoadWorkspaceError::Read {
         path: path.display().to_string(),
         source,
     })?;
 
-    parse_workspace_contract_str(path, &contents)
+    let contract = parse_workspace_contract_str(path, &contents)?;
+    workspace_cache()
+        .lock()
+        .unwrap()
+        .insert(key, contract.clone());
+    Ok(contract)
 }
 
 pub fn parse_workspace_contract_str(
@@ -258,6 +280,30 @@ pub fn parse_workspace_contract_str(
     serde_yaml::from_str(contents).map_err(|source| LoadWorkspaceError::Parse {
         path: path.display().to_string(),
         source,
+    })
+}
+
+fn workspace_cache() -> &'static Mutex<HashMap<WorkspaceCacheKey, WorkspaceContract>> {
+    WORKSPACE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn workspace_cache_key(path: &Path) -> Result<WorkspaceCacheKey, LoadWorkspaceError> {
+    let metadata = fs::metadata(path).map_err(|source| LoadWorkspaceError::Read {
+        path: path.display().to_string(),
+        source,
+    })?;
+
+    let modified_nanos = metadata.modified().ok().and_then(|modified| {
+        modified
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_nanos())
+    });
+
+    Ok(WorkspaceCacheKey {
+        path: path.to_path_buf(),
+        len: metadata.len(),
+        modified_nanos,
     })
 }
 
@@ -871,8 +917,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        diagnose_workspace_contract_with_jobs, parse_workspace_contract_str,
-        validate_workspace_contract,
+        diagnose_workspace_contract_with_jobs, load_workspace_contract,
+        parse_workspace_contract_str, validate_workspace_contract,
     };
 
     #[test]
@@ -933,6 +979,44 @@ repos:
                 .to_string()
                 .contains("workspace repo `web` contract was not found")
         );
+    }
+
+    #[test]
+    fn load_workspace_contract_reloads_when_file_changes() {
+        let fixture = TempDir::new().unwrap();
+        let workspace_path = fixture.path().join("ota.workspace.yaml");
+
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let first = load_workspace_contract(&workspace_path).unwrap();
+        assert_eq!(first.workspace.name, "demo");
+
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: demo-workspace
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let second = load_workspace_contract(&workspace_path).unwrap();
+        assert_eq!(second.workspace.name, "demo-workspace");
     }
 
     #[test]

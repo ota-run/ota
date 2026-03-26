@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
     pub version: u32,
@@ -57,7 +57,7 @@ pub struct Contract {
     pub metadata: BTreeMap<String, serde_yaml::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub name: String,
@@ -67,7 +67,7 @@ pub struct Project {
     pub project_type: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RepoWorkspaceSpec {
     #[serde(rename = "type")]
@@ -81,7 +81,7 @@ pub enum RepoWorkspaceType {
     Monorepo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Execution {
     #[serde(default)]
@@ -94,7 +94,7 @@ pub struct Execution {
     pub backends: Option<ExecutionBackends>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionBackends {
     #[serde(default)]
@@ -137,13 +137,13 @@ impl std::fmt::Display for ExtensionKind {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerBackend {
     pub image: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteBackend {
     pub provider: String,
@@ -168,7 +168,7 @@ pub enum Lifecycle {
     Ephemeral,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum RuntimeRequirement {
     Simple(String),
@@ -184,7 +184,7 @@ impl RuntimeRequirement {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeDetail {
     pub version: String,
@@ -194,7 +194,7 @@ pub struct RuntimeDetail {
     pub distribution: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum ToolRequirement {
     Simple(String),
@@ -210,7 +210,7 @@ impl ToolRequirement {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolDetail {
     pub version: String,
@@ -222,7 +222,7 @@ fn default_required() -> bool {
     true
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct EnvRequirement {
     #[serde(default)]
@@ -235,7 +235,7 @@ pub struct EnvRequirement {
     pub allowed: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceSpec {
     #[serde(default)]
@@ -254,7 +254,7 @@ pub struct ServiceSpec {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskSpec {
     #[serde(default)]
@@ -305,7 +305,7 @@ impl TaskSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskVariantSpec {
     pub when: TaskWhen,
@@ -341,7 +341,7 @@ impl TaskVariantSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWhen {
     #[serde(default)]
@@ -371,7 +371,7 @@ pub struct TaskVariantView<'a> {
     pub script: Option<&'a str>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CheckSpec {
     pub name: String,
@@ -397,7 +397,7 @@ pub enum CheckSeverity {
     Info,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default)]

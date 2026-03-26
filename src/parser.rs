@@ -20,12 +20,24 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::UNIX_EPOCH;
 
 use serde_yaml::{Mapping, Value};
 
 use crate::schema::Contract;
+
+static CONTRACT_CACHE: OnceLock<Mutex<HashMap<ContractCacheKey, Contract>>> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ContractCacheKey {
+    path: PathBuf,
+    len: u64,
+    modified_nanos: Option<u128>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadContractError {
@@ -52,8 +64,18 @@ pub enum LoadContractError {
 }
 
 pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
+    let key = contract_cache_key(path)?;
+    if let Some(contract) = contract_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(contract);
+    }
+
     let contents = read_contract_contents(path)?;
-    parse_contract_str(path, &contents)
+    let contract = parse_contract_str(path, &contents)?;
+    contract_cache()
+        .lock()
+        .unwrap()
+        .insert(key, contract.clone());
+    Ok(contract)
 }
 
 pub fn load_contract_auto(path: &Path) -> Result<(Contract, PathBuf), LoadContractError> {
@@ -123,6 +145,30 @@ fn read_contract_contents(path: &Path) -> Result<String, LoadContractError> {
     fs::read_to_string(path).map_err(|source| LoadContractError::Read {
         path: path.display().to_string(),
         source,
+    })
+}
+
+fn contract_cache() -> &'static Mutex<HashMap<ContractCacheKey, Contract>> {
+    CONTRACT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn contract_cache_key(path: &Path) -> Result<ContractCacheKey, LoadContractError> {
+    let metadata = fs::metadata(path).map_err(|source| LoadContractError::Read {
+        path: path.display().to_string(),
+        source,
+    })?;
+
+    let modified_nanos = metadata.modified().ok().and_then(|modified| {
+        modified
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|duration| duration.as_nanos())
+    });
+
+    Ok(ContractCacheKey {
+        path: path.to_path_buf(),
+        len: metadata.len(),
+        modified_nanos,
     })
 }
 
@@ -288,6 +334,38 @@ workspace:
                 .to_string()
                 .contains("must not declare a top-level `workspace`")
         );
+    }
+
+    #[test]
+    fn load_contract_reloads_when_file_changes() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: alpha
+"#,
+        )
+        .unwrap();
+
+        let first = super::load_contract(&contract_path).unwrap();
+        assert_eq!(first.project.name, "alpha");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: alphabet
+"#,
+        )
+        .unwrap();
+
+        let second = super::load_contract(&contract_path).unwrap();
+        assert_eq!(second.project.name, "alphabet");
     }
 
     #[test]
