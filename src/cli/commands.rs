@@ -7478,7 +7478,7 @@ fn format_command_header(command: &str, target: &str) -> String {
     if plain_mode() {
         return format!("{command} {target}");
     }
-    format!("{}  {} {target}", "🦦 ", paint(command, "1;36"))
+    format!("{} {} {target}", "🦦", paint(command, "1;36"))
 }
 
 fn paint(value: &str, code: &str) -> String {

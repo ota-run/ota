@@ -1481,12 +1481,12 @@ version: 1
 project:
   name: ota
 tools:
-  cargo:
+  rustc:
     version: "999.0.0"
     required: false
 tasks:
   test:
-    run: cargo test
+    run: rustc --version
 "#,
         )
         .unwrap();
@@ -1497,7 +1497,7 @@ tasks:
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(
             report.findings[0].summary,
-            "Version mismatch for tool: cargo"
+            "Version mismatch for tool: rustc"
         );
     }
 
