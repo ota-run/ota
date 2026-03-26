@@ -36,6 +36,20 @@ project:
 
 In practice, most useful contracts also define tasks, runtimes, or checks.
 
+## Primary sections at a glance
+
+- `version`: schema version for the contract itself. Today this is `1`.
+- `project`: stable repo identity and high-level classification.
+- `runtimes`: required language/runtime versions for the repo to be runnable.
+- `tools`: external CLI and tool dependencies the repo expects on PATH.
+- `env`: required environment variables, defaults, and allowed values.
+- `services`: supporting services such as databases, queues, or local infra.
+- `checks`: explicit preconditions and health checks that should pass.
+- `tasks`: named commands humans and agents can run deterministically.
+- `execution`: where tasks run, such as native, container, or remote backends.
+- `agent`: agent-safe task hints and writable-path guidance.
+- `workspace`: monorepo root/member mapping for multi-repo orchestration.
+
 ## Top-level fields
 
 ```yaml
