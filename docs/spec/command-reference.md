@@ -338,12 +338,14 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
+- when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
 - can initialize both detected repos and blank repos
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
+- when `project.name` is still missing in bootstrap mode, Ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 
 Modes:

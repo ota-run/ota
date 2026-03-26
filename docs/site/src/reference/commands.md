@@ -266,6 +266,7 @@ Why:
 - provides safe onboarding entry before full manual authoring
 - writes the smallest valid starter contract for the repo
 - `ota init --bootstrap` writes the fuller detected starter contract when the detector has enough confidence
+- if no stronger project identity is inferred, `ota init --bootstrap` can fall back to the repo directory name for `project.name`
 - plain `ota init` still excludes low-confidence fields
 
 Use-case:

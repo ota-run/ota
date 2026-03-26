@@ -3068,15 +3068,32 @@ fn extract_compose_healthcheck_command(service: &YamlValue) -> Option<String> {
 
 fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
     if builder.contract.project.is_none()
-        && let Some(name) = root.file_name().and_then(|name| name.to_str())
-        && !name.is_empty()
+        && let Some(name) = directory_name_for_root(root)
     {
         builder.set_project_name(
-            name.to_string(),
+            name,
             "directory-name".to_string(),
             Confidence::Low,
         );
     }
+}
+
+fn directory_name_for_root(root: &Path) -> Option<String> {
+    if let Some(name) = root.file_name().and_then(|name| name.to_str())
+        && !name.is_empty()
+        && name != "."
+    {
+        return Some(name.to_string());
+    }
+
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| {
+            cwd.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .filter(|name| !name.is_empty())
 }
 
 fn extract_maven_wrapper_version(contents: &str) -> Option<String> {

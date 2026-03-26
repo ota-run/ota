@@ -35,7 +35,7 @@ use serde_yaml::{Mapping, Value as YamlValue};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
-use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
+use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, Finding, FindingSeverity, diagnose_checks_only, diagnose_contract,
     diagnose_preconditions, diagnose_service, diagnose_services_only,
@@ -4769,13 +4769,29 @@ fn render_init(
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
     let compact_root_display = compact_repo_path(&report.root);
-    let review_yaml =
-        serde_yaml::to_string(&report.contract).expect("serializing init contract should not fail");
+    let bootstrap_contract = bootstrap_init_contract(&report, bootstrap);
+    let review_yaml = serde_yaml::to_string(&bootstrap_contract)
+        .expect("serializing init contract should not fail");
 
     if let Err(error) = parse_contract_str(contract_path, &review_yaml)
         .map_err(|error| error.to_string())
         .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
     {
+        let error = if write && bootstrap && error.contains("missing field `project`") {
+            format!(
+                "bootstrap mode could not infer `project.name` for this repo root{}",
+                format_next_timeline(&[
+                    String::from(
+                        "if this is a workspace root, run `ota workspace init --bootstrap`",
+                    ),
+                    String::from(
+                        "if you meant a member repo, run `ota init <member-path>` from that repo directory",
+                    ),
+                ]),
+            )
+        } else {
+            error
+        };
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
             OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
@@ -4783,7 +4799,11 @@ fn render_init(
                 path: &path_display,
                 written: false,
                 error: &error,
-                next: None,
+                next: if write && bootstrap && error.contains("bootstrap mode could not infer") {
+                    Some("ota workspace init --bootstrap")
+                } else {
+                    None
+                },
             })),
         };
     }
@@ -4791,32 +4811,60 @@ fn render_init(
     if write {
         let write_contract = if mode == "detected" {
             if bootstrap {
-                report.contract.clone()
+                bootstrap_contract
             } else {
                 report.contract_with_min_confidence(Confidence::Medium)
             }
         } else {
-            report.contract.clone()
+            bootstrap_contract
         };
         let write_yaml = serde_yaml::to_string(&write_contract)
             .expect("serializing init write contract should not fail");
 
-        if let Err(_) = parse_contract_str(contract_path, &write_yaml)
+        if let Err(validation_error) = parse_contract_str(contract_path, &write_yaml)
             .map_err(|error| error.to_string())
             .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
         {
-            let mut error = format!(
-                "detected starter includes medium or low confidence fields that are required for a valid contract{}",
-                format_next_timeline(&[
-                    String::from("review `ota init` output"),
-                    String::from("use `ota detect --dry-run` before writing"),
-                ]),
-            );
-            render_inference_section(
-                &mut error,
-                "Excluded from automatic write",
-                excluded_write_inferences(&report),
-            );
+            let error = if bootstrap && validation_error.contains("missing field `project`") {
+                format!(
+                    "bootstrap mode could not infer `project.name` for this repo root{}",
+                    format_next_timeline(&[
+                        String::from(
+                            "if this is a workspace root, run `ota workspace init --bootstrap`",
+                        ),
+                        String::from(
+                            "if you meant a member repo, run `ota init <member-path>` from that repo directory",
+                        ),
+                    ]),
+                )
+            } else if bootstrap {
+                format!(
+                    "bootstrap mode could not produce a valid starter contract from the detected repo signals{}",
+                    format_next_timeline(&[
+                        String::from("review `ota init --dry-run` output"),
+                        String::from("rerun `ota init` without `--bootstrap` for the conservative starter"),
+                    ]),
+                )
+            } else {
+                let mut error = format!(
+                    "detected starter includes medium or low confidence fields that are required for a valid contract{}",
+                    format_next_timeline(&[
+                        String::from("review `ota init --dry-run` output"),
+                        String::from("use `ota detect --dry-run` before writing"),
+                    ]),
+                );
+                render_inference_section(
+                    &mut error,
+                    "Excluded from automatic write",
+                    excluded_write_inferences(&report),
+                );
+                error
+            };
+            let next = Some(if bootstrap {
+                "ota workspace init --bootstrap"
+            } else {
+                "ota detect --dry-run"
+            });
             return match format {
                 OutputFormat::Text => CommandOutput::failure(error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
@@ -4824,7 +4872,7 @@ fn render_init(
                     path: &path_display,
                     written: false,
                     error: &error,
-                    next: Some("ota detect --dry-run"),
+                    next,
                 })),
             };
         }
@@ -4936,6 +4984,40 @@ fn render_init(
             inferred: &report.inferences,
         })),
     }
+}
+
+fn bootstrap_init_contract(report: &DetectReport, bootstrap: bool) -> crate::detector::DetectContract {
+    if !bootstrap {
+        return report.contract.clone();
+    }
+
+    let mut contract = report.contract.clone();
+    if contract.project.is_none()
+        && let Some(name) = directory_name_for_root(&report.root)
+    {
+        contract.project = Some(DetectProject {
+            name,
+        });
+    }
+    contract
+}
+
+fn directory_name_for_root(root: &Path) -> Option<String> {
+    if let Some(name) = root.file_name().and_then(|name| name.to_str())
+        && !name.is_empty()
+        && name != "."
+    {
+        return Some(name.to_string());
+    }
+
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| {
+            cwd.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .filter(|name| !name.is_empty())
 }
 
 fn compare_detected_contract(

@@ -1090,6 +1090,7 @@ fn command_where_label(command: &Commands) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
     #[cfg(unix)]
     use std::hash::{Hash, Hasher};
     #[cfg(unix)]
@@ -1105,6 +1106,24 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{collapse_blank_lines, commands, run_with};
+
+    struct CurrentDirGuard {
+        previous: PathBuf,
+    }
+
+    impl CurrentDirGuard {
+        fn enter(dir: &std::path::Path) -> Self {
+            let previous = std::env::current_dir().unwrap();
+            std::env::set_current_dir(dir).unwrap();
+            Self { previous }
+        }
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
 
     #[cfg(unix)]
     fn install_fake_docker(path: &std::path::Path) {
@@ -4591,6 +4610,53 @@ agent:
         assert!(written.contains("name: tclapp"));
         assert!(written.contains("tclsh: '*"));
         assert!(written.contains("run: tclsh tclapp.tcl"));
+    }
+
+    #[test]
+    fn init_bootstrap_falls_back_to_directory_name_for_project() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "node/Makefile",
+            r#"build:
+	@printf "build\n"
+"#,
+        );
+
+        let node_path = format!("{}/node", fixture.path());
+        let output = run_with(["ota", "init", "--bootstrap", node_path.as_str()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("INIT WRITE"));
+        assert!(output.stdout.contains(
+            "Bootstrap policy: detected mode writes the full detected starter contract"
+        ));
+        let written = fs::read_to_string(fixture.dir.path().join("node").join("ota.yaml")).unwrap();
+        assert!(written.contains("name: node"));
+        let validate = run_with(["ota", "validate", node_path.as_str()]);
+        assert_eq!(validate.exit_code, 0);
+    }
+
+    #[test]
+    fn init_bootstrap_falls_back_to_current_directory_name_for_project() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        let node_dir = fixture.path().join("node");
+        fs::create_dir_all(&node_dir).unwrap();
+        fs::write(
+            node_dir.join("Makefile"),
+            r#"build:
+	@printf "build\n"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(&node_dir);
+        let output = run_with(["ota", "init", "--bootstrap"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("INIT WRITE ."));
+        let written = fs::read_to_string(node_dir.join("ota.yaml")).unwrap();
+        assert!(written.contains("name: node"));
     }
 
     #[test]
