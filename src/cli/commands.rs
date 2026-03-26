@@ -5976,11 +5976,14 @@ fn run_extension_descriptor(
     }
 
     if extension.kind != expected_kind {
+        let mode = match expected_kind {
+            crate::schema::ExtensionKind::Checker => "run",
+            crate::schema::ExtensionKind::Publisher => "publish",
+        };
         return CommandOutput::failure_with_code(
             format!(
-                "extension `{extension_name}` kind `{}` is not executable with `ota extensions --{}`; expected kind: `{}`",
+                "extension `{extension_name}` kind `{}` is not executable with `ota extensions --{mode}`; expected kind: `{}`",
                 extension.kind.as_str(),
-                expected_kind.as_str(),
                 expected_kind.as_str()
             ),
             2,
