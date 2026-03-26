@@ -4827,8 +4827,14 @@ fn render_init(
         {
             let error = if bootstrap && validation_error.contains("missing field `project`") {
                 format!(
-                    "bootstrap mode could not infer `project.name` for this repo root{}",
-                    format_next_timeline(&[
+                    "{}  {}\n{} {}\n{} {}{}",
+                    render_severity(FindingSeverity::Error),
+                    paint("Operation failed", "1;37"),
+                    paint_key("Where:"),
+                    paint_code("ota init"),
+                    error_key("Why:"),
+                    "bootstrap mode could not infer `project.name` for this repo root",
+                    format_error_next_timeline(&[
                         String::from(
                             "if this is a workspace root, run `ota workspace init --bootstrap`",
                         ),
@@ -4839,16 +4845,28 @@ fn render_init(
                 )
             } else if bootstrap {
                 format!(
-                    "bootstrap mode could not produce a valid starter contract from the detected repo signals{}",
-                    format_next_timeline(&[
+                    "{}  {}\n{} {}\n{} {}{}",
+                    render_severity(FindingSeverity::Error),
+                    paint("Operation failed", "1;37"),
+                    paint_key("Where:"),
+                    paint_code("ota init"),
+                    error_key("Why:"),
+                    "bootstrap mode could not produce a valid starter contract from the detected repo signals",
+                    format_error_next_timeline(&[
                         String::from("review `ota init --dry-run` output"),
                         String::from("rerun `ota init` without `--bootstrap` for the conservative starter"),
                     ]),
                 )
             } else {
                 let mut error = format!(
-                    "detected starter includes medium or low confidence fields that are required for a valid contract{}",
-                    format_next_timeline(&[
+                    "{}  {}\n{} {}\n{} {}{}",
+                    render_severity(FindingSeverity::Error),
+                    paint("Operation failed", "1;37"),
+                    paint_key("Where:"),
+                    paint_code("ota init"),
+                    error_key("Why:"),
+                    "detected starter includes medium or low confidence fields that are required for a valid contract",
+                    format_error_next_timeline(&[
                         String::from("review `ota init --dry-run` output"),
                         String::from("use `ota detect --dry-run` before writing"),
                     ]),
@@ -7546,6 +7564,18 @@ fn format_next_timeline(items: &[String]) -> String {
     }
 
     let mut output = format!("\n\n{}", paint_next_header());
+    for item in items {
+        output.push_str(&format!("\n{}  {item}", next_bullet()));
+    }
+    output
+}
+
+fn format_error_next_timeline(items: &[String]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+
+    let mut output = format!("\n\n{}", error_next_key("Next:"));
     for item in items {
         output.push_str(&format!("\n{}  {item}", next_bullet()));
     }
