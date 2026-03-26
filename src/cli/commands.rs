@@ -1243,6 +1243,7 @@ pub fn doctor(
                     .agent
                     .as_ref()
                     .and_then(AgentSummary::from_config);
+                let execution_summary = ExecutionSummary::from_contract(&target.contract);
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -1253,6 +1254,7 @@ pub fn doctor(
                     let mut text_sections = vec![render_doctor_section(
                         &text_path_display,
                         agent_summary.as_ref(),
+                        execution_summary.as_ref(),
                         &target.contract.extensions,
                         &report,
                     )];
@@ -1318,12 +1320,15 @@ pub fn doctor(
                                 .agent
                                 .as_ref()
                                 .and_then(AgentSummary::from_config);
+                            let member_execution =
+                                ExecutionSummary::from_contract(&member_target.contract);
                             text_sections.push(render_doctor_section(
                                 &display_contract_target(
                                     &compact_path_display,
                                     Some(member.as_str()),
                                 ),
                                 member_agent.as_ref(),
+                                member_execution.as_ref(),
                                 &member_target.contract.extensions,
                                 &member_report,
                             ));
@@ -1359,6 +1364,7 @@ pub fn doctor(
                         OutputFormat::Text => render_doctor_text(
                             &text_path_display,
                             agent_summary.as_ref(),
+                            execution_summary.as_ref(),
                             &target.contract.extensions,
                             report,
                         ),
@@ -1440,9 +1446,11 @@ pub fn doctor(
                         .agent
                         .as_ref()
                         .and_then(AgentSummary::from_config);
+                    let execution_summary = ExecutionSummary::from_contract(&target.contract);
                     text_sections.push(render_doctor_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         agent.as_ref(),
+                        execution_summary.as_ref(),
                         &target.contract.extensions,
                         &report,
                     ));
@@ -1540,6 +1548,7 @@ pub fn check(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
                 let report = diagnose_checks_only(&target.contract, &target.contract_path);
+                let execution_summary = ExecutionSummary::from_contract(&target.contract);
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -1551,6 +1560,7 @@ pub fn check(
                         "CHECK",
                         &text_path_display,
                         None,
+                        execution_summary.as_ref(),
                         &report,
                     )];
                     let mut member_results = Vec::new();
@@ -1610,6 +1620,8 @@ pub fn check(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
+                            let member_execution =
+                                ExecutionSummary::from_contract(&member_target.contract);
                             text_sections.push(render_report_section(
                                 "CHECK",
                                 &display_contract_target(
@@ -1617,6 +1629,7 @@ pub fn check(
                                     Some(member.as_str()),
                                 ),
                                 None,
+                                member_execution.as_ref(),
                                 &member_report,
                             ));
                             member_results.push(json!({
@@ -1646,9 +1659,13 @@ pub fn check(
                     }
                 } else {
                     match format {
-                        OutputFormat::Text => {
-                            render_report_text("CHECK", &text_path_display, None, report)
-                        }
+                        OutputFormat::Text => render_report_text(
+                            "CHECK",
+                            &text_path_display,
+                            None,
+                            execution_summary.as_ref(),
+                            report,
+                        ),
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
@@ -1722,10 +1739,12 @@ pub fn check(
                     if !report.ok {
                         overall_ok = false;
                     }
+                    let execution_summary = ExecutionSummary::from_contract(&target.contract);
                     text_sections.push(render_report_section(
                         "CHECK",
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         None,
+                        execution_summary.as_ref(),
                         &report,
                     ));
                     member_results.push(json!({
@@ -5797,10 +5816,11 @@ fn render_tasks_output_text(
 fn render_doctor_text(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let mut output = render_report_text("DOCTOR", path, agent, report);
+    let mut output = render_report_text("DOCTOR", path, agent, execution, report);
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -5810,10 +5830,11 @@ fn render_doctor_text(
 fn render_doctor_section(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    let mut output = render_report_section("DOCTOR", path, agent, report);
+    let mut output = render_report_section("DOCTOR", path, agent, execution, report);
     if !extensions.is_empty() {
         output.push_str(&render_extensions_text(extensions));
     }
@@ -6207,9 +6228,10 @@ fn render_report_text(
     command: &str,
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    execution: Option<&ExecutionSummary<'_>>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let stdout = render_report_section(command, path, agent, &report);
+    let stdout = render_report_section(command, path, agent, execution, &report);
     CommandOutput {
         stdout,
         stderr: None,
@@ -6221,6 +6243,7 @@ fn render_report_section(
     command: &str,
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    execution: Option<&ExecutionSummary<'_>>,
     report: &DoctorReport,
 ) -> String {
     let mut stdout = format!(
@@ -6233,6 +6256,10 @@ fn render_report_section(
             stdout.push('\n');
             stdout.push_str(&summary);
         }
+    }
+
+    if let Some(execution) = execution {
+        stdout.push_str(&render_execution_summary_text(execution));
     }
 
     for finding in &report.findings {
@@ -6274,6 +6301,47 @@ fn render_report_section(
         }
     }
 
+    stdout
+}
+
+fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("Execution")));
+    if let Some(preferred) = execution.preferred {
+        stdout.push_str(&format!("\n{} {}", paint_key("Preferred:"), preferred));
+    }
+    if !execution.supported.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Supported:"),
+            execution.supported.join(", ")
+        ));
+    }
+    if let Some(lifecycle) = execution.lifecycle {
+        stdout.push_str(&format!("\n{} {}", paint_key("Lifecycle:"), lifecycle));
+    }
+    if let Some(backends) = execution.backends.as_ref() {
+        if let Some(container) = backends.container.as_ref() {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Container:"),
+                container.image
+            ));
+        }
+        if let Some(remote) = backends.remote.as_ref() {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Remote Provider:"),
+                remote.provider
+            ));
+            if let Some(target) = remote.target {
+                stdout.push_str(&format!("\n{} {}", paint_key("Remote Target:"), target));
+            }
+            if let Some(cwd) = remote.cwd {
+                stdout.push_str(&format!("\n{} {}", paint_key("Remote Cwd:"), cwd));
+            }
+        }
+    }
     stdout
 }
 

@@ -3735,6 +3735,15 @@ unexpected: true
 version: 1
 project:
   name: ota
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 extensions:
   demo:
     kind: checker
@@ -3759,6 +3768,15 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 extensions:
   demo:
     kind: checker
@@ -4241,6 +4259,15 @@ policies:
 version: 1
 project:
   name: ota
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 extensions:
   demo:
     kind: checker
@@ -4616,6 +4643,15 @@ agent:
 version: 1
 project:
   name: ota
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+      cwd: /workspace
 extensions:
   demo:
     kind: checker
@@ -4631,6 +4667,9 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Execution:"));
+        assert!(stdout.contains("Preferred: remote"));
+        assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Extensions:"));
         assert!(stdout.contains("demo"));
         assert!(stdout.contains("Kind: checker"));
