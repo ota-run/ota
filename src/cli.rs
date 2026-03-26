@@ -5798,11 +5798,7 @@ project:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("MERGED"));
-        assert!(
-            output
-                .stdout
-                .contains("Applied high-confidence additions:")
-        );
+        assert!(output.stdout.contains("Applied high-confidence additions:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
