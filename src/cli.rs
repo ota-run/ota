@@ -5801,7 +5801,7 @@ project:
         assert!(
             output
                 .stdout
-                .contains("Applied selected high-confidence changes:")
+                .contains("Applied high-confidence additions:")
         );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
@@ -6040,6 +6040,13 @@ project:
         assert_eq!(json["comparison"]["existing_contract"], true);
         assert!(
             json["comparison"]["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| change["field"] == "project.name" && change["status"] == "update")
+        );
+        assert!(
+            !json["comparison"]["changes"]
                 .as_array()
                 .unwrap()
                 .iter()
