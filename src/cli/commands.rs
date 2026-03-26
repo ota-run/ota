@@ -4867,8 +4867,15 @@ fn render_init(
                     error_key("Why:"),
                     "detected starter includes medium or low confidence fields that are required for a valid contract",
                     format_error_next_timeline(&[
-                        String::from("review `ota init --dry-run` output"),
-                        String::from("use `ota detect --dry-run` before writing"),
+                        String::from(
+                            "preview the exact contract Ota would write with `ota init --dry-run`",
+                        ),
+                        String::from(
+                            "run `ota init --bootstrap` to write the fuller starter contract, including lower-confidence fields",
+                        ),
+                        String::from(
+                            "run `ota detect --write` for the high-confidence contract path",
+                        ),
                     ]),
                 );
                 render_inference_section(
