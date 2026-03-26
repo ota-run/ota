@@ -109,6 +109,7 @@ Current progress behavior:
 - `ota doctor` and `ota check` keep their own check/progress handling
 - `ota run` and `ota up` keep streaming/progress-focused behavior instead of the shared spinner
 - `ota workspace doctor` uses the shared spinner
+- `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
 
 ## Current exit semantics

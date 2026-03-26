@@ -506,7 +506,6 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
     io::stderr().is_terminal()
         && !cli.plain
         && !cli.debug
-        && !command_requests_json(&cli.command)
         && matches!(
             &cli.command,
             Commands::Validate { .. }
@@ -524,6 +523,13 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                         | WorkspaceCommands::Up { quiet: false, .. },
                 }
         )
+        && (!command_requests_json(&cli.command)
+            || matches!(
+                &cli.command,
+                Commands::Workspace {
+                    command: WorkspaceCommands::Doctor { .. }
+                }
+            ))
 }
 
 fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
