@@ -65,6 +65,24 @@
         }
       }
     },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "command", "api_version"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["checker", "publisher"]
+          },
+          "command": { "type": "string" },
+          "api_version": { "type": "integer", "minimum": 1 },
+          "description": { "type": "string" },
+          "config": { "type": "object" }
+        }
+      }
+    },
     "findings": {
       "type": "array",
       "items": { "$ref": "./shared.json#/$defs/finding" }

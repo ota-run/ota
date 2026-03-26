@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
 use crate::parser::{LoadContractError, load_contract};
-use crate::schema::{Backend, Contract, Lifecycle};
+use crate::schema::{Backend, Contract, ExtensionSpec, Lifecycle};
 use crate::validator::validate_contract;
 
 pub const DEFAULT_WORKSPACE_FILE: &str = "ota.workspace.yaml";
@@ -182,6 +182,8 @@ pub struct WorkspaceRepoDoctorReport {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<WorkspaceExecutionSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: BTreeMap<String, ExtensionSpec>,
     pub findings: Vec<Finding>,
 }
 
@@ -573,15 +575,18 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             required: repo.required,
             ok: !repo.required,
             execution: None,
+            extensions: BTreeMap::new(),
             findings,
         };
     }
 
     let mut execution = None;
+    let mut extensions = BTreeMap::new();
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
                 execution = WorkspaceExecutionSummary::from_contract(&contract);
+                extensions = contract.extensions.clone();
                 adjust_repo_findings(
                     diagnose_contract(&contract, &repo.contract_path),
                     repo.required,
@@ -649,6 +654,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
         required: repo.required,
         ok,
         execution,
+        extensions,
         findings,
     }
 }

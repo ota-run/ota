@@ -21,11 +21,13 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
 use crate::schema::{
-    AgentConfig, Backend, Contract, Lifecycle, ServiceSpec, TaskSpec, TaskVariantView,
+    AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskSpec,
+    TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
@@ -54,6 +56,8 @@ pub struct DoctorSuccess<'a> {
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<ExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub extensions: &'a BTreeMap<String, ExtensionSpec>,
     pub findings: &'a [Finding],
 }
 

@@ -164,6 +164,23 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// List staged extension descriptors from an Ota contract.
+    Extensions {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Execute a named extension descriptor via its configured command.
+        #[arg(long, conflicts_with = "publish")]
+        run: Option<String>,
+        /// Publish a named extension descriptor via its configured command.
+        #[arg(long, conflicts_with = "run")]
+        publish: Option<String>,
+        /// Run the command against one or more monorepo members declared by the root contract.
+        #[arg(long)]
+        member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Prepare the repo for use with minimal prior knowledge.
     Up {
         /// Print machine-readable JSON output.
@@ -508,6 +525,9 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
         Commands::Validate { .. }
             | Commands::Tasks { .. }
             | Commands::Services { .. }
+            | Commands::Doctor { .. }
+            | Commands::Check { .. }
+            | Commands::Extensions { .. }
             | Commands::Init { .. }
             | Commands::Detect { .. }
             | Commands::Workspace {
@@ -522,9 +542,12 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
     );
     let json_spinner_exception = matches!(
         &cli.command,
-        Commands::Workspace {
-            command: WorkspaceCommands::Doctor { .. } | WorkspaceCommands::List { .. }
-        }
+        Commands::Doctor { .. }
+            | Commands::Check { .. }
+            | Commands::Extensions { .. }
+            | Commands::Workspace {
+                command: WorkspaceCommands::Doctor { .. } | WorkspaceCommands::List { .. }
+            }
     );
 
     io::stderr().is_terminal()
@@ -627,6 +650,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Services { json: true, .. }
             | Commands::Doctor { json: true, .. }
             | Commands::Check { json: true, .. }
+            | Commands::Extensions { json: true, .. }
             | Commands::Init { json: true, .. }
             | Commands::Detect { json: true, .. }
     ));
@@ -689,6 +713,21 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             &member,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Extensions {
+            json,
+            run,
+            publish,
+            member,
+            path,
+        } => commands::extensions(
+            path.as_deref(),
+            file.as_deref(),
+            &member,
+            run.as_deref(),
+            publish.as_deref(),
             format_from_json(json),
             debug,
         ),
@@ -1000,6 +1039,13 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Services { .. } => REPO_SETUP_SUGGESTION,
         Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
+        Commands::Extensions { run, .. } => {
+            if run.is_some() {
+                "inspect available extensions with `ota extensions`"
+            } else {
+                REPO_SETUP_SUGGESTION
+            }
+        }
         Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota doctor",
@@ -1064,6 +1110,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
         | Commands::Doctor { json, .. }
+        | Commands::Extensions { json, .. }
         | Commands::Init { json, .. }
         | Commands::Check { json, .. }
         | Commands::Up { json, .. }
@@ -1090,6 +1137,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Services { .. } => "ota services",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
+        Commands::Extensions { .. } => "ota extensions",
         Commands::Init { .. } => "ota init",
         Commands::Check { .. } => "ota check",
         Commands::Up { .. } => "ota up",
@@ -3689,7 +3737,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: check_provider
+    kind: checker
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -3713,7 +3761,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: check_provider
+    kind: checker
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -4193,6 +4241,11 @@ policies:
 version: 1
 project:
   name: ota
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
 execution:
   preferred: remote
   supported:
@@ -4222,6 +4275,9 @@ tasks:
             "user@host"
         );
         assert_eq!(json["execution"]["backends"]["remote"]["cwd"], "/workspace");
+        assert_eq!(json["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
+        assert_eq!(json["extensions"]["demo"]["api_version"], 1);
     }
 
     #[test]
@@ -4551,6 +4607,220 @@ agent:
                 .stdout
                 .contains("AGENT entrypoint=setup safe_tasks=setup")
         );
+    }
+
+    #[test]
+    fn doctor_text_lists_extensions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Extensions:"));
+        assert!(stdout.contains("demo"));
+        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Command: ota-ext-demo"));
+    }
+
+    #[test]
+    fn extensions_text_lists_descriptors() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("EXTENSIONS"));
+        assert!(stdout.contains("demo"));
+        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Command: ota-ext-demo"));
+    }
+
+    #[test]
+    fn extensions_json_reports_descriptors() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
+        assert_eq!(json["extensions"]["demo"]["api_version"], 1);
+    }
+
+    #[test]
+    fn extensions_run_executes_allowed_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: echo extension-run
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--run", "demo", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("EXTENSION RUN"));
+        assert!(stdout.contains("demo"));
+        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Command: echo extension-run"));
+        assert!(stdout.contains("Exit Code: 0"));
+        assert!(stdout.contains("Stdout:"));
+        assert!(stdout.contains("extension-run"));
+    }
+
+    #[test]
+    fn extensions_run_json_reports_execution_result() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: echo extension-run
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "extensions",
+            "--run",
+            "demo",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["extension"]["name"], "demo");
+        assert_eq!(json["extension"]["kind"], "checker");
+        assert_eq!(json["extension"]["command"], "echo extension-run");
+        assert_eq!(json["extension"]["api_version"], 1);
+        assert_eq!(json["exit_code"], 0);
+        assert!(json["stdout"].as_str().unwrap().contains("extension-run"));
+    }
+
+    #[test]
+    fn extensions_text_lists_publisher_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  release-upload:
+    kind: publisher
+    command: ota-ext-upload
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("release-upload"));
+        assert!(stdout.contains("Kind: publisher"));
+        assert!(stdout.contains("Command: ota-ext-upload"));
+    }
+
+    #[test]
+    fn extensions_publish_executes_publisher_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  release-upload:
+    kind: publisher
+    command: echo release-upload
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "extensions",
+            "--publish",
+            "release-upload",
+            fixture.path(),
+        ]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("EXTENSION RUN"));
+        assert!(stdout.contains("release-upload"));
+        assert!(stdout.contains("Kind: publisher"));
+        assert!(stdout.contains("Command: echo release-upload"));
     }
 
     #[test]
@@ -8444,6 +8714,49 @@ repos:
     }
 
     #[test]
+    fn workspace_doctor_text_lists_extensions() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
+tasks:
+  setup:
+    run: cargo build
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Extensions:"));
+        assert!(stdout.contains("demo"));
+        assert!(stdout.contains("Kind: checker"));
+    }
+
+    #[test]
     fn workspace_doctor_stream_emits_progress_updates() {
         let fixture = WorkspaceFixture::new();
         fs::write(
@@ -8523,6 +8836,11 @@ repos:
 version: 1
 project:
   name: web
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
 execution:
   preferred: remote
   supported:
@@ -8562,6 +8880,12 @@ env:
             json["repos"][0]["execution"]["backends"]["remote"]["cwd"],
             "/workspace"
         );
+        assert_eq!(json["repos"][0]["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(
+            json["repos"][0]["extensions"]["demo"]["command"],
+            "ota-ext-demo"
+        );
+        assert_eq!(json["repos"][0]["extensions"]["demo"]["api_version"], 1);
         assert_eq!(
             json["repos"][0]["findings"][0]["summary"],
             "Missing environment variable: OTA_WORKSPACE_REQUIRED"

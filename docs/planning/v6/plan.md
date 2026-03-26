@@ -27,6 +27,7 @@
 Status: active.
 
 Source direction:
+
 - [/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
 - [Extension execution boundary](/Users/bobai/Workspace/Ota.run/ota/docs/spec/extension-execution-boundary.md)
 - [Compatibility policy](/Users/bobai/Workspace/Ota.run/ota/docs/spec/compatibility-policy.md)
@@ -59,26 +60,31 @@ V6 theme:
 ## Execution slices
 
 1. Extension contract rollout
+
 - keep top-level extension behavior contract-bound
 - preserve the current rejection boundary until extension execution is ready
 - align to the normative extension contract target
 
-2. Compatibility and adapter stability
+1. Compatibility and adapter stability
+
 - keep compatibility rules explicit and testable
 - preserve command/JSON/exit stability while the ecosystem widens
 - align adapter behavior to the documented compatibility policy
 
-3. Remote runner and editor integration
+1. Remote runner and editor integration
+
 - surface integration metadata in a stable shape
 - keep editor/IDE use cases first-class without changing core execution semantics
 
-4. Mutation controls and caching
+1. Mutation controls and caching
+
 - keep write paths explicit and bounded
 - use caching only where it improves determinism and operator trust
 
 ## Current progress
 
-- extension execution boundary documented and enforced at the validation layer
+- extension contract is discoverable and `ota extensions --run <name>` provides the explicit
+  execution seam
 - compatibility policy documented
 - remote-runner/editor surface documented
 - mutation/caching target documented

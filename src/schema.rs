@@ -34,7 +34,7 @@ pub struct Contract {
     #[serde(default)]
     pub execution: Option<Execution>,
     #[serde(default)]
-    pub extensions: BTreeMap<String, serde_yaml::Value>,
+    pub extensions: BTreeMap<String, ExtensionSpec>,
     #[serde(default)]
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
     #[serde(default)]
@@ -101,6 +101,40 @@ pub struct ExecutionBackends {
     pub container: Option<ContainerBackend>,
     #[serde(default)]
     pub remote: Option<RemoteBackend>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionSpec {
+    pub kind: ExtensionKind,
+    pub command: String,
+    pub api_version: u32,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub config: BTreeMap<String, serde_yaml::Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtensionKind {
+    Checker,
+    Publisher,
+}
+
+impl ExtensionKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Checker => "checker",
+            Self::Publisher => "publisher",
+        }
+    }
+}
+
+impl std::fmt::Display for ExtensionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Deserialize)]
