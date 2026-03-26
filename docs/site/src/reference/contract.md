@@ -91,7 +91,7 @@ execution:
   preferred: native
 extensions:
   demo:
-    kind: check_provider
+    kind: checker
     command: ota-ext-demo
     api_version: 1
 agent:
@@ -134,14 +134,61 @@ Use `checks` for explicit preconditions and health checks that should be run and
 
 Use `tasks` for deterministic repo commands such as `setup`, `test`, `lint`, and `dev`.
 
+Example flow:
+
+```yaml
+tasks:
+  setup:
+    run: pnpm install
+  build:
+    depends_on:
+      - setup
+    run: pnpm build
+  package:
+    depends_on:
+      - build
+    run: tar -czf dist/release.tar.gz dist/
+  upload:
+    depends_on:
+      - package
+    run: ./scripts/upload-artifact.sh dist/release.tar.gz
+```
+
 ### `execution`
 
 Use `execution` to describe where Ota should run those tasks when native execution is not enough.
 
 ### `extensions`
 
-Use `extensions` for staged extension-contract data. Ota parses the field, but the runtime does
-not execute extension providers yet.
+Use `extensions` for adapter contract data. Each entry is a typed adapter descriptor with `kind`,
+`command`, and `api_version`, plus optional `description` and `config`. Supported kinds today are
+`checker` and `publisher`. `checker` is runnable with `ota extensions --run <name>` when
+`api_version: 1` is declared. `publisher` is runnable with `ota extensions --publish <name>` when
+`api_version: 1` is declared. The validator requires `kind` to be one of the supported kinds,
+`command` to be non-empty, and `api_version` to be greater than zero.
+
+Real-world uses include:
+
+- uploading a release artifact bundle to an internal endpoint
+- publishing scan or compliance reports through one standard adapter
+- exposing a custom checker, codegen helper, or sync tool in a stable contract slot
+
+Example:
+
+```yaml
+extensions:
+  release-upload:
+    kind: publisher
+    command: ota-ext-upload
+    api_version: 1
+    description: Upload the release bundle to the artifact endpoint
+    config:
+      endpoint: https://artifacts.example.com/upload
+      artifact: dist/release.zip
+```
+
+Use `ota extensions` to inspect the contract data. Use `ota extensions --run <name>` for
+`checker` descriptors and `ota extensions --publish <name>` for `publisher` descriptors.
 
 ### `agent`
 

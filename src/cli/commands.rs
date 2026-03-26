@@ -58,7 +58,7 @@ use crate::runner::{
     run_task_captured_with_overrides, run_task_with_overrides,
     run_task_with_progress_and_overrides,
 };
-use crate::schema::{Contract, Lifecycle};
+use crate::schema::{Contract, ExtensionSpec, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
@@ -1253,6 +1253,7 @@ pub fn doctor(
                     let mut text_sections = vec![render_doctor_section(
                         &text_path_display,
                         agent_summary.as_ref(),
+                        &target.contract.extensions,
                         &report,
                     )];
                     let mut member_results = Vec::new();
@@ -1323,6 +1324,7 @@ pub fn doctor(
                                     Some(member.as_str()),
                                 ),
                                 member_agent.as_ref(),
+                                &member_target.contract.extensions,
                                 &member_report,
                             ));
                             member_results.push(json!({
@@ -1354,9 +1356,12 @@ pub fn doctor(
                     }
                 } else {
                     match format {
-                        OutputFormat::Text => {
-                            render_doctor_text(&text_path_display, agent_summary.as_ref(), report)
-                        }
+                        OutputFormat::Text => render_doctor_text(
+                            &text_path_display,
+                            agent_summary.as_ref(),
+                            &target.contract.extensions,
+                            report,
+                        ),
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
@@ -1365,6 +1370,7 @@ pub fn doctor(
                                     path: &path_display,
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
+                                    extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
                                 stderr: None,
@@ -1437,6 +1443,7 @@ pub fn doctor(
                     text_sections.push(render_doctor_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         agent.as_ref(),
+                        &target.contract.extensions,
                         &report,
                     ));
                     member_results.push(json!({
@@ -1650,6 +1657,7 @@ pub fn check(
                                     path: &path_display,
                                     agent: None,
                                     execution: ExecutionSummary::from_contract(&target.contract),
+                                    extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
                                 stderr: None,
@@ -1743,6 +1751,299 @@ pub fn check(
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
                     },
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn extensions(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    run_name: Option<&str>,
+    publish_name: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=extensions")],
+        );
+    }
+
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=extensions")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=extensions"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    for member in members {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    if (run_name.is_some() || publish_name.is_some()) && members.len() > 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from(
+                    "extension execution supports only one target at a time; use `--member <name>` or run from the desired member directory",
+                ),
+                2,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) if members.is_empty() || members.len() == 1 => {
+                if let Some(extension_name) = run_name {
+                    return finalize_debug(
+                        run_extension_descriptor(
+                            &target.contract,
+                            &target.contract_path,
+                            &text_path_display,
+                            extension_name,
+                            crate::schema::ExtensionKind::Checker,
+                            format,
+                        ),
+                        debug,
+                        debug_lines,
+                    );
+                }
+                if let Some(extension_name) = publish_name {
+                    return finalize_debug(
+                        run_extension_descriptor(
+                            &target.contract,
+                            &target.contract_path,
+                            &text_path_display,
+                            extension_name,
+                            crate::schema::ExtensionKind::Publisher,
+                            format,
+                        ),
+                        debug,
+                        debug_lines,
+                    );
+                }
+
+                if members.is_empty()
+                    && target.contract_path == resolved_path
+                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                    })
+                {
+                    let mut text_sections = vec![render_extensions_output_text(
+                        &text_path_display,
+                        &target.contract.extensions,
+                    )];
+                    let mut member_results = Vec::new();
+
+                    if let Some(workspace) = target.contract.workspace.as_ref() {
+                        for member in &workspace.members {
+                            let member_target =
+                                match load_and_validate_target(&resolved_path, Some(member)) {
+                                    Ok(target) => target,
+                                    Err(ContractProblem::Validation(errors)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                    Err(ContractProblem::Load(error)) => {
+                                        return finalize_debug(
+                                            match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                    }),
+                                                ),
+                                            },
+                                            debug,
+                                            debug_lines,
+                                        );
+                                    }
+                                };
+                            text_sections.push(render_extensions_output_text(
+                                &display_contract_target(
+                                    &compact_path_display,
+                                    Some(member.as_str()),
+                                ),
+                                &member_target.contract.extensions,
+                            ));
+                            member_results.push(json!({
+                                "member": member,
+                                "extensions": member_target.contract.extensions,
+                            }));
+                        }
+                    }
+
+                    match format {
+                        OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                            "ok": true,
+                            "path": path_display,
+                            "extensions": target.contract.extensions,
+                            "members": member_results,
+                        }))),
+                    }
+                } else {
+                    match format {
+                        OutputFormat::Text => {
+                            CommandOutput::success(render_extensions_output_text(
+                                &text_path_display,
+                                &target.contract.extensions,
+                            ))
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                            "ok": true,
+                            "path": path_display,
+                            "extensions": target.contract.extensions,
+                            "members": [],
+                        }))),
+                    }
+                }
+            }
+            Ok(_) => {
+                if run_name.is_some() || publish_name.is_some() {
+                    return finalize_debug(
+                        CommandOutput::failure_with_code(
+                            String::from(
+                                "extension execution supports only a single target; run it from the desired member directory or pass `--member <name>`",
+                            ),
+                            2,
+                        ),
+                        debug,
+                        debug_lines,
+                    );
+                }
+
+                let mut text_sections = Vec::new();
+                let mut member_results = Vec::new();
+                for member in members {
+                    let target =
+                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                            Ok(target) => target,
+                            Err(ContractProblem::Validation(errors)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(errors.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ValidateFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: errors
+                                                    .errors()
+                                                    .iter()
+                                                    .map(ToString::to_string)
+                                                    .collect(),
+                                                error: None,
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                            Err(ContractProblem::Load(error)) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(error.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ValidateFailure {
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: Vec::new(),
+                                                error: Some(error.to_string()),
+                                            }))
+                                        }
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
+                    text_sections.push(render_extensions_output_text(
+                        &display_contract_target(&compact_path_display, Some(member.as_str())),
+                        &target.contract.extensions,
+                    ));
+                    member_results.push(json!({
+                        "member": member,
+                        "extensions": target.contract.extensions,
+                    }));
+                }
+
+                match format {
+                    OutputFormat::Text => CommandOutput::success(text_sections.join("\n\n")),
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": path_display,
+                        "members": member_results,
+                    }))),
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
@@ -5496,17 +5797,27 @@ fn render_tasks_output_text(
 fn render_doctor_text(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    render_report_text("DOCTOR", path, agent, report)
+    let mut output = render_report_text("DOCTOR", path, agent, report);
+    if !extensions.is_empty() {
+        output.stdout.push_str(&render_extensions_text(extensions));
+    }
+    output
 }
 
 fn render_doctor_section(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
+    extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    render_report_section("DOCTOR", path, agent, report)
+    let mut output = render_report_section("DOCTOR", path, agent, report);
+    if !extensions.is_empty() {
+        output.push_str(&render_extensions_text(extensions));
+    }
+    output
 }
 
 fn render_workspace_doctor_text(
@@ -5544,6 +5855,10 @@ fn render_workspace_doctor_text(
             ));
         }
 
+        if !repo.extensions.is_empty() {
+            stdout.push_str(&render_extensions_text(&repo.extensions));
+        }
+
         for finding in &repo.findings {
             let next = compact_backticked_paths(&finding.next);
             if concise_mode() {
@@ -5574,6 +5889,195 @@ fn render_workspace_doctor_text(
         stderr: None,
         exit_code: if report.ok { 0 } else { 1 },
     }
+}
+
+fn render_extensions_output_text(
+    path: &str,
+    extensions: &BTreeMap<String, ExtensionSpec>,
+) -> String {
+    format!(
+        "{}\n{}",
+        format_command_header("EXTENSIONS", path),
+        render_extensions_text(extensions)
+    )
+}
+
+fn render_extension_run_text(
+    path: &str,
+    extension_name: &str,
+    extension: &ExtensionSpec,
+    result: &CommandRunResult,
+) -> String {
+    let mut stdout = format_command_header("EXTENSION RUN", &format!("{extension_name} {path}"));
+    stdout.push_str(&format!("\n  {} {}", paint_key("Name:"), extension_name));
+    stdout.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Kind:"),
+        extension.kind.as_str()
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Command:"),
+        extension.command
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {}",
+        paint_key("API Version:"),
+        extension.api_version
+    ));
+    stdout.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Exit Code:"),
+        result.exit_code
+    ));
+
+    if !result.stdout.trim().is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_key("Stdout:")));
+        stdout.push_str(&format!("\n{}", result.stdout.trim_end()));
+    }
+
+    if !result.stderr.trim().is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_key("Stderr:")));
+        stdout.push_str(&format!("\n{}", result.stderr.trim_end()));
+    }
+
+    stdout
+}
+
+fn run_extension_descriptor(
+    contract: &Contract,
+    contract_path: &Path,
+    text_path_display: &str,
+    extension_name: &str,
+    expected_kind: crate::schema::ExtensionKind,
+    format: OutputFormat,
+) -> CommandOutput {
+    let extension = match contract.extensions.get(extension_name) {
+        Some(extension) => extension,
+        None => {
+            return CommandOutput::failure_with_code(
+                format!(
+                    "extension `{extension_name}` is not declared in `{}`",
+                    contract_path.display()
+                ),
+                2,
+            );
+        }
+    };
+
+    if extension.api_version != 1 {
+        return CommandOutput::failure_with_code(
+            format!(
+                "extension `{extension_name}` declares unsupported `api_version {}`; expected `1`",
+                extension.api_version
+            ),
+            2,
+        );
+    }
+
+    if extension.kind != expected_kind {
+        return CommandOutput::failure_with_code(
+            format!(
+                "extension `{extension_name}` kind `{}` is not executable with `ota extensions --{}`; expected kind: `{}`",
+                extension.kind.as_str(),
+                expected_kind.as_str(),
+                expected_kind.as_str()
+            ),
+            2,
+        );
+    }
+
+    let working_dir = contract_working_dir(contract_path);
+    let result =
+        match run_shell_command(&extension.command, working_dir, RepoExecutionMode::Capture) {
+            Ok(result) => result,
+            Err(error) => {
+                return CommandOutput::failure_with_code(
+                    format!("failed to execute extension `{extension_name}`: {error}"),
+                    1,
+                );
+            }
+        };
+
+    match format {
+        OutputFormat::Text => {
+            let mut stdout =
+                render_extension_run_text(text_path_display, extension_name, extension, &result);
+            if result.exit_code != 0 {
+                stdout.push_str(&format!("\n\n{}", error_key("Extension run failed.")));
+            }
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: result.exit_code,
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json_value(json!({
+                "ok": result.exit_code == 0,
+                "path": contract_path.display().to_string(),
+                "extension": {
+                    "name": extension_name,
+                    "kind": extension.kind,
+                    "command": extension.command,
+                    "api_version": extension.api_version,
+                    "description": extension.description,
+                    "config": extension.config,
+                },
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            })),
+            stderr: None,
+            exit_code: result.exit_code,
+        },
+    }
+}
+
+fn render_extensions_text(extensions: &BTreeMap<String, ExtensionSpec>) -> String {
+    if extensions.is_empty() {
+        return String::new();
+    }
+
+    let mut stdout = String::from("\n");
+    stdout.push_str(&format!("\n{}", paint_key("Extensions:")));
+
+    for (name, extension) in extensions {
+        stdout.push_str(&format!("\n{} {}", list_bullet(), paint(name, "1")));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Kind:"),
+            extension.kind.as_str()
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Command:"),
+            extension.command
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            paint_key("API Version:"),
+            extension.api_version
+        ));
+        if let Some(description) = extension.description.as_deref() {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Description:"),
+                description
+            ));
+        }
+        if !extension.config.is_empty() {
+            let keys = extension
+                .config
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(",");
+            stdout.push_str(&format!("\n  {} {}", paint_key("Config Keys:"), keys));
+        }
+    }
+
+    stdout
 }
 
 fn apply_workspace_doctor_filters(
@@ -9182,6 +9686,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             required: repo.required,
             ok: !repo.required,
             execution: None,
+            extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
                     FindingSeverity::Error
@@ -9220,6 +9725,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     required: repo.required,
                     ok: !repo.required,
                     execution: WorkspaceExecutionSummary::from_contract(&contract),
+                    extensions: contract.extensions.clone(),
                     findings: error
                         .errors()
                         .iter()
@@ -9255,6 +9761,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     .iter()
                     .any(|finding| finding.severity == FindingSeverity::Error),
                 execution: WorkspaceExecutionSummary::from_contract(&contract),
+                extensions: contract.extensions.clone(),
                 findings,
             }
         }
@@ -9265,6 +9772,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             required: repo.required,
             ok: !repo.required,
             execution: None,
+            extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
                     FindingSeverity::Error

@@ -73,6 +73,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_project(contract, &mut errors);
     validate_repo_workspace(contract, &mut errors);
     validate_execution(contract, &mut errors);
+    validate_extensions(contract, &mut errors);
     validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
         value.version()
     });
@@ -255,6 +256,28 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         } else {
             errors.push(ValidationError::new(format!(
                 "`execution.preferred: remote` with provider `{provider}` requires `execution.backends.remote.target` (example: `{example}`)"
+            )));
+        }
+    }
+}
+
+fn validate_extensions(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, extension) in &contract.extensions {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new("extension names must not be empty"));
+        }
+
+        if extension.command.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "extension `{}` must not declare an empty `command`",
+                name
+            )));
+        }
+
+        if extension.api_version == 0 {
+            errors.push(ValidationError::new(format!(
+                "extension `{}` must declare `api_version` greater than zero",
+                name
             )));
         }
     }
@@ -712,6 +735,29 @@ tasks:
     }
 
     #[test]
+    fn validates_extension_descriptors() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+    kind: checker
+    command: ota-ext-demo
+    api_version: 1
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
     fn validates_runtime_distribution() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -757,6 +803,42 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "runtime `java` must not declare an empty `distribution`"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_extension_descriptor_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  demo:
+        kind: checker
+        command: " "
+        api_version: 0
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 2);
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error.to_string().contains("empty `command`"))
+        );
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error.to_string().contains("greater than zero"))
         );
     }
 

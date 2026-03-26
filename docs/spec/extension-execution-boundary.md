@@ -29,8 +29,12 @@ This document defines the current implementation boundary for extensions during 
 ## Current boundary (shipped)
 
 - Ota core commands do not execute extension providers at runtime.
-- Top-level `extensions` in `ota.yaml` is parsed as inert contract data, but Ota does not execute
-  extension providers yet.
+- Top-level `extensions` in `ota.yaml` is parsed for discovery and inspection.
+- Supported kinds today are `checker` and `publisher`.
+- `ota extensions --run <name>` can execute one explicitly named `checker` descriptor with
+  `api_version: 1`.
+- `ota extensions --publish <name>` can execute one explicitly named `publisher` descriptor with
+  `api_version: 1`.
 - `ota doctor`, `ota check`, `ota run`, `ota up`, and `ota export` behavior remains core-only.
 
 ## Why this boundary exists
@@ -45,10 +49,11 @@ The normative extension contract target is:
 
 - [21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
 
-Earlier compatibility and protocol work can prepare the surface, but runtime extension execution is deferred until V6 implementation slices are active.
+Earlier compatibility and protocol work can prepare the surface, but runtime extension execution is
+still constrained to the explicit `ota extensions --run <name>` seam.
 
 ## Enforcement in this repo
 
-- validation accepts `extensions` as inert contract data today
+- validation accepts `extensions` as contract data today
 - compatibility tests guard current JSON/exit contracts
 - no command path should silently load or execute extension commands

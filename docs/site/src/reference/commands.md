@@ -93,6 +93,7 @@ Why:
 
 - shows actionable blockers and warnings with explicit next steps
 - `--concise` keeps severity/summary/next action and omits `Why` detail
+- also surfaces inert top-level `extensions` entries so adapter metadata is visible without execution
 
 Use-case:
 
@@ -111,6 +112,45 @@ set -euo pipefail
 
 # fail fast in CI if repo is not ready
 ota doctor --json | tee .ota-doctor.json
+```
+
+### `ota extensions`
+
+When to use:
+
+- when you want to inspect staged extension descriptors or explicitly run one allowlisted
+  descriptor
+
+Why:
+
+- shows typed adapter metadata in one command
+- keeps extension discovery contract-driven and deterministic
+- `ota extensions --run <name>` executes one explicit `checker` descriptor with
+  `api_version: 1`
+- `ota extensions --publish <name>` executes one explicit `publisher` descriptor with
+  `api_version: 1`
+- makes external adapter use cases visible, such as publishers, compliance scanners, and
+  codegen helpers
+
+Use-case:
+
+- editor or CI tooling wants to confirm what extension descriptors a repo declares, or a release
+  operator wants to run one named publisher against an artifact endpoint
+
+```bash
+ota extensions
+ota extensions --json
+ota extensions --run demo-check
+ota extensions --publish release-upload
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota extensions --json | tee .ota-extensions.json
 ```
 
 ### `ota up`

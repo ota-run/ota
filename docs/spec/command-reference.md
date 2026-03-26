@@ -236,6 +236,49 @@ JSON output:
 - repeated `--member` values return grouped per-member results in `members`
 - failure: `ok`, `path`, and either `errors` or `error`
 
+## `ota extensions`
+
+List staged extension descriptors declared in `ota.yaml`.
+
+```bash
+ota extensions [PATH]
+ota extensions --json [PATH]
+ota extensions --member api [PATH]
+ota extensions --run demo-check [PATH]
+ota extensions --publish release-upload [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when a root contract declares `workspace.type: monorepo`, plain `ota extensions` lists root
+  descriptors and grouped member results for each declared member
+- when `--member` is set, lists descriptors from the merged member contract
+- repeated `--member` values list descriptors for those members in the provided order
+- `ota extensions --run <name>` executes one explicitly named, allowlisted descriptor in the
+  current repo or member context
+- `ota extensions --publish <name>` executes one explicitly named, allowlisted `publisher`
+  descriptor in the current repo or member context
+- execution currently accepts `kind: checker` descriptors with `api_version: 1`
+- execution currently accepts `kind: publisher` descriptors with `api_version: 1`
+- the seam is useful for external adapter contracts such as publishers, compliance
+  scanners, and codegen helpers that should be discoverable without being hidden in shell scripts
+
+Text output:
+
+- header: `EXTENSIONS <path>`
+- each descriptor may include `kind`, `command`, `api_version`, `description`, and `config`
+- the report is read-only unless `--run <name>` is set
+
+JSON output:
+
+- success: `ok`, `path`, `extensions`
+- monorepo root summaries include grouped per-member results in `members`
+- repeated `--member` values return grouped per-member results in `members`
+- `--run <name>` returns the executed descriptor, `exit_code`, and captured `stdout`/`stderr`
+- `--publish <name>` returns the executed descriptor, `exit_code`, and captured `stdout`/`stderr`
+- failure: `ok`, `path`, and either `errors` or `error`
+
 ## `ota run`
 
 Run a validated task.
@@ -298,6 +341,7 @@ Current behavior:
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
 - runs declared service healthchecks
+- shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
 - warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run` and the `setup` phase of `ota up`, not the full repo lifecycle

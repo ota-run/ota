@@ -144,8 +144,18 @@ additive policy keys may appear there as well.
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume.
 
+`ota doctor --json` may also include an `extensions` object when the contract declares top-level
+extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
+`api_version`, plus optional `description` and `config`. Supported kinds today are `checker` and
+`publisher`. The field is parsed and preserved for discovery, and `ota extensions --run <name>`
+can execute one explicitly named `checker` descriptor with `api_version: 1`; `ota extensions
+--publish <name>` can execute one explicitly named `publisher` descriptor with `api_version: 1`.
+
 `ota workspace doctor --json` may include the same `execution` object on each repo item when the
 underlying repo contract declares execution metadata.
+
+`ota workspace doctor --json` may also include the same `extensions` object on each repo item when
+the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
 
 Root monorepo summary output can also include grouped member findings under `members`.
 

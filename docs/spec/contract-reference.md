@@ -64,7 +64,7 @@ execution:
     - native
 extensions:
   demo:
-    kind: check_provider
+    kind: checker
     command: ota-ext-demo
     api_version: 1
 runtimes:
@@ -92,8 +92,37 @@ metadata:
   team: platform
 ```
 
-Top-level `extensions` is now recognized as inert contract data.
-Ota parses it and preserves the V6 boundary by not executing extension providers yet.
+Top-level `extensions` is now recognized as adapter contract data.
+Each entry is a typed adapter descriptor with `kind`, `command`, and `api_version`, plus optional
+`description` and `config`.
+Supported kinds today are `checker` and `publisher`.
+`checker` is runnable with `ota extensions --run <name>` when `api_version: 1` is declared.
+`publisher` is runnable with `ota extensions --publish <name>` when `api_version: 1` is declared.
+The validator requires `kind` to be one of the supported kinds, `command` to be non-empty, and
+`api_version` to be greater than zero.
+
+Real-world use cases:
+
+- upload a release artifact bundle to an internal endpoint
+- publish scan or compliance reports through one standard adapter
+- expose a custom checker, codegen helper, or sync tool in a stable contract slot
+
+Example:
+
+```yaml
+extensions:
+  release-upload:
+    kind: publisher
+    command: ota-ext-upload
+    api_version: 1
+    description: Upload the release bundle to the artifact endpoint
+    config:
+      endpoint: https://artifacts.example.com/upload
+      artifact: dist/release.zip
+```
+
+Use `ota extensions` to inspect this contract data. Use `ota extensions --run <name>` for
+`checker` descriptors and `ota extensions --publish <name>` for `publisher` descriptors.
 For the staged execution boundary and V6 target contract, see
 [extension-execution-boundary.md](extension-execution-boundary.md).
 
@@ -399,23 +428,27 @@ tasks:
     category: setup
     run: pnpm install
     safe_for_agent: true
-  dev:
+  build:
     depends_on:
       - setup
-    script: pnpm dev
-  dev_clean:
+    run: pnpm build
+  package:
     depends_on:
-      - setup
-      - reset_db
-    script: pnpm dev
-  reset_db:
-    run: docker compose down -v
-  bootstrap:
-    run: ./scripts/bootstrap.sh
-    variants:
-      - when:
-          os: windows
-        run: .\scripts\bootstrap.ps1
+      - build
+    run: tar -czf dist/release.tar.gz dist/
+  upload:
+    depends_on:
+      - package
+    run: ./scripts/upload-artifact.sh dist/release.tar.gz
+extensions:
+  release-upload:
+    kind: publisher
+    command: ota-ext-upload
+    api_version: 1
+    description: Upload the release bundle to the artifact endpoint
+    config:
+      endpoint: https://artifacts.example.com/upload
+      artifact: dist/release.tar.gz
 ```
 
 Fields:
@@ -432,6 +465,7 @@ Use cases:
 
 - use `run` for one command you would normally type in a shell
 - use `script` when the task needs multiple lines, shell setup, or cleanup steps
+- use `depends_on` to model a build/package/upload chain without hiding order in shell scripts
 
 Example script forms:
 
