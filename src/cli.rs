@@ -27,7 +27,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::{error::ErrorKind, ArgAction, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum, error::ErrorKind};
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
@@ -579,8 +579,7 @@ impl CommandSpinner {
     }
 
     fn stop(mut self) {
-        self.stop
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -861,7 +860,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::List { json, status, repo, path } => commands::workspace_list(
+            WorkspaceCommands::List {
+                json,
+                status,
+                repo,
+                path,
+            } => commands::workspace_list(
                 path.as_deref(),
                 file.as_deref(),
                 status.map(Into::into),
@@ -1090,9 +1094,9 @@ fn command_where_label(command: &Commands) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
     #[cfg(unix)]
     use std::hash::{Hash, Hasher};
+    use std::path::PathBuf;
     #[cfg(unix)]
     use std::process::Command;
     #[cfg(unix)]
@@ -3629,9 +3633,9 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
-        assert!(stderr.contains(
-            "Next: run `ota tasks --use` to see available task names and usage"
-        ));
+        assert!(
+            stderr.contains("Next: run `ota tasks --use` to see available task names and usage")
+        );
     }
 
     #[test]
@@ -4192,7 +4196,10 @@ tasks:
         assert_eq!(json["execution"]["supported"][0], "remote");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
         assert_eq!(json["execution"]["backends"]["remote"]["provider"], "ssh");
-        assert_eq!(json["execution"]["backends"]["remote"]["target"], "user@host");
+        assert_eq!(
+            json["execution"]["backends"]["remote"]["target"],
+            "user@host"
+        );
         assert_eq!(json["execution"]["backends"]["remote"]["cwd"], "/workspace");
     }
 
@@ -4608,7 +4615,9 @@ agent:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap_or_default();
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("preview the exact contract Ota would write with `ota init --dry-run`"));
+        assert!(
+            stderr.contains("preview the exact contract Ota would write with `ota init --dry-run`")
+        );
         assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
         assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
         assert!(stderr.contains("Excluded from automatic write:"));
@@ -4627,9 +4636,11 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("INIT WRITE"));
-        assert!(output
-            .stdout
-            .contains("Bootstrap policy: detected mode writes the full detected starter contract"));
+        assert!(
+            output.stdout.contains(
+                "Bootstrap policy: detected mode writes the full detected starter contract"
+            )
+        );
         assert!(!output.stdout.contains("Excluded from automatic write:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: tclapp"));
@@ -4652,9 +4663,11 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("INIT WRITE"));
-        assert!(output.stdout.contains(
-            "Bootstrap policy: detected mode writes the full detected starter contract"
-        ));
+        assert!(
+            output.stdout.contains(
+                "Bootstrap policy: detected mode writes the full detected starter contract"
+            )
+        );
         let written = fs::read_to_string(fixture.dir.path().join("node").join("ota.yaml")).unwrap();
         assert!(written.contains("name: node"));
         let validate = run_with(["ota", "validate", node_path.as_str()]);
@@ -4776,7 +4789,10 @@ project:
         assert_eq!(json["written"], false);
         assert_eq!(
             json["next"],
-            format!("ota detect --merge {}", compact_path(fixture.dir.path(), "."))
+            format!(
+                "ota detect --merge {}",
+                compact_path(fixture.dir.path(), ".")
+            )
         );
     }
 
@@ -5755,9 +5771,7 @@ project:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains(
-            "`ota detect --merge --dry-run` requires an existing `ota.yaml`"
-        ));
+        assert!(stderr.contains("`ota detect --merge --dry-run` requires an existing `ota.yaml`"));
         assert!(stderr.contains("use `ota detect --dry-run` to review a first contract"));
     }
 
@@ -5784,7 +5798,11 @@ project:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("MERGED"));
-        assert!(output.stdout.contains("Applied selected high-confidence changes:"));
+        assert!(
+            output
+                .stdout
+                .contains("Applied selected high-confidence changes:")
+        );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
@@ -5851,13 +5869,7 @@ project:
 }"#,
         );
 
-        let output = run_with([
-            "ota",
-            "detect",
-            "--merge",
-            "--apply-all",
-            fixture.path(),
-        ]);
+        let output = run_with(["ota", "detect", "--merge", "--apply-all", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
@@ -5961,8 +5973,7 @@ project:
         let output = run_with(["ota", "detect", "--rewrite", fixture.path()]);
         assert_eq!(output.exit_code, 1);
         assert!(
-            strip_ansi(output.stderr.as_deref().unwrap_or_default())
-                .contains("requires `--yes`")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("requires `--yes`")
         );
     }
 
@@ -6171,10 +6182,14 @@ project:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Why:"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("Next: review detected changes with `ota detect --merge --dry-run"));
+        assert!(
+            stderr.contains("Next: review detected changes with `ota detect --merge --dry-run")
+        );
         assert!(stderr.contains("review detected changes with `ota detect --merge --dry-run"));
         assert!(!stderr.contains("| Next: |"));
-        assert!(!stderr.contains("\n▸  review detected changes with `ota detect --merge --dry-run"));
+        assert!(
+            !stderr.contains("\n▸  review detected changes with `ota detect --merge --dry-run")
+        );
     }
 
     #[test]
@@ -6269,9 +6284,10 @@ project:
         assert!(stderr.contains(
             "detected high-confidence fields are not sufficient to produce a valid contract"
         ));
-        assert!(stderr.contains(
-            "use `ota detect --dry-run` to review medium and low confidence fields"
-        ));
+        assert!(
+            stderr
+                .contains("use `ota detect --dry-run` to review medium and low confidence fields")
+        );
         assert!(stderr.contains("Excluded from automatic write:"));
         assert!(stderr.contains("project.name"));
         assert!(!fixture.file_path().exists());
@@ -6943,7 +6959,11 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 1);
         assert!(body.contains("workspace init could not find any repos with `ota.yaml`"));
-        assert!(body.contains("run `ota workspace init --bootstrap` to scaffold missing repo contracts"));
+        assert!(
+            body.contains(
+                "run `ota workspace init --bootstrap` to scaffold missing repo contracts"
+            )
+        );
         assert!(!repo_dir.join("ota.yaml").exists());
     }
 
@@ -6991,7 +7011,9 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
         assert!(!repo_dir.join("ota.yaml").exists());
-        assert!(body.contains("already exists; refusing to overwrite an existing workspace contract"));
+        assert!(
+            body.contains("already exists; refusing to overwrite an existing workspace contract")
+        );
         assert!(body.contains("use `ota workspace detect --merge"));
         assert!(body.contains("use `ota workspace detect --rewrite --yes"));
     }
@@ -7076,7 +7098,12 @@ repos:
     fn workspace_validate_not_found_includes_workspace_setup_next() {
         let fixture = TempDir::new().unwrap();
 
-        let output = run_with(["ota", "workspace", "validate", fixture.path().to_str().unwrap()]);
+        let output = run_with([
+            "ota",
+            "workspace",
+            "validate",
+            fixture.path().to_str().unwrap(),
+        ]);
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
@@ -7214,7 +7241,11 @@ project:
         let fixture = TempDir::new().unwrap();
         let web_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&web_dir).unwrap();
-        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
             "version: 1\nworkspace:\n  name: demo\nrepos:\n  web:\n    path: apps/web\n    required: true\n",
@@ -7239,7 +7270,11 @@ project:
         let fixture = TempDir::new().unwrap();
         let web_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&web_dir).unwrap();
-        fs::write(web_dir.join("ota.yaml"), "version: 1\nproject:\n  name: web\n").unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            "version: 1\nproject:\n  name: web\n",
+        )
+        .unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
             "version: 1\nworkspace:\n  namex: broken\nrepos:\n  web:\n    path: apps/web\n    required: true\n",
@@ -7943,7 +7978,12 @@ repos:
     fn workspace_doctor_not_found_uses_single_workspace_next() {
         let fixture = TempDir::new().unwrap();
 
-        let output = run_with(["ota", "workspace", "doctor", fixture.path().to_str().unwrap()]);
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            fixture.path().to_str().unwrap(),
+        ]);
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
@@ -7993,7 +8033,12 @@ project:
     #[test]
     fn workspace_doctor_concise_omits_path_contract_and_why() {
         let fixture = WorkspaceFixture::new_multi_repo();
-        let db_contract = fixture.dir.path().join("services").join("db").join("ota.yaml");
+        let db_contract = fixture
+            .dir
+            .path()
+            .join("services")
+            .join("db")
+            .join("ota.yaml");
         fs::write(
             db_contract,
             r#"
@@ -8452,7 +8497,11 @@ project:
         .unwrap();
         fs::create_dir_all(fixture.path().join("web").join(".ota")).unwrap();
         fs::write(
-            fixture.path().join("web").join(".ota").join("org-policy.yaml"),
+            fixture
+                .path()
+                .join("web")
+                .join(".ota")
+                .join("org-policy.yaml"),
             r#"
 policies:
   required_sections:
@@ -8461,7 +8510,13 @@ policies:
         )
         .unwrap();
 
-        let output = run_with(["ota", "workspace", "doctor", "--json", fixture.path().to_str().unwrap()]);
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
 
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();

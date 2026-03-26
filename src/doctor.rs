@@ -20,21 +20,21 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::path::Path;
 use std::io::{self, IsTerminal, Write};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::ser::{SerializeStruct, Serializer};
 use serde::Serialize;
+use serde::ser::{SerializeStruct, Serializer};
 
-use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
 use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
+use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -100,10 +100,8 @@ impl Serialize for Finding {
         S: Serializer,
     {
         let policy = self.policy_context();
-        let mut state = serializer.serialize_struct(
-            "Finding",
-            4 + policy.map(|_| 5).unwrap_or_default(),
-        )?;
+        let mut state =
+            serializer.serialize_struct("Finding", 4 + policy.map(|_| 5).unwrap_or_default())?;
 
         state.serialize_field("severity", &self.severity)?;
         state.serialize_field("summary", &self.summary)?;
@@ -552,8 +550,15 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
     findings.push(Finding {
         severity: FindingSeverity::Error,
         summary: String::from("Repo does not satisfy org policy pack"),
-        why: format!("`{}` requires {}", policy_path.display(), why_parts.join(" and ")),
-        next: format!("add the missing items or update `{}`", policy_path.display()),
+        why: format!(
+            "`{}` requires {}",
+            policy_path.display(),
+            why_parts.join(" and ")
+        ),
+        next: format!(
+            "add the missing items or update `{}`",
+            policy_path.display()
+        ),
     });
 }
 
@@ -582,9 +587,7 @@ fn diagnose_command_version(
                 FindingSeverity::Warn
             },
             summary: format!("Missing {kind}: {display_name}"),
-            why: format!(
-                "{display_name} is declared in the contract but is not available on PATH"
-            ),
+            why: format!("{display_name} is declared in the contract but is not available on PATH"),
             next: format!("install {display_name} and make it available on PATH"),
         });
         return;
@@ -604,9 +607,7 @@ fn diagnose_command_version(
         why: format!(
             "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
         ),
-        next: format!(
-            "install a compatible {display_name} version that satisfies `{requirement}`"
-        ),
+        next: format!("install a compatible {display_name} version that satisfies `{requirement}`"),
     });
 }
 
@@ -962,8 +963,8 @@ fn shell_single_quote(command: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::env;
+    use std::fs;
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
@@ -1259,7 +1260,11 @@ tasks:
     #[test]
     fn command_version_handles_go_subcommand() {
         let version = super::command_version("go");
-        assert!(version.as_deref().is_some_and(|value| value.contains("1.24")));
+        assert!(
+            version
+                .as_deref()
+                .is_some_and(|value| value.contains("1.24"))
+        );
     }
 
     #[test]

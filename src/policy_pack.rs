@@ -113,10 +113,11 @@ pub fn load_org_policy_pack_auto(
         return Ok(None);
     };
 
-    let contents = fs::read_to_string(&policy_path).map_err(|source| LoadPolicyPackError::Read {
-        path: policy_path.display().to_string(),
-        source,
-    })?;
+    let contents =
+        fs::read_to_string(&policy_path).map_err(|source| LoadPolicyPackError::Read {
+            path: policy_path.display().to_string(),
+            source,
+        })?;
 
     let pack = serde_yaml::from_str(&contents).map_err(|source| LoadPolicyPackError::Parse {
         path: policy_path.display().to_string(),
@@ -166,7 +167,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{load_org_policy_pack_auto, OrgPolicyPack};
+    use super::{OrgPolicyPack, load_org_policy_pack_auto};
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
@@ -220,6 +221,9 @@ policies:
 
         assert!(policy.policies.strict_versions);
         assert!(policy.policies.agent.as_ref().unwrap().require_safe_tasks);
-        assert_eq!(policy.policies.required_files, vec![String::from("AGENTS.md")]);
+        assert_eq!(
+            policy.policies.required_files,
+            vec![String::from("AGENTS.md")]
+        );
     }
 }

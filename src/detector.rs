@@ -3070,11 +3070,7 @@ fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
     if builder.contract.project.is_none()
         && let Some(name) = directory_name_for_root(root)
     {
-        builder.set_project_name(
-            name,
-            "directory-name".to_string(),
-            Confidence::Low,
-        );
+        builder.set_project_name(name, "directory-name".to_string(), Confidence::Low);
     }
 }
 

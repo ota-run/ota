@@ -24,7 +24,9 @@ use serde::Serialize;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::Finding;
-use crate::schema::{AgentConfig, Backend, Contract, Lifecycle, ServiceSpec, TaskSpec, TaskVariantView};
+use crate::schema::{
+    AgentConfig, Backend, Contract, Lifecycle, ServiceSpec, TaskSpec, TaskVariantView,
+};
 use crate::workspace::WorkspaceRepoDoctorReport;
 
 fn slice_is_empty<T>(value: &[T]) -> bool {
@@ -102,18 +104,30 @@ impl<'a> ExecutionSummary<'a> {
 
         Some(Self {
             preferred: execution.preferred.map(format_backend),
-            supported: execution.supported.iter().map(|backend| format_backend(*backend)).collect(),
+            supported: execution
+                .supported
+                .iter()
+                .map(|backend| format_backend(*backend))
+                .collect(),
             lifecycle: execution.lifecycle.map(format_lifecycle),
-            backends: execution.backends.as_ref().map(|backends| ExecutionBackendsSummary {
-                container: backends.container.as_ref().map(|container| ExecutionContainerSummary {
-                    image: &container.image,
+            backends: execution
+                .backends
+                .as_ref()
+                .map(|backends| ExecutionBackendsSummary {
+                    container: backends.container.as_ref().map(|container| {
+                        ExecutionContainerSummary {
+                            image: &container.image,
+                        }
+                    }),
+                    remote: backends
+                        .remote
+                        .as_ref()
+                        .map(|remote| ExecutionRemoteSummary {
+                            provider: &remote.provider,
+                            target: remote.target.as_deref(),
+                            cwd: remote.cwd.as_deref(),
+                        }),
                 }),
-                remote: backends.remote.as_ref().map(|remote| ExecutionRemoteSummary {
-                    provider: &remote.provider,
-                    target: remote.target.as_deref(),
-                    cwd: remote.cwd.as_deref(),
-                }),
-            }),
         })
     }
 }

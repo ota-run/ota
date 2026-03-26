@@ -44,6 +44,7 @@ jobs:
       - name: Markdown lint
         uses: DavidAnson/markdownlint-cli2-action@v20
         with:
+          config: .markdownlint-cli2.yaml
           globs: |
             docs/site/src/**/*.md
 
