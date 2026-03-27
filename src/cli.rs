@@ -5429,6 +5429,9 @@ checks:
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["error_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["findings"][0]["summary"], "Check failed: root-health");
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
@@ -5482,6 +5485,11 @@ checks:
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("NOT READY"));
         assert!(output.stdout.contains("Check failed: api-health"));
+        assert!(output.stdout.contains("SUMMARY:"));
+        assert!(output.stdout.contains("Errors:"));
+        assert!(output.stdout.contains("Warnings:"));
+        assert!(output.stdout.contains("Info:"));
+        assert!(output.stdout.rfind("SUMMARY:") > output.stdout.rfind("Check failed: api-health"));
         assert!(output.stdout.contains("\n\n"));
     }
 
@@ -8876,6 +8884,47 @@ tasks:
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Remote Target: user@host"));
         assert!(stdout.rfind("SUMMARY:") > stdout.rfind("Preferred: remote"));
+    }
+
+    #[test]
+    fn workspace_check_text_reports_summary_rollup() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+checks:
+  - name: health-check
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "check", fixture.path()]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(body.contains("SUMMARY:"));
+        assert!(body.contains("Repos:"));
+        assert!(body.contains("Errors:"));
+        assert!(body.contains("WORKSPACE CHECK"));
     }
 
     #[test]
