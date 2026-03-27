@@ -5732,7 +5732,7 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     ));
     stdout.push_str(&format!(
         "\n{} {}",
-        paint_key("Base-only:"),
+        paint_key("Missing in target:"),
         summary.removed_count
     ));
     stdout.push_str(&format!(
@@ -5777,7 +5777,7 @@ where
             }
             "remove" => {
                 if let Some(base) = change.base.as_deref() {
-                    stdout.push_str(&format!(": base-only `{base}`"));
+                    stdout.push_str(&format!(": missing in target `{base}`"));
                 }
             }
             "change" => {
