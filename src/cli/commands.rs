@@ -5793,7 +5793,7 @@ where
     stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
     for change in changes {
         stdout.push_str(&format!(
-            "\n{}  {}",
+            "\n{} {}",
             list_bullet(),
             paint(&change.path, "1;38;2;102;217;255")
         ));
