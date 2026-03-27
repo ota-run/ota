@@ -24,7 +24,7 @@
 
 # Execution Receipt
 
-The execution receipt is the future machine-readable record for Ota execution commands.
+The execution receipt is the machine-readable record for Ota execution commands.
 
 Use it to answer:
 
@@ -34,4 +34,4 @@ Use it to answer:
 - what succeeded, failed, or was blocked
 - what the safe next step is
 
-This surface is planned for execution flows, not diagnosis or inference.
+This surface applies to execution flows, not diagnosis or inference.

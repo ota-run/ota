@@ -240,6 +240,10 @@ ota up
 ota up --json
 ```
 
+Receipt:
+
+- emits an execution receipt in text output and JSON output
+
 Script example:
 
 ```bash
@@ -267,6 +271,10 @@ Use-case:
 ```bash
 ota run test
 ```
+
+Receipt:
+
+- emits an execution receipt on stderr after task output
 
 Script example:
 
@@ -726,6 +734,10 @@ Why:
 
 - single command for coordinated multi-repo execution
 
+Receipt:
+
+- emits an execution receipt in text output and JSON output
+
 ```bash
 ota workspace run test
 ota workspace run test --json
@@ -750,6 +762,10 @@ When to use:
 Why:
 
 - one deterministic bootstrap path that reuses repo-level `ota up`
+
+Receipt:
+
+- emits an execution receipt in text output and JSON output
 
 ```bash
 ota workspace up

@@ -384,6 +384,7 @@ Current behavior:
 - runs in the effective target contract directory
 - applies configured environment values
 - prints task progress and advisory notes on stderr
+- emits an execution receipt on stderr after task output
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -557,6 +558,7 @@ Current behavior:
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
+- emits an execution receipt in text output and a `receipt` object in JSON output
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 
@@ -920,6 +922,7 @@ Current behavior:
 - captures per-repo stdout/stderr in default mode
 - `--stream` opts into raw child output (text only, currently requires `--jobs 1`)
 - optional repo task failures do not fail the overall workspace status
+- emits an execution receipt in text output and a `receipt` object in JSON output
 
 Text output:
 
@@ -1073,6 +1076,7 @@ Current behavior:
 - `--stream` opts into raw live child process output instead of buffered per-repo output
 - `--stream` is text-only and currently requires `--jobs 1`
 - does not pull or update repos that already exist locally
+- emits an execution receipt in text output and a `receipt` object in JSON output
 
 Text output:
 

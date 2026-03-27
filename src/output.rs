@@ -85,6 +85,58 @@ pub struct ExplainSummary {
     pub step_count: usize,
 }
 
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutionReceiptSummary {
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+    pub step_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ready_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_ready_count: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptStep {
+    pub order: usize,
+    pub label: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceipt {
+    pub ok: bool,
+    pub path: String,
+    pub scope: String,
+    pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub acquired: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub policy: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<ExecutionReceiptStep>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<String>,
+    pub summary: ExecutionReceiptSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExplainStep {
     pub order: usize,
@@ -318,6 +370,7 @@ pub struct WorkspaceRepoUpReport {
 pub struct WorkspaceUpSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoUpReport],
 }
 
@@ -344,6 +397,7 @@ pub struct WorkspaceRunSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub task: &'a str,
+    pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoRunReport],
 }
 
@@ -413,6 +467,7 @@ pub struct UpStatus<'a> {
     pub status: &'a str,
     pub phase: &'a str,
     pub findings: &'a [Finding],
+    pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
