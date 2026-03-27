@@ -24,7 +24,7 @@
 
 # Semantic Diff and Explain
 
-Status: spec candidate.
+Status: `ota diff` is shipped; `ota explain` remains a spec candidate.
 
 This document defines two proposed read-only surfaces for Ota:
 
@@ -38,10 +38,10 @@ The goal is to help humans and agents understand contract change impact without 
 
 Compare two Ota contract states semantically.
 
-Planned behavior:
+Current behavior:
 
 - compare repo contracts or workspace contracts as structured objects
-- report added, removed, changed, weakened, and newly required fields
+- report added, removed, and changed fields in deterministic order
 - surface readiness impact directly instead of forcing users to infer it from raw YAML
 - preserve deterministic ordering in text and JSON output
 - remain read-only

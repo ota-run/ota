@@ -58,6 +58,7 @@ Hosted validation:
 1. `ota doctor` to understand readiness blockers.
 1. `ota up` to make the repo runnable.
 1. `ota run <task>` for day-to-day task execution.
+1. `ota diff <base> <target>` to compare contract impact before writing changes.
 1. `ota detect --dry-run` before writing any new contract.
 
 ## Repo commands
@@ -120,6 +121,35 @@ set -euo pipefail
 
 # fail fast in CI if repo is not ready
 ota doctor --json | tee .ota-doctor.json
+```
+
+### `ota diff`
+
+When to use:
+
+- when you want to review contract impact before writing changes or compare two contract states in CI
+
+Why:
+
+- shows semantic additions, removals, and changes in deterministic order
+- stays read-only and compares structured contract state rather than raw YAML text
+
+Use-case:
+
+- compare a branch contract against the main branch contract before merging
+
+```bash
+ota diff ./before/ota.yaml ./after/ota.yaml
+ota diff --json ./before/ota.yaml ./after/ota.yaml
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota diff --json ./before/ota.yaml ./after/ota.yaml | tee .ota-diff.json
 ```
 
 ### `ota extensions`

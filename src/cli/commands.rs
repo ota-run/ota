@@ -42,13 +42,13 @@ use crate::doctor::{
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DoctorSuccess, DoctorSummary, ExecutionSummary, InitFailure, InitSuccess,
-    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
-    WorkspaceUpSuccess,
+    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
+    ExecutionSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -510,6 +510,127 @@ pub fn validate(
                     path: &path_display,
                     errors: Vec::new(),
                     error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> CommandOutput {
+    let base_input = base.display().to_string();
+    let target_input = target.display().to_string();
+
+    let base_path = match resolve_diff_contract_path(base) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DiffFailure {
+                        ok: false,
+                        base: &base_input,
+                        target: &target_input,
+                        error: &error,
+                    })),
+                },
+                debug,
+                vec![String::from("DEBUG command=diff")],
+            );
+        }
+    };
+    let target_path = match resolve_diff_contract_path(target) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DiffFailure {
+                        ok: false,
+                        base: &base_input,
+                        target: &target_input,
+                        error: &error,
+                    })),
+                },
+                debug,
+                vec![String::from("DEBUG command=diff")],
+            );
+        }
+    };
+
+    let base_display = base_path.display().to_string();
+    let target_display = target_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=diff"),
+        format!("DEBUG base_path={base_display}"),
+        format!("DEBUG target_path={target_display}"),
+    ];
+
+    finalize_debug(
+        match (
+            load_diff_contract(&base_path),
+            load_diff_contract(&target_path),
+        ) {
+            (Ok(base_contract), Ok(target_contract)) => {
+                let changes = collect_diff_changes(&base_contract, &target_contract);
+                let summary = summarize_diff_changes(&changes);
+                match format {
+                    OutputFormat::Text => {
+                        let mut stdout = format!(
+                            "{}\n\n{}",
+                            format_command_header(
+                                "DIFF",
+                                &format!(
+                                    "{} -> {}",
+                                    compact_contract_path(&base_path),
+                                    compact_contract_path(&target_path)
+                                )
+                            ),
+                            render_status_word(if changes.is_empty() {
+                                "MATCH"
+                            } else {
+                                "DIFFERENT"
+                            })
+                        );
+                        stdout.push_str(&render_diff_summary_text(&summary));
+                        if changes.is_empty() {
+                            stdout.push_str("\n\nno semantic differences");
+                        } else {
+                            render_diff_section(
+                                &mut stdout,
+                                "Added",
+                                changes.iter().filter(|change| change.status == "add"),
+                            );
+                            render_diff_section(
+                                &mut stdout,
+                                "Removed",
+                                changes.iter().filter(|change| change.status == "remove"),
+                            );
+                            render_diff_section(
+                                &mut stdout,
+                                "Changed",
+                                changes.iter().filter(|change| change.status == "change"),
+                            );
+                        }
+                        CommandOutput::success(stdout)
+                    }
+                    OutputFormat::Json => CommandOutput::success(to_json(&DiffSuccess {
+                        ok: true,
+                        base: &base_display,
+                        target: &target_display,
+                        summary,
+                        changes: &changes,
+                    })),
+                }
+            }
+            (Err(error), _) | (_, Err(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DiffFailure {
+                    ok: false,
+                    base: &base_display,
+                    target: &target_display,
+                    error: &error,
                 })),
             },
         },
@@ -5599,6 +5720,268 @@ fn render_detect_change_section(
         stdout.push_str(&change.detected);
         stdout.push('`');
     }
+}
+
+fn render_diff_summary_text(summary: &DiffSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("Summary")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Added:"),
+        summary.added_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Removed:"),
+        summary.removed_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Changed:"),
+        summary.changed_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Weakened:"),
+        summary.weakened_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Strengthened:"),
+        summary.strengthened_count
+    ));
+    stdout
+}
+
+fn render_diff_section<'a, I>(stdout: &mut String, title: &str, changes: I)
+where
+    I: IntoIterator<Item = &'a DiffChange>,
+{
+    let changes = changes.into_iter().collect::<Vec<_>>();
+    if changes.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    for change in changes {
+        stdout.push_str(&format!(
+            "\n{}  {}",
+            list_bullet(),
+            paint(&change.path, "1;38;2;102;217;255")
+        ));
+        match change.status.as_str() {
+            "add" => {
+                if let Some(target) = change.target.as_deref() {
+                    stdout.push_str(&format!(": added `{target}`"));
+                }
+            }
+            "remove" => {
+                if let Some(base) = change.base.as_deref() {
+                    stdout.push_str(&format!(": removed `{base}`"));
+                }
+            }
+            "change" => {
+                stdout.push_str(&format!(
+                    ": `{}` -> `{}`",
+                    change.base.as_deref().unwrap_or(""),
+                    change.target.as_deref().unwrap_or("")
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn summarize_diff_changes(changes: &[DiffChange]) -> DiffSummary {
+    let mut summary = DiffSummary::default();
+    for change in changes {
+        match change.status.as_str() {
+            "add" => summary.added_count += 1,
+            "remove" => summary.removed_count += 1,
+            "change" => summary.changed_count += 1,
+            "weaken" => summary.weakened_count += 1,
+            "strengthen" => summary.strengthened_count += 1,
+            _ => {}
+        }
+    }
+    summary
+}
+
+fn collect_diff_changes(base: &YamlValue, target: &YamlValue) -> Vec<DiffChange> {
+    let mut changes = Vec::new();
+    collect_diff_changes_at(base, target, "", &mut changes);
+    changes
+}
+
+fn collect_diff_changes_at(
+    base: &YamlValue,
+    target: &YamlValue,
+    path: &str,
+    changes: &mut Vec<DiffChange>,
+) {
+    match (base, target) {
+        (YamlValue::Mapping(base_map), YamlValue::Mapping(target_map)) => {
+            let mut keys = BTreeSet::new();
+            for key in base_map.keys() {
+                keys.insert(render_yaml_key(key));
+            }
+            for key in target_map.keys() {
+                keys.insert(render_yaml_key(key));
+            }
+
+            for key in keys {
+                let base_key = base_map
+                    .keys()
+                    .find(|candidate| render_yaml_key(candidate) == key);
+                let target_key = target_map
+                    .keys()
+                    .find(|candidate| render_yaml_key(candidate) == key);
+                let base_value = base_key.and_then(|candidate| base_map.get(candidate));
+                let target_value = target_key.and_then(|candidate| target_map.get(candidate));
+                let child_path = append_diff_path(path, &key);
+                match (base_value, target_value) {
+                    (Some(base_value), Some(target_value)) => {
+                        collect_diff_changes_at(base_value, target_value, &child_path, changes);
+                    }
+                    (Some(base_value), None) => {
+                        emit_diff_removals(base_value, &child_path, changes)
+                    }
+                    (None, Some(target_value)) => {
+                        emit_diff_additions(target_value, &child_path, changes)
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+        (YamlValue::Sequence(base_seq), YamlValue::Sequence(target_seq)) => {
+            let len = base_seq.len().max(target_seq.len());
+            for index in 0..len {
+                let child_path = append_diff_path(path, &format!("[{index}]"));
+                match (base_seq.get(index), target_seq.get(index)) {
+                    (Some(base_value), Some(target_value)) => {
+                        collect_diff_changes_at(base_value, target_value, &child_path, changes);
+                    }
+                    (Some(base_value), None) => {
+                        emit_diff_removals(base_value, &child_path, changes)
+                    }
+                    (None, Some(target_value)) => {
+                        emit_diff_additions(target_value, &child_path, changes)
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+        _ if base == target => {}
+        _ => changes.push(DiffChange {
+            path: if path.is_empty() {
+                String::from("root")
+            } else {
+                path.to_string()
+            },
+            status: String::from("change"),
+            base: Some(render_yaml_inline(base)),
+            target: Some(render_yaml_inline(target)),
+        }),
+    }
+}
+
+fn emit_diff_additions(value: &YamlValue, path: &str, changes: &mut Vec<DiffChange>) {
+    match value {
+        YamlValue::Mapping(map) if !map.is_empty() => {
+            for (key, child) in map {
+                let child_path = append_diff_path(path, &render_yaml_key(key));
+                emit_diff_additions(child, &child_path, changes);
+            }
+        }
+        YamlValue::Sequence(sequence) if !sequence.is_empty() => {
+            for (index, child) in sequence.iter().enumerate() {
+                let child_path = append_diff_path(path, &format!("[{index}]"));
+                emit_diff_additions(child, &child_path, changes);
+            }
+        }
+        _ => changes.push(DiffChange {
+            path: path.to_string(),
+            status: String::from("add"),
+            base: None,
+            target: Some(render_yaml_inline(value)),
+        }),
+    }
+}
+
+fn emit_diff_removals(value: &YamlValue, path: &str, changes: &mut Vec<DiffChange>) {
+    match value {
+        YamlValue::Mapping(map) if !map.is_empty() => {
+            for (key, child) in map {
+                let child_path = append_diff_path(path, &render_yaml_key(key));
+                emit_diff_removals(child, &child_path, changes);
+            }
+        }
+        YamlValue::Sequence(sequence) if !sequence.is_empty() => {
+            for (index, child) in sequence.iter().enumerate() {
+                let child_path = append_diff_path(path, &format!("[{index}]"));
+                emit_diff_removals(child, &child_path, changes);
+            }
+        }
+        _ => changes.push(DiffChange {
+            path: path.to_string(),
+            status: String::from("remove"),
+            base: Some(render_yaml_inline(value)),
+            target: None,
+        }),
+    }
+}
+
+fn render_yaml_key(key: &YamlValue) -> String {
+    match key {
+        YamlValue::String(value) => value.clone(),
+        _ => render_yaml_inline(key),
+    }
+}
+
+fn append_diff_path(path: &str, segment: &str) -> String {
+    if path.is_empty() {
+        segment.to_string()
+    } else if segment.starts_with('[') {
+        format!("{path}{segment}")
+    } else {
+        format!("{path}.{segment}")
+    }
+}
+
+fn render_yaml_inline(value: &YamlValue) -> String {
+    let rendered = serde_yaml::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
+    rendered
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "---" {
+                None
+            } else {
+                Some(trimmed)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn load_diff_contract(path: &Path) -> Result<YamlValue, String> {
+    let contents = fs::read_to_string(path)
+        .map_err(|error| format!("failed to load contract `{}`: {error}", path.display()))?;
+    serde_yaml::from_str(&contents)
+        .map_err(|error| format!("failed to parse contract `{}`: {error}", path.display()))
+}
+
+fn resolve_diff_contract_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_file() {
+        return Ok(path.to_path_buf());
+    }
+    if path.is_dir() {
+        return discover_contract_path(path).map_err(|error| error.to_string());
+    }
+    Err(format!(
+        "contract path does not exist: `{}`",
+        path.display()
+    ))
 }
 
 fn selected_detect_comparison(

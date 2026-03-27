@@ -419,6 +419,42 @@ pub struct ValidateFailure<'a> {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DiffSummary {
+    pub added_count: usize,
+    pub removed_count: usize,
+    pub changed_count: usize,
+    pub weakened_count: usize,
+    pub strengthened_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffChange {
+    pub path: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffSuccess<'a> {
+    pub ok: bool,
+    pub base: &'a str,
+    pub target: &'a str,
+    pub summary: DiffSummary,
+    pub changes: &'a [DiffChange],
+}
+
+#[derive(Debug, Serialize)]
+pub struct DiffFailure<'a> {
+    pub ok: bool,
+    pub base: &'a str,
+    pub target: &'a str,
+    pub error: &'a str,
+}
+
 #[derive(Debug, Serialize)]
 pub struct TasksSuccess<'a> {
     pub ok: bool,

@@ -235,6 +235,16 @@ enum Commands {
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
+    /// Compare two Ota contracts semantically.
+    Diff {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Base contract path to compare against.
+        base: PathBuf,
+        /// Target contract path to compare.
+        target: PathBuf,
+    },
     /// Work with Ota workspace contracts.
     Workspace {
         #[command(subcommand)]
@@ -527,6 +537,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
             | Commands::Services { .. }
             | Commands::Doctor { .. }
             | Commands::Check { .. }
+            | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Init { .. }
             | Commands::Detect { .. }
@@ -544,6 +555,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
         &cli.command,
         Commands::Doctor { .. }
             | Commands::Check { .. }
+            | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Workspace {
                 command: WorkspaceCommands::Doctor { .. } | WorkspaceCommands::List { .. }
@@ -650,6 +662,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Services { json: true, .. }
             | Commands::Doctor { json: true, .. }
             | Commands::Check { json: true, .. }
+            | Commands::Diff { json: true, .. }
             | Commands::Extensions { json: true, .. }
             | Commands::Init { json: true, .. }
             | Commands::Detect { json: true, .. }
@@ -713,6 +726,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             &member,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Diff { json, base, target } => commands::diff(
+            base.as_path(),
+            target.as_path(),
             format_from_json(json),
             debug,
         ),
@@ -1039,6 +1058,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Services { .. } => REPO_SETUP_SUGGESTION,
         Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
+        Commands::Diff { .. } => "compare two contract states with `ota diff <base> <target>`",
         Commands::Extensions { run, .. } => {
             if run.is_some() {
                 "inspect available extensions with `ota extensions`"
@@ -1110,6 +1130,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
         | Commands::Doctor { json, .. }
+        | Commands::Diff { json, .. }
         | Commands::Extensions { json, .. }
         | Commands::Init { json, .. }
         | Commands::Check { json, .. }
@@ -1140,6 +1161,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Extensions { .. } => "ota extensions",
         Commands::Init { .. } => "ota init",
         Commands::Check { .. } => "ota check",
+        Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
         Commands::Detect { .. } => "ota detect",
@@ -1695,6 +1717,90 @@ tasks:
         let tasks = json["tasks"].as_array().unwrap();
         assert!(tasks.iter().any(|task| task["name"] == "setup"));
         assert!(tasks.iter().any(|task| task["name"] == "test"));
+    }
+
+    #[test]
+    fn diff_reports_structural_changes_and_summary_counts() {
+        let base = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        let target = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-app
+tasks:
+  lint:
+    run: cargo fmt --check
+  test:
+    run: cargo test --workspace
+"#,
+        );
+
+        let output = run_with(["ota", "diff", base.path(), target.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_none());
+        assert!(output.stdout.contains("DIFF"));
+        assert!(output.stdout.contains("Summary:"));
+        assert!(output.stdout.contains("Added:"));
+        assert!(output.stdout.contains("Changed:"));
+        assert!(output.stdout.contains("project.name"));
+        assert!(output.stdout.contains("tasks.lint.run"));
+        assert!(output.stdout.contains("tasks.test.run"));
+    }
+
+    #[test]
+    fn diff_json_reports_change_paths_and_summary_counts() {
+        let base = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        let target = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-app
+tasks:
+  lint:
+    run: cargo fmt --check
+  test:
+    run: cargo test --workspace
+"#,
+        );
+
+        let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_none());
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["summary"]["added_count"], 1);
+        assert_eq!(json["summary"]["removed_count"], 0);
+        assert_eq!(json["summary"]["changed_count"], 2);
+        let paths = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["path"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"project.name"));
+        assert!(paths.contains(&"tasks.lint.run"));
+        assert!(paths.contains(&"tasks.test.run"));
     }
 
     #[test]
