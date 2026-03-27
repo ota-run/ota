@@ -46,8 +46,9 @@ use crate::output::{
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
     InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
     WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
@@ -4540,6 +4541,96 @@ pub fn workspace_doctor(
     )
 }
 
+pub fn workspace_explain(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    filters: WorkspaceDoctorFilters,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.explain"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.explain")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.explain"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+        format!("DEBUG filter_status={:?}", filters.status),
+        format!("DEBUG filter_severity={:?}", filters.severity),
+        format!(
+            "DEBUG filter_repo={}",
+            filters.repo.as_deref().unwrap_or("-")
+        ),
+    ];
+
+    finalize_debug(
+        match load_and_diagnose_workspace(&resolved_path, jobs) {
+            Ok(report) => {
+                let report = apply_workspace_doctor_filters(report, &filters);
+                let explain_repos = workspace_explain_repos(&report);
+                let summary = workspace_explain_summary(&report);
+
+                match format {
+                    OutputFormat::Text => {
+                        render_workspace_explain_text(&compact_path_display, &report)
+                    }
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&WorkspaceExplainSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            summary,
+                            repos: &explain_repos,
+                        }),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                }
+            }
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn workspace_check(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -6419,6 +6510,49 @@ fn workspace_doctor_summary(
     summary
 }
 
+fn workspace_explain_summary(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> WorkspaceExplainSummary {
+    let mut summary = WorkspaceExplainSummary {
+        repo_count: report.repos.len(),
+        ..WorkspaceExplainSummary::default()
+    };
+
+    for repo in &report.repos {
+        if repo.ok {
+            summary.ready_count += 1;
+        } else {
+            summary.not_ready_count += 1;
+        }
+
+        let repo_summary = explain_summary_from_findings(&repo.findings);
+        summary.error_count += repo_summary.error_count;
+        summary.warn_count += repo_summary.warn_count;
+        summary.info_count += repo_summary.info_count;
+        summary.step_count += repo_summary.step_count;
+    }
+
+    summary
+}
+
+fn workspace_explain_repos(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> Vec<WorkspaceRepoExplainReport> {
+    report
+        .repos
+        .iter()
+        .map(|repo| WorkspaceRepoExplainReport {
+            name: repo.name.clone(),
+            path: repo.path.clone(),
+            contract_path: repo.contract_path.clone(),
+            required: repo.required,
+            ok: repo.ok,
+            summary: explain_summary_from_findings(&repo.findings),
+            steps: explain_steps(&repo.findings),
+        })
+        .collect()
+}
+
 fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSummary {
     let mut summary = WorkspaceListSummary {
         repo_count: repos.len(),
@@ -6534,6 +6668,55 @@ fn render_workspace_doctor_text(
     }
 }
 
+fn render_workspace_explain_text(
+    path: &str,
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> CommandOutput {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("WORKSPACE EXPLAIN", path),
+        render_readiness_status(report.ok)
+    );
+
+    for repo in &report.repos {
+        stdout.push_str(&format!(
+            "\n\n{} {} [{}] ({})",
+            list_bullet(),
+            paint(&repo.name, "1"),
+            if repo.required {
+                "required"
+            } else {
+                "optional"
+            },
+            render_status_word(if repo.ok { "READY" } else { "NOT READY" })
+        ));
+        if !concise_mode() {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Path:"),
+                compact_repo_path(Path::new(&repo.path))
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Contract:"),
+                compact_contract_path(Path::new(&repo.contract_path))
+            ));
+        }
+
+        let steps = explain_steps(&repo.findings);
+        stdout.push_str(&render_explain_steps_text(&steps));
+    }
+    stdout.push_str(&render_workspace_explain_summary_text(
+        &workspace_explain_summary(report),
+    ));
+
+    CommandOutput {
+        stdout,
+        stderr: None,
+        exit_code: if report.ok { 0 } else { 1 },
+    }
+}
+
 fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
@@ -6572,6 +6755,54 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
         paint("»", "1;38;2;255;214;79"),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout
+}
+
+fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Repos:", "1;38;2;102;217;255"),
+        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Ready:", "1;38;2;0;255;120"),
+        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Not Ready:", "1;38;2;255;235;59"),
+        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Errors:", "1;31"),
+        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Warnings:", "1;33"),
+        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Info:", "1;36"),
+        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Steps:", "1;38;2;102;217;255"),
+        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout
 }
@@ -7067,12 +7298,16 @@ fn render_explain_summary_text(summary: &ExplainSummary) -> String {
 }
 
 fn explain_summary(report: &DoctorReport) -> ExplainSummary {
+    explain_summary_from_findings(&report.findings)
+}
+
+fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
     let mut summary = ExplainSummary {
-        step_count: report.findings.len(),
+        step_count: findings.len(),
         ..ExplainSummary::default()
     };
 
-    for finding in &report.findings {
+    for finding in findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
             FindingSeverity::Warn => summary.warn_count += 1,

@@ -433,6 +433,26 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Explain workspace readiness findings as an ordered remediation plan.
+    Explain {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Maximum number of independent repos to diagnose at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Filter repos by readiness status.
+        #[arg(long, value_enum, default_value_t = WorkspaceDoctorStatusArg::All)]
+        status: WorkspaceDoctorStatusArg,
+        /// Filter findings by severity.
+        #[arg(long, value_enum, default_value_t = WorkspaceDoctorSeverityArg::All)]
+        severity: WorkspaceDoctorSeverityArg,
+        /// Filter output to one workspace repo by name.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Run configured checks across workspace repos.
     Check {
         /// Print machine-readable JSON output.
@@ -557,6 +577,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                     | WorkspaceCommands::Tasks { .. }
                     | WorkspaceCommands::List { .. }
                     | WorkspaceCommands::Doctor { stream: false, .. }
+                    | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::Detect { .. }
                     | WorkspaceCommands::Init { .. }
                     | WorkspaceCommands::Up { quiet: false, .. },
@@ -569,7 +590,9 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
             | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Workspace {
-                command: WorkspaceCommands::Doctor { .. } | WorkspaceCommands::List { .. }
+                command: WorkspaceCommands::Doctor { .. }
+                    | WorkspaceCommands::Explain { .. }
+                    | WorkspaceCommands::List { .. }
             }
     );
 
@@ -979,6 +1002,25 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
+            WorkspaceCommands::Explain {
+                json,
+                jobs,
+                status,
+                severity,
+                repo,
+                path,
+            } => commands::workspace_explain(
+                path.as_deref(),
+                file.as_deref(),
+                jobs,
+                commands::WorkspaceDoctorFilters {
+                    status: status.into(),
+                    severity: severity.into(),
+                    repo,
+                },
+                format_from_json(json),
+                debug,
+            ),
             WorkspaceCommands::Check { json, jobs, path } => commands::workspace_check(
                 path.as_deref(),
                 file.as_deref(),
@@ -1117,6 +1159,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Tasks { .. } => WORKSPACE_TASKS_SUGGESTION,
             WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Doctor { .. } => WORKSPACE_SETUP_SUGGESTION,
+            WorkspaceCommands::Explain { .. } => {
+                "run `ota workspace doctor` to inspect readiness findings before `ota workspace explain`"
+            }
             WorkspaceCommands::Check { .. } => WORKSPACE_CHECK_SUGGESTION,
             WorkspaceCommands::Up { .. } => WORKSPACE_UP_SUGGESTION,
             WorkspaceCommands::Run { .. } => WORKSPACE_TASKS_SUGGESTION,
@@ -1166,6 +1211,7 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Tasks { json, .. }
             | WorkspaceCommands::List { json, .. }
             | WorkspaceCommands::Doctor { json, .. }
+            | WorkspaceCommands::Explain { json, .. }
             | WorkspaceCommands::Check { json, .. }
             | WorkspaceCommands::Up { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
@@ -1196,6 +1242,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
             WorkspaceCommands::List { .. } => "ota workspace list",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
+            WorkspaceCommands::Explain { .. } => "ota workspace explain",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
             WorkspaceCommands::Run { .. } => "ota workspace run",
@@ -1933,6 +1980,131 @@ project:
         assert_eq!(steps.len(), 1);
         assert_eq!(steps[0]["order"], 1);
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
+    }
+
+    #[test]
+    fn workspace_explain_reports_remediation_steps_and_summary_counts() {
+        let fixture = TempDir::new().unwrap();
+        let api_dir = fixture.path().join("api");
+        let web_dir = fixture.path().join("web");
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+  web:
+    path: web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "explain",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("WORKSPACE EXPLAIN"));
+        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("api"));
+        assert!(stdout.contains("web"));
+        assert!(stdout.contains("No tasks defined in contract"));
+    }
+
+    #[test]
+    fn workspace_explain_json_reports_steps_and_summary_counts() {
+        let fixture = TempDir::new().unwrap();
+        let api_dir = fixture.path().join("api");
+        let web_dir = fixture.path().join("web");
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+  web:
+    path: web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "explain",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["repo_count"], 2);
+        assert_eq!(json["summary"]["not_ready_count"], 2);
+        assert_eq!(json["summary"]["step_count"], 2);
+        let repos = json["repos"].as_array().unwrap();
+        assert_eq!(repos.len(), 2);
+        assert_eq!(repos[0]["steps"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            repos[0]["steps"][0]["summary"],
+            "No tasks defined in contract"
+        );
     }
 
     #[test]

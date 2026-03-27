@@ -78,6 +78,7 @@ Ota currently ships these commands:
 - `ota workspace run <task>`
 - `ota workspace check`
 - `ota workspace doctor`
+- `ota workspace explain`
 - `ota workspace up`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
@@ -1013,6 +1014,34 @@ JSON output:
 Current non-goals:
 
 - passing a repo URL directly on the CLI without a workspace contract
+
+## `ota workspace explain`
+
+Explain workspace readiness findings as an ordered remediation plan.
+
+```bash
+ota workspace explain [PATH]
+ota workspace explain --json [PATH]
+ota workspace explain --repo api [PATH]
+```
+
+Current behavior:
+
+- diagnoses the workspace first
+- turns each repo finding into ordered remediation steps
+- stays read-only and deterministic
+- prints a summary with repo and step counts at the end
+
+Text output:
+
+- one section per workspace repo
+- ordered remediation steps under each repo
+- summary counts at the end
+
+JSON output:
+
+- success: `ok`, `path`, `summary`, `repos`
+- failure: `ok`, `path`, and either `errors` or `error`
 
 ## `ota workspace up`
 

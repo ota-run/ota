@@ -660,6 +660,36 @@ set -euo pipefail
 ota workspace doctor --json > .ota-workspace-doctor.json
 ```
 
+### `ota workspace explain`
+
+When to use:
+
+- turn workspace readiness findings into an ordered remediation plan
+
+Why:
+
+- stays read-only and deterministic
+- shows one plan per repo so the fix path stays local and actionable
+
+Use-case:
+
+- copy the workspace remediation plan into a ticket or agent task list
+
+```bash
+ota workspace explain
+ota workspace explain --json
+ota workspace explain --repo api
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota workspace explain --json > .ota-workspace-explain.json
+```
+
 ### `ota workspace check`
 
 When to use:

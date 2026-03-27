@@ -119,6 +119,36 @@ pub struct WorkspaceDoctorSummary {
     pub info_count: usize,
 }
 
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceExplainSummary {
+    pub repo_count: usize,
+    pub ready_count: usize,
+    pub not_ready_count: usize,
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+    pub step_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceRepoExplainReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub ok: bool,
+    pub summary: ExplainSummary,
+    pub steps: Vec<ExplainStep>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceExplainSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub summary: WorkspaceExplainSummary,
+    pub repos: &'a [WorkspaceRepoExplainReport],
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExecutionContainerSummary<'a> {
     pub image: &'a str,
