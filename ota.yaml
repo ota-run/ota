@@ -1,6 +1,115 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
 version: 1
 project:
-  name: full-contract
-  description: Full example of the current Ota contract surface
+  name: ota
+  description: Ota CLI and Contract Engine
   type: application
+execution:
+  preferred: native
+  supported:
+    - native
 tools:
+  cargo: "*"
+checks:
+  - name: rust-installed
+    kind: precondition
+    severity: error
+    run: rustc --version
+tasks:
+  setup:
+    description: Fetch Rust dependencies
+    category: setup
+    run: cargo fetch
+    safe_for_agent: true
+  build:
+    description: Compile the CLI
+    category: build
+    run: cargo build
+    depends_on:
+      - setup
+    safe_for_agent: true
+  fmt:
+    description: Check Rust formatting
+    category: test
+    run: cargo fmt --check
+    safe_for_agent: true
+  check:
+    description: Type-check the crate
+    category: test
+    run: cargo check
+    depends_on:
+      - setup
+    safe_for_agent: true
+  test:
+    description: Run the Rust test suite
+    category: test
+    run: cargo test
+    depends_on:
+      - setup
+    safe_for_agent: true
+  ci:
+    description: Run the standard local verification suite
+    category: test
+    script: |
+      cargo fmt --check
+      cargo check
+      cargo test
+    depends_on:
+      - setup
+    safe_for_agent: true
+  install:
+    description: Reinstall ota from the local workspace
+    category: dev
+    run: ./scripts/install.sh --from-source
+    depends_on:
+      - ci
+agent:
+  entrypoint: setup
+  default_task: ci
+  safe_tasks:
+    - setup
+    - build
+    - fmt
+    - check
+    - test
+    - ci
+  verify_after_changes:
+    - fmt
+    - check
+    - test
+    - ci
+  writable_paths:
+    - src
+    - docs
+    - README.md
+    - scripts
+    - tests
+  protected_paths:
+    - ota.yaml
+    - Cargo.lock
+    - LICENSE
+  notes: |
+    Use ota for repo workflow.
+    Prefer narrow changes with regression tests.
+    Keep public docs and contracts aligned with implementation.

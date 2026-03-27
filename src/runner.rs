@@ -152,10 +152,26 @@ pub fn run_task(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<RunOutcome, RunError> {
-    run_task_with_overrides(
+    run_task_with_args_with_overrides(
         contract,
         contract_path,
         task_name,
+        &[],
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn run_task_with_args(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+) -> Result<RunOutcome, RunError> {
+    run_task_with_args_with_overrides(
+        contract,
+        contract_path,
+        task_name,
+        args,
         ExecutionOverrides::default(),
     )
 }
@@ -166,7 +182,31 @@ pub fn run_task_with_overrides(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<RunOutcome, RunError> {
-    run_task_with_progress_and_overrides(contract, contract_path, task_name, true, overrides)
+    run_task_with_progress_and_args_and_overrides(
+        contract,
+        contract_path,
+        task_name,
+        true,
+        &[],
+        overrides,
+    )
+}
+
+pub fn run_task_with_args_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+    overrides: ExecutionOverrides,
+) -> Result<RunOutcome, RunError> {
+    run_task_with_progress_and_args_and_overrides(
+        contract,
+        contract_path,
+        task_name,
+        true,
+        args,
+        overrides,
+    )
 }
 
 pub fn run_task_with_progress(
@@ -175,11 +215,12 @@ pub fn run_task_with_progress(
     task_name: &str,
     emit_progress: bool,
 ) -> Result<RunOutcome, RunError> {
-    run_task_with_progress_and_overrides(
+    run_task_with_progress_and_args_and_overrides(
         contract,
         contract_path,
         task_name,
         emit_progress,
+        &[],
         ExecutionOverrides::default(),
     )
 }
@@ -191,10 +232,29 @@ pub fn run_task_with_progress_and_overrides(
     emit_progress: bool,
     overrides: ExecutionOverrides,
 ) -> Result<RunOutcome, RunError> {
+    run_task_with_progress_and_args_and_overrides(
+        contract,
+        contract_path,
+        task_name,
+        emit_progress,
+        &[],
+        overrides,
+    )
+}
+
+pub fn run_task_with_progress_and_args_and_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    emit_progress: bool,
+    args: &[String],
+    overrides: ExecutionOverrides,
+) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
         contract,
         contract_path,
         task_name,
+        args,
         overrides,
         TaskExecutionMode::Stream { emit_progress },
     )?;
@@ -210,10 +270,26 @@ pub fn run_task_captured(
     contract_path: &Path,
     task_name: &str,
 ) -> Result<CapturedRunOutcome, RunError> {
-    run_task_captured_with_overrides(
+    run_task_captured_with_args_with_overrides(
         contract,
         contract_path,
         task_name,
+        &[],
+        ExecutionOverrides::default(),
+    )
+}
+
+pub fn run_task_captured_with_args(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+) -> Result<CapturedRunOutcome, RunError> {
+    run_task_captured_with_args_with_overrides(
+        contract,
+        contract_path,
+        task_name,
+        args,
         ExecutionOverrides::default(),
     )
 }
@@ -224,10 +300,21 @@ pub fn run_task_captured_with_overrides(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<CapturedRunOutcome, RunError> {
+    run_task_captured_with_args_with_overrides(contract, contract_path, task_name, &[], overrides)
+}
+
+pub fn run_task_captured_with_args_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+    overrides: ExecutionOverrides,
+) -> Result<CapturedRunOutcome, RunError> {
     run_task_internal(
         contract,
         contract_path,
         task_name,
+        args,
         overrides,
         TaskExecutionMode::Capture,
     )
@@ -292,6 +379,7 @@ fn run_task_internal(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    args: &[String],
     overrides: ExecutionOverrides,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
@@ -332,7 +420,8 @@ fn run_task_internal(
 
         let command_output = execute_task_command(
             task_name,
-            command,
+            &command,
+            args,
             working_dir,
             &env_overrides,
             &backend,
@@ -364,6 +453,7 @@ fn run_task_internal(
 fn execute_task_command(
     task_name: &str,
     command: &str,
+    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     backend: &ResolvedExecutionBackend,
@@ -372,7 +462,7 @@ fn execute_task_command(
     match backend {
         ResolvedExecutionBackend::Native => match mode {
             TaskExecutionMode::Stream { .. } => {
-                let status = shell_command(command)
+                let status = shell_command(command, args)
                     .current_dir(working_dir)
                     .envs(env_overrides.iter())
                     .stdin(Stdio::inherit())
@@ -391,7 +481,7 @@ fn execute_task_command(
                 })
             }
             TaskExecutionMode::Capture => {
-                let output = shell_command(command)
+                let output = shell_command(command, args)
                     .current_dir(working_dir)
                     .envs(env_overrides.iter())
                     .stdin(Stdio::inherit())
@@ -414,6 +504,7 @@ fn execute_task_command(
         ResolvedExecutionBackend::Container { image, lifecycle } => execute_container_task_command(
             task_name,
             command,
+            args,
             working_dir,
             env_overrides,
             image,
@@ -427,6 +518,7 @@ fn execute_task_command(
         } => execute_remote_task_command(
             task_name,
             command,
+            args,
             env_overrides,
             provider,
             target,
@@ -525,6 +617,7 @@ fn remote_target_example(provider: &str) -> &'static str {
 fn execute_remote_task_command(
     task_name: &str,
     command: &str,
+    args: &[String],
     env_overrides: &BTreeMap<String, String>,
     provider: &str,
     target: &str,
@@ -532,10 +625,10 @@ fn execute_remote_task_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let mut remote_command = match provider {
-        "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
-        "ssh" => ssh_remote_command(target, cwd, command, env_overrides),
-        "tsh" => tsh_remote_command(target, cwd, command, env_overrides),
-        "kubectl" => kubectl_remote_command(target, cwd, command, env_overrides),
+        "daytona" => daytona_remote_command(target, cwd, command, args, env_overrides),
+        "ssh" => ssh_remote_command(target, cwd, command, args, env_overrides),
+        "tsh" => tsh_remote_command(target, cwd, command, args, env_overrides),
+        "kubectl" => kubectl_remote_command(target, cwd, command, args, env_overrides),
         other => {
             return Err(RunError::UnsupportedRemoteProvider {
                 task: task_name.to_string(),
@@ -593,6 +686,7 @@ fn daytona_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
+    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("daytona");
@@ -604,7 +698,9 @@ fn daytona_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env(command, env_overrides));
+        .arg(shell_script_with_env(command, env_overrides))
+        .arg("ota")
+        .args(args);
     remote
 }
 
@@ -612,6 +708,7 @@ fn ssh_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
+    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("ssh");
@@ -619,7 +716,9 @@ fn ssh_remote_command(
         .arg(target)
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
+        .arg("ota")
+        .args(args);
     remote
 }
 
@@ -627,6 +726,7 @@ fn tsh_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
+    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("tsh");
@@ -636,7 +736,9 @@ fn tsh_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
+        .arg("ota")
+        .args(args);
     remote
 }
 
@@ -644,6 +746,7 @@ fn kubectl_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
+    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("kubectl");
@@ -653,7 +756,9 @@ fn kubectl_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
+        .arg("ota")
+        .args(args);
     remote
 }
 
@@ -693,6 +798,7 @@ fn shell_quote(value: &str) -> String {
 fn execute_container_task_command(
     task_name: &str,
     command: &str,
+    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -703,6 +809,7 @@ fn execute_container_task_command(
         Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
             task_name,
             command,
+            args,
             working_dir,
             env_overrides,
             image,
@@ -711,6 +818,7 @@ fn execute_container_task_command(
         Lifecycle::Persistent => execute_persistent_container_task_command(
             task_name,
             command,
+            args,
             working_dir,
             env_overrides,
             image,
@@ -722,6 +830,7 @@ fn execute_container_task_command(
 fn execute_ephemeral_container_task_command(
     task_name: &str,
     command: &str,
+    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -739,7 +848,13 @@ fn execute_ephemeral_container_task_command(
     for (name, value) in env_overrides {
         docker.arg("--env").arg(format!("{name}={value}"));
     }
-    docker.arg(image).arg("sh").arg("-lc").arg(command);
+    docker
+        .arg(image)
+        .arg("sh")
+        .arg("-lc")
+        .arg(command)
+        .arg("ota")
+        .args(args);
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -783,6 +898,7 @@ fn execute_ephemeral_container_task_command(
 fn execute_persistent_container_task_command(
     task_name: &str,
     command: &str,
+    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -838,7 +954,9 @@ fn execute_persistent_container_task_command(
         .arg(&container_name)
         .arg("sh")
         .arg("-lc")
-        .arg(command);
+        .arg(command)
+        .arg("ota")
+        .args(args);
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -940,16 +1058,16 @@ fn visit_task(
 }
 
 #[cfg(unix)]
-fn shell_command(command: &str) -> Command {
+fn shell_command(command: &str, args: &[String]) -> Command {
     let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command);
+    shell.arg("-lc").arg(command).arg("ota").args(args);
     shell
 }
 
 #[cfg(windows)]
-fn shell_command(command: &str) -> Command {
+fn shell_command(command: &str, args: &[String]) -> Command {
     let mut shell = Command::new("cmd");
-    shell.arg("/C").arg(command);
+    shell.arg("/C").arg(command).args(args);
     shell
 }
 

@@ -653,6 +653,14 @@ fn validate_agent(
             ));
         }
     }
+
+    for path in &agent.protected_paths {
+        if path.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`agent.protected_paths` entries must not be empty",
+            ));
+        }
+    }
 }
 
 fn validate_task_reference(

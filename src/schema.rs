@@ -411,5 +411,7 @@ pub struct AgentConfig {
     #[serde(default)]
     pub writable_paths: Vec<String>,
     #[serde(default)]
+    pub protected_paths: Vec<String>,
+    #[serde(default)]
     pub notes: Option<String>,
 }

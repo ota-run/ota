@@ -361,6 +361,7 @@ ota run <task> --member api --member web [PATH]
 ota run <task> --backend native [PATH]
 ota run <task> --backend container --lifecycle ephemeral [PATH]
 ota run <task> --backend remote [PATH]
+ota run <task> [PATH] -- [task args...]
 ```
 
 Current behavior:
@@ -369,6 +370,7 @@ Current behavior:
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
 - `--backend` and `--lifecycle` can override the contract for one invocation
+- trailing args after `--` are appended to the task command as shell-quoted positional args
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
@@ -909,6 +911,7 @@ ota workspace run <task> [PATH]
 ota workspace run <task> --json [PATH]
 ota workspace run <task> --jobs 4 [PATH]
 ota workspace run <task> --stream [PATH]
+ota workspace run <task> [PATH] -- [task args...]
 ```
 
 Current behavior:
@@ -922,6 +925,7 @@ Current behavior:
 - captures per-repo stdout/stderr in default mode
 - `--stream` opts into raw child output (text only, currently requires `--jobs 1`)
 - optional repo task failures do not fail the overall workspace status
+- trailing args after `--` are appended to each repo task command as shell-quoted positional args
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
 
 Text output:
