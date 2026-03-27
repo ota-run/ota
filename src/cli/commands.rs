@@ -9444,7 +9444,7 @@ fn error_key(key: &str) -> String {
 }
 
 fn error_next_key(key: &str) -> String {
-    paint(key, "1;38;2;242;209;170")
+    paint(key, "1;38;2;83;61;51")
 }
 
 fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
@@ -9560,7 +9560,7 @@ fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }
 
-const NEXT_HEADER_COLOR: &str = "1;38;2;220;220;220";
+const NEXT_HEADER_COLOR: &str = "1;38;2;83;61;51";
 
 fn result_icon() -> &'static str {
     if plain_mode() { "-" } else { "★" }
