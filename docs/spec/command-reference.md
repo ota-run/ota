@@ -850,7 +850,7 @@ Current behavior:
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
 - lists task declarations for each acquired repo contract
-- `--use` switches text output to compact runnable usage lines
+- `--use` is accepted for CLI parity and currently renders the same text output
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 

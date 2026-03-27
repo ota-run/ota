@@ -9069,7 +9069,7 @@ fn render_workspace_run(
 fn render_workspace_tasks_text(
     path: &str,
     repos: &[WorkspaceRepoTasksReport],
-    use_cmd: bool,
+    _use_cmd: bool,
 ) -> CommandOutput {
     let mut stdout = format!(
         "{}\n\n{}",
@@ -9122,23 +9122,14 @@ fn render_workspace_tasks_text(
         }
 
         for task in &repo.tasks {
-            if use_cmd {
-                stdout.push_str(&format!(
-                    "\n{} {} `{}`",
-                    info_bullet(),
-                    paint(&task.name, "1"),
-                    paint_code(&format!("ota run {}", task.name))
-                ));
-            } else {
-                stdout.push_str(&format!(
-                    "\n{} {} ({})",
-                    list_bullet(),
-                    task.name,
-                    task.kind
-                ));
-                if !task.depends_on.is_empty() {
-                    stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
-                }
+            stdout.push_str(&format!(
+                "\n{} {} ({})",
+                list_bullet(),
+                task.name,
+                task.kind
+            ));
+            if !task.depends_on.is_empty() {
+                stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
         }
     }

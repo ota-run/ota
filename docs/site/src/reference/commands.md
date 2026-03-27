@@ -600,6 +600,8 @@ ota workspace tasks --use
 ota workspace tasks --json
 ```
 
+`--use` is accepted for CLI parity and currently renders the same text output as `ota workspace tasks`.
+
 Script example:
 
 ```bash
