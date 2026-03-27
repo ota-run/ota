@@ -1751,6 +1751,7 @@ tasks:
         assert!(output.stdout.contains("DIFF"));
         assert!(output.stdout.contains("Summary:"));
         assert!(output.stdout.contains("Added:"));
+        assert!(output.stdout.contains("Base-only:"));
         assert!(output.stdout.contains("Changed:"));
         assert!(output.stdout.contains("project.name"));
         assert!(output.stdout.contains("tasks.lint.run"));

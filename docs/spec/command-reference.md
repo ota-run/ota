@@ -258,7 +258,7 @@ ota diff --json ./before/ota.yaml ./after/ota.yaml
 Current behavior:
 
 - compares two repo or workspace contracts as structured YAML
-- reports added, removed, and changed fields in deterministic order
+- reports added, base-only, and changed fields in deterministic order
 - remains read-only
 - exits `0` when the comparison succeeds, even if differences exist
 - surfaces load and parse errors clearly
@@ -268,7 +268,7 @@ Text output:
 - header: `DIFF <base> -> <target>`
 - `MATCH` or `DIFFERENT`
 - summary counts
-- grouped added, removed, and changed paths
+- grouped added, base-only, and changed paths
 
 JSON output:
 

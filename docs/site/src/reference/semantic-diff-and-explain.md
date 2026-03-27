@@ -45,7 +45,7 @@ The spec keeps them separate from:
 ## `ota diff`
 
 `ota diff` compares two repo or workspace contracts as structured YAML and reports added,
-removed, and changed fields in deterministic order.
+base-only, and changed fields in deterministic order.
 
 ## `ota explain`
 
