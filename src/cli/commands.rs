@@ -7240,29 +7240,28 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("Steps")));
     if steps.is_empty() {
-        stdout.push_str(&format!("\n{}  none", info_bullet()));
+        stdout.push_str(&format!("\n{} none", paint("»", "1;38;2;255;214;79")));
         return stdout;
     }
 
     for step in steps {
-        if !matches!(step.order, 1) {
+        if step.order > 1 {
             stdout.push('\n');
         }
         stdout.push_str(&format!(
-            "\n{} {}. {}  {}",
+            "\n{} {}. {}",
             paint("»", "1;38;2;255;214;79"),
             step.order,
-            render_severity_label(step.severity),
             render_finding_summary(step.severity, &step.summary)
         ));
         stdout.push_str(&format!(
-            "\n{} {}",
-            finding_detail_key(step.severity, "Why:"),
+            "\n  {} {}",
+            paint_key("Why:"),
             compact_backticked_paths(&step.why)
         ));
         stdout.push_str(&format!(
-            "\n{} {}",
-            finding_detail_key(step.severity, "Next:"),
+            "\n  {} {}",
+            paint_key("Next:"),
             compact_backticked_paths(&step.next)
         ));
     }
@@ -9008,22 +9007,6 @@ fn render_severity(severity: FindingSeverity) -> String {
         FindingSeverity::Error => format!("{} {}", paint("◉", "1;31"), paint("ERROR", "1;31")),
         FindingSeverity::Warn => format!("{} {}", paint("◉", "1;33"), paint("WARN", "1;33")),
         FindingSeverity::Info => format!("{} {}", paint("◉", "1;36"), paint("INFO", "1;36")),
-    }
-}
-
-fn render_severity_label(severity: FindingSeverity) -> String {
-    if plain_mode() {
-        return match severity {
-            FindingSeverity::Error => String::from("ERROR"),
-            FindingSeverity::Warn => String::from("WARN"),
-            FindingSeverity::Info => String::from("INFO"),
-        };
-    }
-
-    match severity {
-        FindingSeverity::Error => paint("ERROR", "1;31"),
-        FindingSeverity::Warn => paint("WARN", "1;33"),
-        FindingSeverity::Info => paint("INFO", "1;36"),
     }
 }
 
