@@ -579,8 +579,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                     | WorkspaceCommands::Doctor { stream: false, .. }
                     | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::Detect { .. }
-                    | WorkspaceCommands::Init { .. }
-                    | WorkspaceCommands::Up { quiet: false, .. },
+                    | WorkspaceCommands::Init { .. },
             }
     );
     let json_spinner_exception = matches!(
