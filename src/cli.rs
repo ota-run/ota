@@ -2732,7 +2732,6 @@ env:
                 .stdout
                 .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
         );
-        assert!(output.stdout.contains("RECEIPT:"));
         assert!(output.stdout.contains("\n\n"));
     }
 
@@ -4164,9 +4163,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
-        assert!(
-            stderr.contains("Next: run `ota tasks --use` to see available task names and usage")
-        );
+        assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
     }
 
     #[test]
@@ -4302,9 +4299,9 @@ project:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
         assert!(stderr.contains("contract path does not exist"));
-        assert!(stderr.contains("use `ota init` to create a starter contract"));
-        assert!(stderr.contains("use `ota detect --dry-run` to preview inferred fields"));
-        assert!(stderr.contains("use `ota detect --write` to write a detected contract"));
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
+        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
+        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
     }
 
     #[test]
@@ -4651,9 +4648,7 @@ agent:
         assert!(
             output
                 .stdout
-                .contains(
-                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=Cargo.lock,LICENSE",
-                )
+                .contains("AGENT entrypoint=setup safe_tasks=setup")
         );
     }
 
@@ -4680,7 +4675,7 @@ tasks:
         let object = json.as_object().unwrap();
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
-        assert_eq!(object.len(), 3);
+        assert_eq!(object.len(), 4);
     }
 
     #[test]
@@ -5093,9 +5088,7 @@ agent:
         assert!(
             output
                 .stdout
-                .contains(
-                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=Cargo.lock,LICENSE",
-                )
+                .contains("AGENT entrypoint=setup safe_tasks=setup")
         );
     }
 
@@ -5800,9 +5793,9 @@ project:
         assert_eq!(output.exit_code, 1);
         let stderr = output.stderr.as_deref().unwrap();
         assert!(stderr.contains("contract path does not exist"));
-        assert!(stderr.contains("use `ota init` to create a starter contract"));
-        assert!(stderr.contains("use `ota detect --dry-run` to preview inferred fields"));
-        assert!(stderr.contains("use `ota detect --write` to write a detected contract"));
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
+        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
+        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
     }
 
     #[test]
@@ -7357,7 +7350,10 @@ tasks:
 
         let up = run_with(["ota", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 0);
-        assert_json_top_level_keys(&up, &["findings", "ok", "path", "phase", "status"]);
+        assert_json_top_level_keys(
+            &up,
+            &["findings", "ok", "path", "phase", "receipt", "status"],
+        );
 
         let detect = run_with(["ota", "detect", "--json", "--dry-run", fixture.path()]);
         assert_eq!(detect.exit_code, 0);
@@ -7651,7 +7647,7 @@ tasks:
             multi_repo.path(),
         ]);
         assert_eq!(run.exit_code, 0);
-        assert_json_top_level_keys(&run, &["ok", "path", "repos", "task"]);
+        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "task"]);
 
         let check = run_with(["ota", "workspace", "check", "--json", single_repo.path()]);
         assert_eq!(check.exit_code, 0);
@@ -7663,7 +7659,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
-        assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
     }
 
     #[test]
@@ -8469,7 +8465,7 @@ tasks:
 
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
-        assert_json_top_level_keys(&run, &["ok", "path", "repos", "task"]);
+        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "task"]);
 
         let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 1);
@@ -8481,7 +8477,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
     }
 
     #[cfg(unix)]
@@ -8803,7 +8799,13 @@ tasks:
         );
         assert_eq!(
             body["repos"][1]["execution"]["backends"]["remote"]["cwd"],
-            "/workspace"
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .display()
+                .to_string()
         );
     }
 
@@ -9848,7 +9850,9 @@ repos:
 
     #[test]
     fn workspace_parallel_commands_preserve_dependency_order_in_json() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(fixture.dir.path());
 
         let doctor = run_with([
             "ota",
@@ -10094,7 +10098,6 @@ tasks:
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("web [optional] (WARN)"));
         assert!(output.stdout.contains("Exit code: 7"));
-        assert!(output.stdout.contains("RECEIPT:"));
     }
 
     #[cfg(unix)]

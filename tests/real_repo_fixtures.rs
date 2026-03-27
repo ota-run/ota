@@ -126,8 +126,8 @@ repos:
     assert!(stdout.contains("stream-out"));
     assert!(stdout.contains("WORKSPACE UP"));
     assert!(stderr.contains("stream-err"));
-    assert!(stderr.contains("[ota-stream]  ▶ RUN web"));
-    assert!(stderr.contains("[ota-stream]  ✓ READY web"));
+    assert!(stderr.contains("[ota-stream] RUN web"));
+    assert!(stderr.contains("[ota-stream] READY web"));
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn validate_discovers_contract_from_current_directory_real_fixture() {
 
     assert!(output.status.success());
     assert!(stdout.contains("VALIDATE"));
-    assert!(stdout.contains("✓ VALID"));
+    assert!(stdout.contains("➤ VALID"));
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn validate_uses_ota_file_override_real_fixture() {
 
     assert!(output.status.success());
     assert!(stdout.contains("VALIDATE"));
-    assert!(stdout.contains("✓ VALID"));
+    assert!(stdout.contains("➤ VALID"));
 }
 
 #[test]
