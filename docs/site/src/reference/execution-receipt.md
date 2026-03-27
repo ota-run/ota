@@ -22,31 +22,16 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Execution Receipt
 
-This section summarizes the stable surfaces of Ota:
+The execution receipt is the future machine-readable record for Ota execution commands.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+Use it to answer:
 
-Canonical specification files remain under `docs/spec/`.
+- what Ota believed was required
+- what it chose to run against
+- what it reused or acquired
+- what succeeded, failed, or was blocked
+- what the safe next step is
 
-Use this section when you need precision:
-
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
-
-## Key references
-
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
+This surface is planned for execution flows, not diagnosis or inference.

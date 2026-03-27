@@ -33,6 +33,7 @@ Source direction:
 - [Hosted validation workflow](/Users/bobai/Workspace/Ota.run/ota/docs/spec/hosted-validation-workflow.md)
 - [JSON output reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/json-output-reference.md)
 - [Command reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/command-reference.md)
+- [Semantic diff and explain](/Users/bobai/Workspace/Ota.run/ota/docs/spec/semantic-diff-and-explain.md)
 
 V7 theme:
 
@@ -46,6 +47,7 @@ V7 theme:
 - remote runner metadata standard finalization
 - hosted validation workflow shape
 - stronger machine-facing operational summaries
+- semantic contract diff and remediation planning
 
 ## Priorities
 
@@ -86,3 +88,4 @@ V7 theme:
 - at least one editor integration can consume the stable contract successfully
 - hosted validation can gate pull requests deterministically
 - remote runner integrations consume Ota metadata without custom per-repo glue
+- semantic diff can explain contract change impact without raw YAML parsing

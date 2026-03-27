@@ -273,6 +273,8 @@ Example contracts:
 - [V5 plan](docs/planning/v5/plan.md)
 - [V6 plan](docs/planning/v6/plan.md)
 - [V7 plan](docs/planning/v7/plan.md)
+- [V8 plan](docs/planning/v8/plan.md)
+- [V9 plan](docs/planning/v9/plan.md)
 - [V5 UX hardening completion slice](docs/planning/v5-ux-hardening.md)
 - [Hosted validation workflow](docs/spec/hosted-validation-workflow.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)
