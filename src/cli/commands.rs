@@ -8604,6 +8604,11 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             } else {
                 stdout.push('\n');
             }
+            let detail_indent = if step.order >= 10 {
+                "      "
+            } else {
+                "       "
+            };
             stdout.push_str(&format!(
                 " {}. {}  {}",
                 step.order,
@@ -8611,10 +8616,19 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 paint(&step.label, "1")
             ));
             if let Some(detail) = step.detail.as_deref() {
-                stdout.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
+                stdout.push_str(&format!(
+                    "\n{}{} {}",
+                    detail_indent,
+                    paint_key("Detail:"),
+                    detail
+                ));
             }
             if let Some(exit_code) = step.exit_code {
-                stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
+                stdout.push_str(&format!(
+                    "\n{}{} {exit_code}",
+                    detail_indent,
+                    paint_key("Exit code:")
+                ));
             }
         }
         stdout.push_str("\n");
