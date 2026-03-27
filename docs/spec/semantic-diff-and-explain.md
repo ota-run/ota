@@ -54,8 +54,8 @@ Useful cases:
 
 Text output:
 
-- top-level diff summary
 - grouped field-level changes
+- summary counts at the end
 - readiness impact notes
 
 JSON output:

@@ -593,7 +593,6 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                                 "DIFFERENT"
                             })
                         );
-                        stdout.push_str(&render_diff_summary_text(&summary));
                         if changes.is_empty() {
                             stdout.push_str("\n\nno semantic differences");
                         } else {
@@ -613,6 +612,7 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                                 changes.iter().filter(|change| change.status == "change"),
                             );
                         }
+                        stdout.push_str(&render_diff_summary_text(&summary));
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&DiffSuccess {
@@ -5724,7 +5724,7 @@ fn render_detect_change_section(
 
 fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("Summary")));
+    stdout.push_str(&format!("{}:", paint_section_title("≡ SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {}",
         paint_key("Added:"),

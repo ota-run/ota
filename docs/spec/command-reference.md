@@ -267,8 +267,8 @@ Text output:
 
 - header: `DIFF <base> -> <target>`
 - `MATCH` or `DIFFERENT`
-- summary counts
 - grouped added, missing-in-target, and changed paths
+- summary counts at the end
 
 JSON output:
 

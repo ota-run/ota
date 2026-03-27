@@ -46,6 +46,7 @@ The spec keeps them separate from:
 
 `ota diff` compares two repo or workspace contracts as structured YAML and reports added,
 missing-in-target, and changed fields in deterministic order.
+The summary counts appear after the field-level sections.
 
 ## `ota explain`
 
