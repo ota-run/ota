@@ -92,6 +92,16 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  release-gate:
+    description: Run the GitHub Actions verification suite
+    category: test
+    script: |
+      cargo test --test real_repo_fixtures
+      cargo test --test examples_validate
+    depends_on:
+      - ci
+      - compat
+    safe_for_agent: true
   bump-version:
     description: Bump Cargo.toml to a new release version
     category: release

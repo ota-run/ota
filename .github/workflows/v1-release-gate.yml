@@ -28,20 +28,11 @@ jobs:
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --check
+      - name: Install ota
+        run: cargo install --path . --locked
 
-      - name: Run compatibility gate
-        run: ./scripts/test-compat.sh
+      - name: Validate contract
+        run: ota validate
 
-      - name: Run full test suite
-        run: cargo test
-
-      - name: Run detect fixture suite
-        run: cargo test --test detect_fixtures
-
-      - name: Run real repo fixture suite
-        run: cargo test --test real_repo_fixtures
-
-      - name: Run examples validation suite
-        run: cargo test --test examples_validate
+      - name: Run release gate
+        run: ota run release-gate
