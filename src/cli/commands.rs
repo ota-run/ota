@@ -5720,7 +5720,11 @@ fn render_detect_change_section(
 
 fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("★ SUMMARY")));
+    stdout.push_str(&format!(
+        "{} {}:",
+        paint("≡", "1;38;2;255;214;79"),
+        paint_section_title("SUMMARY")
+    ));
     stdout.push_str(&format!(
         "\n{} {}",
         paint_key("Added:"),
