@@ -57,7 +57,15 @@ The core architecture is:
 - CLI = deterministic engine and UX layer
 - JSON output = machine-readable integration surface
 
-The CLI command surface is implemented in `src/cli/commands.rs`. All agent and human interactions with the repo should use the CLI as defined there. For canonical contract and workspace contract examples, see the `examples/` directory.
+**Agents must treat `ota.yaml` in the project root as the canonical source for:**
+- which tasks are safe for agents to run (`agent.safe_tasks`)
+- which paths are writable or protected (`agent.writable_paths`, `agent.protected_paths`)
+- which tasks must be run after changes (`agent.verify_after_changes`)
+- the entrypoint and default agent task (`agent.entrypoint`, `agent.default_task`)
+
+**Agents must not perform actions outside these boundaries.**
+
+For canonical contract and workspace contract examples, see the `examples/` directory.
 
 Workspace and monorepo support is first-class: use `ota.workspace.yaml` and the `ota workspace ...` commands for multi-repo orchestration, validation, and bootstrap. See the [README.md](README.md) and `examples/` for usage patterns.
 
@@ -378,6 +386,9 @@ Avoid inventing overlapping terms if the above already fit.
 4. Identify what adjacent behavior may be affected
 5. Keep validation tight but real
 6. If touching command UX, think about human output, JSON output, and exit codes together
+7. **Consult `ota.yaml` for canonical task, test, and CI flows.**
+8. **Use scripts in `scripts/` (e.g., `bump-version.sh`, `install.sh`) for release/dev flows as defined in `ota.yaml` tasks.**
+9. **Refer to example contracts in `examples/` for canonical authoring patterns.**
 
 ### Autonomous bug fixing
 

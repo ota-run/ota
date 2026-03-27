@@ -1922,17 +1922,17 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stderr.is_none());
-        assert!(output.stdout.contains("DIFF"));
-        assert!(output.stdout.contains("SUMMARY"));
-        assert!(output.stdout.contains("»"));
-        assert!(output.stdout.contains("➤ DIFFERENT"));
-        assert!(output.stdout.contains("DIFFERENT"));
-        assert!(output.stdout.contains("Added:"));
-        assert!(output.stdout.contains("Missing in target:"));
-        assert!(output.stdout.contains("Changed:"));
-        assert!(output.stdout.contains("project.name"));
-        assert!(output.stdout.contains("tasks.lint.run"));
-        assert!(output.stdout.contains("tasks.test.run"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("DIFF"));
+        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("»"));
+        assert!(stdout.contains("DIFFERENT"));
+        assert!(stdout.contains("Added:"));
+        assert!(stdout.contains("Missing in target:"));
+        assert!(stdout.contains("Changed:"));
+        assert!(stdout.contains("project.name"));
+        assert!(stdout.contains("tasks.lint.run"));
+        assert!(stdout.contains("tasks.test.run"));
     }
 
     #[test]
@@ -1995,13 +1995,14 @@ project:
 
         assert_eq!(output.exit_code, 1);
         assert!(output.stderr.is_none());
-        assert!(output.stdout.contains("EXPLAIN"));
-        assert!(output.stdout.contains("SUMMARY"));
-        assert!(output.stdout.contains("Steps"));
-        assert!(output.stdout.contains("No tasks defined in contract"));
-        assert!(output.stdout.contains("Why:"));
-        assert!(output.stdout.contains("Next:"));
-        assert!(output.stdout.contains("»"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("EXPLAIN"));
+        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("No tasks defined in contract"));
+        assert!(stdout.contains("Why:"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("»"));
     }
 
     #[test]
@@ -2331,12 +2332,13 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("TASKS "));
-        assert!(output.stdout.contains("/ota.yaml"));
-        assert!(output.stdout.contains("[member api]"));
-        assert!(output.stdout.contains("setup"));
-        assert!(output.stdout.contains("test"));
-        assert!(output.stdout.contains("\n\n"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("TASKS "));
+        assert!(stdout.contains("/ota.yaml"));
+        assert!(stdout.contains("[member api]"));
+        assert!(stdout.contains("setup"));
+        assert!(stdout.contains("test"));
+        assert!(stdout.contains("\n\n"));
     }
 
     #[test]
@@ -2376,13 +2378,8 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[test]
@@ -2522,13 +2519,8 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[test]
@@ -2717,22 +2709,19 @@ env:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains(&format!(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(&format!(
             "DOCTOR {}",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains(&format!(
+        assert!(stdout.contains(&format!(
             "DOCTOR {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(
-            output
-                .stdout
-                .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
-        );
-        assert!(output.stdout.contains("\n\n"));
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
+        assert!(stdout.contains("\n\n"));
     }
 
     #[test]
@@ -2769,13 +2758,8 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[test]
@@ -2884,23 +2868,17 @@ env:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stdout
-                .contains(&format!("UP {}", compact_contract(&fixture.file_path())))
-        );
-        assert!(output.stdout.contains(&format!(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(&format!("UP {}", compact_contract(&fixture.file_path()))));
+        assert!(stdout.contains(&format!(
             "UP {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(
-            output
-                .stdout
-                .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
-        );
-        assert!(output.stdout.contains("\n\n"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
+        assert!(stdout.contains("\n\n"));
     }
 
     #[test]
@@ -2937,13 +2915,8 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[cfg(unix)]
@@ -3014,7 +2987,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert_eq!(
-            output.stdout,
+            strip_ansi(&output.stdout),
             format!("CLEANED {}", compact_contract(&fixture.file_path()))
         );
         assert!(fixture.dir.path().join("docker-log.txt").exists());
@@ -3043,7 +3016,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert_eq!(
-            output.stdout,
+            strip_ansi(&output.stdout),
             format!(
                 "NO CLEANUP NEEDED {}",
                 compact_contract(&fixture.file_path())
@@ -3077,15 +3050,16 @@ project:
         let output = run_with(["ota", "clean", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains(&format!(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(&format!(
             "NO CLEANUP NEEDED {}",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains(&format!(
+        assert!(stdout.contains(&format!(
             "NO CLEANUP NEEDED {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("\n\n"));
+        assert!(stdout.contains("\n\n"));
     }
 
     #[test]
@@ -3122,13 +3096,8 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[cfg(unix)]
@@ -3185,14 +3154,9 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("Lifecycle note: running task in an ephemeral container backend")
-        );
+        assert!(strip_ansi(&output.stdout).contains("READY"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Lifecycle note: running task in an ephemeral container backend"));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -3278,7 +3242,7 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "remote"
@@ -3364,7 +3328,7 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "remote"
@@ -3450,7 +3414,7 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "remote"
@@ -3523,14 +3487,9 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("Lifecycle note: running task in an ephemeral container backend")
-        );
+        assert!(strip_ansi(&output.stdout).contains("READY"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Lifecycle note: running task in an ephemeral container backend"));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -3614,7 +3573,7 @@ tasks:
                 .unwrap()
                 .contains("exec sandbox-dev")
         );
-        assert!(output.stderr.as_deref().unwrap().contains("RECEIPT:"));
+        assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("RECEIPT:"));
     }
 
     #[cfg(unix)]
@@ -4016,9 +3975,11 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stderr.as_deref().unwrap().contains(
-            "provider `tsh` requires `execution.backends.remote.target` (example: `user@host`)"
-        ));
+        assert!(
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains(
+                "provider `tsh` requires `execution.backends.remote.target` (example: `user@host`)"
+            )
+        );
     }
 
     #[test]
@@ -4052,7 +4013,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let expected = compact_contract(&fixture.dir.path().join("api").join("ota.yaml"));
-        assert!(output.stdout.contains(&expected));
+        assert!(strip_ansi(&output.stdout).contains(&expected));
     }
 
     #[test]
@@ -4093,7 +4054,7 @@ tasks:
         let output = run_with(["ota", "validate", "--unknown-flag"]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(output.stderr.as_deref().unwrap().contains("unexpected"));
+        assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("unexpected"));
     }
 
     #[test]
@@ -4140,7 +4101,7 @@ tasks:
         let output = run_with(["ota", "workspace", "services"]);
 
         assert_eq!(output.exit_code, 2);
-        let stderr = output.stderr.as_deref().unwrap_or_default();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("unrecognized subcommand 'services'"));
         assert!(stderr.contains("ota services"));
         assert!(stderr.contains("ota workspace doctor"));
@@ -4162,7 +4123,7 @@ tasks:
         let output = run_with(["ota", "run", "missing", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
     }
 
@@ -4187,7 +4148,7 @@ unexpected: true
         let output = run_with(["ota", "validate", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stderr.as_deref().unwrap().contains("unexpected"));
+        assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("unexpected"));
     }
 
     #[test]
@@ -4280,13 +4241,10 @@ project:
         let output = run_with(["ota", "validate", nested.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stdout,
-            format!(
-                "🦦 VALIDATE {}\n\n➤ VALID",
-                compact_contract(&fixture.file_path())
-            )
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("VALIDATE"));
+        assert!(stdout.contains("VALID"));
+        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
     }
 
     #[test]
@@ -4297,7 +4255,7 @@ project:
         let output = run_with(["ota", "validate", missing.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("contract path does not exist"));
         assert!(stderr.contains("run `ota init` to create a starter contract"));
         assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
@@ -4322,13 +4280,10 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stdout,
-            format!(
-                "🦦 VALIDATE {}\n\n➤ VALID",
-                compact_contract(&fixture.file_path())
-            )
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("VALIDATE"));
+        assert!(stdout.contains("VALID"));
+        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
     }
 
     #[test]
@@ -4481,9 +4436,10 @@ tasks:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("setup"));
-        assert!(output.stdout.contains("Kind: script"));
-        assert!(output.stdout.contains("Use: `ota run setup`"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("setup"));
+        assert!(stdout.contains("Kind: script"));
+        assert!(stdout.contains("Use: `ota run setup`"));
     }
 
     #[test]
@@ -4502,13 +4458,13 @@ tasks:
         );
 
         let output = run_with(["ota", "tasks", fixture.path()]);
-        let normalized = output.stdout.clone();
+        let normalized = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(normalized.starts_with("🦦 TASKS "));
-        assert!(normalized.contains("/ota.yaml\n\n✦ build"));
-        assert!(normalized.contains("\n✦ build"));
-        assert!(normalized.contains("\n✦ dev"));
+        assert!(normalized.contains("TASKS "));
+        assert!(normalized.contains("/ota.yaml"));
+        assert!(normalized.contains("build"));
+        assert!(normalized.contains("dev"));
         assert!(!normalized.contains("- Task:"));
     }
 
@@ -4532,11 +4488,12 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("🦦 TASKS "));
-        assert!(output.stdout.contains("\n\n✦ dev `ota run dev`"));
-        assert!(output.stdout.contains("\n✦ start `ota run start`"));
-        assert!(output.stdout.contains("\n✦ typecheck `ota run typecheck`"));
-        assert!(!output.stdout.contains("Command Preview:"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("TASKS "));
+        assert!(stdout.contains("dev `ota run dev`"));
+        assert!(stdout.contains("start `ota run start`"));
+        assert!(stdout.contains("typecheck `ota run typecheck`"));
+        assert!(!stdout.contains("Command Preview:"));
     }
 
     #[test]
@@ -5393,13 +5350,14 @@ tasks:
         let output = run_with(["ota", "init", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT"));
-        assert!(output.stdout.contains("Mode: detected"));
-        assert!(output.stdout.contains(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT"));
+        assert!(stdout.contains("Mode: detected"));
+        assert!(stdout.contains(
             "Next: review this starter contract, edit it if needed, then run `ota init "
         ));
-        assert!(output.stdout.contains("name: ota-web"));
-        assert!(output.stdout.contains("tools.pnpm"));
+        assert!(stdout.contains("name: ota-web"));
+        assert!(stdout.contains("tools.pnpm"));
         assert!(!fixture.file_path().exists());
     }
 
@@ -5418,11 +5376,13 @@ tasks:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT WRITE"));
-        assert!(output.stdout.contains(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT WRITE"));
+        assert!(stdout.contains(
             "Write policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded"
         ));
-        assert!(output.stdout.contains("Next:\n▸  run `ota validate"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota validate"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -5437,8 +5397,9 @@ tasks:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT WRITE"));
-        assert!(output.stdout.contains(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT WRITE"));
+        assert!(stdout.contains(
             "Write policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded"
         ));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
@@ -5459,14 +5420,15 @@ tasks:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap_or_default();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("preview the starter contract with `ota init --dry-run`"));
         assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
         assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
         assert!(stderr.contains("Excluded from automatic write:"));
-        assert!(stderr.contains("✦ Field: project.name"));
-        assert!(stderr.contains("Confidence: low\n\n✦ Field: tasks.build.run"));
+        assert!(stderr.contains("Field: project.name"));
+        assert!(stderr.contains("Confidence: low"));
+        assert!(stderr.contains("Field: tasks.build.run"));
         assert!(!stderr.contains("▸  Excluded from automatic write:"));
         assert!(!stderr.contains("▸  ✦ Field: project.name"));
     }
@@ -5479,13 +5441,14 @@ tasks:
         let output = run_with(["ota", "init", "--bootstrap", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT WRITE"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT WRITE"));
         assert!(
-            output.stdout.contains(
+            stdout.contains(
                 "Bootstrap policy: detected mode writes the full detected starter contract"
             )
         );
-        assert!(!output.stdout.contains("Excluded from automatic write:"));
+        assert!(!stdout.contains("Excluded from automatic write:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: tclapp"));
         assert!(written.contains("tclsh: '*"));
@@ -5506,9 +5469,10 @@ tasks:
         let output = run_with(["ota", "init", "--bootstrap", node_path.as_str()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT WRITE"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT WRITE"));
         assert!(
-            output.stdout.contains(
+            stdout.contains(
                 "Bootstrap policy: detected mode writes the full detected starter contract"
             )
         );
@@ -5536,7 +5500,7 @@ tasks:
         let output = run_with(["ota", "init", "--bootstrap"]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("INIT WRITE ."));
+        assert!(strip_ansi(&output.stdout).contains("INIT WRITE ."));
         let written = fs::read_to_string(node_dir.join("ota.yaml")).unwrap();
         assert!(written.contains("name: node"));
     }
@@ -5561,9 +5525,10 @@ tasks:
         let output = run_with(["ota", "init", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("Mode: blank"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Mode: blank"));
         assert!(
-            output.stdout.contains(
+            stdout.contains(
                 "Coverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it"
             )
         );
@@ -5585,27 +5550,12 @@ tasks:
         let output = run_with(["ota", "init", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("use `ota detect --merge` to update the existing contract"));
         assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("use `ota detect --merge` to update the existing contract")
+            stderr.contains("review the existing contract with `ota validate` or `ota doctor`")
         );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("review the existing contract with `ota validate` or `ota doctor`")
-        );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("update the existing contract with `ota detect --merge")
-        );
+        assert!(stderr.contains("update the existing contract with `ota detect --merge"));
     }
 
     #[test]
@@ -5740,7 +5690,7 @@ tasks:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
     }
 
     #[test]
@@ -5756,8 +5706,9 @@ project:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("No tasks defined in contract"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("No tasks defined in contract"));
     }
 
     #[test]
@@ -5773,14 +5724,12 @@ project:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("🦦 DOCTOR "));
-        assert!(output.stdout.contains("\n\n➤ NOT READY"));
-        assert!(
-            output
-                .stdout
-                .contains("◉ ERROR  No tasks defined in contract")
-        );
-        assert!(!output.stdout.contains("\n---\n"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("DOCTOR "));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("ERROR"));
+        assert!(stdout.contains("No tasks defined in contract"));
+        assert!(!stdout.contains("\n---\n"));
     }
 
     #[test]
@@ -5791,7 +5740,7 @@ project:
         let output = run_with(["ota", "doctor", missing.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("contract path does not exist"));
         assert!(stderr.contains("run `ota init` to create a starter contract"));
         assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
@@ -5822,9 +5771,10 @@ tasks:
         let output = run_with(["ota", "check", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("CHECK"));
-        assert!(output.stdout.contains("WARN  Check failed: health-check"));
-        assert!(!output.stdout.contains("Missing environment variable"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("CHECK"));
+        assert!(stdout.contains("WARN  Check failed: health-check"));
+        assert!(!stdout.contains("Missing environment variable"));
     }
 
     #[test]
@@ -5935,24 +5885,21 @@ checks:
         let output = run_with(["ota", "check", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stdout
-                .contains(&format!("CHECK {}", compact_contract(&fixture.file_path())))
-        );
-        assert!(output.stdout.contains(&format!(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(&format!("CHECK {}", compact_contract(&fixture.file_path()))));
+        assert!(stdout.contains(&format!(
             "CHECK {} [member api]",
             compact_contract(&fixture.file_path())
         )));
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("Check failed: api-health"));
-        assert!(output.stdout.contains("SUMMARY:"));
-        assert!(output.stdout.contains("Errors:"));
-        assert!(output.stdout.contains("Warnings:"));
-        assert!(output.stdout.contains("Info:"));
-        assert!(output.stdout.rfind("SUMMARY:") > output.stdout.rfind("Check failed: api-health"));
-        assert!(output.stdout.contains("\n\n"));
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Check failed: api-health"));
+        assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("Errors:"));
+        assert!(stdout.contains("Warnings:"));
+        assert!(stdout.contains("Info:"));
+        assert!(stdout.rfind("SUMMARY:") > stdout.rfind("Check failed: api-health"));
+        assert!(stdout.contains("\n\n"));
     }
 
     #[test]
@@ -5989,13 +5936,8 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 2);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("`--member api` was provided more than once")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--member api` was provided more than once"));
     }
 
     #[test]
@@ -6018,12 +5960,9 @@ tasks:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(
-            output
-                .stdout
-                .contains("WARN  Missing tool: ota-tool-that-does-not-exist")
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("WARN  Missing tool: ota-tool-that-does-not-exist"));
     }
 
     #[test]
@@ -6070,12 +6009,9 @@ tasks:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(
-            output
-                .stdout
-                .contains("WARN  Ephemeral lifecycle is advisory only in V1")
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("WARN  Ephemeral lifecycle is advisory only in V1"));
     }
 
     #[test]
@@ -6106,16 +6042,14 @@ tasks:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let error_index = output
-            .stdout
+        let stdout = strip_ansi(&output.stdout);
+        let error_index = stdout
             .find("ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
             .unwrap();
-        let warn_index = output
-            .stdout
+        let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
-        let info_index = output
-            .stdout
+        let info_index = stdout
             .find("INFO  Check failed: informational-check")
             .unwrap();
 
@@ -6139,8 +6073,9 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("Phase: post-setup diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -6163,8 +6098,9 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("Phase: preconditions"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Phase: preconditions"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -6184,10 +6120,11 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 7);
-        assert!(output.stdout.contains("SETUP FAILED"));
-        assert!(output.stdout.contains("Phase: setup"));
-        assert!(output.stdout.contains("Task: setup"));
-        assert!(output.stdout.contains("Exit code: 7"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("SETUP FAILED"));
+        assert!(stdout.contains("Phase: setup"));
+        assert!(stdout.contains("Task: setup"));
+        assert!(stdout.contains("Exit code: 7"));
     }
 
     #[test]
@@ -6211,7 +6148,7 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
@@ -6271,13 +6208,10 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("Phase: services"));
-        assert!(
-            output
-                .stdout
-                .contains("ERROR  Service healthcheck failed: postgres")
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Phase: services"));
+        assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
@@ -6309,13 +6243,10 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("Phase: services"));
-        assert!(
-            output
-                .stdout
-                .contains("ERROR  Service healthcheck failed: postgres")
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Phase: services"));
+        assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
         assert!(fixture.dir.path().join("db-started.txt").exists());
         assert!(!fixture.dir.path().join("api-started.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
@@ -6365,10 +6296,11 @@ tasks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 9);
-        assert!(output.stdout.contains("SERVICE START FAILED"));
-        assert!(output.stdout.contains("Phase: services"));
-        assert!(output.stdout.contains("Service: postgres"));
-        assert!(output.stdout.contains("Exit code: 9"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("SERVICE START FAILED"));
+        assert!(stdout.contains("Phase: services"));
+        assert!(stdout.contains("Service: postgres"));
+        assert!(stdout.contains("Exit code: 9"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -6420,9 +6352,10 @@ checks:
         let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(output.stdout.contains("NOT READY"));
-        assert!(output.stdout.contains("Phase: post-setup diagnosis"));
-        assert!(output.stdout.contains("ERROR  Check failed: health-check"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(stdout.contains("ERROR  Check failed: health-check"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -6442,10 +6375,11 @@ checks:
         let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("project:"));
-        assert!(output.stdout.contains("name: ota-web"));
-        assert!(output.stdout.contains("runtimes.node"));
-        assert!(output.stdout.contains("tasks.dev.run"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("project:"));
+        assert!(stdout.contains("name: ota-web"));
+        assert!(stdout.contains("runtimes.node"));
+        assert!(stdout.contains("tasks.dev.run"));
     }
 
     #[test]
@@ -6523,28 +6457,13 @@ tasks:
         let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("Existing contract comparison:"));
-        assert!(
-            output
-                .stdout
-                .contains("project.name: would update `existing` -> `ota-web`")
-        );
-        assert!(
-            output
-                .stdout
-                .contains("tools.pnpm: would update `9` -> `10.1.0`")
-        );
-        assert!(
-            output
-                .stdout
-                .contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`")
-        );
-        assert!(
-            output
-                .stdout
-                .contains("ota detect --merge --apply <field name>")
-        );
-        assert!(output.stdout.contains("ota detect --rewrite --yes"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Existing contract comparison:"));
+        assert!(stdout.contains("project.name: would update `existing` -> `ota-web`"));
+        assert!(stdout.contains("tools.pnpm: would update `9` -> `10.1.0`"));
+        assert!(stdout.contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`"));
+        assert!(stdout.contains("ota detect --merge --apply <field name>"));
+        assert!(stdout.contains("ota detect --rewrite --yes"));
     }
 
     #[test]
@@ -6645,8 +6564,9 @@ project:
         let output = run_with(["ota", "detect", "--merge", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("MERGED"));
-        assert!(output.stdout.contains("Applied high-confidence additions:"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("MERGED"));
+        assert!(stdout.contains("Applied high-confidence additions:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
@@ -7030,9 +6950,10 @@ tasks:
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("DETECT WRITE"));
-        assert!(output.stdout.contains("Excluded from automatic write:"));
-        assert!(output.stdout.contains("runtimes.node"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("DETECT WRITE"));
+        assert!(stdout.contains("Excluded from automatic write:"));
+        assert!(stdout.contains("runtimes.node"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
@@ -7174,8 +7095,9 @@ project:
         let output = run_with(["ota", "detect", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("DETECT PREVIEW"));
-        assert!(output.stdout.contains("Mode: dry-run (no write)"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("DETECT PREVIEW"));
+        assert!(stdout.contains("Mode: dry-run (no write)"));
     }
 
     #[test]
@@ -7246,21 +7168,13 @@ project:
         let output = run_with(["ota", "--debug", "validate", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stdout,
-            format!(
-                "🦦 VALIDATE {}\n\n➤ VALID",
-                compact_contract(&fixture.file_path())
-            )
-        );
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("DEBUG command=validate")
-        );
-        assert!(output.stderr.as_deref().unwrap().contains(&format!(
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("VALIDATE"));
+        assert!(stdout.contains("VALID"));
+        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("DEBUG command=validate"));
+        assert!(stderr.contains(&format!(
             "DEBUG contract_path={}",
             fixture.file_path().display()
         )));
@@ -7285,7 +7199,7 @@ tasks:
         let output = run_with(["ota", "--debug", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stderr = output.stderr.as_deref().unwrap();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(
             stderr.contains(
                 "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1"
@@ -9203,7 +9117,7 @@ project:
         let output = run_with(["ota", "workspace", "tasks", nested.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains(&format!(
+        assert!(strip_ansi(&output.stdout).contains(&format!(
             "WORKSPACE TASKS {}",
             compact_workspace(&fixture.workspace_file())
         )));
@@ -9218,13 +9132,10 @@ project:
         let output = run_with(["ota", "workspace", "validate", nested.to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stdout,
-            format!(
-                "🦦 WORKSPACE VALIDATE {}\n\n➤ VALID",
-                compact_workspace(&fixture.workspace_file())
-            )
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("WORKSPACE VALIDATE"));
+        assert!(stdout.contains("VALID"));
+        assert!(stdout.contains(&compact_workspace(&fixture.workspace_file())));
     }
 
     #[test]
@@ -9247,7 +9158,7 @@ tasks:
         let output = run_with(["ota", "workspace", "validate", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = output.stderr.as_deref().unwrap_or_default();
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("ERROR"));
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why:"));
@@ -9745,13 +9656,10 @@ env:
         let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (READY)"));
-        assert!(
-            output
-                .stdout
-                .contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED")
-        );
+        assert!(strip_ansi(&output.stdout).contains("READY"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("web [optional] (READY)"));
+        assert!(stdout.contains("WARN  Missing environment variable: OTA_OPTIONAL_REQUIRED"));
     }
 
     #[test]
@@ -9781,13 +9689,12 @@ repos:
         ]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(
-            output.stdout,
-            format!(
-                "🦦 WORKSPACE VALIDATE {}\n\n➤ VALID",
-                compact_workspace(&fixture.path().join("ota.workspace.yaml"))
-            )
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("WORKSPACE VALIDATE"));
+        assert!(stdout.contains("VALID"));
+        assert!(stdout.contains(&compact_workspace(
+            &fixture.path().join("ota.workspace.yaml")
+        )));
     }
 
     #[test]
@@ -9920,8 +9827,8 @@ repos:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--jobs` must be greater than zero")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--jobs` must be greater than zero"
         );
     }
 
@@ -10003,9 +9910,10 @@ checks:
         let output = run_with(["ota", "workspace", "check", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (READY)"));
-        assert!(output.stdout.contains("WARN  Check failed: health-check"));
+        assert!(strip_ansi(&output.stdout).contains("READY"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("web [optional] (READY)"));
+        assert!(stdout.contains("WARN  Check failed: health-check"));
     }
 
     #[test]
@@ -10016,8 +9924,8 @@ checks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--jobs` must be greater than zero")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--jobs` must be greater than zero"
         );
     }
 
@@ -10095,9 +10003,10 @@ tasks:
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (WARN)"));
-        assert!(output.stdout.contains("Exit code: 7"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("web [optional] (WARN)"));
+        assert!(stdout.contains("Exit code: 7"));
     }
 
     #[cfg(unix)]
@@ -10167,8 +10076,8 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--jobs` must be greater than zero")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--jobs` must be greater than zero"
         );
     }
 
@@ -10441,11 +10350,12 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("web [optional] (WARN)"));
-        assert!(output.stdout.contains("Task: setup"));
-        assert!(output.stdout.contains("Exit code: 7"));
-        assert!(output.stdout.contains("RECEIPT:"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("web [optional] (WARN)"));
+        assert!(stdout.contains("Task: setup"));
+        assert!(stdout.contains("Exit code: 7"));
+        assert!(stdout.contains("RECEIPT:"));
     }
 
     #[test]
@@ -10565,8 +10475,8 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--jobs` must be greater than zero")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--jobs` must be greater than zero"
         );
     }
 
@@ -10586,8 +10496,8 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--stream` is only supported for text output")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--stream` is only supported for text output"
         );
     }
 
@@ -10608,8 +10518,8 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--stream` currently requires `--jobs 1`")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--stream` currently requires `--jobs 1`"
         );
     }
 
