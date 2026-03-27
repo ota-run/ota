@@ -7256,11 +7256,12 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
 
     for step in steps {
         if step.order > 1 {
+            stdout.push_str("\n\n");
+        } else {
             stdout.push('\n');
         }
         stdout.push_str(&format!(
-            "\n{} {}. {}",
-            paint("→", "1;38;2;255;214;79"),
+            " {}. {}",
             step.order,
             render_finding_summary(step.severity, &step.summary)
         ));
