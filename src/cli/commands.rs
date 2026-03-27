@@ -8752,7 +8752,7 @@ fn render_execution_receipt_status(status: &str) -> String {
     match status.trim() {
         "READY" => paint("READY", "1;38;2;0;255;120"),
         "NOT READY" | "BLOCKED" | "WARN" => paint(status.trim(), "1;38;2;255;235;59"),
-        value if value.contains("FAILED") => paint(value, "1;31"),
+        value if value.contains("FAILED") => paint(value, "1;38;2;255;214;79"),
         other => paint(other, "1;37"),
     }
 }
