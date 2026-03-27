@@ -8677,30 +8677,74 @@ fn render_execution_receipt_summary_text(summary: &ExecutionReceiptSummary) -> S
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     if let Some(repo_count) = summary.repo_count {
-        stdout.push_str(&format!("\n{} {}", paint_key("Repos:"), repo_count));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint("»", "1;38;2;255;214;79"),
+            paint("Repos:", "1;38;2;102;217;255")
+        ));
+        stdout.push_str(&format!(
+            " {}",
+            paint(&repo_count.to_string(), "1;38;2;255;255;255")
+        ));
         if let Some(ready_count) = summary.ready_count {
-            stdout.push_str(&format!("\n{} {}", paint_key("Ready:"), ready_count));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint("»", "1;38;2;255;214;79"),
+                paint("Ready:", "1;38;2;0;255;120")
+            ));
+            stdout.push_str(&format!(
+                " {}",
+                paint(&ready_count.to_string(), "1;38;2;255;255;255")
+            ));
         }
         if let Some(not_ready_count) = summary.not_ready_count {
             stdout.push_str(&format!(
                 "\n{} {}",
-                paint_key("Not Ready:"),
-                not_ready_count
+                paint("»", "1;38;2;255;214;79"),
+                paint("Not Ready:", "1;38;2;255;235;59")
+            ));
+            stdout.push_str(&format!(
+                " {}",
+                paint(&not_ready_count.to_string(), "1;38;2;255;255;255")
             ));
         }
     }
     stdout.push_str(&format!(
         "\n{} {}",
-        paint_key("Errors:"),
-        summary.error_count
+        paint("»", "1;38;2;255;214;79"),
+        paint("Errors:", "1;31")
+    ));
+    stdout.push_str(&format!(
+        " {}",
+        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {}",
-        paint_key("Warnings:"),
-        summary.warn_count
+        paint("»", "1;38;2;255;214;79"),
+        paint("Warnings:", "1;33")
     ));
-    stdout.push_str(&format!("\n{} {}", paint_key("Info:"), summary.info_count));
-    stdout.push_str(&format!("\n{} {}", paint_key("Steps:"), summary.step_count));
+    stdout.push_str(&format!(
+        " {}",
+        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Info:", "1;36")
+    ));
+    stdout.push_str(&format!(
+        " {}",
+        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Steps:", "1;38;2;102;217;255")
+    ));
+    stdout.push_str(&format!(
+        " {}",
+        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
+    ));
     stdout
 }
 
