@@ -6995,7 +6995,7 @@ project:
 
     #[test]
     fn stylize_failure_splits_ansi_next_block() {
-        let message = "`./ota.yaml` already exists; refusing to overwrite an existing contract | \x1b[1;38;2;83;61;51mNext:\x1b[0m | ▸  review detected changes with `ota detect --merge --dry-run .`";
+        let message = "`./ota.yaml` already exists; refusing to overwrite an existing contract | \x1b[1;38;2;242;209;170mNext:\x1b[0m | ▸  review detected changes with `ota detect --merge --dry-run .`";
         let styled = commands::stylize_text_failure("ota detect", message);
         let plain = strip_ansi(&styled);
         assert!(plain.contains("Why:"));
