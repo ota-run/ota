@@ -43,10 +43,11 @@ use crate::doctor::{
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
-    ExecutionSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpStatus, ValidateFailure, ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceListSuccess, WorkspaceListSummary, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
+    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
+    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceListSuccess,
+    WorkspaceListSummary, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
     WorkspaceTasksSuccess, WorkspaceUpSuccess,
 };
@@ -1619,6 +1620,117 @@ pub fn doctor(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn explain(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if let Some(duplicate) = duplicate_member(members) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                format!("`--member {duplicate}` was provided more than once"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=explain")],
+        );
+    }
+
+    if members.len() > 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from(
+                    "`ota explain` supports only one target at a time; use `--member <name>` to explain a single monorepo member",
+                ),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=explain")],
+        );
+    }
+
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=explain")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let single_member = (members.len() == 1).then(|| members[0].as_str());
+    let text_path_display = display_contract_target(&compact_path_display, single_member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=explain"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    for member in members {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, single_member) {
+            Ok(target) => {
+                let report = diagnose_contract(&target.contract, &target.contract_path);
+                let summary = explain_summary(&report);
+                let steps = explain_steps(&report.findings);
+
+                match format {
+                    OutputFormat::Text => CommandOutput {
+                        stdout: render_explain_section(
+                            &text_path_display,
+                            &report,
+                            &summary,
+                            &steps,
+                        ),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&ExplainSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            summary,
+                            steps: &steps,
+                        }),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => {
+                    let error = errors.to_string();
+                    CommandOutput::failure(to_json(&ExplainFailure {
+                        ok: false,
+                        path: &path_display,
+                        error: &error,
+                    }))
+                }
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => {
+                    let error = error.to_string();
+                    CommandOutput::failure(to_json(&ExplainFailure {
+                        ok: false,
+                        path: &path_display,
+                        error: &error,
+                    }))
+                }
             },
         },
         debug,
@@ -6875,6 +6987,114 @@ fn render_report_section(
     }
 
     stdout
+}
+
+fn render_explain_section(
+    path: &str,
+    report: &DoctorReport,
+    summary: &ExplainSummary,
+    steps: &[ExplainStep],
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("EXPLAIN", path),
+        render_readiness_status(report.ok)
+    );
+    stdout.push_str(&render_explain_steps_text(steps));
+    stdout.push_str(&render_explain_summary_text(summary));
+    stdout
+}
+
+fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("Steps")));
+    if steps.is_empty() {
+        stdout.push_str(&format!("\n{}  none", info_bullet()));
+        return stdout;
+    }
+
+    for step in steps {
+        stdout.push_str(&format!(
+            "\n{} {} {}  {}",
+            paint("»", "1;38;2;255;214;79"),
+            paint(&format!("{}.", step.order), "1"),
+            render_severity(step.severity),
+            render_finding_summary(step.severity, &step.summary)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            finding_detail_key(step.severity, "Why:"),
+            compact_backticked_paths(&step.why)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            finding_detail_key(step.severity, "Next:"),
+            compact_backticked_paths(&step.next)
+        ));
+    }
+
+    stdout
+}
+
+fn render_explain_summary_text(summary: &ExplainSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Errors:", "1;31"),
+        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Warnings:", "1;33"),
+        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Info:", "1;36"),
+        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Steps:", "1;38;2;102;217;255"),
+        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout
+}
+
+fn explain_summary(report: &DoctorReport) -> ExplainSummary {
+    let mut summary = ExplainSummary {
+        step_count: report.findings.len(),
+        ..ExplainSummary::default()
+    };
+
+    for finding in &report.findings {
+        match finding.severity {
+            FindingSeverity::Error => summary.error_count += 1,
+            FindingSeverity::Warn => summary.warn_count += 1,
+            FindingSeverity::Info => summary.info_count += 1,
+        }
+    }
+
+    summary
+}
+
+fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
+    findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| ExplainStep {
+            order: index + 1,
+            severity: finding.severity,
+            summary: finding.summary.clone(),
+            why: finding.why.clone(),
+            next: finding.next.clone(),
+        })
+        .collect()
 }
 
 fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {

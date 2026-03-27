@@ -24,8 +24,7 @@
 
 # Semantic Diff and Explain
 
-`ota diff` is the shipped read-only contract comparison command.
-`ota explain` remains a proposed readiness-to-remediation command.
+`ota diff` and `ota explain` are shipped read-only contract commands.
 
 Use `ota diff` when you want to compare two contract states semantically.
 Use `ota explain` when you want a readiness report turned into a fix plan.
@@ -50,9 +49,6 @@ The summary counts appear after the field-level sections.
 
 ## `ota explain`
 
-`ota explain` is still planned. It will turn readiness findings into ordered remediation steps.
+`ota explain` turns readiness findings into ordered remediation steps.
 
-## Planned contract
-
-- `ota explain` should turn findings into ordered remediation steps
-- both should stay read-only and deterministic
+It stays read-only and deterministic.

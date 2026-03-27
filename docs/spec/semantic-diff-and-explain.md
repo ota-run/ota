@@ -24,7 +24,7 @@
 
 # Semantic Diff and Explain
 
-Status: `ota diff` is shipped; `ota explain` remains a spec candidate.
+Status: `ota diff` and `ota explain` are shipped.
 
 This document defines two proposed read-only surfaces for Ota:
 
@@ -71,12 +71,12 @@ JSON output:
 
 Turn readiness findings into a remediation plan.
 
-Planned behavior:
+Behavior:
 
-- take doctor findings as input
-- group findings into actionable fix steps
-- keep the plan read-only and deterministic
-- never auto-apply changes
+- takes doctor findings as input
+- groups findings into actionable fix steps
+- keeps the plan read-only and deterministic
+- never auto-applies changes
 
 Useful cases:
 

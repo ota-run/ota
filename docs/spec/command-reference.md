@@ -64,6 +64,7 @@ Ota currently ships these commands:
 - `ota services`
 - `ota run <task>`
 - `ota doctor`
+- `ota explain`
 - `ota init`
 - `ota check`
 - `ota up`
@@ -276,6 +277,34 @@ JSON output:
 - failure: `ok`, `base`, `target`, and `error`
 
 Use this when you want to compare contract states before writing changes or to review the impact of a proposed edit in CI.
+
+## `ota explain`
+
+Explain readiness findings as an ordered remediation plan.
+
+```bash
+ota explain ./repo
+ota explain --json ./repo
+ota explain --member api ./repo
+```
+
+Current behavior:
+
+- diagnoses the contract first
+- turns each finding into an ordered remediation step
+- stays read-only and deterministic
+- prints a summary with step counts at the end
+
+Text output:
+
+- ordered remediation steps
+- `Why` and `Next` lines for each step
+- summary counts at the end
+
+JSON output:
+
+- success: `ok`, `path`, `summary`, `steps`
+- failure: `ok`, `path`, and `error`
 
 ## `ota extensions`
 

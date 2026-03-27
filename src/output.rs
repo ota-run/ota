@@ -24,7 +24,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
-use crate::doctor::Finding;
+use crate::doctor::{Finding, FindingSeverity};
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskSpec,
     TaskVariantView,
@@ -75,6 +75,38 @@ pub struct DoctorSummary {
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExplainSummary {
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+    pub step_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExplainStep {
+    pub order: usize,
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExplainSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub summary: ExplainSummary,
+    pub steps: &'a [ExplainStep],
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExplainFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub error: &'a str,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
