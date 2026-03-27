@@ -122,6 +122,11 @@ Root monorepo summary output can also include grouped member results:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 1,
+    "info_count": 0
+  },
   "agent": {
     "entrypoint": "setup",
     "verify_after_changes": ["test"]
@@ -147,6 +152,9 @@ additive policy keys may appear there as well.
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume.
 
+`ota doctor --json` also includes a top-level `summary` object with finding counts so hosted
+validation and editor tooling do not need to recompute them.
+
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
 `api_version`, plus optional `description` and `config`. Supported kinds today are `checker` and
@@ -159,6 +167,12 @@ underlying repo contract declares execution metadata.
 
 `ota workspace doctor --json` may also include the same `extensions` object on each repo item when
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
+
+`ota workspace doctor --json` also includes a top-level `summary` object with repo and finding
+counts for hosted validation and editor consumers.
+
+`ota workspace list --json` also includes a top-level `summary` object with repo inventory counts
+for editor, CI, and hosted preflight tooling.
 
 Root monorepo summary output can also include grouped member findings under `members`.
 
@@ -252,6 +266,14 @@ Failure shape can also include:
 {
   "ok": false,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0
+  },
   "repos": [
     {
       "name": "web",
@@ -278,6 +300,13 @@ Failure shape can also include:
 {
   "ok": true,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 1,
+    "not_ready_count": 0,
+    "acquired_count": 1,
+    "missing_contract_count": 0
+  },
   "repos": [
     {
       "name": "api",
