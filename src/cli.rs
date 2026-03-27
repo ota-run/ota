@@ -8988,6 +8988,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution:"));
         assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("»"));
         assert!(stdout.contains("Repos: 2"));
         assert!(stdout.contains("Ready: 2"));
         assert!(stdout.contains("Preferred: remote"));
@@ -9032,6 +9033,7 @@ checks:
 
         assert_eq!(output.exit_code, 1);
         assert!(body.contains("SUMMARY:"));
+        assert!(body.contains("»"));
         assert!(body.contains("Repos:"));
         assert!(body.contains("Errors:"));
         assert!(body.contains("WORKSPACE CHECK"));
