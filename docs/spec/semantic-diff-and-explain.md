@@ -41,7 +41,7 @@ Compare two Ota contract states semantically.
 Current behavior:
 
 - compare repo contracts or workspace contracts as structured objects
-- report added, base-only, and changed fields in deterministic order
+- report added, missing-in-target, and changed fields in deterministic order
 - surface readiness impact directly instead of forcing users to infer it from raw YAML
 - preserve deterministic ordering in text and JSON output
 - remain read-only
