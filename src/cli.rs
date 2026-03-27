@@ -2216,6 +2216,9 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["error_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 0);
+        assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["findings"].as_array().unwrap().len(), 0);
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
@@ -4259,15 +4262,6 @@ policies:
 version: 1
 project:
   name: ota
-execution:
-  preferred: remote
-  supported:
-    - remote
-  backends:
-    remote:
-      provider: ssh
-      target: user@host
-      cwd: /workspace
 extensions:
   demo:
     kind: checker
@@ -4293,6 +4287,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["summary"]["error_count"], 0);
+        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["execution"]["preferred"], "remote");
         assert_eq!(json["execution"]["supported"][0], "remote");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
@@ -8225,6 +8222,11 @@ tasks:
         assert_eq!(json.exit_code, 0);
         let body: Value = serde_json::from_str(&json.stdout).unwrap();
         assert_eq!(body["ok"], true);
+        assert_eq!(body["summary"]["repo_count"], 2);
+        assert_eq!(body["summary"]["ready_count"], 2);
+        assert_eq!(body["summary"]["not_ready_count"], 0);
+        assert_eq!(body["summary"]["acquired_count"], 2);
+        assert_eq!(body["summary"]["missing_contract_count"], 0);
         assert_eq!(body["repos"][0]["name"], "db");
         assert_eq!(body["repos"][0]["status"], "READY");
         assert_eq!(body["repos"][1]["name"], "api");
@@ -8979,6 +8981,12 @@ env:
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["repo_count"], 1);
+        assert_eq!(json["summary"]["ready_count"], 0);
+        assert_eq!(json["summary"]["not_ready_count"], 1);
+        assert_eq!(json["summary"]["error_count"], 2);
+        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["ok"], false);
         assert_eq!(json["repos"][0]["execution"]["preferred"], "remote");

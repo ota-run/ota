@@ -52,6 +52,7 @@ pub struct CommandOutput {
 pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -65,7 +66,25 @@ pub struct DoctorSuccess<'a> {
 pub struct WorkspaceDoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: WorkspaceDoctorSummary,
     pub repos: &'a [WorkspaceRepoDoctorReport],
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DoctorSummary {
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceDoctorSummary {
+    pub repo_count: usize,
+    pub ready_count: usize,
+    pub not_ready_count: usize,
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -198,7 +217,17 @@ pub struct WorkspaceRepoListReport {
 pub struct WorkspaceListSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: WorkspaceListSummary,
     pub repos: &'a [WorkspaceRepoListReport],
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceListSummary {
+    pub repo_count: usize,
+    pub ready_count: usize,
+    pub not_ready_count: usize,
+    pub acquired_count: usize,
+    pub missing_contract_count: usize,
 }
 
 #[derive(Debug, Serialize)]

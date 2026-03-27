@@ -42,12 +42,13 @@ use crate::doctor::{
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DoctorSuccess, ExecutionSummary, InitFailure, InitSuccess,
+    DetectSuccess, DoctorSuccess, DoctorSummary, ExecutionSummary, InitFailure, InitSuccess,
     MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
     TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
-    WorkspaceDoctorSuccess, WorkspaceListSuccess, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceUpSuccess,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1259,6 +1260,7 @@ pub fn doctor(
                         &report,
                     )];
                     let mut member_results = Vec::new();
+                    let mut summary = doctor_summary(&report);
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
                         for member in &workspace.members {
@@ -1315,6 +1317,7 @@ pub fn doctor(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
+                            add_doctor_summary(&mut summary, &member_report);
                             let member_agent = member_target
                                 .contract
                                 .agent
@@ -1351,6 +1354,7 @@ pub fn doctor(
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
                                 "path": path_display,
+                                "summary": summary,
                                 "agent": agent_summary,
                                 "findings": report.findings,
                                 "members": member_results,
@@ -1374,6 +1378,7 @@ pub fn doctor(
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
                                     path: &path_display,
+                                    summary: doctor_summary(&report),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
                                     extensions: &target.contract.extensions,
@@ -1672,6 +1677,7 @@ pub fn check(
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
                                     path: &path_display,
+                                    summary: doctor_summary(&report),
                                     agent: None,
                                     execution: ExecutionSummary::from_contract(&target.contract),
                                     extensions: &target.contract.extensions,
@@ -4134,6 +4140,7 @@ pub fn workspace_list(
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceListSuccess {
                         ok: true,
                         path: &path_display,
+                        summary: workspace_list_summary(&repos),
                         repos: &repos,
                     })),
                 }
@@ -4261,6 +4268,7 @@ pub fn workspace_doctor(
                         stdout: to_json(&WorkspaceDoctorSuccess {
                             ok: report.ok,
                             path: &path_display,
+                            summary: workspace_doctor_summary(&report),
                             repos: &report.repos,
                         }),
                         stderr: None,
@@ -4336,6 +4344,7 @@ pub fn workspace_check(
                     stdout: to_json(&WorkspaceDoctorSuccess {
                         ok: report.ok,
                         path: &path_display,
+                        summary: workspace_doctor_summary(&report),
                         repos: &report.repos,
                     }),
                     stderr: None,
@@ -5825,6 +5834,78 @@ fn render_doctor_text(
         output.stdout.push_str(&render_extensions_text(extensions));
     }
     output
+}
+
+fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
+    let mut summary = DoctorSummary::default();
+    for finding in &report.findings {
+        match finding.severity {
+            FindingSeverity::Error => summary.error_count += 1,
+            FindingSeverity::Warn => summary.warn_count += 1,
+            FindingSeverity::Info => summary.info_count += 1,
+        }
+    }
+    summary
+}
+
+fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
+    for finding in &report.findings {
+        match finding.severity {
+            FindingSeverity::Error => summary.error_count += 1,
+            FindingSeverity::Warn => summary.warn_count += 1,
+            FindingSeverity::Info => summary.info_count += 1,
+        }
+    }
+}
+
+fn workspace_doctor_summary(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> WorkspaceDoctorSummary {
+    let mut summary = WorkspaceDoctorSummary {
+        repo_count: report.repos.len(),
+        ..WorkspaceDoctorSummary::default()
+    };
+
+    for repo in &report.repos {
+        if repo.ok {
+            summary.ready_count += 1;
+        } else {
+            summary.not_ready_count += 1;
+        }
+
+        for finding in &repo.findings {
+            match finding.severity {
+                FindingSeverity::Error => summary.error_count += 1,
+                FindingSeverity::Warn => summary.warn_count += 1,
+                FindingSeverity::Info => summary.info_count += 1,
+            }
+        }
+    }
+
+    summary
+}
+
+fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSummary {
+    let mut summary = WorkspaceListSummary {
+        repo_count: repos.len(),
+        ..WorkspaceListSummary::default()
+    };
+
+    for repo in repos {
+        if repo.acquired {
+            summary.acquired_count += 1;
+        }
+        if repo.status == "READY" {
+            summary.ready_count += 1;
+        } else {
+            summary.not_ready_count += 1;
+        }
+        if !repo.contract_present {
+            summary.missing_contract_count += 1;
+        }
+    }
+
+    summary
 }
 
 fn render_doctor_section(

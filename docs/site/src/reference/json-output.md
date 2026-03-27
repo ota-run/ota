@@ -40,8 +40,8 @@ JSON output is part of Ota’s integration contract for:
 - agent tooling
 
 Editor and CI tooling should prefer the JSON surfaces here over parsing human-readable command
-output. The stable inputs are `ok`, `errors`, `findings`, per-repo results, `execution`, and
-declared extension descriptors.
+output. The stable inputs are `ok`, `errors`, `findings`, `summary`, per-repo results, `execution`,
+and declared extension descriptors.
 
 Design intent:
 
