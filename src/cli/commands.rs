@@ -10427,7 +10427,6 @@ fn load_and_run_workspace_up(
                             Some(&format!("({dependency})"))
                         )
                     );
-                    eprintln!();
                 }
                 blocked_reports.push((order, report));
             } else {
@@ -10472,7 +10471,6 @@ fn load_and_run_workspace_up(
                     "{}",
                     workspace_progress_line(&workspace_name, &report.status, &report.name, None)
                 );
-                eprintln!();
             }
             if report.required && !report.ok {
                 ok = false;
@@ -10568,7 +10566,6 @@ fn load_and_run_workspace_task(
                             Some(&format!("({dependency})"))
                         )
                     );
-                    eprintln!();
                 }
                 blocked_reports.push((order, report));
             } else {
@@ -10628,7 +10625,6 @@ fn load_and_run_workspace_task(
                     "{}",
                     workspace_progress_line(&workspace_name, &report.status, &report.name, None)
                 );
-                eprintln!();
             }
             if report.required && !report.ok {
                 ok = false;
@@ -10679,7 +10675,6 @@ fn run_workspace_task_streaming(
                             Some(&format!("({dependency})"))
                         )
                     );
-                    eprintln!();
                 }
                 report
             }
@@ -10696,7 +10691,6 @@ fn run_workspace_task_streaming(
                         "{}",
                         workspace_progress_line(workspace_name, &report.status, &report.name, None)
                     );
-                    eprintln!();
                 }
                 report
             }
@@ -10741,7 +10735,6 @@ fn run_workspace_up_streaming(
                             Some(&format!("({dependency})"))
                         )
                     );
-                    eprintln!();
                 }
                 report
             }
@@ -10764,7 +10757,6 @@ fn run_workspace_up_streaming(
                         "{}",
                         workspace_progress_line(workspace_name, &report.status, &report.name, None)
                     );
-                    eprintln!();
                 }
                 report
             }
@@ -11862,7 +11854,6 @@ fn load_and_diagnose_workspace_streaming(
                     "{}",
                     workspace_progress_line(&workspace_name, status, &report.name, None)
                 );
-                eprintln!();
             }
             if report.required && !report.ok {
                 ok = false;
