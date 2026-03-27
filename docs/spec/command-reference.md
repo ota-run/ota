@@ -67,6 +67,7 @@ Ota currently ships these commands:
 - `ota init`
 - `ota check`
 - `ota up`
+- `ota diff`
 - `ota detect`
 - `ota workspace init`
 - `ota workspace detect`
@@ -243,6 +244,38 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota diff`
+
+Compare two Ota contracts semantically.
+
+```bash
+ota diff ./before/ota.yaml ./after/ota.yaml
+ota diff ./repo-a ./repo-b
+ota diff --json ./before/ota.yaml ./after/ota.yaml
+```
+
+Current behavior:
+
+- compares two repo or workspace contracts as structured YAML
+- reports added, removed, and changed fields in deterministic order
+- remains read-only
+- exits `0` when the comparison succeeds, even if differences exist
+- surfaces load and parse errors clearly
+
+Text output:
+
+- header: `DIFF <base> -> <target>`
+- `MATCH` or `DIFFERENT`
+- summary counts
+- grouped added, removed, and changed paths
+
+JSON output:
+
+- success: `ok`, `base`, `target`, `summary`, `changes`
+- failure: `ok`, `base`, `target`, and `error`
+
+Use this when you want to compare contract states before writing changes or to review the impact of a proposed edit in CI.
 
 ## `ota extensions`
 

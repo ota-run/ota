@@ -24,13 +24,13 @@
 
 # Semantic Diff and Explain
 
-`ota diff` and `ota explain` are the proposed read-only contract intelligence commands for
-humans and agents.
+`ota diff` is the shipped read-only contract comparison command.
+`ota explain` remains a proposed readiness-to-remediation command.
 
 Use `ota diff` when you want to compare two contract states semantically.
 Use `ota explain` when you want a readiness report turned into a fix plan.
 
-These surfaces are not implemented yet. The spec keeps them separate from:
+The spec keeps them separate from:
 
 - `ota detect`, which infers
 - `ota doctor`, which diagnoses
@@ -42,8 +42,16 @@ These surfaces are not implemented yet. The spec keeps them separate from:
 - helps humans review contract impact without reading raw YAML diffs
 - keeps remediation separate from inference
 
+## `ota diff`
+
+`ota diff` compares two repo or workspace contracts as structured YAML and reports added,
+removed, and changed fields in deterministic order.
+
+## `ota explain`
+
+`ota explain` is still planned. It will turn readiness findings into ordered remediation steps.
+
 ## Planned contract
 
-- `ota diff` should report added, removed, changed, weakened, and newly required fields
 - `ota explain` should turn findings into ordered remediation steps
 - both should stay read-only and deterministic
