@@ -82,6 +82,16 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  compat:
+    description: Run the compatibility test gate
+    category: test
+    script: |
+      cargo test contract_is_stable
+      cargo test --test json_schema_contracts
+      cargo test --test detect_fixtures
+    depends_on:
+      - setup
+    safe_for_agent: true
   bump-version:
     description: Bump Cargo.toml to a new release version
     category: release
@@ -92,6 +102,10 @@ tasks:
     description: Reinstall ota from the local workspace
     category: dev
     run: ./scripts/install.sh --from-source
+    variants:
+      - when:
+          os: windows
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
     depends_on:
       - ci
 agent:
