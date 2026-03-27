@@ -8641,7 +8641,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         for step in &receipt.steps {
             stdout.push_str(&format!(
                 "\n{} {}. {}  {}",
-                paint_key("»"),
+                paint_key("→"),
                 step.order,
                 render_execution_receipt_status(&step.status),
                 step.label
