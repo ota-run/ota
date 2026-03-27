@@ -7240,7 +7240,11 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("Steps")));
     if steps.is_empty() {
-        stdout.push_str(&format!("\n{} none", paint("»", "1;38;2;255;214;79")));
+        if plain_mode() {
+            stdout.push_str("\n* none");
+        } else {
+            stdout.push_str(&format!("\n{} none", paint("✦", "1;38;2;255;214;79")));
+        }
         return stdout;
     }
 
