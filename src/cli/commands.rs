@@ -5722,31 +5722,31 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
-        "\n{}  {} {}",
+        "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
         paint("Added:", "1;38;2;0;255;120"),
         paint(&summary.added_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
-        "\n{}  {} {}",
+        "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
         paint("Missing in target:", "1;38;2;255;235;59"),
         paint(&summary.removed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
-        "\n{}  {} {}",
+        "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
         paint("Changed:", "1;38;2;0;255;255"),
         paint(&summary.changed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
-        "\n{}  {} {}",
+        "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
         paint("Weakened:", "1;38;2;255;80;80"),
         paint(&summary.weakened_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
-        "\n{}  {} {}",
+        "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
         paint("Strengthened:", "1;38;2;0;255;120"),
         paint(
