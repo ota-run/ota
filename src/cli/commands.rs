@@ -8599,9 +8599,13 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     if !receipt.steps.is_empty() {
         stdout.push_str(&format!("{}:", paint_section_title("Steps")));
         for step in &receipt.steps {
+            if step.order > 1 {
+                stdout.push_str("\n\n");
+            } else {
+                stdout.push('\n');
+            }
             stdout.push_str(&format!(
-                "\n{} {}. {}  {}",
-                paint_key("→"),
+                " {}. {}  {}",
                 step.order,
                 render_execution_receipt_status(&step.status),
                 step.label
