@@ -10814,27 +10814,14 @@ fn workspace_progress_line(
     }
 
     let prefix = paint(&workspace_progress_prefix(workspace_name), "1;36");
-    let icon = workspace_progress_icon(status);
     let status = workspace_progress_status(status);
     let repo = paint(repo_name, "1;37");
 
     match tail {
         Some(tail) if !tail.trim().is_empty() => {
-            format!("{prefix}  {icon} {status} {repo} {}", paint(tail, "1;37"))
+            format!("{prefix}  {status} {repo} {}", paint(tail, "1;37"))
         }
-        _ => format!("{prefix}  {icon} {status} {repo}"),
-    }
-}
-
-fn workspace_progress_icon(status: &str) -> String {
-    match status.trim() {
-        "RUN" => paint("▶", "1;36"),
-        "READY" => paint("➤", "1;38;2;0;255;120"),
-        "NOT READY" => paint("◉", "1;38;2;255;235;59"),
-        "BLOCKED" => paint("◉", "1;38;2;255;235;59"),
-        "ACQUIRE" => paint("↓", "1;35"),
-        value if value.contains("FAILED") => paint("◉", "1;31"),
-        _ => paint("•", "1;37"),
+        _ => format!("{prefix}  {status} {repo}"),
     }
 }
 
