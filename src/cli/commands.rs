@@ -8838,7 +8838,7 @@ fn render_workspace_up(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "{}\n\n{}",
+                "\n{}\n\n{}",
                 format_command_header("WORKSPACE UP", path),
                 render_readiness_status(report.ok)
             );
