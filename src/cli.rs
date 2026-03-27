@@ -9457,7 +9457,7 @@ repos:
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
-        let output = run_with(["ota", "workspace", "up", "--receipt", fixture.path()]);
+        let output = run_with(["ota", "workspace", "up", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
@@ -9466,7 +9466,9 @@ repos:
             compact_workspace(&fixture.workspace_file())
         )));
         assert!(stdout.contains("READY"));
+        assert!(stdout.contains("SUMMARY:"));
         assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(!stdout.contains("RECEIPT:"));
         assert!(!stdout.contains("\n---\n"));
     }
 

@@ -75,13 +75,14 @@ The receipt includes:
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
 `lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota run`, `ota up`, and
-workspace execution flows. Workspace receipts also report repo counts in the summary.
+workspace execution flows. The summary is shown in the normal text output, and the
+receipt keeps the structured summary data for JSON and optional receipt output.
 
 ## Behavior
 
 - deterministic ordering
 - machine-readable first
-- human-readable summary second
+- human-readable summary in the normal execution output
 - explicit source of truth for decisions
 - no hidden auto-fix behavior
 

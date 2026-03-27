@@ -8555,6 +8555,7 @@ fn render_up_text(
 ) -> CommandOutput {
     let mut stdout =
         render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
+    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
     }
@@ -8693,7 +8694,6 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         stdout.push_str(&format!("\n\n{} {}", paint_next_header(), next));
     }
 
-    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
     stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
     let path_display = if receipt.scope == "repo" {
         Path::new(receipt.path.as_str())
@@ -8956,6 +8956,9 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
+            stdout.push_str(&render_execution_receipt_summary_text(
+                &report.receipt.summary,
+            ));
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
@@ -9036,6 +9039,9 @@ fn render_workspace_run(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
+            stdout.push_str(&render_execution_receipt_summary_text(
+                &report.receipt.summary,
+            ));
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
