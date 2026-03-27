@@ -8596,25 +8596,52 @@ fn render_up_section_from_parts(
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("RECEIPT")));
-    stdout.push_str(&format!("\n{} {}", paint_key("Scope:"), receipt.scope));
-    stdout.push_str(&format!("\n{} {}", paint_key("Path:"), receipt.path));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("♦", "1;38;2;255;214;79"),
+        paint_key("Scope:"),
+        receipt.scope
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("♦", "1;38;2;255;214;79"),
+        paint_key("Path:"),
+        receipt.path
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("♦", "1;38;2;255;214;79"),
         paint_key("Contract:"),
         receipt.contract
     ));
     if let Some(workspace) = receipt.workspace.as_deref() {
-        stdout.push_str(&format!("\n{} {}", paint_key("Workspace:"), workspace));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Workspace:"),
+            workspace
+        ));
     }
     if let Some(backend) = receipt.backend.as_deref() {
-        stdout.push_str(&format!("\n{} {}", paint_key("Backend:"), backend));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Backend:"),
+            backend
+        ));
     }
     if let Some(lifecycle) = receipt.lifecycle.as_deref() {
-        stdout.push_str(&format!("\n{} {}", paint_key("Lifecycle:"), lifecycle));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Lifecycle:"),
+            lifecycle
+        ));
     }
     if !receipt.acquired.is_empty() {
         stdout.push_str(&format!(
-            "\n{} {}",
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
             paint_key("Acquired:"),
             receipt.acquired.join(", ")
         ));
@@ -8626,11 +8653,17 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             .map(|(key, value)| format!("{key}={value}"))
             .collect::<Vec<_>>()
             .join(", ");
-        stdout.push_str(&format!("\n{} {}", paint_key("Env:"), env));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Env:"),
+            env
+        ));
     }
     if !receipt.policy.is_empty() {
         stdout.push_str(&format!(
-            "\n{} {}",
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
             paint_key("Policy:"),
             receipt.policy.join(", ")
         ));
@@ -8658,7 +8691,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     if !receipt.blocked.is_empty() {
         stdout.push_str(&format!("\n\n{}:", paint_section_title("Blocked")));
         stdout.push_str(&format!(
-            "\n{} {}",
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
             paint_key("Items:"),
             receipt.blocked.join(", ")
         ));
