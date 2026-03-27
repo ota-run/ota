@@ -8594,7 +8594,42 @@ fn render_up_section_from_parts(
 }
 
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
-    let mut stdout = render_execution_receipt_summary_text(&receipt.summary);
+    let mut stdout = String::from("\n\n");
+    if !receipt.steps.is_empty() {
+        stdout.push_str(&format!("{}:", paint_section_title("Steps")));
+        for step in &receipt.steps {
+            stdout.push_str(&format!(
+                "\n{} {}. {}  {}",
+                paint_key("→"),
+                step.order,
+                render_execution_receipt_status(&step.status),
+                step.label
+            ));
+            if let Some(detail) = step.detail.as_deref() {
+                stdout.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
+            }
+            if let Some(exit_code) = step.exit_code {
+                stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
+            }
+        }
+        stdout.push_str("\n");
+    }
+
+    if !receipt.blocked.is_empty() {
+        stdout.push_str(&format!("\n{}:", paint_section_title("Blocked")));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Items:"),
+            receipt.blocked.join(", ")
+        ));
+    }
+
+    if let Some(next) = receipt.next.as_deref() {
+        stdout.push_str(&format!("\n\n{} {}", paint_key("Next:"), next));
+    }
+
+    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
     stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
     let path_display = compact_path(Path::new(receipt.path.as_str()), ".");
     let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
@@ -8671,39 +8706,6 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             paint_key("Policy:"),
             receipt.policy.join(", ")
         ));
-    }
-
-    if !receipt.steps.is_empty() {
-        stdout.push_str(&format!("\n\n{}:", paint_section_title("Steps")));
-        for step in &receipt.steps {
-            stdout.push_str(&format!(
-                "\n{} {}. {}  {}",
-                paint_key("→"),
-                step.order,
-                render_execution_receipt_status(&step.status),
-                step.label
-            ));
-            if let Some(detail) = step.detail.as_deref() {
-                stdout.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
-            }
-            if let Some(exit_code) = step.exit_code {
-                stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
-            }
-        }
-    }
-
-    if !receipt.blocked.is_empty() {
-        stdout.push_str(&format!("\n\n{}:", paint_section_title("Blocked")));
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Items:"),
-            receipt.blocked.join(", ")
-        ));
-    }
-
-    if let Some(next) = receipt.next.as_deref() {
-        stdout.push_str(&format!("\n\n{} {}", paint_key("Next:"), next));
     }
 
     stdout
