@@ -113,6 +113,7 @@ agent:
     - tests
   protected_paths:
     - Cargo.lock
+    - ota.yaml
     - LICENSE
   notes: |
     Use ota for repo workflow.
