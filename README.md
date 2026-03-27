@@ -195,9 +195,7 @@ Current planning state:
 
 ## Contribution policy
 
-Ota accepts bug reports, feature requests, and docs feedback. General external code
-contributions are not accepted at this time. The implementation remains maintainers-only so the
-commercial and architectural direction stays coherent.
+Ota does not accept external code contributions. See [docs/spec/commercial-policy.md](docs/spec/commercial-policy.md) for the open-core and enterprise boundary.
 
 ## Installation
 

@@ -22,32 +22,24 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Commercial Policy
 
-This section summarizes the stable surfaces of Ota:
+Ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+## Open core
 
-Canonical specification files remain under `docs/spec/`.
+- CLI
+- repo and workspace contracts
+- JSON output and docs
+- contract-first readiness model
 
-Use this section when you need precision:
+## Policy
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+- no external code contributions
+- the `Ota` name and logo stay reserved
+- enterprise packaging stays separate from the OSS core
 
-## Key references
+## Boundary
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
-- [Commercial policy](commercial-policy.md)
+The core should stay small, deterministic, and broadly adoptable. Commercial value belongs in
+separate services, private modules, hosting, support, or packaging around the open core.
