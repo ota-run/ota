@@ -8636,6 +8636,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             .parent()
             .map(|parent| compact_path(parent, "."))
             .unwrap_or_else(|| compact_path(Path::new(receipt.path.as_str()), "."))
+    } else if receipt.scope == "workspace" {
+        receipt.path.clone()
     } else {
         compact_path(Path::new(receipt.path.as_str()), ".")
     };
