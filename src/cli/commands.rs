@@ -341,24 +341,24 @@ fn render_missing_contract_guidance(
         MissingContractContext::Repo => {
             out.push_str(&format!("\n\n{}", error_next_key("Next:")));
             out.push_str(&format!(
-                "\n{}  setup repo with {}",
+                "\n{}  run {} to create a starter contract",
                 next_bullet(),
                 paint_code("`ota init`")
             ));
             out.push_str(&format!(
-                "\n{}  or preview inferred fields with {}",
+                "\n{}  or run {} to preview inferred fields",
                 next_bullet(),
                 paint_code("`ota detect --dry-run`")
             ));
             out.push_str(&format!(
-                "\n{}  or write a detected contract with {}",
+                "\n{}  or run {} to write a detected contract",
                 next_bullet(),
                 paint_code("`ota detect --write`")
             ));
         }
         MissingContractContext::Workspace => {
             out.push_str(&format!(
-                "\n{} setup workspace with {}",
+                "\n{} run {} to create a starter workspace",
                 error_next_key("Next:"),
                 paint_code("`ota workspace init`")
             ));
@@ -9266,7 +9266,7 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
             ));
         } else {
             stdout.push_str(&format!(
-                "\n{} {} (setup repo with {})",
+                "\n{} {} (run {})",
                 paint_key("Contract:"),
                 paint("missing", "1;38;2;255;235;59"),
                 paint_code(&format!(
@@ -12054,7 +12054,7 @@ enum ResolveContractError {
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
     #[error(
-        "contract path does not exist: `{path}`\n\nNext:\n▸ use `ota init` to create a starter contract\n▸ use `ota detect --dry-run` to preview inferred fields\n▸ use `ota detect --write` to write a detected contract"
+        "contract path does not exist: `{path}`\n\nNext:\n▸ run `ota init` to create a starter contract\n▸ run `ota detect --dry-run` to preview inferred fields\n▸ run `ota detect --write` to write a detected contract"
     )]
     MissingExplicitPath { path: String },
 }
@@ -12067,6 +12067,8 @@ enum ResolveWorkspaceError {
     NotFound { start: String },
     #[error("explicit workspace path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
-    #[error("workspace path does not exist: `{path}`")]
+    #[error(
+        "workspace path does not exist: `{path}`\n\nNext:\n▸ run `ota workspace init` to create a starter workspace"
+    )]
     MissingExplicitPath { path: String },
 }
