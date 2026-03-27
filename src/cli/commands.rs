@@ -1260,7 +1260,7 @@ pub fn doctor(
                         &report,
                     )];
                     let mut member_results = Vec::new();
-                    let mut summary = doctor_summary(&report);
+                    let mut check_summary = doctor_summary(&report);
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
                         for member in &workspace.members {
@@ -1317,7 +1317,7 @@ pub fn doctor(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
-                            add_doctor_summary(&mut summary, &member_report);
+                            add_doctor_summary(&mut check_summary, &member_report);
                             let member_agent = member_target
                                 .contract
                                 .agent
@@ -1354,7 +1354,7 @@ pub fn doctor(
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
                                 "path": path_display,
-                                "summary": summary,
+                                "summary": check_summary,
                                 "agent": agent_summary,
                                 "findings": report.findings,
                                 "members": member_results,
@@ -1570,6 +1570,7 @@ pub fn check(
                         None,
                     )];
                     let mut member_results = Vec::new();
+                    let mut check_summary = doctor_summary(&report);
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
                         for member in &workspace.members {
@@ -1626,6 +1627,7 @@ pub fn check(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
+                            add_doctor_summary(&mut check_summary, &member_report);
                             let member_execution =
                                 ExecutionSummary::from_contract(&member_target.contract);
                             text_sections.push(render_report_section(
@@ -1649,7 +1651,11 @@ pub fn check(
 
                     match format {
                         OutputFormat::Text => CommandOutput {
-                            stdout: text_sections.join("\n\n"),
+                            stdout: format!(
+                                "{}\n{}",
+                                text_sections.join("\n\n"),
+                                render_check_summary_text(&check_summary)
+                            ),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
@@ -1657,6 +1663,7 @@ pub fn check(
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
                                 "path": path_display,
+                                "summary": check_summary,
                                 "findings": report.findings,
                                 "members": member_results,
                             })),
@@ -6044,6 +6051,27 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     stdout
 }
 
+fn render_check_summary_text(summary: &DoctorSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Errors:", "1;38;2;255;255;255"),
+        paint(&summary.error_count.to_string(), "1;31")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Warnings:", "1;38;2;255;255;255"),
+        paint(&summary.warn_count.to_string(), "1;33")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Info:", "1;38;2;255;255;255"),
+        paint(&summary.info_count.to_string(), "1;36")
+    ));
+    stdout
+}
+
 fn render_extensions_output_text(
     path: &str,
     extensions: &BTreeMap<String, ExtensionSpec>,
@@ -6344,6 +6372,9 @@ fn render_workspace_check_text(
             }
         }
     }
+    stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
+        report,
+    )));
 
     CommandOutput {
         stdout,

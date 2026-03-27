@@ -609,6 +609,7 @@ When to use:
 Why:
 
 - lightweight CI signal across multiple repositories
+- text output includes a summary roll-up with repo counts and finding totals at the bottom
 - `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 
 ```bash
