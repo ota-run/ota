@@ -8594,8 +8594,8 @@ fn render_up_section_from_parts(
 }
 
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
-    let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("RECEIPT")));
+    let mut stdout = render_execution_receipt_summary_text(&receipt.summary);
+    stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
     stdout.push_str(&format!(
         "\n{} {} {}",
         paint("♦", "1;38;2;255;214;79"),
@@ -8697,8 +8697,6 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             receipt.blocked.join(", ")
         ));
     }
-
-    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
 
     if let Some(next) = receipt.next.as_deref() {
         stdout.push_str(&format!("\n\n{} {}", paint_key("Next:"), next));
