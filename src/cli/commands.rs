@@ -5760,16 +5760,24 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
 fn render_diff_status_word(match_state: bool) -> String {
     if plain_mode() {
         return if match_state {
-            String::from("MATCH")
+            String::from("✓ MATCH")
         } else {
-            String::from("DIFFERENT")
+            String::from("✕ DIFFERENT")
         };
     }
 
     if match_state {
-        paint("MATCH", "1;38;2;0;255;120")
+        format!(
+            "{} {}",
+            paint("✓", "1;38;2;0;255;120"),
+            paint("MATCH", "1;38;2;0;255;120")
+        )
     } else {
-        paint("DIFFERENT", "1;38;2;255;235;59")
+        format!(
+            "{} {}",
+            paint("✕", "1;38;2;255;71;87"),
+            paint("DIFFERENT", "1;38;2;255;71;87")
+        )
     }
 }
 
