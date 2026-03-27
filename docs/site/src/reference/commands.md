@@ -596,6 +596,7 @@ Why:
 
 ```bash
 ota workspace tasks
+ota workspace tasks --use
 ota workspace tasks --json
 ```
 

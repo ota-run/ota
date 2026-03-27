@@ -4102,6 +4102,7 @@ pub fn workspace_init(
 pub fn workspace_tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
+    use_cmd: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -4239,7 +4240,7 @@ pub fn workspace_tasks(
 
                 match format {
                     OutputFormat::Text => {
-                        render_workspace_tasks_text(&compact_path_display, &repos)
+                        render_workspace_tasks_text(&compact_path_display, &repos, use_cmd)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
@@ -9059,7 +9060,11 @@ fn render_workspace_run(
     }
 }
 
-fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
+fn render_workspace_tasks_text(
+    path: &str,
+    repos: &[WorkspaceRepoTasksReport],
+    use_cmd: bool,
+) -> CommandOutput {
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE TASKS", path),
@@ -9111,14 +9116,23 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
         }
 
         for task in &repo.tasks {
-            stdout.push_str(&format!(
-                "\n{} {} ({})",
-                list_bullet(),
-                task.name,
-                task.kind
-            ));
-            if !task.depends_on.is_empty() {
-                stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
+            if use_cmd {
+                stdout.push_str(&format!(
+                    "\n{} {} `{}`",
+                    info_bullet(),
+                    paint(&task.name, "1"),
+                    paint_code(&format!("ota run {}", task.name))
+                ));
+            } else {
+                stdout.push_str(&format!(
+                    "\n{} {} ({})",
+                    list_bullet(),
+                    task.name,
+                    task.kind
+                ));
+                if !task.depends_on.is_empty() {
+                    stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
+                }
             }
         }
     }
