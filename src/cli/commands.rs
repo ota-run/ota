@@ -8604,11 +8604,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             } else {
                 stdout.push('\n');
             }
-            let detail_indent = if step.order >= 10 {
-                "      "
-            } else {
-                "       "
-            };
+            let detail_indent = "   ";
             stdout.push_str(&format!(
                 " {}. {}  {}",
                 step.order,
