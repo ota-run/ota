@@ -22,34 +22,27 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Support and Enterprise
 
-This section summarizes the stable surfaces of Ota:
+Ota’s open core stays Apache 2.0. Commercial value should come from separate offerings around the
+core rather than from confusing the public contract.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+## Good enterprise candidates
 
-Canonical specification files remain under `docs/spec/`.
+- hosted control plane for policy, audit, and fleet-level coordination
+- private adapters or backends
+- organization policy packs and approvals
+- support, onboarding, and migration services
+- compliance retention and reporting
 
-Use this section when you need precision:
+## Keep separate from the core
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+- the CLI contract
+- repo/workspace schemas
+- JSON output shape
+- public docs and examples
 
-## Key references
+## Operating rule
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
-- [Commercial policy](commercial-policy.md)
-- [Brand policy](brand-policy.md)
-- [Support and enterprise](support-and-enterprise.md)
+If a feature needs to be paid, keep its contract boundary explicit and do not mix it into the
+public open-core schema unless that is strategically unavoidable.

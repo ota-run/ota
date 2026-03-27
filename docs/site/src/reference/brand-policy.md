@@ -22,34 +22,23 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Brand Policy
 
-This section summarizes the stable surfaces of Ota:
+Ota’s brand is separate from the Apache 2.0 code license.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+## Reserved marks
 
-Canonical specification files remain under `docs/spec/`.
+- `Ota`
+- the Ota logo and visual identity
 
-Use this section when you need precision:
+## Usage
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+- use the brand only to refer to the official project
+- do not present derivative products as the official Ota project
+- keep downstream packaging and enterprise offerings clearly branded as separate products
 
-## Key references
+## Relationship to commercial policy
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
-- [Commercial policy](commercial-policy.md)
-- [Brand policy](brand-policy.md)
-- [Support and enterprise](support-and-enterprise.md)
+The brand policy supports the commercial boundary. The open-core code stays broadly adoptable,
+while the name, logo, and official identity remain reserved for the project and its sanctioned
+commercial offerings.

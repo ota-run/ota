@@ -43,6 +43,8 @@ Ota is open source under Apache 2.0. The commercial model stays separate from th
 - the logo and branding
 - commercial packaging and enterprise offerings
 
+See [brand-policy.md](brand-policy.md) for the brand usage boundary.
+
 ## Monetization boundary
 
 Enterprise value should stay outside the open-core contract surface when possible. The core stays
