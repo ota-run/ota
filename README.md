@@ -197,6 +197,10 @@ Current planning state:
 
 Ota does not accept external code contributions. See [docs/spec/commercial-policy.md](docs/spec/commercial-policy.md) for the open-core and enterprise boundary.
 
+Use the GitHub issue templates for bug reports, feature requests, and docs feedback.
+
+See [docs/spec/support-and-enterprise.md](docs/spec/support-and-enterprise.md) for the current support and enterprise boundary.
+
 ## Installation
 
 Install from a local checkout:
