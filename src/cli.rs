@@ -4603,9 +4603,9 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         assert!(
-            output
-                .stdout
-                .contains("AGENT entrypoint=setup safe_tasks=setup")
+            output.stdout.contains(
+                "AGENT:\n  entrypoint: setup\n  safe_tasks: setup\n  writable_paths: src"
+            )
         );
     }
 
@@ -5045,7 +5045,7 @@ agent:
         assert!(
             output
                 .stdout
-                .contains("AGENT entrypoint=setup safe_tasks=setup")
+                .contains("AGENT:\n  entrypoint: setup\n  safe_tasks: setup")
         );
     }
 

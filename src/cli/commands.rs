@@ -6427,40 +6427,9 @@ fn render_tasks_text(
     let mut output = format_command_header("TASKS", path);
 
     if let Some(agent) = agent {
-        let mut details = Vec::new();
-        if let Some(entrypoint) = agent.entrypoint {
-            details.push(format!("entrypoint={entrypoint}"));
-        }
-        if let Some(default_task) = agent.default_task {
-            details.push(format!("default_task={default_task}"));
-        }
-        if !agent.safe_tasks.is_empty() {
-            details.push(format!("safe_tasks={}", agent.safe_tasks.join(",")));
-        }
-        if !agent.verify_after_changes.is_empty() {
-            details.push(format!(
-                "verify_after_changes={}",
-                agent.verify_after_changes.join(",")
-            ));
-        }
-        if !agent.writable_paths.is_empty() {
-            details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
-        }
-        if !agent.protected_paths.is_empty() {
-            details.push(format!(
-                "protected_paths={}",
-                agent.protected_paths.join(",")
-            ));
-        }
-
-        if !details.is_empty() {
-            output.push_str("\nAGENT ");
-            output.push_str(&details.join(" "));
-        }
-
-        if let Some(notes) = agent.notes {
-            output.push_str("\nAgent notes: ");
-            output.push_str(notes);
+        if let Some(summary) = render_agent_summary_block(agent) {
+            output.push('\n');
+            output.push_str(&summary);
         }
     }
 
@@ -7488,36 +7457,52 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
 }
 
 fn render_agent_summary_line(agent: &AgentSummary<'_>) -> Option<String> {
-    let mut details = Vec::new();
+    render_agent_summary_block(agent)
+}
+
+fn render_agent_summary_block(agent: &AgentSummary<'_>) -> Option<String> {
+    let mut lines = Vec::new();
+    lines.push(String::from("AGENT:"));
     if let Some(entrypoint) = agent.entrypoint {
-        details.push(format!("entrypoint={entrypoint}"));
+        lines.push(format!("  entrypoint: {entrypoint}"));
     }
     if let Some(default_task) = agent.default_task {
-        details.push(format!("default_task={default_task}"));
+        lines.push(format!("  default_task: {default_task}"));
     }
     if !agent.safe_tasks.is_empty() {
-        details.push(format!("safe_tasks={}", agent.safe_tasks.join(",")));
+        lines.push(format!("  safe_tasks: {}", agent.safe_tasks.join(", ")));
     }
     if !agent.verify_after_changes.is_empty() {
-        details.push(format!(
-            "verify_after_changes={}",
-            agent.verify_after_changes.join(",")
+        lines.push(format!(
+            "  verify_after_changes: {}",
+            agent.verify_after_changes.join(", ")
         ));
     }
     if !agent.writable_paths.is_empty() {
-        details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
-    }
-    if !agent.protected_paths.is_empty() {
-        details.push(format!(
-            "protected_paths={}",
-            agent.protected_paths.join(",")
+        lines.push(format!(
+            "  writable_paths: {}",
+            agent.writable_paths.join(", ")
         ));
     }
+    if !agent.protected_paths.is_empty() {
+        lines.push(format!(
+            "  protected_paths: {}",
+            agent.protected_paths.join(", ")
+        ));
+    }
+    if let Some(notes) = agent.notes {
+        if !notes.trim().is_empty() {
+            lines.push(String::from("  notes:"));
+            for line in notes.lines() {
+                lines.push(format!("    {line}"));
+            }
+        }
+    }
 
-    if details.is_empty() {
+    if lines.len() == 1 {
         None
     } else {
-        Some(format!("AGENT {}", details.join(" ")))
+        Some(lines.join("\n"))
     }
 }
 
