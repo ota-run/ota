@@ -548,6 +548,10 @@ agent:
   writable_paths:
     - src
     - docs
+  protected_paths:
+    - Cargo.lock
+    - ota.yaml
+  notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
 
 Current validation rules:
@@ -557,8 +561,19 @@ Current validation rules:
 - `safe_tasks` entries must reference known tasks
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty
+- `protected_paths` entries must not be empty
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
+
+Agent semantics:
+
+- `entrypoint` is the first task an agent should use to get oriented in the repo
+- `default_task` is the normal verification task to run when no more specific task is needed
+- `safe_tasks` are the tasks an agent can run without broad risk
+- `verify_after_changes` are the tasks an agent should rerun after modifying files
+- `writable_paths` are the paths an agent may edit
+- `protected_paths` are the paths an agent should avoid editing casually
+- `notes` is free-form repo guidance for humans and agents
 
 ## `metadata`
 

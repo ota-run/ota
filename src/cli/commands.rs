@@ -59,7 +59,8 @@ use crate::parser::{
 };
 use crate::runner::{
     ExecutionOverrides, RunError, clean_execution, effective_execution,
-    run_task_captured_with_overrides, run_task_with_overrides,
+    run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
     run_task_with_progress_and_overrides,
 };
 use crate::schema::{Contract, ExtensionSpec, Lifecycle};
@@ -1246,6 +1247,7 @@ pub fn run_command(
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
     members: &[String],
+    task_args: &[String],
     debug: bool,
     show_receipt: bool,
 ) -> CommandOutput {
@@ -1299,7 +1301,14 @@ pub fn run_command(
     }
 
     finalize_debug(
-        match run_contract_targets(task_name, &resolved_path, overrides, members, show_receipt) {
+        match run_contract_targets(
+            task_name,
+            &resolved_path,
+            overrides,
+            members,
+            task_args,
+            show_receipt,
+        ) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
                 stderr: (!stderr.is_empty()).then_some(stderr),
@@ -4831,6 +4840,7 @@ pub fn workspace_run(
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
+    task_args: &[String],
 ) -> CommandOutput {
     if jobs == 0 {
         return finalize_debug(
@@ -4897,6 +4907,7 @@ pub fn workspace_run(
             jobs,
             matches!(format, OutputFormat::Text),
             stream,
+            &task_args,
         ) {
             Ok(report) => {
                 render_workspace_run(task, &compact_path_display, &report, format, show_receipt)
@@ -6365,6 +6376,12 @@ fn render_tasks_text(
         if !agent.writable_paths.is_empty() {
             details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
         }
+        if !agent.protected_paths.is_empty() {
+            details.push(format!(
+                "protected_paths={}",
+                agent.protected_paths.join(",")
+            ));
+        }
 
         if !details.is_empty() {
             output.push_str("\nAGENT ");
@@ -7420,6 +7437,12 @@ fn render_agent_summary_line(agent: &AgentSummary<'_>) -> Option<String> {
     if !agent.writable_paths.is_empty() {
         details.push(format!("writable_paths={}", agent.writable_paths.join(",")));
     }
+    if !agent.protected_paths.is_empty() {
+        details.push(format!(
+            "protected_paths={}",
+            agent.protected_paths.join(",")
+        ));
+    }
 
     if details.is_empty() {
         None
@@ -8294,12 +8317,20 @@ fn run_contract_targets(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     members: &[String],
+    task_args: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None)
             .map_err(render_contract_problem_failure)?;
-        return run_single_contract_target(task_name, overrides, None, target, show_receipt);
+        return run_single_contract_target(
+            task_name,
+            overrides,
+            None,
+            target,
+            task_args,
+            show_receipt,
+        );
     }
 
     let mut stderr_sections = Vec::new();
@@ -8312,6 +8343,7 @@ fn run_contract_targets(
             overrides,
             Some(member.as_str()),
             target,
+            task_args,
             show_receipt,
         )?);
     }
@@ -8324,12 +8356,14 @@ fn run_single_contract_target(
     overrides: ExecutionOverrides,
     member: Option<&str>,
     target: LoadedContractTarget,
+    task_args: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
-    match run_task_with_overrides(
+    match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
         task_name,
+        task_args,
         overrides,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
@@ -10568,6 +10602,7 @@ fn load_and_run_workspace_task(
     jobs: usize,
     emit_progress: bool,
     stream: bool,
+    task_args: &[String],
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
@@ -10575,7 +10610,14 @@ fn load_and_run_workspace_task(
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_task_streaming(&workspace_name, path, task, repo_refs, emit_progress);
+        return run_workspace_task_streaming(
+            &workspace_name,
+            path,
+            task,
+            repo_refs,
+            emit_progress,
+            task_args,
+        );
     }
 
     let mut repos = BTreeMap::new();
@@ -10651,6 +10693,7 @@ fn load_and_run_workspace_task(
 
         let (tx, rx) = mpsc::channel();
         let task_name = task.to_string();
+        let task_args = task_args.to_vec();
         let handles = runnable
             .into_iter()
             .map(|(order, repo)| {
@@ -10673,8 +10716,14 @@ fn load_and_run_workspace_task(
                 }
                 let tx = tx.clone();
                 let task = task_name.clone();
+                let task_args = task_args.clone();
                 thread::spawn(move || {
-                    let report = run_workspace_repo_task(repo, &task, RepoExecutionMode::Capture);
+                    let report = run_workspace_repo_task(
+                        repo,
+                        &task,
+                        &task_args,
+                        RepoExecutionMode::Capture,
+                    );
                     let _ = tx.send((order, report));
                 })
             })
@@ -10724,6 +10773,7 @@ fn run_workspace_task_streaming(
     task: &str,
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
+    task_args: &[String],
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
     let mut repos = Vec::new();
     let mut ok = true;
@@ -10758,7 +10808,8 @@ fn run_workspace_task_streaming(
                         workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
                     );
                 }
-                let report = run_workspace_repo_task(repo, task, RepoExecutionMode::Stream);
+                let report =
+                    run_workspace_repo_task(repo, task, task_args, RepoExecutionMode::Stream);
                 if emit_progress {
                     eprintln!(
                         "{}",
@@ -11149,6 +11200,7 @@ fn blocked_workspace_repo_run(
 fn run_workspace_repo_task(
     repo: WorkspaceRepoRef,
     task: &str,
+    task_args: &[String],
     mode: RepoExecutionMode,
 ) -> WorkspaceRepoRunReport {
     let repo_name = repo.name.clone();
@@ -11279,10 +11331,11 @@ fn run_workspace_repo_task(
             }
 
             let run_result = match mode {
-                RepoExecutionMode::Capture => run_task_captured_with_overrides(
+                RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides(
                     &contract,
                     &repo.contract_path,
                     task,
+                    task_args,
                     ExecutionOverrides::default(),
                 )
                 .map(|result| CommandRunResult {
@@ -11290,11 +11343,12 @@ fn run_workspace_repo_task(
                     stdout: result.stdout,
                     stderr: result.stderr,
                 }),
-                RepoExecutionMode::Stream => run_task_with_progress_and_overrides(
+                RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides(
                     &contract,
                     &repo.contract_path,
                     task,
                     false,
+                    task_args,
                     ExecutionOverrides::default(),
                 )
                 .map(|result| CommandRunResult {

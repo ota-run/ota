@@ -638,6 +638,8 @@ pub struct AgentSummary<'a> {
     pub verify_after_changes: &'a [String],
     #[serde(skip_serializing_if = "slice_is_empty")]
     pub writable_paths: &'a [String],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub protected_paths: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
 }
@@ -650,6 +652,7 @@ impl<'a> AgentSummary<'a> {
             safe_tasks: &agent.safe_tasks,
             verify_after_changes: &agent.verify_after_changes,
             writable_paths: &agent.writable_paths,
+            protected_paths: &agent.protected_paths,
             notes: agent.notes.as_deref(),
         };
 
@@ -658,6 +661,7 @@ impl<'a> AgentSummary<'a> {
             || !summary.safe_tasks.is_empty()
             || !summary.verify_after_changes.is_empty()
             || !summary.writable_paths.is_empty()
+            || !summary.protected_paths.is_empty()
             || summary.notes.is_some())
         .then_some(summary)
     }

@@ -127,6 +127,9 @@ enum Commands {
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
+        /// Pass trailing arguments to the task command after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Diagnose repo readiness from an Ota contract.
     Doctor {
@@ -509,6 +512,9 @@ enum WorkspaceCommands {
         receipt: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
+        /// Pass trailing arguments to the workspace task command after `--`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -751,6 +757,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             receipt,
             member,
             path,
+            args,
         } => commands::run_command(
             task.as_str(),
             path.as_deref(),
@@ -760,6 +767,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: lifecycle.map(Into::into),
             },
             &member,
+            &args,
             debug,
             receipt,
         ),
@@ -1067,6 +1075,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 stream,
                 receipt,
                 path,
+                args,
             } => commands::workspace_run(
                 task.as_str(),
                 path.as_deref(),
@@ -1076,6 +1085,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
                 receipt,
+                &args,
             ),
         },
     };
@@ -4641,7 +4651,9 @@ agent:
         assert!(
             output
                 .stdout
-                .contains("AGENT entrypoint=setup safe_tasks=setup writable_paths=src")
+                .contains(
+                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=ota.yaml,Cargo.lock",
+                )
         );
     }
 
@@ -5081,7 +5093,9 @@ agent:
         assert!(
             output
                 .stdout
-                .contains("AGENT entrypoint=setup safe_tasks=setup")
+                .contains(
+                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=ota.yaml,Cargo.lock",
+                )
         );
     }
 
@@ -5636,14 +5650,17 @@ project:
 tasks:
   setup:
     script: |
-      printf ready > prepared.txt
+      printf '%s' "$1" > prepared.txt
 "#,
         );
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", fixture.path(), "--", "1.3.5"]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(fixture.dir.path().join("prepared.txt").exists());
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "1.3.5"
+        );
     }
 
     #[test]
@@ -10351,6 +10368,48 @@ tasks:
         assert!(output.stdout.contains("Task: setup"));
         assert!(output.stdout.contains("Exit code: 7"));
         assert!(output.stdout.contains("RECEIPT:"));
+    }
+
+    #[test]
+    fn workspace_run_passes_trailing_args_to_task() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    script: |
+      printf '%s' "$1" > version.txt
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            fixture.path(),
+            "--",
+            "1.3.5",
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(
+                fixture
+                    .dir
+                    .path()
+                    .join("apps")
+                    .join("web")
+                    .join("version.txt")
+            )
+            .unwrap(),
+            "1.3.5"
+        );
     }
 
     #[cfg(unix)]

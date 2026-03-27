@@ -270,6 +270,7 @@ Use-case:
 
 ```bash
 ota run test
+ota run test ./repo -- 1.3.5
 ```
 
 Receipt:
@@ -741,6 +742,7 @@ Receipt:
 ```bash
 ota workspace run test
 ota workspace run test --json
+ota workspace run test ./workspace -- 1.3.5
 ```
 
 Script example:
