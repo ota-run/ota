@@ -550,7 +550,7 @@ agent:
     - docs
   protected_paths:
     - Cargo.lock
-    - ota.yaml
+    - LICENSE
   notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
 
@@ -574,6 +574,7 @@ Agent semantics:
 - `writable_paths` are the paths an agent may edit
 - `protected_paths` are the paths an agent should avoid editing casually
 - `notes` is free-form repo guidance for humans and agents
+- `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
 
 ## `metadata`
 

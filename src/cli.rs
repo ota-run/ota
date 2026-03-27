@@ -4652,7 +4652,7 @@ agent:
             output
                 .stdout
                 .contains(
-                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=ota.yaml,Cargo.lock",
+                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=Cargo.lock,LICENSE",
                 )
         );
     }
@@ -5094,7 +5094,7 @@ agent:
             output
                 .stdout
                 .contains(
-                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=ota.yaml,Cargo.lock",
+                    "AGENT entrypoint=setup safe_tasks=setup writable_paths=src protected_paths=Cargo.lock,LICENSE",
                 )
         );
     }
@@ -6834,7 +6834,10 @@ project:
             r#"
 version: 1
 project:
-  namex: broken
+  name: existing
+tasks:
+  setup:
+    run: echo existing
 "#,
         );
         fixture.write(
@@ -6863,6 +6866,78 @@ project:
             .filter(|name| name.starts_with("ota.yaml.bak-"))
             .collect::<Vec<_>>();
         assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn detect_rewrite_refuses_to_overwrite_protected_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+agent:
+  protected_paths:
+    - ota.yaml
+tasks:
+  setup:
+    run: echo existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--rewrite", "--yes", fixture.path()]);
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("refusing to write protected path `ota.yaml`"));
+        assert!(
+            !fixture
+                .dir
+                .path()
+                .read_dir()
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("ota.yaml.bak-"))
+        );
+    }
+
+    #[test]
+    fn detect_merge_refuses_to_overwrite_protected_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+agent:
+  protected_paths:
+    - ota.yaml
+tasks:
+  setup:
+    run: echo existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", fixture.path()]);
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("refusing to write protected path `ota.yaml`"));
     }
 
     #[test]

@@ -79,7 +79,7 @@ Success:
     "safe_tasks": ["setup", "test"],
     "verify_after_changes": ["test"],
     "writable_paths": ["src", "docs"],
-    "protected_paths": ["ota.yaml", "Cargo.lock"]
+    "protected_paths": ["Cargo.lock", "LICENSE"]
   },
   "tasks": [
     {
