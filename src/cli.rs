@@ -1875,7 +1875,7 @@ tasks:
         assert!(output.stderr.is_none());
         assert!(output.stdout.contains("DIFF"));
         assert!(output.stdout.contains("SUMMARY"));
-        assert!(output.stdout.contains("»"));
+        assert!(output.stdout.contains("♦"));
         assert!(output.stdout.contains("➤ DIFFERENT"));
         assert!(output.stdout.contains("DIFFERENT"));
         assert!(output.stdout.contains("Added:"));
@@ -1952,7 +1952,7 @@ project:
         assert!(output.stdout.contains("No tasks defined in contract"));
         assert!(output.stdout.contains("Why:"));
         assert!(output.stdout.contains("Next:"));
-        assert!(output.stdout.contains("»"));
+        assert!(output.stdout.contains("♦"));
     }
 
     #[test]
@@ -9295,7 +9295,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution:"));
         assert!(stdout.contains("SUMMARY:"));
-        assert!(stdout.contains("»"));
+        assert!(stdout.contains("♦"));
         assert!(stdout.contains("Repos: 2"));
         assert!(stdout.contains("Ready: 2"));
         assert!(stdout.contains("Preferred: remote"));
@@ -9340,7 +9340,7 @@ checks:
 
         assert_eq!(output.exit_code, 1);
         assert!(body.contains("SUMMARY:"));
-        assert!(body.contains("»"));
+        assert!(body.contains("♦"));
         assert!(body.contains("Repos:"));
         assert!(body.contains("Errors:"));
         assert!(body.contains("WORKSPACE CHECK"));

@@ -5926,31 +5926,31 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Added:", "1;38;2;0;255;120"),
         paint(&summary.added_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Missing in target:", "1;38;2;255;235;59"),
         paint(&summary.removed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Changed:", "1;38;2;0;255;255"),
         paint(&summary.changed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Weakened:", "1;38;2;255;80;80"),
         paint(&summary.weakened_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Strengthened:", "1;38;2;0;255;120"),
         paint(
             &summary.strengthened_count.to_string(),
@@ -6722,37 +6722,37 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Ready:", "1;38;2;0;255;120"),
         paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Not Ready:", "1;38;2;255;235;59"),
         paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -6764,43 +6764,43 @@ fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> S
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Ready:", "1;38;2;0;255;120"),
         paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Not Ready:", "1;38;2;255;235;59"),
         paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -7254,7 +7254,7 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
         }
         stdout.push_str(&format!(
             "\n{} {}. {}",
-            paint("»", "1;38;2;255;214;79"),
+            paint("♦", "1;38;2;255;214;79"),
             step.order,
             render_finding_summary(step.severity, &step.summary)
         ));
@@ -7278,25 +7278,25 @@ fn render_explain_summary_text(summary: &ExplainSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("♦", "1;38;2;255;214;79"),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
