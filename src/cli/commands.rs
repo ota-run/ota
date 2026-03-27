@@ -8608,7 +8608,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 " {}. {}  {}",
                 step.order,
                 render_execution_receipt_status(&step.status),
-                step.label
+                paint(&step.label, "1")
             ));
             if let Some(detail) = step.detail.as_deref() {
                 stdout.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
