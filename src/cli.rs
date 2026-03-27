@@ -2683,6 +2683,7 @@ env:
                 .stdout
                 .contains("Missing environment variable: OTA_MEMBER_REQUIRED")
         );
+        assert!(output.stdout.contains("RECEIPT:"));
         assert!(output.stdout.contains("\n\n"));
     }
 
@@ -2797,6 +2798,7 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["status"], "READY");
+        assert_eq!(json["receipt"]["scope"], "repo");
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["ok"], true);
@@ -3564,6 +3566,7 @@ tasks:
                 .unwrap()
                 .contains("exec sandbox-dev")
         );
+        assert!(output.stderr.as_deref().unwrap().contains("RECEIPT:"));
     }
 
     #[cfg(unix)]
@@ -9899,6 +9902,7 @@ tasks:
         assert_eq!(json["repos"][0]["phase"], "setup");
         assert_eq!(json["repos"][0]["task"], "setup");
         assert_eq!(json["repos"][0]["exit_code"], 9);
+        assert_eq!(json["receipt"]["scope"], "workspace");
     }
 
     #[test]
@@ -9936,6 +9940,7 @@ tasks:
         assert!(output.stdout.contains("READY"));
         assert!(output.stdout.contains("web [optional] (WARN)"));
         assert!(output.stdout.contains("Exit code: 7"));
+        assert!(output.stdout.contains("RECEIPT:"));
     }
 
     #[cfg(unix)]
@@ -10233,6 +10238,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["task"], "setup");
+        assert_eq!(json["receipt"]["scope"], "workspace");
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["status"], "TASK FAILED");
         assert_eq!(json["repos"][0]["task"], "setup");
@@ -10275,6 +10281,7 @@ tasks:
         assert!(output.stdout.contains("web [optional] (WARN)"));
         assert!(output.stdout.contains("Task: setup"));
         assert!(output.stdout.contains("Exit code: 7"));
+        assert!(output.stdout.contains("RECEIPT:"));
     }
 
     #[cfg(unix)]

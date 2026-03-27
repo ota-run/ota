@@ -24,9 +24,9 @@
 
 # Execution Receipt
 
-Status: spec candidate.
+Status: shipped.
 
-This document defines the planned execution receipt for Ota mutation and execution commands.
+This document defines the execution receipt for Ota mutation and execution commands.
 
 The goal is to produce a deterministic, machine-readable record of what Ota believed,
 what it did, and what happened during execution.
@@ -46,7 +46,7 @@ The receipt is meant to answer:
 
 ## Commands
 
-The receipt should apply to execution and mutation surfaces such as:
+The receipt applies to execution and mutation surfaces such as:
 
 - `ota run`
 - `ota up`
@@ -56,7 +56,7 @@ It should not replace `doctor`, `detect`, or `init`.
 
 ## Planned shape
 
-The receipt should include:
+The receipt includes:
 
 - `ok`
 - `path`
@@ -72,6 +72,10 @@ The receipt should include:
 - `blocked`
 - `summary`
 - `next`
+
+The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
+`lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota run`, `ota up`, and
+workspace execution flows. Workspace receipts also report repo counts in the summary.
 
 ## Behavior
 

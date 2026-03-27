@@ -43,10 +43,11 @@ use crate::doctor::{
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
-    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    ExecutionReceipt, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
+    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
@@ -1300,12 +1301,16 @@ pub fn run_command(
         match run_contract_targets(task_name, &resolved_path, overrides, members) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
-                stderr,
+                stderr: (!stderr.is_empty()).then_some(stderr),
                 exit_code: 0,
             },
             Err(error) => CommandOutput {
                 stdout: String::new(),
-                stderr: Some(error.message),
+                stderr: Some(match error.receipt {
+                    Some(receipt) if error.message.is_empty() => receipt,
+                    Some(receipt) => format!("{}\n{}", error.message, receipt),
+                    None => error.message,
+                }),
                 exit_code: error.exit_code,
             },
         },
@@ -2570,6 +2575,7 @@ pub fn up(
                                 "status": root_result.status,
                                 "phase": root_result.phase,
                                 "findings": root_result.report.findings,
+                                "receipt": root_result.receipt,
                                 "service": root_result.service,
                                 "task": root_result.task,
                                 "exit_code": root_result.exit_code,
@@ -7416,15 +7422,16 @@ fn render_up(
     service: Option<&str>,
     task: Option<&str>,
     exit_code: Option<i32>,
+    receipt: &ExecutionReceipt,
     format: OutputFormat,
 ) -> CommandOutput {
     match format {
-        OutputFormat::Text => {
-            render_up_text(path, status, phase, report, ready, service, task, exit_code)
-        }
-        OutputFormat::Json => {
-            render_up_json(path, status, phase, report, ready, service, task, exit_code)
-        }
+        OutputFormat::Text => render_up_text(
+            path, status, phase, report, ready, service, task, exit_code, receipt,
+        ),
+        OutputFormat::Json => render_up_json(
+            path, status, phase, report, ready, service, task, exit_code, receipt,
+        ),
     }
 }
 
@@ -7435,11 +7442,15 @@ fn render_up_result(
     format: OutputFormat,
 ) -> CommandOutput {
     match format {
-        OutputFormat::Text => CommandOutput {
-            stdout: render_up_section(text_path, &result),
-            stderr: None,
-            exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
-        },
+        OutputFormat::Text => {
+            let mut stdout = render_up_section(text_path, &result);
+            stdout.push_str(&render_execution_receipt_text(&result.receipt));
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: result.exit_code.unwrap_or(if result.ok { 0 } else { 1 }),
+            }
+        }
         OutputFormat::Json => render_up(
             path,
             result.status,
@@ -7449,6 +7460,7 @@ fn render_up_result(
             result.service.as_deref(),
             result.task.as_deref(),
             result.exit_code,
+            &result.receipt,
             format,
         ),
     }
@@ -8253,7 +8265,7 @@ fn run_contract_targets(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     members: &[String],
-) -> Result<Option<String>, RunCommandFailure> {
+) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None)
             .map_err(render_contract_problem_failure)?;
@@ -8265,18 +8277,15 @@ fn run_contract_targets(
         eprintln!("MEMBER {member}");
         let target = load_and_validate_target(resolved_path, Some(member.as_str()))
             .map_err(render_contract_problem_failure)?;
-        if let Some(stderr) =
-            run_single_contract_target(task_name, overrides, Some(member.as_str()), target)?
-        {
-            stderr_sections.push(stderr);
-        }
+        stderr_sections.push(run_single_contract_target(
+            task_name,
+            overrides,
+            Some(member.as_str()),
+            target,
+        )?);
     }
 
-    if stderr_sections.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(stderr_sections.join("\n")))
-    }
+    Ok(stderr_sections.join("\n"))
 }
 
 fn run_single_contract_target(
@@ -8284,29 +8293,135 @@ fn run_single_contract_target(
     overrides: ExecutionOverrides,
     member: Option<&str>,
     target: LoadedContractTarget,
-) -> Result<Option<String>, RunCommandFailure> {
+) -> Result<String, RunCommandFailure> {
     match run_task_with_overrides(
         &target.contract,
         &target.contract_path,
         task_name,
         overrides,
     ) {
-        Ok(outcome) if outcome.exit_code == 0 => Ok(lifecycle_notice_with_member(
-            &target.contract,
-            overrides,
-            member,
-        )),
+        Ok(outcome) if outcome.exit_code == 0 => {
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &outcome.executed_tasks,
+                outcome.exit_code,
+                true,
+                None,
+            );
+            let mut output = String::new();
+            if let Some(notice) = lifecycle_notice_with_member(&target.contract, overrides, member)
+            {
+                output.push_str(&notice);
+                output.push('\n');
+            }
+            let receipt_text = render_execution_receipt_text(&receipt);
+            if output.is_empty() {
+                output.push_str(receipt_text.trim_start_matches('\n'));
+            } else {
+                output.push_str(&receipt_text);
+            }
+            Ok(output)
+        }
         Ok(outcome) => Err(RunCommandFailure {
             message: format!(
                 "task `{task_name}` failed with exit code {}",
                 outcome.exit_code,
             ),
             exit_code: outcome.exit_code,
+            receipt: Some(render_execution_receipt_text(&run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &outcome.executed_tasks,
+                outcome.exit_code,
+                false,
+                Some(format!(
+                    "inspect task `{task_name}` output and rerun `ota run {task_name}`"
+                )),
+            ))),
         }),
         Err(error) => Err(RunCommandFailure {
             message: render_run_error(error),
             exit_code: 1,
+            receipt: Some(render_execution_receipt_text(&run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &[],
+                1,
+                false,
+                Some(format!(
+                    "repair task `{task_name}` and rerun `ota run {task_name}`"
+                )),
+            ))),
         }),
+    }
+}
+
+fn run_execution_receipt(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+    _member: Option<&str>,
+    executed_tasks: &[String],
+    exit_code: i32,
+    ok: bool,
+    next: Option<String>,
+) -> ExecutionReceipt {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    let step_detail = if executed_tasks.is_empty() {
+        None
+    } else {
+        Some(format!("executed tasks: {}", executed_tasks.join(", ")))
+    };
+    let steps = if executed_tasks.is_empty() {
+        Vec::new()
+    } else {
+        vec![execution_receipt_step(
+            1,
+            task_name.to_string(),
+            if ok {
+                "READY".to_string()
+            } else {
+                "FAILED".to_string()
+            },
+            step_detail,
+            Some(exit_code),
+        )]
+    };
+
+    ExecutionReceipt {
+        ok,
+        path: contract_path.display().to_string(),
+        scope: String::from("repo"),
+        contract: contract_path.display().to_string(),
+        workspace: None,
+        backend: Some(format_backend(backend).to_string()),
+        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        acquired: Vec::new(),
+        env: BTreeMap::new(),
+        policy: Vec::new(),
+        steps,
+        blocked: Vec::new(),
+        summary: ExecutionReceiptSummary {
+            error_count: if ok { 0 } else { 1 },
+            warn_count: 0,
+            info_count: 0,
+            step_count: if executed_tasks.is_empty() { 0 } else { 1 },
+            repo_count: None,
+            ready_count: None,
+            not_ready_count: None,
+        },
+        next,
     }
 }
 
@@ -8344,12 +8459,14 @@ fn join_notices(notices: Vec<String>) -> Option<String> {
 struct RunCommandFailure {
     message: String,
     exit_code: i32,
+    receipt: Option<String>,
 }
 
 fn render_contract_problem_failure(error: ContractProblem) -> RunCommandFailure {
     RunCommandFailure {
         message: render_contract_problem(&error),
         exit_code: 1,
+        receipt: None,
     }
 }
 
@@ -8394,9 +8511,11 @@ fn render_up_text(
     service: Option<&str>,
     task: Option<&str>,
     exit_code: Option<i32>,
+    receipt: &ExecutionReceipt,
 ) -> CommandOutput {
-    let stdout =
+    let mut stdout =
         render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
+    stdout.push_str(&render_execution_receipt_text(receipt));
 
     CommandOutput {
         stdout,
@@ -8474,6 +8593,126 @@ fn render_up_section_from_parts(
     stdout
 }
 
+fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("RECEIPT")));
+    stdout.push_str(&format!("\n{} {}", paint_key("Scope:"), receipt.scope));
+    stdout.push_str(&format!("\n{} {}", paint_key("Path:"), receipt.path));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Contract:"),
+        receipt.contract
+    ));
+    if let Some(workspace) = receipt.workspace.as_deref() {
+        stdout.push_str(&format!("\n{} {}", paint_key("Workspace:"), workspace));
+    }
+    if let Some(backend) = receipt.backend.as_deref() {
+        stdout.push_str(&format!("\n{} {}", paint_key("Backend:"), backend));
+    }
+    if let Some(lifecycle) = receipt.lifecycle.as_deref() {
+        stdout.push_str(&format!("\n{} {}", paint_key("Lifecycle:"), lifecycle));
+    }
+    if !receipt.acquired.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Acquired:"),
+            receipt.acquired.join(", ")
+        ));
+    }
+    if !receipt.env.is_empty() {
+        let env = receipt
+            .env
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        stdout.push_str(&format!("\n{} {}", paint_key("Env:"), env));
+    }
+    if !receipt.policy.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Policy:"),
+            receipt.policy.join(", ")
+        ));
+    }
+
+    if !receipt.steps.is_empty() {
+        stdout.push_str(&format!("\n\n{}:", paint_section_title("Steps")));
+        for step in &receipt.steps {
+            stdout.push_str(&format!(
+                "\n{} {}. {}  {}",
+                paint_key("»"),
+                step.order,
+                render_execution_receipt_status(&step.status),
+                step.label
+            ));
+            if let Some(detail) = step.detail.as_deref() {
+                stdout.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
+            }
+            if let Some(exit_code) = step.exit_code {
+                stdout.push_str(&format!("\n  {} {exit_code}", paint_key("Exit code:")));
+            }
+        }
+    }
+
+    if !receipt.blocked.is_empty() {
+        stdout.push_str(&format!("\n\n{}:", paint_section_title("Blocked")));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Items:"),
+            receipt.blocked.join(", ")
+        ));
+    }
+
+    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
+
+    if let Some(next) = receipt.next.as_deref() {
+        stdout.push_str(&format!("\n{} {}", paint_key("Next:"), next));
+    }
+
+    stdout
+}
+
+fn render_execution_receipt_summary_text(summary: &ExecutionReceiptSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    if let Some(repo_count) = summary.repo_count {
+        stdout.push_str(&format!("\n{} {}", paint_key("Repos:"), repo_count));
+        if let Some(ready_count) = summary.ready_count {
+            stdout.push_str(&format!("\n{} {}", paint_key("Ready:"), ready_count));
+        }
+        if let Some(not_ready_count) = summary.not_ready_count {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Not Ready:"),
+                not_ready_count
+            ));
+        }
+    }
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Errors:"),
+        summary.error_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Warnings:"),
+        summary.warn_count
+    ));
+    stdout.push_str(&format!("\n{} {}", paint_key("Info:"), summary.info_count));
+    stdout.push_str(&format!("\n{} {}", paint_key("Steps:"), summary.step_count));
+    stdout
+}
+
+fn render_execution_receipt_status(status: &str) -> String {
+    match status.trim() {
+        "READY" => paint("READY", "1;38;2;0;255;120"),
+        "NOT READY" | "BLOCKED" | "WARN" => paint(status.trim(), "1;38;2;255;235;59"),
+        value if value.contains("FAILED") => paint(value, "1;31"),
+        other => paint(other, "1;37"),
+    }
+}
+
 fn render_up_json(
     path: &str,
     status: &str,
@@ -8483,6 +8722,7 @@ fn render_up_json(
     service: Option<&str>,
     task: Option<&str>,
     exit_code: Option<i32>,
+    receipt: &ExecutionReceipt,
 ) -> CommandOutput {
     CommandOutput {
         stdout: to_json(&UpStatus {
@@ -8491,6 +8731,7 @@ fn render_up_json(
             status,
             phase,
             findings: &report.findings,
+            receipt: receipt.clone(),
             service,
             task,
             exit_code,
@@ -8561,6 +8802,7 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
+            stdout.push_str(&render_execution_receipt_text(&report.receipt));
 
             CommandOutput {
                 stdout,
@@ -8572,6 +8814,7 @@ fn render_workspace_up(
             stdout: to_json(&WorkspaceUpSuccess {
                 ok: report.ok,
                 path,
+                receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -8636,6 +8879,7 @@ fn render_workspace_run(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
+            stdout.push_str(&render_execution_receipt_text(&report.receipt));
 
             CommandOutput {
                 stdout,
@@ -8648,6 +8892,7 @@ fn render_workspace_run(
                 ok: report.ok,
                 path,
                 task,
+                receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -9421,6 +9666,7 @@ struct RepoUpResult {
     status: &'static str,
     phase: &'static str,
     report: DoctorReport,
+    receipt: ExecutionReceipt,
     service: Option<String>,
     task: Option<String>,
     exit_code: Option<i32>,
@@ -9430,11 +9676,13 @@ struct RepoUpResult {
 
 struct WorkspaceUpReport {
     ok: bool,
+    receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoUpReport>,
 }
 
 struct WorkspaceRunReport {
     ok: bool,
+    receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoRunReport>,
 }
 
@@ -9448,6 +9696,229 @@ struct CommandRunResult {
     exit_code: i32,
     stdout: String,
     stderr: String,
+}
+
+fn execution_receipt_summary(
+    findings: &[Finding],
+    step_count: usize,
+    repo_count: Option<usize>,
+    ready_count: Option<usize>,
+    not_ready_count: Option<usize>,
+) -> ExecutionReceiptSummary {
+    let error_count = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .count();
+    let warn_count = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Warn)
+        .count();
+    let info_count = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Info)
+        .count();
+
+    ExecutionReceiptSummary {
+        error_count,
+        warn_count,
+        info_count,
+        step_count,
+        repo_count,
+        ready_count,
+        not_ready_count,
+    }
+}
+
+fn execution_receipt_step(
+    order: usize,
+    label: impl Into<String>,
+    status: impl Into<String>,
+    detail: Option<String>,
+    exit_code: Option<i32>,
+) -> ExecutionReceiptStep {
+    ExecutionReceiptStep {
+        order,
+        label: label.into(),
+        status: status.into(),
+        detail,
+        exit_code,
+    }
+}
+
+fn repo_execution_receipt(
+    path: &Path,
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    status: &str,
+    phase: &str,
+    service: Option<&str>,
+    task: Option<&str>,
+    findings: &[Finding],
+    exit_code: Option<i32>,
+    next: Option<String>,
+) -> ExecutionReceipt {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    let detail = service
+        .map(|service| format!("service `{service}`"))
+        .or_else(|| task.map(|task| format!("task `{task}`")));
+    let mut steps = Vec::new();
+    steps.push(execution_receipt_step(
+        1,
+        phase.to_string(),
+        status.to_string(),
+        detail,
+        exit_code,
+    ));
+
+    ExecutionReceipt {
+        ok: status == "READY" && exit_code.unwrap_or(0) == 0,
+        path: path.display().to_string(),
+        scope: String::from("repo"),
+        contract: path.display().to_string(),
+        workspace: None,
+        backend: Some(format_backend(backend).to_string()),
+        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        acquired: Vec::new(),
+        env: BTreeMap::new(),
+        policy: Vec::new(),
+        steps,
+        blocked: Vec::new(),
+        summary: execution_receipt_summary(findings, 1, None, None, None),
+        next,
+    }
+}
+
+fn workspace_up_receipt(
+    workspace_path: &Path,
+    workspace_name: &str,
+    repos: &[WorkspaceRepoUpReport],
+) -> ExecutionReceipt {
+    let mut findings = Vec::new();
+    let mut steps = Vec::new();
+    let mut blocked = Vec::new();
+    let mut ready_count = 0usize;
+    let mut not_ready_count = 0usize;
+
+    for (index, repo) in repos.iter().enumerate() {
+        if repo.ok {
+            ready_count += 1;
+        } else {
+            not_ready_count += 1;
+        }
+        if repo.status == "BLOCKED" {
+            blocked.push(repo.name.clone());
+        }
+        findings.extend(repo.findings.clone());
+        steps.push(execution_receipt_step(
+            index + 1,
+            repo.name.clone(),
+            repo.status.clone(),
+            Some(match repo.phase.as_str() {
+                "services" => repo
+                    .service
+                    .as_deref()
+                    .map(|service| format!("service `{service}`"))
+                    .unwrap_or_else(|| repo.phase.clone()),
+                "setup" => repo
+                    .task
+                    .as_deref()
+                    .map(|task| format!("task `{task}`"))
+                    .unwrap_or_else(|| repo.phase.clone()),
+                other => other.to_string(),
+            }),
+            repo.exit_code,
+        ));
+    }
+
+    let next = repos
+        .iter()
+        .flat_map(|repo| repo.findings.iter())
+        .map(|finding| finding.next.clone())
+        .find(|next| !next.trim().is_empty());
+
+    ExecutionReceipt {
+        ok: repos.iter().all(|repo| repo.ok || !repo.required),
+        path: workspace_path.display().to_string(),
+        scope: String::from("workspace"),
+        contract: workspace_path.display().to_string(),
+        workspace: Some(workspace_name.to_string()),
+        backend: None,
+        lifecycle: None,
+        acquired: Vec::new(),
+        env: BTreeMap::new(),
+        policy: Vec::new(),
+        steps,
+        blocked,
+        summary: execution_receipt_summary(
+            &findings,
+            repos.len(),
+            Some(repos.len()),
+            Some(ready_count),
+            Some(not_ready_count),
+        ),
+        next,
+    }
+}
+
+fn workspace_run_receipt(
+    workspace_path: &Path,
+    workspace_name: &str,
+    task: &str,
+    repos: &[WorkspaceRepoRunReport],
+) -> ExecutionReceipt {
+    let mut findings = Vec::new();
+    let mut steps = Vec::new();
+    let mut blocked = Vec::new();
+    let mut ready_count = 0usize;
+    let mut not_ready_count = 0usize;
+
+    for (index, repo) in repos.iter().enumerate() {
+        if repo.ok {
+            ready_count += 1;
+        } else {
+            not_ready_count += 1;
+        }
+        if repo.status == "BLOCKED" {
+            blocked.push(repo.name.clone());
+        }
+        findings.extend(repo.findings.clone());
+        steps.push(execution_receipt_step(
+            index + 1,
+            repo.name.clone(),
+            repo.status.clone(),
+            Some(format!("task `{task}`")),
+            repo.exit_code,
+        ));
+    }
+
+    let next = repos
+        .iter()
+        .flat_map(|repo| repo.findings.iter())
+        .map(|finding| finding.next.clone())
+        .find(|next| !next.trim().is_empty());
+
+    ExecutionReceipt {
+        ok: repos.iter().all(|repo| repo.ok || !repo.required),
+        path: workspace_path.display().to_string(),
+        scope: String::from("workspace"),
+        contract: workspace_path.display().to_string(),
+        workspace: Some(workspace_name.to_string()),
+        backend: None,
+        lifecycle: None,
+        acquired: Vec::new(),
+        env: BTreeMap::new(),
+        policy: Vec::new(),
+        steps,
+        blocked,
+        summary: execution_receipt_summary(
+            &findings,
+            repos.len(),
+            Some(repos.len()),
+            Some(ready_count),
+            Some(not_ready_count),
+        ),
+        next,
+    }
 }
 
 fn workspace_repo_needs_acquisition(repo: &WorkspaceRepoRef) -> bool {
@@ -9569,6 +10040,21 @@ fn execute_repo_up(
             ok: false,
             status: "NOT READY",
             phase: "preconditions",
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                overrides,
+                "NOT READY",
+                "preconditions",
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
             report: preflight,
             service: None,
             task: None,
@@ -9600,6 +10086,18 @@ fn execute_repo_up(
                         ok: false,
                         status: "SERVICE START FAILED",
                         phase: "services",
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            overrides,
+                            "SERVICE START FAILED",
+                            "services",
+                            Some(name.as_str()),
+                            None,
+                            &[],
+                            Some(command.exit_code),
+                            None,
+                        ),
                         report: DoctorReport {
                             ok: false,
                             findings: Vec::new(),
@@ -9621,6 +10119,21 @@ fn execute_repo_up(
                 ok: false,
                 status: "NOT READY",
                 phase: "services",
+                receipt: repo_execution_receipt(
+                    resolved_path,
+                    contract,
+                    overrides,
+                    "NOT READY",
+                    "services",
+                    Some(name.as_str()),
+                    None,
+                    &service_report.findings,
+                    None,
+                    service_report
+                        .findings
+                        .first()
+                        .map(|finding| finding.next.clone()),
+                ),
                 report: service_report,
                 service: Some(name),
                 task: None,
@@ -9637,6 +10150,21 @@ fn execute_repo_up(
             ok: false,
             status: "NOT READY",
             phase: "services",
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                overrides,
+                "NOT READY",
+                "services",
+                None,
+                None,
+                &service_report.findings,
+                None,
+                service_report
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
             report: service_report,
             service: None,
             task: None,
@@ -9677,6 +10205,18 @@ fn execute_repo_up(
                     ok: false,
                     status: "SETUP FAILED",
                     phase: "setup",
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        overrides,
+                        "SETUP FAILED",
+                        "setup",
+                        None,
+                        Some("setup"),
+                        &[],
+                        Some(outcome.exit_code),
+                        None,
+                    ),
                     report: DoctorReport {
                         ok: false,
                         findings: Vec::new(),
@@ -9701,6 +10241,18 @@ fn execute_repo_up(
         ok: report.ok,
         status: if report.ok { "READY" } else { "NOT READY" },
         phase: "post-setup diagnosis",
+        receipt: repo_execution_receipt(
+            resolved_path,
+            contract,
+            overrides,
+            if report.ok { "READY" } else { "NOT READY" },
+            "post-setup diagnosis",
+            None,
+            None,
+            &report.findings,
+            None,
+            report.findings.first().map(|finding| finding.next.clone()),
+        ),
         report,
         service: None,
         task: None,
@@ -9722,7 +10274,7 @@ fn load_and_run_workspace_up(
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_up_streaming(&workspace_name, repo_refs, emit_progress);
+        return run_workspace_up_streaming(&workspace_name, path, repo_refs, emit_progress);
     }
 
     let mut repos = BTreeMap::new();
@@ -9851,10 +10403,9 @@ fn load_and_run_workspace_up(
         }
     }
 
-    Ok(WorkspaceUpReport {
-        ok,
-        repos: repos.into_values().collect(),
-    })
+    let repos = repos.into_values().collect::<Vec<_>>();
+    let receipt = workspace_up_receipt(path, &workspace_name, &repos);
+    Ok(WorkspaceUpReport { ok, receipt, repos })
 }
 
 fn load_and_run_workspace_task(
@@ -9870,7 +10421,7 @@ fn load_and_run_workspace_task(
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_task_streaming(&workspace_name, task, repo_refs, emit_progress);
+        return run_workspace_task_streaming(&workspace_name, path, task, repo_refs, emit_progress);
     }
 
     let mut repos = BTreeMap::new();
@@ -10010,14 +10561,14 @@ fn load_and_run_workspace_task(
         }
     }
 
-    Ok(WorkspaceRunReport {
-        ok,
-        repos: repos.into_values().collect(),
-    })
+    let repos = repos.into_values().collect::<Vec<_>>();
+    let receipt = workspace_run_receipt(path, &workspace_name, task, &repos);
+    Ok(WorkspaceRunReport { ok, receipt, repos })
 }
 
 fn run_workspace_task_streaming(
     workspace_name: &str,
+    workspace_path: &Path,
     task: &str,
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
@@ -10080,11 +10631,13 @@ fn run_workspace_task_streaming(
         repos.push(report);
     }
 
-    Ok(WorkspaceRunReport { ok, repos })
+    let receipt = workspace_run_receipt(workspace_path, workspace_name, task, &repos);
+    Ok(WorkspaceRunReport { ok, receipt, repos })
 }
 
 fn run_workspace_up_streaming(
     workspace_name: &str,
+    workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
     emit_progress: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
@@ -10146,7 +10699,8 @@ fn run_workspace_up_streaming(
         repos.push(report);
     }
 
-    Ok(WorkspaceUpReport { ok, repos })
+    let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
+    Ok(WorkspaceUpReport { ok, receipt, repos })
 }
 
 fn workspace_progress_prefix(workspace_name: &str) -> String {
