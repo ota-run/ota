@@ -8596,6 +8596,8 @@ fn render_up_section_from_parts(
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = render_execution_receipt_summary_text(&receipt.summary);
     stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
+    let path_display = compact_path(Path::new(receipt.path.as_str()), ".");
+    let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
     stdout.push_str(&format!(
         "\n{} {} {}",
         paint("♦", "1;38;2;255;214;79"),
@@ -8606,14 +8608,16 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         "\n{} {} {}",
         paint("♦", "1;38;2;255;214;79"),
         paint_key("Path:"),
-        receipt.path
+        path_display
     ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        paint("♦", "1;38;2;255;214;79"),
-        paint_key("Contract:"),
-        receipt.contract
-    ));
+    if receipt.contract != receipt.path {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Contract:"),
+            contract_display
+        ));
+    }
     if let Some(workspace) = receipt.workspace.as_deref() {
         stdout.push_str(&format!(
             "\n{} {} {}",
