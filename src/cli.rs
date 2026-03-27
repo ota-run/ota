@@ -1751,6 +1751,7 @@ tasks:
         assert!(output.stdout.contains("DIFF"));
         assert!(output.stdout.contains("★"));
         assert!(output.stdout.contains("SUMMARY"));
+        assert!(output.stdout.contains("DIFFERENT"));
         assert!(output.stdout.contains("Added:"));
         assert!(output.stdout.contains("Missing in target:"));
         assert!(output.stdout.contains("Changed:"));
