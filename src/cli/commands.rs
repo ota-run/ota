@@ -4102,7 +4102,6 @@ pub fn workspace_init(
 pub fn workspace_tasks(
     path: Option<&Path>,
     file_override: Option<&Path>,
-    use_cmd: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -4240,7 +4239,7 @@ pub fn workspace_tasks(
 
                 match format {
                     OutputFormat::Text => {
-                        render_workspace_tasks_text(&compact_path_display, &repos, use_cmd)
+                        render_workspace_tasks_text(&compact_path_display, &repos)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
@@ -9066,11 +9065,7 @@ fn render_workspace_run(
     }
 }
 
-fn render_workspace_tasks_text(
-    path: &str,
-    repos: &[WorkspaceRepoTasksReport],
-    _use_cmd: bool,
-) -> CommandOutput {
+fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -> CommandOutput {
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE TASKS", path),

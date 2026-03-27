@@ -840,7 +840,6 @@ List workspace repo tasks in dependency order.
 
 ```bash
 ota workspace tasks [PATH]
-ota workspace tasks --use [PATH]
 ota workspace tasks --json [PATH]
 ```
 
@@ -850,7 +849,6 @@ Current behavior:
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
 - lists task declarations for each acquired repo contract
-- `--use` is accepted for CLI parity and currently renders the same text output
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 
