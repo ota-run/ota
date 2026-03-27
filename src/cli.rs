@@ -398,6 +398,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Print compact runnable usage lines for each task.
+        #[arg(long = "use", action = ArgAction::SetTrue)]
+        use_cmd: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -977,9 +980,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Tasks { json, path } => commands::workspace_tasks(
+            WorkspaceCommands::Tasks {
+                json,
+                use_cmd,
+                path,
+            } => commands::workspace_tasks(
                 path.as_deref(),
                 file.as_deref(),
+                use_cmd,
                 format_from_json(json),
                 debug,
             ),
@@ -9074,6 +9082,17 @@ repos:
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["acquired"], false);
         assert!(json["repos"][0]["tasks"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn workspace_tasks_use_prints_compact_usage_lines() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "tasks", "--use", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("🦦 WORKSPACE TASKS "));
+        assert!(output.stdout.contains("\n✦ setup `ota run setup`"));
     }
 
     #[test]
