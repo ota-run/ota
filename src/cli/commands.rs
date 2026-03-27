@@ -10798,14 +10798,14 @@ fn workspace_progress_line(
     if plain_mode() {
         return match tail {
             Some(tail) if !tail.trim().is_empty() => format!(
-                "{}  {} {} {}",
+                "{} {} {} {}",
                 workspace_progress_prefix(workspace_name),
                 status.trim(),
                 repo_name,
                 tail
             ),
             _ => format!(
-                "{}  {} {}",
+                "{} {} {}",
                 workspace_progress_prefix(workspace_name),
                 status.trim(),
                 repo_name
@@ -10819,9 +10819,9 @@ fn workspace_progress_line(
 
     match tail {
         Some(tail) if !tail.trim().is_empty() => {
-            format!("{prefix}  {status} {repo} {}", paint(tail, "1;37"))
+            format!("{prefix} {status} {repo} {}", paint(tail, "1;37"))
         }
-        _ => format!("{prefix}  {status} {repo}"),
+        _ => format!("{prefix} {status} {repo}"),
     }
 }
 
