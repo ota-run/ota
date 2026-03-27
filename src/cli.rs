@@ -1120,7 +1120,8 @@ fn finalize_cli_output(
 fn append_try_footer(stderr: String, command: &Commands) -> String {
     const REPO_SETUP_SUGGESTION: &str = "setup repo with `ota init`";
     const WORKSPACE_SETUP_SUGGESTION: &str = "setup workspace with `ota workspace init`";
-    const WORKSPACE_TASKS_SUGGESTION: &str = "ota workspace tasks";
+    const WORKSPACE_TASKS_SUGGESTION: &str =
+        "inspect the failing repo contract with `ota validate`, then rerun `ota workspace tasks`";
     const WORKSPACE_CHECK_SUGGESTION: &str = "ota workspace check";
     const WORKSPACE_UP_SUGGESTION: &str = "ota workspace up";
     const WORKSPACE_DETECT_DRY_RUN_SUGGESTION: &str =
@@ -1175,7 +1176,15 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
                 }
             }
             WorkspaceCommands::Validate { .. } => WORKSPACE_SETUP_SUGGESTION,
-            WorkspaceCommands::Tasks { .. } => WORKSPACE_TASKS_SUGGESTION,
+            WorkspaceCommands::Tasks { .. } => {
+                if stderr.contains("failed to parse contract")
+                    || stderr.contains("could not be loaded")
+                {
+                    WORKSPACE_TASKS_SUGGESTION
+                } else {
+                    "inspect the workspace contract with `ota workspace validate`, then rerun `ota workspace tasks`"
+                }
+            }
             WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Doctor { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Explain { .. } => {
@@ -1183,7 +1192,15 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             }
             WorkspaceCommands::Check { .. } => WORKSPACE_CHECK_SUGGESTION,
             WorkspaceCommands::Up { .. } => WORKSPACE_UP_SUGGESTION,
-            WorkspaceCommands::Run { .. } => WORKSPACE_TASKS_SUGGESTION,
+            WorkspaceCommands::Run { .. } => {
+                if stderr.contains("failed to parse contract")
+                    || stderr.contains("could not be loaded")
+                {
+                    "inspect the failing repo contract with `ota validate`, then rerun `ota workspace run <task>`"
+                } else {
+                    "run `ota workspace tasks` to inspect available task names, then rerun `ota workspace run <task>`"
+                }
+            }
         },
     };
 
@@ -9057,6 +9074,27 @@ repos:
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["acquired"], false);
         assert!(json["repos"][0]["tasks"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn workspace_tasks_failure_uses_concise_next_step() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("inspect the failing repo contract with `ota validate`"));
+        assert!(stderr.contains("rerun `ota workspace tasks`"));
     }
 
     #[test]
