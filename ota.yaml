@@ -25,6 +25,10 @@ project:
   name: ota
   description: Ota CLI and Contract Engine
   type: application
+metadata:
+  team: Engineering
+  owner: ota
+  repo_class: open-core
 execution:
   preferred: native
   supported:
