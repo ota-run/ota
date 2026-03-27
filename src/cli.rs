@@ -1749,7 +1749,8 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(output.stderr.is_none());
         assert!(output.stdout.contains("DIFF"));
-        assert!(output.stdout.contains("Summary:"));
+        assert!(output.stdout.contains("≡"));
+        assert!(output.stdout.contains("SUMMARY"));
         assert!(output.stdout.contains("Added:"));
         assert!(output.stdout.contains("Missing in target:"));
         assert!(output.stdout.contains("Changed:"));
