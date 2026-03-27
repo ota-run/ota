@@ -136,6 +136,17 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Explain readiness findings as an ordered remediation plan.
+    Explain {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Run the command against one or more monorepo members declared by the root contract.
+        #[arg(long)]
+        member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Create a starter Ota contract for a repo that does not yet have one.
     Init {
         /// Compatibility flag; writing is now the default.
@@ -661,6 +672,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Tasks { json: true, .. }
             | Commands::Services { json: true, .. }
             | Commands::Doctor { json: true, .. }
+            | Commands::Explain { json: true, .. }
             | Commands::Check { json: true, .. }
             | Commands::Diff { json: true, .. }
             | Commands::Extensions { json: true, .. }
@@ -716,6 +728,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
             debug,
         ),
         Commands::Doctor { json, member, path } => commands::doctor(
+            path.as_deref(),
+            file.as_deref(),
+            &member,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Explain { json, member, path } => commands::explain(
             path.as_deref(),
             file.as_deref(),
             &member,
@@ -1058,6 +1077,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Services { .. } => REPO_SETUP_SUGGESTION,
         Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
         Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
+        Commands::Explain { .. } => {
+            "run `ota doctor` to inspect readiness findings before `ota explain`"
+        }
         Commands::Diff { .. } => "compare two contract states with `ota diff <base> <target>`",
         Commands::Extensions { run, .. } => {
             if run.is_some() {
@@ -1130,6 +1152,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
         | Commands::Doctor { json, .. }
+        | Commands::Explain { json, .. }
         | Commands::Diff { json, .. }
         | Commands::Extensions { json, .. }
         | Commands::Init { json, .. }
@@ -1158,6 +1181,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Services { .. } => "ota services",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
+        Commands::Explain { .. } => "ota explain",
         Commands::Extensions { .. } => "ota extensions",
         Commands::Init { .. } => "ota init",
         Commands::Check { .. } => "ota check",
@@ -1859,6 +1883,56 @@ tasks:
         assert!(paths.contains(&"project.name"));
         assert!(paths.contains(&"tasks.lint.run"));
         assert!(paths.contains(&"tasks.test.run"));
+    }
+
+    #[test]
+    fn explain_reports_remediation_steps_and_summary_counts() {
+        let contract = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "explain", contract.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.is_none());
+        assert!(output.stdout.contains("EXPLAIN"));
+        assert!(output.stdout.contains("SUMMARY"));
+        assert!(output.stdout.contains("Steps"));
+        assert!(output.stdout.contains("No tasks defined in contract"));
+        assert!(output.stdout.contains("Why:"));
+        assert!(output.stdout.contains("Next:"));
+        assert!(output.stdout.contains("»"));
+    }
+
+    #[test]
+    fn explain_json_reports_steps_and_summary_counts() {
+        let contract = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "explain", "--json", contract.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.is_none());
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["error_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 0);
+        assert_eq!(json["summary"]["info_count"], 0);
+        assert_eq!(json["summary"]["step_count"], 1);
+        let steps = json["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0]["order"], 1);
+        assert_eq!(steps[0]["summary"], "No tasks defined in contract");
     }
 
     #[test]

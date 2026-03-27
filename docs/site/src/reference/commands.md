@@ -59,6 +59,7 @@ Hosted validation:
 1. `ota up` to make the repo runnable.
 1. `ota run <task>` for day-to-day task execution.
 1. `ota diff <base> <target>` to compare contract impact before writing changes.
+1. `ota explain` to turn findings into an ordered remediation plan.
 1. `ota detect --dry-run` before writing any new contract.
 
 ## Repo commands
@@ -150,6 +151,35 @@ Script example:
 set -euo pipefail
 
 ota diff --json ./before/ota.yaml ./after/ota.yaml | tee .ota-diff.json
+```
+
+### `ota explain`
+
+When to use:
+
+- when you want findings turned into an ordered remediation plan
+
+Why:
+
+- stays read-only and deterministic
+- turns doctor output into a concrete next-fix sequence
+
+Use-case:
+
+- copy a remediation plan into a ticket or hand it to an agent
+
+```bash
+ota explain ./repo
+ota explain --json ./repo
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota explain --json ./repo | tee .ota-explain.json
 ```
 
 ### `ota extensions`
