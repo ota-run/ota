@@ -1118,12 +1118,15 @@ fn finalize_cli_output(
 }
 
 fn append_try_footer(stderr: String, command: &Commands) -> String {
-    const REPO_SETUP_SUGGESTION: &str = "setup repo with `ota init`";
-    const WORKSPACE_SETUP_SUGGESTION: &str = "setup workspace with `ota workspace init`";
+    const REPO_SETUP_SUGGESTION: &str = "run `ota init` to create a starter contract";
+    const WORKSPACE_SETUP_SUGGESTION: &str =
+        "run `ota workspace init` to create a starter workspace";
     const WORKSPACE_TASKS_SUGGESTION: &str =
-        "inspect the failing repo contract with `ota validate`, then rerun `ota workspace tasks`";
-    const WORKSPACE_CHECK_SUGGESTION: &str = "ota workspace check";
-    const WORKSPACE_UP_SUGGESTION: &str = "ota workspace up";
+        "fix the failing repo contract with `ota validate`, then rerun `ota workspace tasks`";
+    const WORKSPACE_CHECK_SUGGESTION: &str =
+        "run `ota workspace check` to review workspace readiness";
+    const WORKSPACE_UP_SUGGESTION: &str =
+        "run `ota workspace doctor` to review readiness before `ota workspace up`";
     const WORKSPACE_DETECT_DRY_RUN_SUGGESTION: &str =
         "preview the current workspace draft with `ota workspace detect --dry-run`";
     const WORKSPACE_INIT_HELP_SUGGESTION: &str =
@@ -1134,11 +1137,11 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     }
 
     let suggestion = match command {
-        Commands::Validate { .. } => REPO_SETUP_SUGGESTION,
-        Commands::Tasks { .. } => "ota tasks",
-        Commands::Services { .. } => REPO_SETUP_SUGGESTION,
-        Commands::Run { .. } => "run `ota tasks --use` to see available task names and usage",
-        Commands::Doctor { .. } => REPO_SETUP_SUGGESTION,
+        Commands::Validate { .. } => "run `ota init` to create a starter contract",
+        Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
+        Commands::Services { .. } => "run `ota services` to inspect declared services",
+        Commands::Run { .. } => "run `ota tasks --use` to inspect runnable task usage",
+        Commands::Doctor { .. } => "run `ota init` to create a starter contract",
         Commands::Explain { .. } => {
             "run `ota doctor` to inspect readiness findings before `ota explain`"
         }
@@ -1151,8 +1154,8 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             }
         }
         Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
-        Commands::Check { .. } => "ota check",
-        Commands::Up { .. } => "ota doctor",
+        Commands::Check { .. } => "run `ota check` to review readiness",
+        Commands::Up { .. } => "run `ota doctor` to review readiness before `ota up`",
         Commands::Clean { .. } => "ota clean --help",
         Commands::Detect { .. } => {
             if stderr.contains("failed to parse contract")
@@ -7951,7 +7954,7 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("setup workspace with `ota workspace init`"));
+        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
     }
 
     #[test]
@@ -8835,7 +8838,7 @@ repos:
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("api [required] (ACQUIRED)"));
         assert!(body.contains("Status: NOT READY"));
-        assert!(body.contains("Contract: missing (setup repo with"));
+        assert!(body.contains("Contract: missing (run"));
         assert!(body.contains("ota init"));
     }
 
@@ -8850,7 +8853,7 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(!stderr.contains("Where: ota workspace list"));
         assert!(stderr.contains("no `ota.workspace.yaml` found"));
-        assert!(stderr.contains("Next: setup workspace with `ota workspace init`"));
+        assert!(stderr.contains("Next: run `ota workspace init` to create a starter workspace"));
     }
 
     #[test]
@@ -8864,7 +8867,7 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why: no `ota.yaml` found from"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("setup repo with `ota init`"));
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
         assert!(stderr.contains("`ota detect --dry-run`"));
         assert!(stderr.contains("`ota detect --write`"));
     }
@@ -8880,7 +8883,7 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why: no `ota.yaml` found from"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("setup repo with `ota init`"));
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
         assert!(stderr.contains("`ota detect --dry-run`"));
         assert!(stderr.contains("`ota detect --write`"));
         assert!(!stderr.contains("create missing repo contracts with `ota init <repo-path>`"));
@@ -8902,7 +8905,7 @@ repos:
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
         assert_eq!(stderr.matches("Next:").count(), 1);
-        assert!(stderr.contains("setup workspace with `ota workspace init`"));
+        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
         assert!(!stderr.contains("Next: `ota workspace doctor`"));
     }
 
@@ -9093,7 +9096,7 @@ project:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("inspect the failing repo contract with `ota validate`"));
+        assert!(stderr.contains("fix the failing repo contract with `ota validate`"));
         assert!(stderr.contains("rerun `ota workspace tasks`"));
     }
 
