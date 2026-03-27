@@ -5422,7 +5422,7 @@ project:
 
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("🦦 DOCTOR "));
-        assert!(output.stdout.contains("\n\n◉ NOT READY"));
+        assert!(output.stdout.contains("\n\n✕ NOT READY"));
         assert!(
             output
                 .stdout

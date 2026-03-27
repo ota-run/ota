@@ -8589,8 +8589,8 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                paint("◉", "1;38;2;255;235;59"),
-                paint("NOT READY", "1;38;2;255;235;59")
+                paint("✕", "1;38;2;255;71;87"),
+                paint("NOT READY", "1;38;2;255;71;87")
             )
         }
     }
