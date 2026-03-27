@@ -242,7 +242,7 @@ ota up --json
 
 Receipt:
 
-- emits an execution receipt in text output when `--receipt` is set, and JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
 
 Script example:
 
@@ -274,7 +274,7 @@ ota run test
 
 Receipt:
 
-- emits an execution receipt on stderr after task output when `--receipt` is set
+- prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
 
 Script example:
 
@@ -737,7 +737,7 @@ Why:
 
 Receipt:
 
-- emits an execution receipt in text output when `--receipt` is set, and JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
 
 ```bash
 ota workspace run test
@@ -766,7 +766,7 @@ Why:
 
 Receipt:
 
-- emits an execution receipt in text output when `--receipt` is set, and JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
 
 ```bash
 ota workspace up
