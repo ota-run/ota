@@ -10448,12 +10448,6 @@ fn load_and_run_workspace_up(
                         workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None)
                     );
                 }
-                if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(&workspace_name, "RUN", &repo.name, None)
-                    );
-                }
                 let tx = tx.clone();
                 thread::spawn(move || {
                     let report = run_workspace_repo_up(repo, RepoExecutionMode::Capture);
@@ -10694,12 +10688,6 @@ fn run_workspace_task_streaming(
                     eprintln!(
                         "{}",
                         workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
-                    );
-                }
-                if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, "RUN", &repo.name, Some(task))
                     );
                 }
                 let report = run_workspace_repo_task(repo, task, RepoExecutionMode::Stream);
@@ -11869,12 +11857,6 @@ fn load_and_diagnose_workspace_streaming(
         let mut handles = Vec::new();
         for pending_index in ready.into_iter().rev() {
             let (order, repo) = pending.remove(pending_index);
-            if emit_progress {
-                eprintln!(
-                    "{}",
-                    workspace_progress_line(&workspace_name, "RUN", &repo.name, None)
-                );
-            }
             let tx = tx.clone();
             handles.push(thread::spawn(move || {
                 let report = crate::workspace::diagnose_workspace_repo(repo);
