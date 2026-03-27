@@ -5720,33 +5720,34 @@ fn render_detect_change_section(
 
 fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
-        "{} {}:",
-        paint("≡", "1;38;2;255;214;79"),
-        paint_section_title("SUMMARY")
-    ));
-    stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint_key("Added:"),
         summary.added_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint_key("Missing in target:"),
         summary.removed_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint_key("Changed:"),
         summary.changed_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint_key("Weakened:"),
         summary.weakened_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint_key("Strengthened:"),
         summary.strengthened_count
     ));
