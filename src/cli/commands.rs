@@ -1567,6 +1567,7 @@ pub fn check(
                         None,
                         execution_summary.as_ref(),
                         &report,
+                        None,
                     )];
                     let mut member_results = Vec::new();
 
@@ -1636,6 +1637,7 @@ pub fn check(
                                 None,
                                 member_execution.as_ref(),
                                 &member_report,
+                                None,
                             ));
                             member_results.push(json!({
                                 "member": member,
@@ -1670,6 +1672,7 @@ pub fn check(
                             None,
                             execution_summary.as_ref(),
                             report,
+                            None,
                         ),
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
@@ -1752,6 +1755,7 @@ pub fn check(
                         None,
                         execution_summary.as_ref(),
                         &report,
+                        None,
                     ));
                     member_results.push(json!({
                         "member": member,
@@ -5829,7 +5833,7 @@ fn render_doctor_text(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let mut output = render_report_text("DOCTOR", path, agent, execution, report);
+    let mut output = render_report_text("DOCTOR", path, agent, execution, report, None);
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -5915,7 +5919,7 @@ fn render_doctor_section(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    let mut output = render_report_section("DOCTOR", path, agent, execution, report);
+    let mut output = render_report_section("DOCTOR", path, agent, execution, report, None);
     if !extensions.is_empty() {
         output.push_str(&render_extensions_text(extensions));
     }
@@ -5989,12 +5993,55 @@ fn render_workspace_doctor_text(
             }
         }
     }
+    stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
+        report,
+    )));
 
     CommandOutput {
         stdout,
         stderr: None,
         exit_code: if report.ok { 0 } else { 1 },
     }
+}
+
+fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!(
+        "{} {}:",
+        paint("≡", "1;38;2;102;217;255"),
+        paint_section_title("SUMMARY")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Repos:", "1;38;2;102;217;255"),
+        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Ready:", "1;38;2;0;255;120"),
+        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Not Ready:", "1;38;2;255;235;59"),
+        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Errors:", "1;31"),
+        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Warnings:", "1;33"),
+        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Info:", "1;36"),
+        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout
 }
 
 fn render_extensions_output_text(
@@ -6311,8 +6358,9 @@ fn render_report_text(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: DoctorReport,
+    summary: Option<&DoctorSummary>,
 ) -> CommandOutput {
-    let stdout = render_report_section(command, path, agent, execution, &report);
+    let stdout = render_report_section(command, path, agent, execution, &report, summary);
     CommandOutput {
         stdout,
         stderr: None,
@@ -6326,6 +6374,7 @@ fn render_report_section(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: &DoctorReport,
+    _summary: Option<&DoctorSummary>,
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}",
@@ -6342,7 +6391,6 @@ fn render_report_section(
     if let Some(execution) = execution {
         stdout.push_str(&render_execution_summary_text(execution));
     }
-
     for finding in &report.findings {
         let next = compact_backticked_paths(&finding.next);
         let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {

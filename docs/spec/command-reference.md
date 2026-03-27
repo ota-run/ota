@@ -937,6 +937,7 @@ Text output:
 
 - header: `WORKSPACE DOCTOR <path>`
 - status line: `READY` or `NOT READY`
+- summary roll-up with repo counts and finding totals before per-repo details
 - each repo includes required/optional status, contract path, and findings
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 

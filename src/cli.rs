@@ -8869,9 +8869,13 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution:"));
+        assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("Repos: 2"));
+        assert!(stdout.contains("Ready: 2"));
         assert!(stdout.contains("Preferred: remote"));
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Remote Target: user@host"));
+        assert!(stdout.rfind("SUMMARY:") > stdout.rfind("Preferred: remote"));
     }
 
     #[test]

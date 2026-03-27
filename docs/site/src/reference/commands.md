@@ -578,6 +578,7 @@ When to use:
 Why:
 
 - central view of blockers without hiding per-repo context
+- text output includes a summary roll-up with repo counts and finding totals before per-repo details
 - `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 - `--stream` is text-only and emits repo completion updates while the final report is being built
 
