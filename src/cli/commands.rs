@@ -9549,7 +9549,7 @@ fn paint_section_title(value: &str) -> String {
 }
 
 fn paint_next_header() -> String {
-    paint("Next:", NEXT_HEADER_COLOR)
+    error_next_key("Next:")
 }
 
 pub fn paint_next_label() -> String {
@@ -9559,8 +9559,6 @@ pub fn paint_next_label() -> String {
 fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }
-
-const NEXT_HEADER_COLOR: &str = "1;38;2;220;220;220";
 
 fn result_icon() -> &'static str {
     if plain_mode() { "-" } else { "★" }
