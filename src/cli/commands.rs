@@ -587,11 +587,7 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                                     compact_contract_path(&target_path)
                                 )
                             ),
-                            render_status_word(if changes.is_empty() {
-                                "MATCH"
-                            } else {
-                                "DIFFERENT"
-                            })
+                            render_diff_status_word(changes.is_empty())
                         );
                         if changes.is_empty() {
                             stdout.push_str("\n\nno semantic differences");
@@ -5751,6 +5747,22 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
         summary.strengthened_count
     ));
     stdout
+}
+
+fn render_diff_status_word(match_state: bool) -> String {
+    if plain_mode() {
+        return if match_state {
+            String::from("MATCH")
+        } else {
+            String::from("DIFFERENT")
+        };
+    }
+
+    if match_state {
+        paint("MATCH", "1;38;2;0;255;120")
+    } else {
+        paint("DIFFERENT", "1;38;2;255;235;59")
+    }
 }
 
 fn render_diff_section<'a, I>(stdout: &mut String, title: &str, changes: I)
