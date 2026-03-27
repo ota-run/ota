@@ -5170,10 +5170,10 @@ tasks:
         assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
         assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
         assert!(stderr.contains("Excluded from automatic write:"));
-        assert!(stderr.contains("✦  Field: project.name"));
-        assert!(stderr.contains("Confidence: low\n\n✦  Field: tasks.build.run"));
+        assert!(stderr.contains("✦ Field: project.name"));
+        assert!(stderr.contains("Confidence: low\n\n✦ Field: tasks.build.run"));
         assert!(!stderr.contains("▸  Excluded from automatic write:"));
-        assert!(!stderr.contains("▸  ✦  Field: project.name"));
+        assert!(!stderr.contains("▸  ✦ Field: project.name"));
     }
 
     #[test]
@@ -7213,6 +7213,7 @@ project:
     #[cfg(unix)]
     #[test]
     fn workspace_commands_json_success_contract_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(multi_repo.dir.path());
@@ -8106,6 +8107,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_commands_exit_code_contract_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let usage_fixture = WorkspaceFixture::new();
         let usage = run_with([
             "ota",
@@ -9126,6 +9128,7 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_text_status_contract_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -9145,6 +9148,7 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_quiet_suppresses_progress_output() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -9691,6 +9695,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_up_respects_repo_dependency_order() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -10029,6 +10034,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_run_respects_repo_dependency_order() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
