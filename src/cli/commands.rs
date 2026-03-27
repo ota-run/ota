@@ -8667,7 +8667,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
 
     if let Some(next) = receipt.next.as_deref() {
-        stdout.push_str(&format!("\n{} {}", paint_key("Next:"), next));
+        stdout.push_str(&format!("\n\n{} {}", paint_key("Next:"), next));
     }
 
     stdout
