@@ -5775,8 +5775,8 @@ fn render_diff_status_word(match_state: bool) -> String {
     } else {
         format!(
             "{} {}",
-            paint("✕", "1;38;2;255;71;87"),
-            paint("DIFFERENT", "1;38;2;255;71;87")
+            paint("✕", "1;38;2;255;235;59"),
+            paint("DIFFERENT", "1;38;2;255;235;59")
         )
     }
 }
