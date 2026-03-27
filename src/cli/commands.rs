@@ -10875,19 +10875,19 @@ fn render_inference_section<'a>(
             output.push('\n');
         }
         output.push_str(&format!(
-            "\n{}  {} {}",
+            "\n{} {} {}",
             info_bullet(),
             paint_key("Field:"),
             inference.field
         ));
-        output.push_str(&format!("\n   {} {}", paint_key("Value:"), inference.value));
+        output.push_str(&format!("\n  {} {}", paint_key("Value:"), inference.value));
         output.push_str(&format!(
-            "\n   {} {}",
+            "\n  {} {}",
             paint_key("Source:"),
             inference.source
         ));
         output.push_str(&format!(
-            "\n   {} {}",
+            "\n  {} {}",
             paint_key("Confidence:"),
             render_confidence(inference.confidence)
         ));
