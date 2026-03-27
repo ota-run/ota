@@ -1378,6 +1378,60 @@ exec /bin/sh -lc "$1"
     }
 
     #[cfg(unix)]
+    struct FakeSshGuard {
+        original_path: Option<std::ffi::OsString>,
+        original_log: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl Drop for FakeSshGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.original_path.take() {
+                    Some(path) => std::env::set_var("PATH", path),
+                    None => std::env::remove_var("PATH"),
+                }
+                match self.original_log.take() {
+                    Some(log) => std::env::set_var("OTA_SSH_LOG", log),
+                    None => std::env::remove_var("OTA_SSH_LOG"),
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn setup_fake_ssh(root: &std::path::Path) -> FakeSshGuard {
+        let bin_dir = root.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let ssh_path = bin_dir.join("ssh");
+        install_fake_ssh(&ssh_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&ssh_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&ssh_path, permissions).unwrap();
+        }
+
+        let log_path = root.join("ssh-log.txt");
+        let original_path = std::env::var_os("PATH");
+        let original_log = std::env::var_os("OTA_SSH_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_SSH_LOG", &log_path);
+        }
+
+        FakeSshGuard {
+            original_path,
+            original_log,
+        }
+    }
+
+    #[cfg(unix)]
     fn install_fake_tsh(path: &std::path::Path) {
         fs::write(
             path,
@@ -6915,11 +6969,11 @@ tasks:
 
         let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(&doctor, &["findings", "ok", "path"]);
+        assert_json_top_level_keys(&doctor, &["findings", "ok", "path", "summary"]);
 
         let check = run_with(["ota", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 0);
-        assert_json_top_level_keys(&check, &["findings", "ok", "path"]);
+        assert_json_top_level_keys(&check, &["findings", "ok", "path", "summary"]);
 
         let up = run_with(["ota", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 0);
@@ -7156,10 +7210,12 @@ project:
         assert!(!stdout.contains("\n---\n"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_commands_json_success_contract_is_stable() {
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(multi_repo.dir.path());
 
         let init_fixture = TempDir::new().unwrap();
         let web_dir = init_fixture.path().join("apps").join("web");
@@ -7218,11 +7274,11 @@ tasks:
 
         let check = run_with(["ota", "workspace", "check", "--json", single_repo.path()]);
         assert_eq!(check.exit_code, 0);
-        assert_json_top_level_keys(&check, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&check, &["ok", "path", "repos", "summary"]);
 
         let doctor = run_with(["ota", "workspace", "doctor", "--json", single_repo.path()]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(&doctor, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&doctor, &["ok", "path", "repos", "summary"]);
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
@@ -7991,6 +8047,7 @@ repos:
         assert_eq!(before, after);
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_commands_json_validation_failure_contract_is_stable() {
         let fixture = WorkspaceFixture::new();
@@ -8035,17 +8092,18 @@ tasks:
 
         let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 1);
-        assert_json_top_level_keys(&check, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&check, &["ok", "path", "repos", "summary"]);
 
         let doctor = run_with(["ota", "workspace", "doctor", "--json", fixture.path()]);
         assert_eq!(doctor.exit_code, 1);
-        assert_json_top_level_keys(&doctor, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&doctor, &["ok", "path", "repos", "summary"]);
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
         assert_json_top_level_keys(&up, &["ok", "path", "repos"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_commands_exit_code_contract_is_stable() {
         let usage_fixture = WorkspaceFixture::new();
@@ -8110,6 +8168,7 @@ tasks:
         assert_eq!(up_failure.exit_code, 1);
 
         let success_up = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(success_up.dir.path());
         let up_success = run_with(["ota", "workspace", "up", success_up.path()]);
         assert_eq!(up_success.exit_code, 0);
     }
@@ -9064,9 +9123,11 @@ repos:
         assert!(stdout.contains("NOT READY"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_up_text_status_contract_is_stable() {
         let fixture = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(fixture.dir.path());
 
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
@@ -9081,9 +9142,11 @@ repos:
         assert!(!stdout.contains("\n---\n"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_up_quiet_suppresses_progress_output() {
         let fixture = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(fixture.dir.path());
 
         let output = run_with(["ota", "workspace", "up", "--quiet", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
@@ -9625,9 +9688,11 @@ tasks:
         assert!(output.stdout.contains("Exit code: 7"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_up_respects_repo_dependency_order() {
         let fixture = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(fixture.dir.path());
 
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
 
@@ -9961,9 +10026,11 @@ tasks:
         assert!(output.stdout.contains("Exit code: 7"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_run_respects_repo_dependency_order() {
         let fixture = WorkspaceFixture::new_multi_repo();
+        let _ssh = setup_fake_ssh(fixture.dir.path());
 
         let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
 
@@ -10205,11 +10272,12 @@ execution:
     remote:
       provider: ssh
       target: user@host
-      cwd: /workspace
+      cwd: {}
 tasks:
   setup:
     run: printf "api\n" >> "{marker}"
 "#,
+                    api_dir.display(),
                     marker = api_dir.join("workspace-order.txt").display()
                 ),
             )
