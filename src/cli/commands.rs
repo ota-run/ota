@@ -5724,32 +5724,35 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     stdout.push_str(&format!(
         "\n{}  {} {}",
         paint("»", "1;38;2;255;214;79"),
-        paint_key("Added:"),
-        summary.added_count
+        paint("Added:", "1;38;2;0;255;120"),
+        paint(&summary.added_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{}  {} {}",
         paint("»", "1;38;2;255;214;79"),
-        paint_key("Missing in target:"),
-        summary.removed_count
+        paint("Missing in target:", "1;38;2;255;235;59"),
+        paint(&summary.removed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{}  {} {}",
         paint("»", "1;38;2;255;214;79"),
-        paint_key("Changed:"),
-        summary.changed_count
+        paint("Changed:", "1;38;2;0;255;255"),
+        paint(&summary.changed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{}  {} {}",
         paint("»", "1;38;2;255;214;79"),
-        paint_key("Weakened:"),
-        summary.weakened_count
+        paint("Weakened:", "1;38;2;255;80;80"),
+        paint(&summary.weakened_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{}  {} {}",
         paint("»", "1;38;2;255;214;79"),
-        paint_key("Strengthened:"),
-        summary.strengthened_count
+        paint("Strengthened:", "1;38;2;0;255;120"),
+        paint(
+            &summary.strengthened_count.to_string(),
+            "1;38;2;255;255;255"
+        )
     ));
     stdout
 }
