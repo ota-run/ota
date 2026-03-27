@@ -1876,7 +1876,7 @@ tasks:
         assert!(output.stdout.contains("DIFF"));
         assert!(output.stdout.contains("SUMMARY"));
         assert!(output.stdout.contains("»"));
-        assert!(output.stdout.contains("✕ DIFFERENT"));
+        assert!(output.stdout.contains("➤ DIFFERENT"));
         assert!(output.stdout.contains("DIFFERENT"));
         assert!(output.stdout.contains("Added:"));
         assert!(output.stdout.contains("Missing in target:"));
@@ -4234,7 +4234,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦 VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n➤ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -4276,7 +4276,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦 VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n➤ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -5722,7 +5722,7 @@ project:
 
         assert_eq!(output.exit_code, 1);
         assert!(output.stdout.contains("🦦 DOCTOR "));
-        assert!(output.stdout.contains("\n\n✕ NOT READY"));
+        assert!(output.stdout.contains("\n\n➤ NOT READY"));
         assert!(
             output
                 .stdout
@@ -7122,7 +7122,7 @@ project:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦 VALIDATE {}\n\n✓ VALID",
+                "🦦 VALIDATE {}\n\n➤ VALID",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -9064,7 +9064,7 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦 WORKSPACE VALIDATE {}\n\n✓ VALID",
+                "🦦 WORKSPACE VALIDATE {}\n\n➤ VALID",
                 compact_workspace(&fixture.workspace_file())
             )
         );
@@ -9625,7 +9625,7 @@ repos:
         assert_eq!(
             output.stdout,
             format!(
-                "🦦 WORKSPACE VALIDATE {}\n\n✓ VALID",
+                "🦦 WORKSPACE VALIDATE {}\n\n➤ VALID",
                 compact_workspace(&fixture.path().join("ota.workspace.yaml"))
             )
         );

@@ -5963,22 +5963,22 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
 fn render_diff_status_word(match_state: bool) -> String {
     if plain_mode() {
         return if match_state {
-            String::from("✓ MATCH")
+            String::from("➤ MATCH")
         } else {
-            String::from("✕ DIFFERENT")
+            String::from("➤ DIFFERENT")
         };
     }
 
     if match_state {
         format!(
             "{} {}",
-            paint("✓", "1;38;2;0;255;120"),
+            paint("➤", "1;38;2;0;255;120"),
             paint("MATCH", "1;38;2;0;255;120")
         )
     } else {
         format!(
             "{} {}",
-            paint("✕", "1;38;2;255;235;59"),
+            paint("➤", "1;38;2;255;235;59"),
             paint("DIFFERENT", "1;38;2;255;235;59")
         )
     }
@@ -9040,7 +9040,7 @@ fn render_valid_status() -> String {
     } else {
         format!(
             "{} {}",
-            paint("✓", "1;38;2;0;255;120"),
+            paint("➤", "1;38;2;0;255;120"),
             paint("VALID", "1;38;2;0;255;120")
         )
     }
@@ -9053,7 +9053,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                paint("✓", "1;38;2;0;255;120"),
+                paint("➤", "1;38;2;0;255;120"),
                 paint("READY", "1;38;2;0;255;120")
             )
         }
@@ -9063,7 +9063,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                paint("✕", "1;38;2;255;235;59"),
+                paint("➤", "1;38;2;255;235;59"),
                 paint("NOT READY", "1;38;2;255;235;59")
             )
         }
@@ -10211,7 +10211,7 @@ fn workspace_progress_line(
 fn workspace_progress_icon(status: &str) -> String {
     match status.trim() {
         "RUN" => paint("▶", "1;36"),
-        "READY" => paint("✓", "1;38;2;0;255;120"),
+        "READY" => paint("➤", "1;38;2;0;255;120"),
         "NOT READY" => paint("◉", "1;38;2;255;235;59"),
         "BLOCKED" => paint("◉", "1;38;2;255;235;59"),
         "ACQUIRE" => paint("↓", "1;35"),
