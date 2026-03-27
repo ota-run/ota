@@ -52,6 +52,20 @@ Use the following commands as the canonical hosted-validation stack:
 For workspace inventory and readiness summaries, `ota workspace list --json` can be used as a
 lightweight preflight signal.
 
+## Infrastructure boundary
+
+Ota does not replace the CI runner or its service provisioning layer.
+
+For example, if your GitHub Actions job uses a Postgres service container, GitHub Actions still
+starts that container. Ota removes the repo-specific duplication above it:
+
+- contract validation
+- readiness diagnosis
+- task execution
+- env and service intent declared once in `ota.yaml`
+
+That means the CI workflow stays thin, while the repo contract carries the real requirements.
+
 ## Gating rules
 
 Hosted validation should treat the following as failures:
@@ -85,6 +99,113 @@ ota doctor --json | tee .ota-doctor.json
 ota workspace validate --json | tee .ota-workspace-validate.json
 ota workspace doctor --json | tee .ota-workspace-doctor.json
 ```
+
+## Example with a Postgres service container
+
+GitHub Actions still provisions the database container; Ota removes the duplicate repo setup
+above it.
+
+```yaml
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ota
+        run: curl -fsSL https://ota.run/install.sh | sh
+      - name: Validate contract
+        run: ota validate
+      - name: Diagnose readiness
+        run: ota doctor --json
+      - name: Prepare repo
+        run: ota up
+      - name: Run lint
+        run: ota run lint
+      - name: Run tests
+        run: ota run test
+```
+
+## Example with Ota-provisioned Postgres
+
+In this shape, the repo contract owns the database service and the CI job stays thin.
+
+```yaml
+version: 1
+project:
+  name: app
+
+services:
+  postgres:
+    image: postgres:16
+    env:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: app
+    ports:
+      - 5432:5432
+    healthcheck:
+      command: pg_isready -U postgres
+
+env:
+  DATABASE_URL:
+    required: true
+
+tasks:
+  lint:
+    run: npm run lint
+  test:
+    run: npm test
+```
+
+```yaml
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ota
+        run: curl -fsSL https://ota.run/install.sh | sh
+      - name: Validate contract
+        run: ota validate
+      - name: Prepare repo
+        run: ota up
+      - name: Run lint
+        run: ota run lint
+      - name: Run tests
+        run: ota run test
+```
+
+In this model, Ota starts and validates the service declared in `ota.yaml`; the runner does not
+duplicate the Postgres setup.
 
 Example PR policy:
 

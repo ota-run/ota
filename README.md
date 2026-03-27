@@ -106,6 +106,37 @@ Current behavior:
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
 - `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
 
+## Hosted validation and service provisioning
+
+In CI, the runner still owns the job. Ota owns the repo contract and can provision declared
+services such as Postgres through `ota up`, so the workflow stays thin and the service intent lives
+with the repo instead of being duplicated in pipeline YAML.
+
+```yaml
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ota
+        run: curl -fsSL https://ota.run/install.sh | sh
+      - name: Validate contract
+        run: ota validate
+      - name: Prepare repo
+        run: ota up
+      - name: Run lint
+        run: ota run lint
+      - name: Run tests
+        run: ota run test
+```
+
 ## Detect trust model
 
 Ota treats detection as trust-sensitive.
@@ -161,6 +192,12 @@ Current planning state:
 - Active version: [docs/planning/v7/plan.md](docs/planning/v7/plan.md)
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
+
+## Contribution policy
+
+Ota accepts bug reports, feature requests, and docs feedback. General external code
+contributions are not accepted at this time. The implementation remains maintainers-only so the
+commercial and architectural direction stays coherent.
 
 ## Installation
 

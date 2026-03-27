@@ -26,6 +26,16 @@
 
 Ota is being built as open infrastructure for repo readiness. Contributions should preserve trust, determinism, and a small dependable surface.
 
+## Contribution policy
+
+We accept:
+
+- bug reports
+- feature requests
+- docs feedback
+
+We do not accept general external code contributions at this time. The codebase is implemented by the project maintainers and their AI agents so the commercial and architectural direction stays coherent.
+
 ## Development workflow
 
 Build and test locally:
