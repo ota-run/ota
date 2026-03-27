@@ -1247,6 +1247,7 @@ pub fn run_command(
     overrides: ExecutionOverrides,
     members: &[String],
     debug: bool,
+    show_receipt: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -1298,7 +1299,7 @@ pub fn run_command(
     }
 
     finalize_debug(
-        match run_contract_targets(task_name, &resolved_path, overrides, members) {
+        match run_contract_targets(task_name, &resolved_path, overrides, members, show_receipt) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
                 stderr: (!stderr.is_empty()).then_some(stderr),
@@ -2421,6 +2422,7 @@ pub fn up(
     members: &[String],
     format: OutputFormat,
     debug: bool,
+    show_receipt: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -2478,8 +2480,11 @@ pub fn up(
                         Err(error) => return CommandOutput::failure(error),
                     };
                     let mut overall_ok = root_result.ok;
-                    let mut text_sections =
-                        vec![render_up_section(&text_path_display, &root_result)];
+                    let mut text_sections = vec![render_up_section_with_receipt(
+                        &text_path_display,
+                        &root_result,
+                        show_receipt,
+                    )];
                     let mut member_results = Vec::new();
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
@@ -2541,12 +2546,13 @@ pub fn up(
                             ) {
                                 lifecycle_notes.push(notice);
                             }
-                            text_sections.push(render_up_section(
+                            text_sections.push(render_up_section_with_receipt(
                                 &display_contract_target(
                                     &compact_path_display,
                                     Some(member.as_str()),
                                 ),
                                 &member_result,
+                                show_receipt,
                             ));
                             member_results.push(json!({
                                 "member": member,
@@ -2593,14 +2599,18 @@ pub fn up(
                         overrides,
                         RepoExecutionMode::Stream,
                     ) {
-                        Ok(result) => {
-                            render_up_result(&path_display, &text_path_display, result, format)
-                                .with_stderr(up_lifecycle_notice_with_member(
-                                    &target.contract,
-                                    overrides,
-                                    single_member,
-                                ))
-                        }
+                        Ok(result) => render_up_result(
+                            &path_display,
+                            &text_path_display,
+                            result,
+                            format,
+                            show_receipt,
+                        )
+                        .with_stderr(up_lifecycle_notice_with_member(
+                            &target.contract,
+                            overrides,
+                            single_member,
+                        )),
                         Err(error) => CommandOutput::failure(error),
                     }
                 }
@@ -4720,6 +4730,7 @@ pub fn workspace_up(
     stream: bool,
     format: OutputFormat,
     debug: bool,
+    show_receipt: bool,
 ) -> CommandOutput {
     if jobs == 0 {
         return finalize_debug(
@@ -4786,7 +4797,7 @@ pub fn workspace_up(
             matches!(format, OutputFormat::Text) && !quiet,
             stream,
         ) {
-            Ok(report) => render_workspace_up(&compact_path_display, &report, format),
+            Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -4819,6 +4830,7 @@ pub fn workspace_run(
     stream: bool,
     format: OutputFormat,
     debug: bool,
+    show_receipt: bool,
 ) -> CommandOutput {
     if jobs == 0 {
         return finalize_debug(
@@ -4886,7 +4898,9 @@ pub fn workspace_run(
             matches!(format, OutputFormat::Text),
             stream,
         ) {
-            Ok(report) => render_workspace_run(task, &compact_path_display, &report, format),
+            Ok(report) => {
+                render_workspace_run(task, &compact_path_display, &report, format, show_receipt)
+            }
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -7424,11 +7438,21 @@ fn render_up(
     task: Option<&str>,
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
+    show_receipt: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => render_up_text(
-            path, status, phase, report, ready, service, task, exit_code, receipt,
+            path,
+            status,
+            phase,
+            report,
+            ready,
+            service,
+            task,
+            exit_code,
+            receipt,
+            show_receipt,
         ),
         OutputFormat::Json => render_up_json(
             path, status, phase, report, ready, service, task, exit_code, receipt,
@@ -7441,11 +7465,14 @@ fn render_up_result(
     text_path: &str,
     result: RepoUpResult,
     format: OutputFormat,
+    show_receipt: bool,
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
             let mut stdout = render_up_section(text_path, &result);
-            stdout.push_str(&render_execution_receipt_text(&result.receipt));
+            if show_receipt {
+                stdout.push_str(&render_execution_receipt_text(&result.receipt));
+            }
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -7462,6 +7489,7 @@ fn render_up_result(
             result.task.as_deref(),
             result.exit_code,
             &result.receipt,
+            false,
             format,
         ),
     }
@@ -8266,11 +8294,12 @@ fn run_contract_targets(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     members: &[String],
+    show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None)
             .map_err(render_contract_problem_failure)?;
-        return run_single_contract_target(task_name, overrides, None, target);
+        return run_single_contract_target(task_name, overrides, None, target, show_receipt);
     }
 
     let mut stderr_sections = Vec::new();
@@ -8283,6 +8312,7 @@ fn run_contract_targets(
             overrides,
             Some(member.as_str()),
             target,
+            show_receipt,
         )?);
     }
 
@@ -8294,6 +8324,7 @@ fn run_single_contract_target(
     overrides: ExecutionOverrides,
     member: Option<&str>,
     target: LoadedContractTarget,
+    show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
     match run_task_with_overrides(
         &target.contract,
@@ -8319,11 +8350,13 @@ fn run_single_contract_target(
                 output.push_str(&notice);
                 output.push('\n');
             }
-            let receipt_text = render_execution_receipt_text(&receipt);
-            if output.is_empty() {
-                output.push_str(receipt_text.trim_start_matches('\n'));
-            } else {
-                output.push_str(&receipt_text);
+            if show_receipt {
+                let receipt_text = render_execution_receipt_text(&receipt);
+                if output.is_empty() {
+                    output.push_str(receipt_text.trim_start_matches('\n'));
+                } else {
+                    output.push_str(&receipt_text);
+                }
             }
             Ok(output)
         }
@@ -8333,36 +8366,40 @@ fn run_single_contract_target(
                 outcome.exit_code,
             ),
             exit_code: outcome.exit_code,
-            receipt: Some(render_execution_receipt_text(&run_execution_receipt(
-                &target.contract,
-                &target.contract_path,
-                overrides,
-                task_name,
-                member,
-                &outcome.executed_tasks,
-                outcome.exit_code,
-                false,
-                Some(format!(
-                    "inspect task `{task_name}` output and rerun `ota run {task_name}`"
-                )),
-            ))),
+            receipt: show_receipt.then(|| {
+                render_execution_receipt_text(&run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &outcome.executed_tasks,
+                    outcome.exit_code,
+                    false,
+                    Some(format!(
+                        "inspect task `{task_name}` output and rerun `ota run {task_name}`"
+                    )),
+                ))
+            }),
         }),
         Err(error) => Err(RunCommandFailure {
             message: render_run_error(error),
             exit_code: 1,
-            receipt: Some(render_execution_receipt_text(&run_execution_receipt(
-                &target.contract,
-                &target.contract_path,
-                overrides,
-                task_name,
-                member,
-                &[],
-                1,
-                false,
-                Some(format!(
-                    "repair task `{task_name}` and rerun `ota run {task_name}`"
-                )),
-            ))),
+            receipt: show_receipt.then(|| {
+                render_execution_receipt_text(&run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &[],
+                    1,
+                    false,
+                    Some(format!(
+                        "repair task `{task_name}` and rerun `ota run {task_name}`"
+                    )),
+                ))
+            }),
         }),
     }
 }
@@ -8513,10 +8550,13 @@ fn render_up_text(
     task: Option<&str>,
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
+    show_receipt: bool,
 ) -> CommandOutput {
     let mut stdout =
         render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
-    stdout.push_str(&render_execution_receipt_text(receipt));
+    if show_receipt {
+        stdout.push_str(&render_execution_receipt_text(receipt));
+    }
 
     CommandOutput {
         stdout,
@@ -8535,6 +8575,14 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         result.task.as_deref(),
         result.exit_code,
     )
+}
+
+fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receipt: bool) -> String {
+    let mut stdout = render_up_section(path, result);
+    if show_receipt {
+        stdout.push_str(&render_execution_receipt_text(&result.receipt));
+    }
+    stdout
 }
 
 fn render_up_section_from_parts(
@@ -8849,6 +8897,7 @@ fn render_workspace_up(
     path: &str,
     report: &WorkspaceUpReport,
     format: OutputFormat,
+    show_receipt: bool,
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
@@ -8906,7 +8955,9 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
-            stdout.push_str(&render_execution_receipt_text(&report.receipt));
+            if show_receipt {
+                stdout.push_str(&render_execution_receipt_text(&report.receipt));
+            }
 
             CommandOutput {
                 stdout,
@@ -8932,6 +8983,7 @@ fn render_workspace_run(
     path: &str,
     report: &WorkspaceRunReport,
     format: OutputFormat,
+    show_receipt: bool,
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
@@ -8983,7 +9035,9 @@ fn render_workspace_run(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
-            stdout.push_str(&render_execution_receipt_text(&report.receipt));
+            if show_receipt {
+                stdout.push_str(&render_execution_receipt_text(&report.receipt));
+            }
 
             CommandOutput {
                 stdout,

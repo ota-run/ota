@@ -119,6 +119,9 @@ enum Commands {
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Include the execution receipt in text output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        receipt: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -203,6 +206,9 @@ enum Commands {
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Include the execution receipt in text output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        receipt: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -479,6 +485,9 @@ enum WorkspaceCommands {
         /// Stream raw child process output live instead of buffering it into the final report.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
+        /// Include the execution receipt in text output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        receipt: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -495,6 +504,9 @@ enum WorkspaceCommands {
         /// Stream raw child process output live instead of buffering it into the final report.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
+        /// Include the execution receipt in text output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        receipt: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -736,6 +748,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             task,
             backend,
             lifecycle,
+            receipt,
             member,
             path,
         } => commands::run_command(
@@ -748,6 +761,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             },
             &member,
             debug,
+            receipt,
         ),
         Commands::Doctor { json, member, path } => commands::doctor(
             path.as_deref(),
@@ -795,6 +809,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             backend,
             lifecycle,
+            receipt,
             member,
             path,
         } => commands::up(
@@ -807,6 +822,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             &member,
             format_from_json(json),
             debug,
+            receipt,
         ),
         Commands::Clean { member, path } => {
             commands::clean(path.as_deref(), file.as_deref(), &member, debug)
@@ -1032,6 +1048,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 jobs,
                 quiet,
                 stream,
+                receipt,
                 path,
             } => commands::workspace_up(
                 path.as_deref(),
@@ -1041,12 +1058,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 stream,
                 format_from_json(json),
                 debug,
+                receipt,
             ),
             WorkspaceCommands::Run {
                 task,
                 json,
                 jobs,
                 stream,
+                receipt,
                 path,
             } => commands::workspace_run(
                 task.as_str(),
@@ -1056,6 +1075,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 stream,
                 format_from_json(json),
                 debug,
+                receipt,
             ),
         },
     };
@@ -3544,7 +3564,7 @@ tasks:
             std::env::set_var("PATH", &joined_path);
         }
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--receipt", fixture.path()]);
 
         match original_path {
             Some(path) => unsafe {
@@ -3622,7 +3642,7 @@ tasks:
             std::env::set_var("OTA_SSH_LOG", &log_path);
         }
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--receipt", fixture.path()]);
 
         match original_path {
             Some(path) => unsafe {
@@ -9380,7 +9400,7 @@ repos:
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
-        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+        let output = run_with(["ota", "workspace", "up", "--receipt", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
@@ -10273,7 +10293,14 @@ tasks:
         )
         .unwrap();
 
-        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "setup",
+            "--receipt",
+            fixture.path(),
+        ]);
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("READY"));
