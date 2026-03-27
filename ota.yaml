@@ -78,6 +78,12 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  bump-version:
+    description: Bump Cargo.toml to a new release version
+    category: release
+    run: ./scripts/bump-version.sh "$1"
+    depends_on:
+      - ci
   install:
     description: Reinstall ota from the local workspace
     category: dev
@@ -106,7 +112,6 @@ agent:
     - scripts
     - tests
   protected_paths:
-    - ota.yaml
     - Cargo.lock
     - LICENSE
   notes: |
