@@ -22,31 +22,17 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Env Resolution and Policy
 
-This section summarizes the stable surfaces of Ota:
+Ota already supports declaring env requirements in `ota.yaml`.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+This future surface adds policy-controlled resolution and injection so repos and
+workspaces can explain where env values came from without becoming a full app config
+system.
 
-Canonical specification files remain under `docs/spec/`.
+Use it for:
 
-Use this section when you need precision:
-
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
-
-## Key references
-
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
+- required runtime env
+- approved source resolution
+- consistent execution injection
+- provenance-aware receipts

@@ -1,0 +1,97 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Execution Receipt
+
+Status: spec candidate.
+
+This document defines the planned execution receipt for Ota mutation and execution commands.
+
+The goal is to produce a deterministic, machine-readable record of what Ota believed,
+what it did, and what happened during execution.
+
+## Purpose
+
+The receipt is meant to answer:
+
+- what scope Ota used
+- what contract version or hash it acted on
+- what backend and lifecycle were chosen
+- what was reused or acquired
+- what env or policy affected the decision
+- what tasks, checks, or services ran
+- what failed or was blocked
+- what the safe next step is
+
+## Commands
+
+The receipt should apply to execution and mutation surfaces such as:
+
+- `ota run`
+- `ota up`
+- workspace execution flows
+
+It should not replace `doctor`, `detect`, or `init`.
+
+## Planned shape
+
+The receipt should include:
+
+- `ok`
+- `path`
+- `scope`
+- `contract`
+- `workspace`
+- `backend`
+- `lifecycle`
+- `acquired`
+- `env`
+- `policy`
+- `steps`
+- `blocked`
+- `summary`
+- `next`
+
+## Behavior
+
+- deterministic ordering
+- machine-readable first
+- human-readable summary second
+- explicit source of truth for decisions
+- no hidden auto-fix behavior
+
+## Non-goals
+
+- replacing live logs
+- turning diagnosis into execution
+- hiding failure details behind a generic summary
+- introducing opaque background state
+
+## Relationship to other surfaces
+
+- `doctor` diagnoses readiness
+- `detect` infers contract data
+- `diff` compares contract meaning
+- `explain` turns findings into a remediation plan
+- `receipt` records what execution actually did

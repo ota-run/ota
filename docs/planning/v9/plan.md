@@ -22,31 +22,51 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# V9 Plan
 
-This section summarizes the stable surfaces of Ota:
+Status: planned.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+Source direction:
 
-Canonical specification files remain under `docs/spec/`.
+- [Env resolution and policy](/Users/bobai/Workspace/Ota.run/ota/docs/spec/env-resolution-and-policy.md)
 
-Use this section when you need precision:
+V9 theme:
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+- policy-controlled env resolution
+- execution provenance
+- repository operability with explicit env boundaries
 
-## Key references
+## Included capabilities
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
+- deterministic env resolution precedence
+- policy-controlled env source selection
+- provenance-aware env injection for execution
+
+## Priorities
+
+1. Keep env resolution explicit and auditable
+2. Preserve repo/workspace trust boundaries
+3. Keep app config ownership outside Ota
+
+## Execution slices
+
+1. Env resolution schema
+
+- define approved env sources and precedence
+- keep repo and workspace env contracts compatible
+
+1. Provenance-aware injection
+
+- record which source won for each env value
+- surface that in execution receipts
+
+1. Policy-controlled validation
+
+- validate env against org policy
+- keep resolution deterministic and read-only outside execution
+
+## Success criteria
+
+- env values can be resolved from approved sources
+- execution receipts can show env provenance
+- Ota remains bounded and does not become a generic app config system

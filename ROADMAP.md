@@ -62,6 +62,14 @@ V7 is active.
 
 - [V7 plan](docs/planning/v7/plan.md)
 
+## Upcoming version
+
+- [V8 plan](docs/planning/v8/plan.md)
+
+## Future version
+
+- [V9 plan](docs/planning/v9/plan.md)
+
 ## Implemented foundation
 
 - repo contract validation and execution
@@ -71,11 +79,13 @@ V7 is active.
 
 ## Near-term next steps
 
-- keep the V6 extension slice narrow and explicit
+- keep the V7 contract surfaces stable and reviewable
 - preserve the shipped repo/workspace trust baseline
 - keep docs and active planning aligned with the canonical spec repo
 - keep extension and editor surfaces contract-bound
 - avoid widening into generic plugin-runtime scope
+- stage V8 execution receipts and semantic impact tooling as a separate version
+- stage V9 env resolution and provenance as a separate version
 
 ## Archived V2 shape
 

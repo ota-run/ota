@@ -22,31 +22,28 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Reference
+# Semantic Diff and Explain
 
-This section summarizes the stable surfaces of Ota:
+`ota diff` and `ota explain` are the proposed read-only contract intelligence commands for
+humans and agents.
 
-- commands
-- repo contract (`ota.yaml`)
-- workspace contract (`ota.workspace.yaml`)
-- machine-readable JSON output
-- hosted validation workflow
-- output and brand style conventions
+Use `ota diff` when you want to compare two contract states semantically.
+Use `ota explain` when you want a readiness report turned into a fix plan.
 
-Canonical specification files remain under `docs/spec/`.
+These surfaces are not implemented yet. The spec keeps them separate from:
 
-Use this section when you need precision:
+- `ota detect`, which infers
+- `ota doctor`, which diagnoses
+- `ota init`, which bootstraps
 
-- exact command behavior for automation
-- schema/contract clarity for repository standards
-- stable machine interfaces for CI and agents
-- hosted validation workflow for PR gating and CI
+## Why it matters
 
-## Key references
+- helps agents propose smaller, safer edits
+- helps humans review contract impact without reading raw YAML diffs
+- keeps remediation separate from inference
 
-- [Commands](commands.md)
-- [JSON output](json-output.md)
-- [Hosted validation](hosted-validation.md)
-- [Semantic diff and explain](semantic-diff-and-explain.md)
-- [Execution receipt](execution-receipt.md)
-- [Env resolution and policy](env-resolution-and-policy.md)
+## Planned contract
+
+- `ota diff` should report added, removed, changed, weakened, and newly required fields
+- `ota explain` should turn findings into ordered remediation steps
+- both should stay read-only and deterministic
