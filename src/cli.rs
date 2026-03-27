@@ -9085,14 +9085,18 @@ repos:
     }
 
     #[test]
-    fn workspace_tasks_use_prints_compact_usage_lines() {
+    fn workspace_tasks_use_matches_default_output() {
         let fixture = WorkspaceFixture::new_multi_repo();
 
-        let output = run_with(["ota", "workspace", "tasks", "--use", fixture.path()]);
+        let default_output = run_with(["ota", "workspace", "tasks", fixture.path()]);
+        let use_output = run_with(["ota", "workspace", "tasks", "--use", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
-        assert!(output.stdout.contains("🦦 WORKSPACE TASKS "));
-        assert!(output.stdout.contains("\n✦ setup `ota run setup`"));
+        assert_eq!(default_output.exit_code, 0);
+        assert_eq!(use_output.exit_code, 0);
+        assert_eq!(
+            strip_ansi(&use_output.stdout),
+            strip_ansi(&default_output.stdout)
+        );
     }
 
     #[test]
