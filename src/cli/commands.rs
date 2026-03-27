@@ -8631,7 +8631,14 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
 
     stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
     stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
-    let path_display = compact_path(Path::new(receipt.path.as_str()), ".");
+    let path_display = if receipt.scope == "repo" {
+        Path::new(receipt.path.as_str())
+            .parent()
+            .map(|parent| compact_path(parent, "."))
+            .unwrap_or_else(|| compact_path(Path::new(receipt.path.as_str()), "."))
+    } else {
+        compact_path(Path::new(receipt.path.as_str()), ".")
+    };
     let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
     stdout.push_str(&format!(
         "\n{} {} {}",
@@ -8645,14 +8652,12 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         paint_key("Path:"),
         path_display
     ));
-    if receipt.contract != receipt.path {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Contract:"),
-            contract_display
-        ));
-    }
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("♦", "1;38;2;255;214;79"),
+        paint_key("Contract:"),
+        contract_display
+    ));
     if let Some(workspace) = receipt.workspace.as_deref() {
         stdout.push_str(&format!(
             "\n{} {} {}",
