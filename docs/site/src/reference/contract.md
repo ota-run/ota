@@ -193,7 +193,8 @@ Use `ota extensions` to inspect the contract data. Use `ota extensions --run <na
 ### `agent`
 
 Use `agent` to tell Ota which tasks are safe for agents, which paths are writable, which paths are
-protected, and what repo-specific guidance applies.
+protected, and what repo-specific guidance applies. Protected paths are enforced by `ota detect
+--merge` and `ota detect --rewrite`.
 
 ### `workspace`
 

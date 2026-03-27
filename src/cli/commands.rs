@@ -5048,6 +5048,26 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     }
 }
 
+fn protected_path_for_write(contract: &Contract, root: &Path, target: &Path) -> Option<String> {
+    let agent = contract.agent.as_ref()?;
+    let relative = target.strip_prefix(root).unwrap_or(target);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+
+    agent.protected_paths.iter().find_map(|protected| {
+        let protected = protected.trim().replace('\\', "/");
+        let protected = protected.trim_start_matches("./").trim_end_matches('/');
+        if protected.is_empty() {
+            return None;
+        }
+
+        if relative == protected || relative.starts_with(&format!("{protected}/")) {
+            Some(protected.to_string())
+        } else {
+            None
+        }
+    })
+}
+
 fn write_detected_merge(
     report: DetectReport,
     apply: &[String],
@@ -5281,6 +5301,23 @@ fn write_detected_merge(
         };
     }
 
+    if let Some(protected_path) =
+        protected_path_for_write(&existing_contract, &report.root, &contract_path)
+    {
+        let error =
+            format!("refusing to write protected path `{protected_path}` from existing contract");
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
@@ -5329,6 +5366,22 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     let contract_path = report.root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(&contract_path);
+    let existing_contract = match load_contract(&contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            let error = error.to_string();
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
     let comparison = compare_detected_contract(&contract_path, &report.contract);
 
     let yaml = match serde_yaml::to_string(&report.contract) {
@@ -5355,6 +5408,23 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
         .map_err(|error| error.to_string())
         .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
     {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+
+    if let Some(protected_path) =
+        protected_path_for_write(&existing_contract, &report.root, &contract_path)
+    {
+        let error =
+            format!("refusing to write protected path `{protected_path}` from existing contract");
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
             OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
