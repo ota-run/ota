@@ -43,11 +43,11 @@ use crate::doctor::{
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
-    ExecutionReceipt, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
-    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
+    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
+    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
@@ -58,7 +58,7 @@ use crate::parser::{
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, clean_execution, effective_execution,
+    ExecutionOverrides, RunError, clean_execution, effective_execution, resolve_task_env_details,
     run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
     run_task_with_progress_and_overrides,
@@ -1247,7 +1247,7 @@ pub fn run_command(
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
     members: &[String],
-    task_args: &[String],
+    task_inputs: &[String],
     debug: bool,
     show_receipt: bool,
 ) -> CommandOutput {
@@ -1306,7 +1306,7 @@ pub fn run_command(
             &resolved_path,
             overrides,
             members,
-            task_args,
+            task_inputs,
             show_receipt,
         ) {
             Ok(stderr) => CommandOutput {
@@ -4840,7 +4840,7 @@ pub fn workspace_run(
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
-    task_args: &[String],
+    task_inputs: &[String],
 ) -> CommandOutput {
     if jobs == 0 {
         return finalize_debug(
@@ -4907,7 +4907,7 @@ pub fn workspace_run(
             jobs,
             matches!(format, OutputFormat::Text),
             stream,
-            &task_args,
+            &task_inputs,
         ) {
             Ok(report) => {
                 render_workspace_run(task, &compact_path_display, &report, format, show_receipt)
@@ -6473,6 +6473,24 @@ fn render_tasks_text(
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
+        if !task.env.is_empty() {
+            let env = task
+                .env
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
+        }
+        if !task.inputs.is_empty() {
+            let inputs = task
+                .inputs
+                .iter()
+                .map(|(name, spec)| render_task_input_summary(name, spec))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("\n  {} {}", paint_key("Inputs:"), inputs));
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Command Preview:"),
@@ -6500,14 +6518,46 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     }
 
     for task in tasks {
+        let usage = render_task_use_command(task);
         output.push_str(&format!(
             "\n{} {} `{}`",
             info_bullet(),
             paint(task.name, "1"),
-            paint_code(&format!("ota run {}", task.name))
+            paint_code(&usage)
         ));
     }
     output
+}
+
+fn render_task_input_summary(name: &str, spec: &crate::schema::TaskInputSpec) -> String {
+    let mut parts = vec![format!("--{}", name.replace('_', "-"))];
+    if spec.required {
+        parts.push(String::from("required"));
+    } else {
+        parts.push(String::from("optional"));
+    }
+    if let Some(default) = spec.default.as_deref() {
+        parts.push(format!("default={default}"));
+    }
+    if !spec.allowed.is_empty() {
+        parts.push(format!("allowed={}", spec.allowed.join("|")));
+    }
+    parts.join(" ")
+}
+
+fn render_task_use_command(task: &TaskSummary<'_>) -> String {
+    let mut command = format!("ota run {}", task.name);
+    for (name, spec) in task.inputs {
+        command.push(' ');
+        command.push_str(&format!("--{}", name.replace('_', "-")));
+        command.push(' ');
+        command.push_str(&if spec.allowed.is_empty() {
+            String::from("<value>")
+        } else {
+            format!("<{}>", spec.allowed.join("|"))
+        });
+    }
+    command
 }
 
 fn render_tasks_output_text(
@@ -7246,7 +7296,7 @@ fn render_report_section(
     );
     if let Some(agent) = agent {
         if let Some(summary) = render_agent_summary_line(agent) {
-            stdout.push('\n');
+            stdout.push_str("\n\n");
             stdout.push_str(&summary);
         }
     }
@@ -7453,6 +7503,30 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
             }
         }
     }
+    if !execution.env.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} process env > contract default > required missing",
+            paint_key("Env precedence:")
+        ));
+        stdout.push_str("\nEnv:");
+        for item in &execution.env {
+            let mut details = Vec::new();
+            if item.required {
+                details.push("required".to_string());
+            }
+            if let Some(default) = item.default {
+                details.push(format!("default={default}"));
+            }
+            if !item.allowed.is_empty() {
+                details.push(format!("allowed={}", item.allowed.join(", ")));
+            }
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key(item.name),
+                details.join(", ")
+            ));
+        }
+    }
     stdout
 }
 
@@ -7581,43 +7655,127 @@ fn display_contract_target(path: &str, member: Option<&str>) -> String {
 }
 
 fn compact_contract_path(path: &Path) -> String {
-    compact_path(path, DEFAULT_CONTRACT_FILE)
+    compact_contract_file_path(path, DEFAULT_CONTRACT_FILE)
 }
 
 fn compact_workspace_path(path: &Path) -> String {
-    compact_path(path, DEFAULT_WORKSPACE_FILE)
+    compact_contract_file_path(path, DEFAULT_WORKSPACE_FILE)
 }
 
 fn compact_repo_path(path: &Path) -> String {
-    if let Ok(current_dir) = std::env::current_dir() {
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            current_dir.join(path)
-        };
-        if let Ok(relative) = absolute.strip_prefix(&current_dir) {
+    compact_path_relative_to_current_dir(path, ".")
+}
+
+fn compact_path(path: &Path, fallback: &str) -> String {
+    compact_path_relative_to_current_dir(path, fallback)
+}
+
+fn compact_path_relative_to_current_dir(path: &Path, fallback: &str) -> String {
+    compact_path_relative_to(path, fallback, std::env::current_dir().ok().as_deref())
+}
+
+fn compact_contract_file_path(path: &Path, fallback: &str) -> String {
+    compact_contract_file_path_relative_to(path, fallback, std::env::current_dir().ok().as_deref())
+}
+
+fn compact_contract_file_path_relative_to(
+    path: &Path,
+    fallback: &str,
+    current_dir: Option<&Path>,
+) -> String {
+    let Some(parent) = path.parent() else {
+        return compact_path_relative_to(path, fallback, current_dir);
+    };
+    let Some(current_dir) = current_dir else {
+        return path.display().to_string();
+    };
+
+    let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+    let root = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        current_dir.join(path)
+    };
+    let absolute = fs::canonicalize(&absolute).unwrap_or(absolute);
+
+    if current_dir.starts_with(&root) {
+        if let Ok(relative) = absolute.strip_prefix(&root) {
             if relative.as_os_str().is_empty() {
                 return String::from(".");
             }
             return format!("./{}", relative.display());
         }
     }
-    compact_path(path, ".")
+
+    absolute.display().to_string()
 }
 
-fn compact_path(path: &Path, fallback: &str) -> String {
-    if let Ok(current_dir) = std::env::current_dir() {
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            current_dir.join(path)
-        };
-        if let Ok(relative) = absolute.strip_prefix(&current_dir) {
-            if relative.as_os_str().is_empty() {
-                return String::from(".");
-            }
-            return format!("./{}", relative.display());
+#[cfg(test)]
+mod tests {
+    use super::{compact_contract_file_path_relative_to, compact_path_relative_to};
+
+    #[test]
+    fn compacts_paths_inside_current_dir_and_keeps_full_paths_outside() {
+        let outer = tempfile::tempdir().expect("outer tempdir");
+        let inner = tempfile::tempdir().expect("inner tempdir");
+        let outer_path = outer.path();
+        let inner_path = inner.path();
+        let contract_path = inner_path.join("ota.yaml");
+
+        std::fs::write(&contract_path, "version: 1\n").expect("write contract");
+
+        assert_eq!(
+            compact_path_relative_to(contract_path.as_path(), "ota.yaml", Some(inner_path)),
+            "./ota.yaml"
+        );
+
+        assert_eq!(
+            compact_path_relative_to(contract_path.as_path(), "ota.yaml", Some(outer_path)),
+            contract_path.display().to_string()
+        );
+    }
+
+    #[test]
+    fn compacts_contract_files_relative_to_repo_root_when_inside_repo() {
+        let outer = tempfile::tempdir().expect("outer tempdir");
+        let repo = outer.path().join("repo");
+        std::fs::create_dir(&repo).expect("create repo dir");
+        let contract_path = repo.join("ota.yaml");
+        std::fs::write(&contract_path, "version: 1\n").expect("write contract");
+
+        assert_eq!(
+            compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(&repo)),
+            "./ota.yaml"
+        );
+
+        let outer_contract = std::fs::canonicalize(&contract_path).expect("canonical contract");
+        assert_eq!(
+            compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
+            outer_contract.display().to_string()
+        );
+    }
+}
+
+fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Path>) -> String {
+    let Some(current_dir) = current_dir else {
+        return path.display().to_string();
+    };
+    let current_dir = fs::canonicalize(current_dir).unwrap_or_else(|_| current_dir.to_path_buf());
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        current_dir.join(path)
+    };
+    let absolute = fs::canonicalize(&absolute).unwrap_or(absolute);
+    if let Ok(relative) = absolute.strip_prefix(&current_dir) {
+        if relative.as_os_str().is_empty() {
+            return String::from(".");
         }
+        return format!("./{}", relative.display());
+    }
+    if absolute.is_absolute() {
+        return absolute.display().to_string();
     }
 
     let tail = path
@@ -8372,7 +8530,7 @@ fn run_contract_targets(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     members: &[String],
-    task_args: &[String],
+    task_inputs: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
@@ -8383,7 +8541,7 @@ fn run_contract_targets(
             overrides,
             None,
             target,
-            task_args,
+            task_inputs,
             show_receipt,
         );
     }
@@ -8398,7 +8556,7 @@ fn run_contract_targets(
             overrides,
             Some(member.as_str()),
             target,
-            task_args,
+            task_inputs,
             show_receipt,
         )?);
     }
@@ -8411,14 +8569,14 @@ fn run_single_contract_target(
     overrides: ExecutionOverrides,
     member: Option<&str>,
     target: LoadedContractTarget,
-    task_args: &[String],
+    task_inputs: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
     match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
         task_name,
-        task_args,
+        task_inputs,
         overrides,
     ) {
         Ok(outcome) if outcome.exit_code == 0 => {
@@ -8505,6 +8663,8 @@ fn run_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let task_env = contract.tasks.get(task_name).map(|task| &task.env);
+    let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
     let step_detail = if executed_tasks.is_empty() {
         None
     } else {
@@ -8535,7 +8695,22 @@ fn run_execution_receipt(
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         acquired: Vec::new(),
-        env: BTreeMap::new(),
+        env: env_details
+            .iter()
+            .map(|(name, value)| (name.clone(), value.value.clone()))
+            .collect(),
+        env_sources: env_details
+            .iter()
+            .map(|(name, value)| ExecutionReceiptEnvSource {
+                name: name.clone(),
+                value: value.value.clone(),
+                source: match value.source {
+                    crate::runner::EnvResolutionSource::Process => String::from("process"),
+                    crate::runner::EnvResolutionSource::Default => String::from("default"),
+                    crate::runner::EnvResolutionSource::Task => String::from("task"),
+                },
+            })
+            .collect(),
         policy: Vec::new(),
         steps,
         blocked: Vec::new(),
@@ -8845,12 +9020,21 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         ));
     }
     if !receipt.env.is_empty() {
-        let env = receipt
-            .env
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let env = if receipt.env_sources.is_empty() {
+            receipt
+                .env
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            receipt
+                .env_sources
+                .iter()
+                .map(|entry| format!("{}={} ({})", entry.name, entry.value, entry.source))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         stdout.push_str(&format!(
             "\n{} {} {}",
             paint("♦", "1;38;2;255;214;79"),
@@ -10009,6 +10193,10 @@ fn repo_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let task_env = task
+        .and_then(|task_name| contract.tasks.get(task_name))
+        .map(|task| &task.env);
+    let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
     let detail = service
         .map(|service| format!("service `{service}`"))
         .or_else(|| task.map(|task| format!("task `{task}`")));
@@ -10030,7 +10218,22 @@ fn repo_execution_receipt(
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         acquired: Vec::new(),
-        env: BTreeMap::new(),
+        env: env_details
+            .iter()
+            .map(|(name, value)| (name.clone(), value.value.clone()))
+            .collect(),
+        env_sources: env_details
+            .iter()
+            .map(|(name, value)| ExecutionReceiptEnvSource {
+                name: name.clone(),
+                value: value.value.clone(),
+                source: match value.source {
+                    crate::runner::EnvResolutionSource::Process => String::from("process"),
+                    crate::runner::EnvResolutionSource::Default => String::from("default"),
+                    crate::runner::EnvResolutionSource::Task => String::from("task"),
+                },
+            })
+            .collect(),
         policy: Vec::new(),
         steps,
         blocked: Vec::new(),
@@ -10097,6 +10300,7 @@ fn workspace_up_receipt(
         lifecycle: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
+        env_sources: Vec::new(),
         policy: Vec::new(),
         steps,
         blocked,
@@ -10158,6 +10362,7 @@ fn workspace_run_receipt(
         lifecycle: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
+        env_sources: Vec::new(),
         policy: Vec::new(),
         steps,
         blocked,

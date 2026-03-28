@@ -72,6 +72,44 @@ pub enum RunError {
     UnsupportedBackend { task: String, backend: &'static str },
     #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
     UnsupportedRemoteProvider { task: String, provider: String },
+    #[error("task `{task}` input `{input}` is not declared in ota.yaml")]
+    UnknownTaskInput { task: String, input: String },
+    #[error("task `{task}` input `{input}` is required but was not provided")]
+    MissingRequiredTaskInput { task: String, input: String },
+    #[error("task `{task}` input `{input}` was provided more than once")]
+    DuplicateTaskInput { task: String, input: String },
+    #[error("task `{task}` input `{input}` is missing a value")]
+    MissingTaskInputValue { task: String, input: String },
+    #[error(
+        "task `{task}` input `{input}` resolved to `{value}`, which is not allowed; expected one of: {allowed}"
+    )]
+    InvalidTaskInputValue {
+        task: String,
+        input: String,
+        value: String,
+        allowed: String,
+    },
+    #[error(
+        "task `{task}` input `{input}` must be provided as `--{flag} <value>` or `--{flag}=<value>`"
+    )]
+    InvalidTaskInputSyntax {
+        task: String,
+        input: String,
+        flag: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvResolutionSource {
+    Process,
+    Default,
+    Task,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedEnvValue {
+    pub value: String,
+    pub source: EnvResolutionSource,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -113,16 +151,43 @@ pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPl
     Ok(RunPlan { tasks: ordered })
 }
 
-pub fn resolve_task_env(contract: &Contract) -> Result<BTreeMap<String, String>, RunError> {
+pub fn resolve_task_env(
+    contract: &Contract,
+    task_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let resolved = resolve_task_env_details(contract, task_env)?;
     let mut overrides = BTreeMap::new();
 
+    for (name, resolved) in resolved {
+        if matches!(resolved.source, EnvResolutionSource::Default) {
+            overrides.insert(name, resolved.value);
+        } else if matches!(resolved.source, EnvResolutionSource::Task) {
+            overrides.insert(name, resolved.value);
+        }
+    }
+
+    Ok(overrides)
+}
+
+pub fn resolve_task_env_details(
+    contract: &Contract,
+    task_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    let mut resolved_values = BTreeMap::new();
+
     for (name, requirement) in &contract.env {
-        let resolved = std::env::var(name)
-            .ok()
-            .or_else(|| requirement.default.clone());
+        let process_value = std::env::var(name).ok();
+        let resolved = process_value
+            .map(|value| (value, EnvResolutionSource::Process))
+            .or_else(|| {
+                requirement
+                    .default
+                    .clone()
+                    .map(|value| (value, EnvResolutionSource::Default))
+            });
 
         match resolved {
-            Some(value) => {
+            Some((value, source)) => {
                 if !requirement.allowed.is_empty()
                     && !requirement.allowed.iter().any(|v| v == &value)
                 {
@@ -133,9 +198,7 @@ pub fn resolve_task_env(contract: &Contract) -> Result<BTreeMap<String, String>,
                     });
                 }
 
-                if std::env::var_os(name).is_none() {
-                    overrides.insert(name.clone(), value);
-                }
+                resolved_values.insert(name.clone(), ResolvedEnvValue { value, source });
             }
             None if requirement.required => {
                 return Err(RunError::MissingRequiredEnv { name: name.clone() });
@@ -144,7 +207,19 @@ pub fn resolve_task_env(contract: &Contract) -> Result<BTreeMap<String, String>,
         }
     }
 
-    Ok(overrides)
+    if let Some(task_env) = task_env {
+        for (name, value) in task_env {
+            resolved_values.insert(
+                name.clone(),
+                ResolvedEnvValue {
+                    value: value.clone(),
+                    source: EnvResolutionSource::Task,
+                },
+            );
+        }
+    }
+
+    Ok(resolved_values)
 }
 
 pub fn run_task(
@@ -379,14 +454,14 @@ fn run_task_internal(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
-    args: &[String],
+    input_args: &[String],
     overrides: ExecutionOverrides,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
-    let env_overrides = resolve_task_env(contract)?;
     let working_dir = contract_working_dir(contract_path);
     let backend = resolve_execution_backend(contract, task_name, overrides)?;
+    let requested_task_name = task_name.to_string();
     let mut executed_tasks = Vec::new();
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -409,6 +484,14 @@ fn run_task_internal(
                 os: current_os.to_string(),
             });
         };
+        let env_overrides = resolve_task_env(contract, Some(&task.env))?;
+        let input_overrides = if task_name == &requested_task_name {
+            resolve_task_inputs(task_name, task, input_args)?
+        } else {
+            BTreeMap::new()
+        };
+        let mut combined_env = env_overrides;
+        combined_env.extend(input_overrides);
         let command = execution.body;
 
         if let TaskExecutionMode::Stream {
@@ -421,9 +504,8 @@ fn run_task_internal(
         let command_output = execute_task_command(
             task_name,
             &command,
-            args,
             working_dir,
-            &env_overrides,
+            &combined_env,
             &backend,
             mode,
         )?;
@@ -453,7 +535,6 @@ fn run_task_internal(
 fn execute_task_command(
     task_name: &str,
     command: &str,
-    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     backend: &ResolvedExecutionBackend,
@@ -462,7 +543,7 @@ fn execute_task_command(
     match backend {
         ResolvedExecutionBackend::Native => match mode {
             TaskExecutionMode::Stream { .. } => {
-                let status = shell_command(command, args)
+                let status = shell_command(command)
                     .current_dir(working_dir)
                     .envs(env_overrides.iter())
                     .stdin(Stdio::inherit())
@@ -481,7 +562,7 @@ fn execute_task_command(
                 })
             }
             TaskExecutionMode::Capture => {
-                let output = shell_command(command, args)
+                let output = shell_command(command)
                     .current_dir(working_dir)
                     .envs(env_overrides.iter())
                     .stdin(Stdio::inherit())
@@ -504,7 +585,6 @@ fn execute_task_command(
         ResolvedExecutionBackend::Container { image, lifecycle } => execute_container_task_command(
             task_name,
             command,
-            args,
             working_dir,
             env_overrides,
             image,
@@ -518,7 +598,6 @@ fn execute_task_command(
         } => execute_remote_task_command(
             task_name,
             command,
-            args,
             env_overrides,
             provider,
             target,
@@ -526,6 +605,124 @@ fn execute_task_command(
             mode,
         ),
     }
+}
+
+fn resolve_task_inputs(
+    task_name: &str,
+    task: &TaskSpec,
+    input_args: &[String],
+) -> Result<BTreeMap<String, String>, RunError> {
+    let mut provided = BTreeMap::new();
+    let mut index = 0;
+
+    while index < input_args.len() {
+        let token = &input_args[index];
+        if token == "--" {
+            index += 1;
+            continue;
+        }
+        if !token.starts_with("--") || token.len() <= 2 {
+            return Err(RunError::InvalidTaskInputSyntax {
+                task: task_name.to_string(),
+                input: token.trim_start_matches('-').to_string(),
+                flag: token.clone(),
+            });
+        }
+
+        let remainder = &token[2..];
+        let (flag, inline_value) = if let Some((flag, value)) = remainder.split_once('=') {
+            (flag, Some(value.to_string()))
+        } else {
+            (remainder, None)
+        };
+
+        if flag.is_empty() {
+            return Err(RunError::InvalidTaskInputSyntax {
+                task: task_name.to_string(),
+                input: String::new(),
+                flag: token.clone(),
+            });
+        }
+
+        let input_name = flag.replace('-', "_");
+        let Some(spec) = task.inputs.get(&input_name) else {
+            return Err(RunError::UnknownTaskInput {
+                task: task_name.to_string(),
+                input: input_name,
+            });
+        };
+
+        let value = match inline_value {
+            Some(value) => value,
+            None => {
+                index += 1;
+                let Some(next) = input_args.get(index) else {
+                    return Err(RunError::MissingTaskInputValue {
+                        task: task_name.to_string(),
+                        input: input_name,
+                    });
+                };
+                next.clone()
+            }
+        };
+
+        if !spec.allowed.is_empty() && !spec.allowed.iter().any(|allowed| allowed == &value) {
+            return Err(RunError::InvalidTaskInputValue {
+                task: task_name.to_string(),
+                input: input_name,
+                value,
+                allowed: spec.allowed.join(", "),
+            });
+        }
+
+        if provided.insert(input_name.clone(), value).is_some() {
+            return Err(RunError::DuplicateTaskInput {
+                task: task_name.to_string(),
+                input: input_name,
+            });
+        }
+
+        index += 1;
+    }
+
+    for (name, spec) in &task.inputs {
+        if provided.contains_key(name) {
+            continue;
+        }
+        if let Some(default) = spec.default.clone() {
+            if !spec.allowed.is_empty() && !spec.allowed.iter().any(|allowed| allowed == &default) {
+                return Err(RunError::InvalidTaskInputValue {
+                    task: task_name.to_string(),
+                    input: name.clone(),
+                    value: default,
+                    allowed: spec.allowed.join(", "),
+                });
+            }
+            provided.insert(name.clone(), default);
+        } else if spec.required {
+            return Err(RunError::MissingRequiredTaskInput {
+                task: task_name.to_string(),
+                input: name.clone(),
+            });
+        }
+    }
+
+    Ok(provided
+        .into_iter()
+        .map(|(name, value)| (task_input_env_name(&name), value))
+        .collect())
+}
+
+fn task_input_env_name(name: &str) -> String {
+    let mut env = String::from("OTA_INPUT_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            env.push(ch.to_ascii_uppercase());
+        } else {
+            env.push('_');
+        }
+    }
+    env
 }
 
 pub fn effective_execution(
@@ -617,7 +814,6 @@ fn remote_target_example(provider: &str) -> &'static str {
 fn execute_remote_task_command(
     task_name: &str,
     command: &str,
-    args: &[String],
     env_overrides: &BTreeMap<String, String>,
     provider: &str,
     target: &str,
@@ -625,10 +821,10 @@ fn execute_remote_task_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let mut remote_command = match provider {
-        "daytona" => daytona_remote_command(target, cwd, command, args, env_overrides),
-        "ssh" => ssh_remote_command(target, cwd, command, args, env_overrides),
-        "tsh" => tsh_remote_command(target, cwd, command, args, env_overrides),
-        "kubectl" => kubectl_remote_command(target, cwd, command, args, env_overrides),
+        "daytona" => daytona_remote_command(target, cwd, command, env_overrides),
+        "ssh" => ssh_remote_command(target, cwd, command, env_overrides),
+        "tsh" => tsh_remote_command(target, cwd, command, env_overrides),
+        "kubectl" => kubectl_remote_command(target, cwd, command, env_overrides),
         other => {
             return Err(RunError::UnsupportedRemoteProvider {
                 task: task_name.to_string(),
@@ -686,7 +882,6 @@ fn daytona_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
-    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("daytona");
@@ -698,9 +893,7 @@ fn daytona_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env(command, env_overrides))
-        .arg("ota")
-        .args(args);
+        .arg(shell_script_with_env(command, env_overrides));
     remote
 }
 
@@ -708,7 +901,6 @@ fn ssh_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
-    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("ssh");
@@ -716,9 +908,7 @@ fn ssh_remote_command(
         .arg(target)
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
-        .arg("ota")
-        .args(args);
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
     remote
 }
 
@@ -726,7 +916,6 @@ fn tsh_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
-    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("tsh");
@@ -736,9 +925,7 @@ fn tsh_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
-        .arg("ota")
-        .args(args);
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
     remote
 }
 
@@ -746,7 +933,6 @@ fn kubectl_remote_command(
     target: &str,
     cwd: Option<&str>,
     command: &str,
-    args: &[String],
     env_overrides: &BTreeMap<String, String>,
 ) -> Command {
     let mut remote = Command::new("kubectl");
@@ -756,9 +942,7 @@ fn kubectl_remote_command(
         .arg("--")
         .arg("sh")
         .arg("-lc")
-        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd))
-        .arg("ota")
-        .args(args);
+        .arg(shell_script_with_env_and_cwd(command, env_overrides, cwd));
     remote
 }
 
@@ -798,7 +982,6 @@ fn shell_quote(value: &str) -> String {
 fn execute_container_task_command(
     task_name: &str,
     command: &str,
-    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -809,7 +992,6 @@ fn execute_container_task_command(
         Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
             task_name,
             command,
-            args,
             working_dir,
             env_overrides,
             image,
@@ -818,7 +1000,6 @@ fn execute_container_task_command(
         Lifecycle::Persistent => execute_persistent_container_task_command(
             task_name,
             command,
-            args,
             working_dir,
             env_overrides,
             image,
@@ -830,7 +1011,6 @@ fn execute_container_task_command(
 fn execute_ephemeral_container_task_command(
     task_name: &str,
     command: &str,
-    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -848,13 +1028,7 @@ fn execute_ephemeral_container_task_command(
     for (name, value) in env_overrides {
         docker.arg("--env").arg(format!("{name}={value}"));
     }
-    docker
-        .arg(image)
-        .arg("sh")
-        .arg("-lc")
-        .arg(command)
-        .arg("ota")
-        .args(args);
+    docker.arg(image).arg("sh").arg("-lc").arg(command);
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -898,7 +1072,6 @@ fn execute_ephemeral_container_task_command(
 fn execute_persistent_container_task_command(
     task_name: &str,
     command: &str,
-    args: &[String],
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
@@ -954,9 +1127,7 @@ fn execute_persistent_container_task_command(
         .arg(&container_name)
         .arg("sh")
         .arg("-lc")
-        .arg(command)
-        .arg("ota")
-        .args(args);
+        .arg(command);
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -1058,16 +1229,16 @@ fn visit_task(
 }
 
 #[cfg(unix)]
-fn shell_command(command: &str, args: &[String]) -> Command {
+fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command).arg("ota").args(args);
+    shell.arg("-lc").arg(command);
     shell
 }
 
 #[cfg(windows)]
-fn shell_command(command: &str, args: &[String]) -> Command {
+fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("cmd");
-    shell.arg("/C").arg(command).args(args);
+    shell.arg("/C").arg(command);
     shell
 }
 
@@ -1083,9 +1254,9 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{
-        CapturedRunOutcome, ExecutionOverrides, RunError, clean_execution, plan_task_execution,
-        resolve_task_env, run_task, run_task_captured, run_task_with_overrides,
-        run_task_with_progress,
+        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
+        plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
+        run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
     };
 
     #[test]
@@ -1140,11 +1311,62 @@ tasks:
         )
         .unwrap();
 
-        let resolved = resolve_task_env(&contract).unwrap();
+        let resolved = resolve_task_env(&contract, None).unwrap();
         assert_eq!(
             resolved.get("OTA_TEST_DEFAULT_ONLY"),
             Some(&"ready".to_string())
         );
+    }
+
+    #[test]
+    fn reports_env_resolution_sources_for_process_and_default_values() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_PROCESS:
+    required: true
+  OTA_TEST_DEFAULT:
+    default: ready
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let original_process = env::var_os("OTA_TEST_PROCESS");
+        let original_default = env::var_os("OTA_TEST_DEFAULT");
+
+        unsafe {
+            env::set_var("OTA_TEST_PROCESS", "present");
+            env::remove_var("OTA_TEST_DEFAULT");
+        }
+
+        let resolved = resolve_task_env_details(&fixture, None).unwrap();
+        assert_eq!(
+            resolved["OTA_TEST_PROCESS"].source,
+            EnvResolutionSource::Process
+        );
+        assert_eq!(resolved["OTA_TEST_PROCESS"].value, "present");
+        assert_eq!(
+            resolved["OTA_TEST_DEFAULT"].source,
+            EnvResolutionSource::Default
+        );
+        assert_eq!(resolved["OTA_TEST_DEFAULT"].value, "ready");
+
+        match original_process {
+            Some(value) => unsafe { env::set_var("OTA_TEST_PROCESS", value) },
+            None => unsafe { env::remove_var("OTA_TEST_PROCESS") },
+        }
+        match original_default {
+            Some(value) => unsafe { env::set_var("OTA_TEST_DEFAULT", value) },
+            None => unsafe { env::remove_var("OTA_TEST_DEFAULT") },
+        }
     }
 
     #[test]
@@ -1165,11 +1387,88 @@ tasks:
         )
         .unwrap();
 
-        let error = resolve_task_env(&contract).unwrap_err();
+        let error = resolve_task_env(&contract, None).unwrap_err();
         assert!(matches!(
             error,
             RunError::MissingRequiredEnv { name } if name == "OTA_TEST_MISSING_REQUIRED"
         ));
+    }
+
+    #[test]
+    fn task_env_overrides_process_and_repo_defaults() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_ENV:
+    default: repo-default
+tasks:
+  test:
+    env:
+      OTA_TEST_ENV: task-value
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("OTA_TEST_ENV");
+        unsafe {
+            env::set_var("OTA_TEST_ENV", "process-value");
+        }
+
+        let task_env = &contract.tasks.get("test").unwrap().env;
+        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
+        let overrides = resolve_task_env(&contract, Some(task_env)).unwrap();
+
+        assert_eq!(resolved["OTA_TEST_ENV"].source, EnvResolutionSource::Task);
+        assert_eq!(resolved["OTA_TEST_ENV"].value, "task-value");
+        assert_eq!(overrides["OTA_TEST_ENV"], "task-value");
+
+        match original {
+            Some(value) => unsafe { env::set_var("OTA_TEST_ENV", value) },
+            None => unsafe { env::remove_var("OTA_TEST_ENV") },
+        }
+    }
+
+    #[test]
+    fn task_inputs_map_kebab_case_flags_to_input_env() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    inputs:
+      base_url:
+        required: true
+      mode:
+        default: live
+    script: |
+      printf '%s|%s' "$OTA_INPUT_BASE_URL" "$OTA_INPUT_MODE" > inputs.txt
+"#,
+        );
+
+        let outcome = run_task_with_args(
+            &fixture.contract,
+            fixture.file_path(),
+            "test",
+            &[
+                String::from("--base-url"),
+                String::from("http://localhost:8080"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("inputs.txt")).unwrap(),
+            "http://localhost:8080|live"
+        );
     }
 
     #[test]

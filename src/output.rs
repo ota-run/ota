@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::schema::{
-    AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskSpec,
+    AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
     TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
@@ -111,6 +111,13 @@ pub struct ExecutionReceiptStep {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptEnvSource {
+    pub name: String,
+    pub value: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceipt {
     pub ok: bool,
     pub path: String,
@@ -126,6 +133,8 @@ pub struct ExecutionReceipt {
     pub acquired: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_sources: Vec<ExecutionReceiptEnvSource>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub policy: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -224,6 +233,16 @@ pub struct ExecutionBackendsSummary<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExecutionEnvSummary<'a> {
+    pub name: &'a str,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExecutionSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred: Option<&'a str>,
@@ -233,6 +252,8 @@ pub struct ExecutionSummary<'a> {
     pub lifecycle: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backends: Option<ExecutionBackendsSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<ExecutionEnvSummary<'a>>,
 }
 
 impl<'a> ExecutionSummary<'a> {
@@ -265,6 +286,16 @@ impl<'a> ExecutionSummary<'a> {
                             cwd: remote.cwd.as_deref(),
                         }),
                 }),
+            env: contract
+                .env
+                .iter()
+                .map(|(name, requirement)| ExecutionEnvSummary {
+                    name,
+                    required: requirement.required,
+                    default: requirement.default.as_deref(),
+                    allowed: requirement.allowed.iter().map(String::as_str).collect(),
+                })
+                .collect(),
         })
     }
 }
@@ -674,6 +705,10 @@ pub struct TaskSummary<'a> {
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<&'a str>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: &'a BTreeMap<String, TaskInputSpec>,
     pub kind: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<&'a str>,
@@ -696,6 +731,8 @@ impl<'a> TaskSummary<'a> {
             name,
             description: task.description.as_deref(),
             category: task.category.as_deref(),
+            env: &task.env,
+            inputs: &task.inputs,
             kind: execution.kind,
             run: (execution.kind == "run").then_some(execution.body),
             script: (execution.kind == "script").then_some(execution.body),

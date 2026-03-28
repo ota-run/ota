@@ -127,9 +127,9 @@ enum Commands {
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
-        /// Pass trailing arguments to the task command after `--`.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        /// Task input flags such as `--base-url http://...`.
+        #[arg(allow_hyphen_values = true)]
+        inputs: Vec<String>,
     },
     /// Diagnose repo readiness from an Ota contract.
     Doctor {
@@ -512,9 +512,9 @@ enum WorkspaceCommands {
         receipt: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
-        /// Pass trailing arguments to the workspace task command after `--`.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        /// Task input flags such as `--base-url http://...`.
+        #[arg(allow_hyphen_values = true)]
+        inputs: Vec<String>,
     },
 }
 
@@ -757,7 +757,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             receipt,
             member,
             path,
-            args,
+            inputs,
         } => commands::run_command(
             task.as_str(),
             path.as_deref(),
@@ -767,7 +767,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: lifecycle.map(Into::into),
             },
             &member,
-            &args,
+            &inputs,
             debug,
             receipt,
         ),
@@ -1075,7 +1075,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 stream,
                 receipt,
                 path,
-                args,
+                inputs,
             } => commands::workspace_run(
                 task.as_str(),
                 path.as_deref(),
@@ -1085,7 +1085,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
                 receipt,
-                &args,
+                &inputs,
             ),
         },
     };
@@ -5090,6 +5090,47 @@ tasks:
     }
 
     #[test]
+    fn doctor_text_reports_env_precedence_and_policy() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+env:
+  OTA_TEST_BASE_URL:
+    required: true
+    default: http://localhost:8080
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+
+        let original = std::env::var_os("OTA_TEST_BASE_URL");
+        unsafe {
+            std::env::set_var("OTA_TEST_BASE_URL", "http://example.com");
+        }
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("OTA_TEST_BASE_URL", value) },
+            None => unsafe { std::env::remove_var("OTA_TEST_BASE_URL") },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Env precedence:"));
+        assert!(stdout.contains("process env > contract default > required missing"));
+        assert!(stdout.contains("Env:"));
+        assert!(stdout.contains("OTA_TEST_BASE_URL"));
+        assert!(stdout.contains("required, default=http://localhost:8080"));
+    }
+
+    #[test]
     fn extensions_text_lists_descriptors() {
         let fixture = ContractFixture::new(
             r#"
@@ -5584,7 +5625,7 @@ project:
     }
 
     #[test]
-    fn run_executes_script_tasks() {
+    fn run_executes_script_task_inputs() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5592,17 +5633,27 @@ project:
   name: ota
 tasks:
   setup:
+    inputs:
+      base_url:
+        required: true
     script: |
-      printf '%s' "$1" > prepared.txt
+      printf '%s' "$OTA_INPUT_BASE_URL" > prepared.txt
 "#,
         );
 
-        let output = run_with(["ota", "run", "setup", fixture.path(), "--", "1.3.5"]);
+        let output = run_with([
+            "ota",
+            "run",
+            "setup",
+            fixture.path(),
+            "--base-url",
+            "http://localhost:8080",
+        ]);
 
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "1.3.5"
+            "http://localhost:8080"
         );
     }
 
@@ -10359,7 +10410,7 @@ tasks:
     }
 
     #[test]
-    fn workspace_run_passes_trailing_args_to_task() {
+    fn workspace_run_passes_named_inputs_to_task() {
         let fixture = WorkspaceFixture::new();
         fs::write(
             fixture.dir.path().join("apps").join("web").join("ota.yaml"),
@@ -10369,8 +10420,11 @@ project:
   name: web
 tasks:
   setup:
+    inputs:
+      base_url:
+        required: true
     script: |
-      printf '%s' "$1" > version.txt
+      printf '%s' "$OTA_INPUT_BASE_URL" > version.txt
 "#,
         )
         .unwrap();
@@ -10381,8 +10435,8 @@ tasks:
             "run",
             "setup",
             fixture.path(),
-            "--",
-            "1.3.5",
+            "--base-url",
+            "http://localhost:8080",
         ]);
 
         assert_eq!(output.exit_code, 0);
@@ -10396,7 +10450,7 @@ tasks:
                     .join("version.txt")
             )
             .unwrap(),
-            "1.3.5"
+            "http://localhost:8080"
         );
     }
 

@@ -455,6 +455,8 @@ Fields:
 
 - `description`: optional string
 - `category`: optional string
+- `env`: optional map of fixed task-scoped environment overrides
+- `inputs`: optional map of named task inputs
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `variants`: optional list of conditional task executions
@@ -465,7 +467,72 @@ Use cases:
 
 - use `run` for one command you would normally type in a shell
 - use `script` when the task needs multiple lines, shell setup, or cleanup steps
+- use `env` when a task needs fixed environment values that should override repo-level env for that task
+- use `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`
 - use `depends_on` to model a build/package/upload chain without hiding order in shell scripts
+
+Task input semantics:
+
+- `inputs` are declared in `tasks.<name>.inputs`
+- each input name is lowercase snake_case in the contract and becomes `--kebab-case` on the CLI
+- Ota injects resolved values into the task process as `OTA_INPUT_<NAME>`
+- `default` supplies a value when the caller omits the input
+- `required: true` makes the input mandatory unless a default is present
+- `allowed` limits the accepted values for that input
+- task inputs override repo-level env only for the task they belong to
+- task dependencies do not inherit the parent task’s declared inputs
+- if every declared input has a default, the task can be run with no input flags
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        description: API base URL for the live suite
+        default: http://localhost:8080
+      mode:
+        description: Run mode for the API suite
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+      skip_api:
+        description: Skip API execution and build reports only
+        default: false
+        allowed:
+          - true
+          - false
+  version:bump:
+    inputs:
+      version:
+        description: New release version for the Java SDK
+        required: true
+```
+
+Run it as:
+
+```bash
+ota run api-automation-tests
+ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run version:bump --version 0.2.0
+```
+
+Input fields:
+
+- `description`: optional string
+- `required`: optional boolean
+- `default`: optional string
+- `allowed`: optional list of accepted string values
+
+Input rules:
+
+- input names must use lowercase snake_case
+- `default` must be non-empty when present
+- `allowed` values must be non-empty
+- when `allowed` is declared, `default` must be one of the allowed values
+- `required: true` cannot be satisfied by an empty value
 
 Example script forms:
 
@@ -488,6 +555,9 @@ Rules:
 
 - task names must not be empty
 - tasks must declare a default `run` or `script`, or at least one variant
+- input names must use lowercase snake_case
+- input defaults must not be empty
+- input allowed values must not be empty
 - `run` must be non-empty when present
 - `script` must be non-empty when present
 - variant entries must declare `when.os`
@@ -500,6 +570,7 @@ Rules:
 Current execution model:
 
 - `run` and `script` are shell-compatible execution forms
+- task `env` values are applied when Ota runs the task and override repo-level env with the same name
 - when variants are declared, Ota resolves the best matching `when.os` entry first and falls back to the default execution
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
