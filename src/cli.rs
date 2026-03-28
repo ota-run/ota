@@ -776,7 +776,7 @@ fn render_version_output(args: &[OsString]) -> String {
         return format!("🦦 {version}");
     }
 
-    format!("🦦 \x1b[1m{version}\x1b[0m")
+    format!("🦦 \x1b[38;5;130m{version}\x1b[0m")
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
@@ -1680,7 +1680,7 @@ exec /bin/sh -lc "$1"
         .unwrap();
     }
 
-    fn compact_path(path: &std::path::Path, fallback: &str) -> String {
+    fn compact_path(path: &std::path::Path, _fallback: &str) -> String {
         std::fs::canonicalize(path)
             .unwrap_or_else(|_| path.to_path_buf())
             .display()
