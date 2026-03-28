@@ -112,4 +112,4 @@ printf 'To:   %s\n' "$new_version"
 printf '\nNext:\n'
 printf '▸  run `cargo test`\n'
 printf '▸  commit with message like `release: v%s`\n' "$new_version"
-printf '▸  tag with `git tag v%s` when ready\n' "$new_version"
+printf '▸  push to `main`; GitHub Actions will create `v%s` after the gate passes\n' "$new_version"
