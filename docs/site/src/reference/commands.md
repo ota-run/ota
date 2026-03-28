@@ -283,6 +283,9 @@ Current behavior:
 
 - `--version` pins a specific release
 - `--channel` currently accepts `stable` and `latest`
+- `stable` resolves the latest stable release tag
+- `latest` resolves the newest release entry, including prereleases if present
+- `--version` overrides the channel when both are set
 - success runs the installer for the chosen release target
 
 ### `ota run <task>`

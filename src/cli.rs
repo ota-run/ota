@@ -677,7 +677,7 @@ fn maybe_append_update_notice(
     };
 
     match rx.recv_timeout(Duration::from_millis(50)) {
-        Ok(Some(notice)) => output.with_stderr(Some(notice)),
+        Ok(Some(notice)) => output.with_stderr(Some(format!("\x1b[1m{notice}\x1b[0m"))),
         _ => output,
     }
 }
@@ -778,7 +778,7 @@ fn render_version_output(args: &[OsString]) -> String {
         return format!("🦦 {version}");
     }
 
-    format!("🦦 \x1b[1;38;5;208m{version}\x1b[0m")
+    format!("🦦 \x1b[1;38;5;136m{version}\x1b[0m")
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
@@ -4223,7 +4223,7 @@ tasks:
     fn appends_update_notice_to_successful_output() {
         let (tx, rx) = mpsc::channel();
         tx.send(Some(String::from(
-            "A newer Ota release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.",
+            "A newer `ota` release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.",
         )))
         .unwrap();
 
@@ -4234,7 +4234,7 @@ tasks:
         assert_eq!(
             output.stderr,
             Some(String::from(
-                "A newer Ota release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update."
+                "\x1b[1mA newer `ota` release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.\x1b[0m"
             ))
         );
     }
