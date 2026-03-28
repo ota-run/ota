@@ -45,6 +45,7 @@ Progress behavior:
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
 - `ota workspace list` shows execution metadata when the repo contract declares it
+- successful interactive commands may print a best-effort update notice when a newer release exists, and the notice points to `ota self-update` or `ota upgrade`
 
 Hosted validation:
 
@@ -253,6 +254,36 @@ set -euo pipefail
 ota up
 ota run test
 ```
+
+### `ota self-update`
+
+When to use:
+
+- when Ota is already installed and you want to update it in place
+
+Why:
+
+- downloads and installs the newest release binary or a pinned release
+- alias: `ota upgrade`
+
+Use-case:
+
+- update the current machine after seeing the update notice from another Ota command
+
+```bash
+ota self-update
+ota self-update --version v0.1.3
+ota self-update --channel stable
+ota upgrade
+ota upgrade --version v0.1.3
+ota upgrade --channel stable
+```
+
+Current behavior:
+
+- `--version` pins a specific release
+- `--channel` currently accepts `stable` and `latest`
+- success runs the installer for the chosen release target
 
 ### `ota run <task>`
 

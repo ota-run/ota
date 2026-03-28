@@ -65,6 +65,7 @@ use crate::runner::{
 };
 use crate::schema::{Contract, ExtensionSpec, Lifecycle};
 use crate::validator::{ValidationErrors, validate_contract};
+use crate::update;
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
     diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
@@ -1327,6 +1328,12 @@ pub fn run_command(
         debug,
         debug_lines,
     )
+}
+
+pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
+    finalize_debug(update::self_update(version, channel), debug, vec![
+        String::from("DEBUG command=self-update"),
+    ])
 }
 
 pub fn doctor(
@@ -7732,7 +7739,10 @@ mod tests {
 
         assert_eq!(
             compact_path_relative_to(contract_path.as_path(), "ota.yaml", Some(outer_path)),
-            contract_path.display().to_string()
+            std::fs::canonicalize(&contract_path)
+                .expect("canonical contract")
+                .display()
+                .to_string()
         );
     }
 

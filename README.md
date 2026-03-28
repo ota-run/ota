@@ -126,7 +126,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Ota
-        run: curl -fsSL https://ota.run/install.sh | sh
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
       - name: Prepare repo
@@ -206,26 +206,33 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 Install the latest release binary:
 
 ```bash
-curl -fsSL https://ota.run/install.sh | sh
+curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-iwr https://ota.run/install.ps1 | iex
+iwr https://dist.ota.run/install.ps1 | iex
 ```
 
 Pin a release:
 
 ```bash
-OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+OTA_VERSION=v0.1.2 curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
 $env:OTA_VERSION = "v0.1.2"
-iwr https://ota.run/install.ps1 | iex
+iwr https://dist.ota.run/install.ps1 | iex
+```
+
+Update an existing install:
+
+```bash
+ota self-update
+ota upgrade
 ```
 
 Install from a local checkout:
