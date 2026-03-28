@@ -117,7 +117,7 @@ Current progress behavior:
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
-- successful interactive commands may print a best-effort update notice when a newer release exists, and the notice points to `ota self-update` or `ota upgrade`
+- successful interactive commands may print a best-effort update notice when a newer release exists, and the notice says `A newer \`ota\` release is available: vX.Y.Z` and points to `ota self-update` or `ota upgrade`
 
 Hosted validation guidance:
 
@@ -618,6 +618,9 @@ Current behavior:
 - `ota self-update` and `ota upgrade` are aliases
 - `--version` pins a specific release
 - `--channel` currently accepts `stable` and `latest`
+- `stable` resolves the latest stable release tag
+- `latest` resolves the newest release entry, including prereleases if present
+- `--version` overrides the channel when both are set
 - on success, the command runs the installer for the chosen release target
 
 Use this when:

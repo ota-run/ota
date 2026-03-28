@@ -33,6 +33,23 @@ use crate::output::CommandOutput;
 
 const DEFAULT_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/ota-run/ota/releases/latest";
+const DEFAULT_RELEASES_LIST_URL: &str = "https://api.github.com/repos/ota-run/ota/releases";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateTrack {
+    Stable,
+    Latest,
+}
+
+impl UpdateTrack {
+    fn from_channel(channel: &str) -> Option<Self> {
+        match channel.trim().to_ascii_lowercase().as_str() {
+            "stable" => Some(Self::Stable),
+            "latest" => Some(Self::Latest),
+            _ => None,
+        }
+    }
+}
 
 fn normalize_version(value: &str) -> String {
     value
@@ -44,6 +61,11 @@ fn normalize_version(value: &str) -> String {
 
 fn latest_release_url() -> String {
     env::var("OTA_UPDATE_CHECK_URL").unwrap_or_else(|_| DEFAULT_RELEASES_LATEST_URL.to_string())
+}
+
+fn release_list_url() -> String {
+    env::var("OTA_UPDATE_CHECK_URL_LATEST")
+        .unwrap_or_else(|_| DEFAULT_RELEASES_LIST_URL.to_string())
 }
 
 fn installer_url() -> String {
@@ -215,15 +237,23 @@ fn execute_installer(
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutput {
-    if let Some(channel) = channel {
-        let normalized = channel.trim().to_ascii_lowercase();
-        if normalized != "stable" && normalized != "latest" {
+    let resolved_track = if let Some(channel) = channel {
+        let Some(track) = UpdateTrack::from_channel(channel) else {
             return CommandOutput::failure_with_code(
                 format!("unsupported update channel `{channel}`; expected `stable` or `latest`"),
                 2,
             );
-        }
-    }
+        };
+        Some(track)
+    } else {
+        None
+    };
+
+    let resolved_version = match (version, resolved_track) {
+        (Some(version), _) => Some(version.to_string()),
+        (None, Some(track)) => fetch_release_tag(track),
+        (None, None) => None,
+    };
 
     let installer = installer_url();
     let release_base = env::var("OTA_RELEASE_BASE").ok();
@@ -234,25 +264,32 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
         return download;
     }
 
-    let output = execute_installer(&script_path, version, release_base.as_deref());
+    let output = execute_installer(
+        &script_path,
+        resolved_version.as_deref(),
+        release_base.as_deref(),
+    );
     let _ = fs::remove_file(&script_path);
     output
 }
 
 pub fn maybe_update_notice(current_version: &str) -> Option<String> {
-    let latest = fetch_latest_release_tag()?;
+    let latest = fetch_release_tag(UpdateTrack::Stable)?;
     let current = normalize_version(current_version);
     if latest == current {
         return None;
     }
 
     Some(format!(
-        "A newer Ota release is available: v{latest}\nRun `ota self-update` or `ota upgrade` to update."
+        "A newer `ota` release is available: v{latest}\nRun `ota self-update` or `ota upgrade` to update."
     ))
 }
 
-fn fetch_latest_release_tag() -> Option<String> {
-    let url = latest_release_url();
+fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
+    let url = match track {
+        UpdateTrack::Stable => latest_release_url(),
+        UpdateTrack::Latest => release_list_url(),
+    };
     let raw = if cfg!(windows) {
         let script = format!(
             "(Invoke-WebRequest -UseBasicParsing -Headers @{{'Accept'='application/vnd.github+json'; 'User-Agent'='ota'}} -TimeoutSec 2 -Uri '{}').Content",
@@ -314,13 +351,34 @@ fn fetch_latest_release_tag() -> Option<String> {
         }
     };
 
-    let value: JsonValue = serde_json::from_str(&raw).ok()?;
-    let tag = value.get("tag_name")?.as_str()?.trim();
-    if tag.is_empty() {
-        return None;
+    match track {
+        UpdateTrack::Stable => {
+            let value: JsonValue = serde_json::from_str(&raw).ok()?;
+            let tag = value.get("tag_name")?.as_str()?.trim();
+            if tag.is_empty() {
+                return None;
+            }
+            Some(normalize_version(tag))
+        }
+        UpdateTrack::Latest => {
+            let value: JsonValue = serde_json::from_str(&raw).ok()?;
+            let releases = value.as_array()?;
+            for release in releases {
+                let is_draft = release
+                    .get("draft")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false);
+                if is_draft {
+                    continue;
+                }
+                let tag = release.get("tag_name")?.as_str()?.trim();
+                if !tag.is_empty() {
+                    return Some(normalize_version(tag));
+                }
+            }
+            None
+        }
     }
-
-    Some(normalize_version(tag))
 }
 
 #[cfg(test)]
@@ -333,6 +391,8 @@ mod tests {
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
 
+    use super::UpdateTrack;
+    use super::fetch_release_tag;
     use super::maybe_update_notice;
     use super::normalize_version;
 
@@ -387,8 +447,52 @@ mod tests {
         assert_eq!(
             notice,
             Some(String::from(
-                "A newer Ota release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update."
+                "A newer `ota` release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update."
             ))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_latest_channel_from_release_list() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = r#"[{"tag_name":"v9.9.9","draft":false,"prerelease":true},{"tag_name":"v9.9.8","draft":false,"prerelease":false}]"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let original_latest = env::var_os("OTA_UPDATE_CHECK_URL_LATEST");
+        unsafe {
+            env::set_var(
+                "OTA_UPDATE_CHECK_URL_LATEST",
+                format!("http://127.0.0.1:{}/releases", addr.port()),
+            );
+        }
+
+        let tag = fetch_release_tag(UpdateTrack::Latest);
+
+        match original_latest {
+            Some(value) => unsafe {
+                env::set_var("OTA_UPDATE_CHECK_URL_LATEST", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_UPDATE_CHECK_URL_LATEST");
+            },
+        }
+
+        handle.join().unwrap();
+
+        assert_eq!(tag.as_deref(), Some("9.9.9"));
     }
 }
