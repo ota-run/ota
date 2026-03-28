@@ -47,6 +47,16 @@ function Write-OtaInfo {
     Write-Host $Message -ForegroundColor DarkYellow
 }
 
+function Write-OtaReceipt {
+    param([string]$Message)
+    Write-Host "${Esc}[1;38;2;214;161;95m$Message${Esc}[0m"
+}
+
+function Write-OtaReceiptLine {
+    param([string]$Message)
+    Write-Host "${Esc}[1;38;2;214;161;95m➤${Esc}[0m ${Esc}[1;37m$Message${Esc}[0m"
+}
+
 function Write-OtaWarn {
     param([string]$Message)
     Write-Host $Message -ForegroundColor Yellow
@@ -244,16 +254,27 @@ if ($installFromSource) {
 }
 
 if (Get-Command ota -ErrorAction SilentlyContinue) {
-    & ota --version
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    $binaryPath = (Get-Command ota).Source
+    $versionOutput = (& ota --version 2>$null | Out-String).Trim()
 } elseif ($env:OTA_BIN_DIR -and (Test-Path (Join-Path $env:OTA_BIN_DIR "ota.exe"))) {
-    & (Join-Path $env:OTA_BIN_DIR "ota.exe") --version
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
+    $binaryPath = Join-Path $env:OTA_BIN_DIR "ota.exe"
+    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+} elseif (Test-Path (Join-Path $HOME ".local/bin/ota.exe")) {
+    $binaryPath = Join-Path $HOME ".local/bin/ota.exe"
+    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+} elseif (Test-Path (Join-Path $HOME ".cargo/bin/ota.exe")) {
+    $binaryPath = Join-Path $HOME ".cargo/bin/ota.exe"
+    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
 } else {
     Write-OtaError "install completed but 'ota' is not on PATH yet"
     exit 1
 }
+
+if ($versionOutput.StartsWith("ota ")) {
+    $versionOutput = $versionOutput.Substring(4)
+} elseif ($versionOutput.StartsWith("🦦 ")) {
+    $versionOutput = $versionOutput.Substring(3)
+}
+
+Write-OtaReceipt "🦦 READY"
+Write-OtaReceiptLine $versionOutput
