@@ -28,8 +28,8 @@ pub mod parser;
 pub mod policy_pack;
 pub mod runner;
 pub mod schema;
-pub mod update;
 #[cfg(test)]
 pub mod test_support;
+pub mod update;
 pub mod validator;
 pub mod workspace;
