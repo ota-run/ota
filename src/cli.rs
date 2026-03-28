@@ -776,7 +776,7 @@ fn render_version_output(args: &[OsString]) -> String {
         return format!("🦦 {version}");
     }
 
-    format!("🦦 \x1b[38;5;130m{version}\x1b[0m")
+    format!("🦦 \x1b[1;38;5;208m{version}\x1b[0m")
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
