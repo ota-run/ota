@@ -197,6 +197,7 @@ Current behavior:
 - prints tasks in deterministic order
 - resolves the execution form for the current OS
 - includes task metadata when present
+- includes task `env` and `inputs` when present
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
 
@@ -204,6 +205,7 @@ Text output:
 
 - header: `TASKS <path>`
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
+- each task may include `env` and `inputs`
 - each task includes a short execution preview
 
 JSON output:
@@ -361,7 +363,7 @@ ota run <task> --member api --member web [PATH]
 ota run <task> --backend native [PATH]
 ota run <task> --backend container --lifecycle ephemeral [PATH]
 ota run <task> --backend remote [PATH]
-ota run <task> [PATH] -- [task args...]
+ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
 Current behavior:
@@ -370,7 +372,39 @@ Current behavior:
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
 - `--backend` and `--lifecycle` can override the contract for one invocation
-- trailing args after `--` are appended to the task command as shell-quoted positional args
+- task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
+- task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
+- `default` values are applied when the caller omits an input
+- `required: true` makes an input mandatory unless a default exists
+- `allowed` limits the accepted values for that input
+- task inputs only apply to the task you invoked, not its dependencies
+- if every declared input has a default, you can omit all input flags
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        default: http://localhost:8080
+      mode:
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+  version:bump:
+    inputs:
+      version:
+        required: true
+```
+
+```bash
+ota run api-automation-tests
+ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run version:bump --version 0.2.0
+```
+
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
@@ -384,7 +418,7 @@ Current behavior:
 - `kubectl`: `pod/ota-dev`
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
-- applies configured environment values
+- applies configured environment values and task input env variables
 - prints task progress and advisory notes on stderr
 - prints a summary in text output, and emits an execution receipt on stderr after task output
 - returns the child process exit code
@@ -911,7 +945,7 @@ ota workspace run <task> [PATH]
 ota workspace run <task> --json [PATH]
 ota workspace run <task> --jobs 4 [PATH]
 ota workspace run <task> --stream [PATH]
-ota workspace run <task> [PATH] -- [task args...]
+ota workspace run <task> [PATH] --base-url http://localhost:8080
 ```
 
 Current behavior:
@@ -925,7 +959,39 @@ Current behavior:
 - captures per-repo stdout/stderr in default mode
 - `--stream` opts into raw child output (text only, currently requires `--jobs 1`)
 - optional repo task failures do not fail the overall workspace status
-- trailing args after `--` are appended to each repo task command as shell-quoted positional args
+- task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
+- task inputs are exposed to each repo task process as `OTA_INPUT_<NAME>` env variables
+- `default` values are applied when the caller omits an input
+- `required: true` makes an input mandatory unless a default exists
+- `allowed` limits the accepted values for that input
+- task inputs only apply to the targeted repo task, not its dependencies
+- if every declared input has a default, you can omit all input flags
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        default: http://localhost:8080
+      mode:
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+  version:bump:
+    inputs:
+      version:
+        required: true
+```
+
+```bash
+ota workspace run api-automation-tests
+ota workspace run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota workspace run version:bump --version 0.2.0
+```
+
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
 
 Text output:

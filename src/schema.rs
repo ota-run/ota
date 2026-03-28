@@ -262,6 +262,10 @@ pub struct TaskSpec {
     #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub inputs: BTreeMap<String, TaskInputSpec>,
+    #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
@@ -303,6 +307,19 @@ impl TaskSpec {
                 })
             })
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskInputSpec {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub allowed: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

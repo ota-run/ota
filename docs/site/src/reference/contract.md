@@ -133,6 +133,36 @@ Use `checks` for explicit preconditions and health checks that should be run and
 ### `tasks`
 
 Use `tasks` for deterministic repo commands such as `setup`, `test`, `lint`, and `dev`.
+Use task `env` when a task needs fixed environment values that should override repo-level env for that task.
+Use task `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`.
+Input names use lowercase snake_case. Ota maps them to `--kebab-case` flags and injects them as `OTA_INPUT_<NAME>`.
+Defaults are optional; `required: true` makes an input mandatory unless a default exists; `allowed` limits accepted values.
+If every declared input has a default, the task can be run with no input flags.
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        default: http://localhost:8080
+      mode:
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+  version:bump:
+    inputs:
+      version:
+        required: true
+```
+
+```bash
+ota run api-automation-tests
+ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run version:bump --version 0.2.0
+```
 
 Example flow:
 

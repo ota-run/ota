@@ -86,6 +86,14 @@ Success:
       "name": "setup",
       "kind": "script",
       "script": "printf ready > prepared.txt\n",
+      "env": {
+        "JAVA_HOME": "/opt/jdk-21"
+      },
+      "inputs": {
+        "base_url": {
+          "required": true
+        }
+      },
       "depends_on": [],
       "safe_for_agent": false
     }
@@ -108,6 +116,14 @@ Root monorepo summary output can also include grouped member results:
           "name": "test",
           "kind": "run",
           "run": "cargo test",
+          "env": {
+            "BASE_URL": "http://localhost:8080"
+          },
+          "inputs": {
+            "mode": {
+              "default": "live"
+            }
+          },
           "depends_on": [],
           "safe_for_agent": false
         }

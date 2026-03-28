@@ -350,6 +350,36 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
             errors.push(ValidationError::new("task name must not be empty"));
         }
 
+        for (input_name, input) in &task.inputs {
+            if !is_task_input_name(input_name) {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` input `{input_name}` must use lowercase snake_case"
+                )));
+            }
+            if let Some(default) = input.default.as_deref()
+                && default.trim().is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` input `{input_name}` must not declare an empty `default`"
+                )));
+            }
+            for allowed in &input.allowed {
+                if allowed.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` input `{input_name}` must not declare an empty allowed value"
+                    )));
+                }
+            }
+            if let Some(default) = input.default.as_deref()
+                && !input.allowed.is_empty()
+                && !input.allowed.iter().any(|value| value == default)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` input `{input_name}` default must be one of the allowed values"
+                )));
+            }
+        }
+
         let has_base_fields = task.run.is_some() || task.script.is_some();
         match (task.run.as_deref(), task.script.as_deref()) {
             (Some(run), None) if run.trim().is_empty() => errors.push(ValidationError::new(
@@ -423,6 +453,17 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
     }
 
     detect_task_cycles(tasks, errors);
+}
+
+fn is_task_input_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<ValidationError>) {
@@ -659,6 +700,14 @@ fn validate_agent(
             errors.push(ValidationError::new(
                 "`agent.protected_paths` entries must not be empty",
             ));
+        }
+    }
+
+    for task in tasks.values() {
+        for name in task.env.keys() {
+            if name.trim().is_empty() {
+                errors.push(ValidationError::new("task env keys must not be empty"));
+            }
         }
     }
 }

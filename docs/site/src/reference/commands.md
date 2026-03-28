@@ -270,7 +270,39 @@ Use-case:
 
 ```bash
 ota run test
-ota run test ./repo -- 1.3.5
+ota run test --base-url http://localhost:8080
+ota run version:bump --version 0.2.0
+```
+
+Task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags.
+They are also exposed to the task as `OTA_INPUT_<NAME>` env variables.
+`default` values apply when omitted, `required: true` makes an input mandatory unless a default exists,
+and `allowed` limits accepted values.
+If every declared input has a default, you can omit all input flags.
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        default: http://localhost:8080
+      mode:
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+  version:bump:
+    inputs:
+      version:
+        required: true
+```
+
+```bash
+ota run api-automation-tests
+ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run version:bump --version 0.2.0
 ```
 
 Receipt:
@@ -742,7 +774,39 @@ Receipt:
 ```bash
 ota workspace run test
 ota workspace run test --json
-ota workspace run test ./workspace -- 1.3.5
+ota workspace run test --base-url http://localhost:8080
+ota workspace run version:bump --version 0.2.0
+```
+
+Task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags.
+They are also exposed to each repo task as `OTA_INPUT_<NAME>` env variables.
+`default` values apply when omitted, `required: true` makes an input mandatory unless a default exists,
+and `allowed` limits accepted values.
+If every declared input has a default, you can omit all input flags.
+
+Example:
+
+```yaml
+tasks:
+  api-automation-tests:
+    inputs:
+      base_url:
+        default: http://localhost:8080
+      mode:
+        default: standard
+        allowed:
+          - standard
+          - contract-drift
+  version:bump:
+    inputs:
+      version:
+        required: true
+```
+
+```bash
+ota workspace run api-automation-tests
+ota workspace run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota workspace run version:bump --version 0.2.0
 ```
 
 Script example:
