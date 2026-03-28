@@ -26,6 +26,7 @@
 
 Ota ships prebuilt release binaries for macOS/Linux and Windows.
 Use source install only when developing Ota from a cloned checkout.
+The installers include a branded otter banner and a compact success receipt so the install path feels intentionally Ota-native.
 
 ## macOS/Linux
 

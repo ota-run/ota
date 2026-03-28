@@ -64,6 +64,22 @@ ota_info() {
   fi
 }
 
+ota_receipt() {
+  if supports_color; then
+    printf '\033[1;38;2;214;161;95m%s\033[0m\n' "$1" >&2
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+ota_receipt_line() {
+  if supports_color; then
+    printf '\033[1;38;2;214;161;95m➤\033[0m \033[1;37m%s\033[0m\n' "$1" >&2
+  else
+    printf '➤ %s\n' "$1" >&2
+  fi
+}
+
 ota_warn() {
   if supports_color; then
     printf '\033[1;33m%s\033[0m\n' "$1" >&2
@@ -271,15 +287,22 @@ else
   fi
 fi
 
+version_output=""
+binary_path=""
+
 if command -v ota >/dev/null 2>&1; then
-  ota --version
+  binary_path="$(command -v ota)"
+  version_output="$(ota --version 2>/dev/null || true)"
 elif [ -n "${OTA_BIN_DIR:-}" ] && [ -x "${OTA_BIN_DIR}/ota" ]; then
-  "${OTA_BIN_DIR}/ota" --version
+  binary_path="${OTA_BIN_DIR}/ota"
+  version_output="$("${OTA_BIN_DIR}/ota" --version 2>/dev/null || true)"
 elif [ -x "$HOME/.local/bin/ota" ]; then
-  "$HOME/.local/bin/ota" --version
+  binary_path="$HOME/.local/bin/ota"
+  version_output="$("$HOME/.local/bin/ota" --version 2>/dev/null || true)"
   ota_warn "warning: add $HOME/.local/bin to PATH to run 'ota' directly"
 elif [ -x "$HOME/.cargo/bin/ota" ]; then
-  "$HOME/.cargo/bin/ota" --version
+  binary_path="$HOME/.cargo/bin/ota"
+  version_output="$("$HOME/.cargo/bin/ota" --version 2>/dev/null || true)"
   ota_warn "warning: add $HOME/.cargo/bin to PATH to run 'ota' directly"
 else
   ota_error "error: install completed but \`ota\` is not on PATH yet"
@@ -290,3 +313,8 @@ else
   fi
   exit 1
 fi
+
+version_text="${version_output#🦦 }"
+version_text="${version_text#ota }"
+ota_receipt "🦦 READY"
+ota_receipt_line "${version_text}"
