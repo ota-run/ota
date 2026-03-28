@@ -203,6 +203,31 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 
 ## Installation
 
+Install the latest release binary:
+
+```bash
+curl -fsSL https://ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+iwr https://ota.run/install.ps1 | iex
+```
+
+Pin a release:
+
+```bash
+OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+$env:OTA_VERSION = "v0.1.2"
+iwr https://ota.run/install.ps1 | iex
+```
+
 Install from a local checkout:
 
 ```bash
@@ -215,19 +240,7 @@ Windows PowerShell:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 ```
 
-Install from git:
-
-```bash
-./scripts/install.sh
-```
-
-Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-```
-
-See [docs/installation.md](docs/installation.md) for pinning by tag/branch/revision.
+See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and source fallback details.
 
 ## Quickstart
 
