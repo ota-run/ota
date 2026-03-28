@@ -36,3 +36,33 @@ jobs:
 
       - name: Run release gate
         run: ota run release-gate
+
+  release-tag:
+    name: Create Release Tag
+    needs: v1-release-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag
+        run: |
+          version="$(awk -F'"' '/^version = / {print $2; exit}' Cargo.toml)"
+          tag="v${version}"
+
+          git fetch --tags --force
+          if git rev-parse "${tag}" >/dev/null 2>&1; then
+            echo "tag already exists: ${tag}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "Release ${tag}"
+          git push origin "${tag}"
