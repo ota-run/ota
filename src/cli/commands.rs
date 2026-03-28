@@ -64,8 +64,8 @@ use crate::runner::{
     run_task_with_progress_and_overrides,
 };
 use crate::schema::{Contract, ExtensionSpec, Lifecycle};
-use crate::validator::{ValidationErrors, validate_contract};
 use crate::update;
+use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
     diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
@@ -1331,9 +1331,11 @@ pub fn run_command(
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
-    finalize_debug(update::self_update(version, channel), debug, vec![
-        String::from("DEBUG command=self-update"),
-    ])
+    finalize_debug(
+        update::self_update(version, channel),
+        debug,
+        vec![String::from("DEBUG command=self-update")],
+    )
 }
 
 pub fn doctor(

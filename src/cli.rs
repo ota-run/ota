@@ -596,7 +596,9 @@ fn run_cli(cli: Cli) -> CommandOutput {
     let update_notice_rx = should_show_update_notice(&cli).then(|| {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
-            let _ = tx.send(crate::update::maybe_update_notice(env!("CARGO_PKG_VERSION")));
+            let _ = tx.send(crate::update::maybe_update_notice(env!(
+                "CARGO_PKG_VERSION"
+            )));
         });
         rx
     });
@@ -1388,9 +1390,9 @@ mod tests {
     #[cfg(unix)]
     use std::hash::{Hash, Hasher};
     use std::path::PathBuf;
-    use std::sync::mpsc;
     #[cfg(unix)]
     use std::process::Command;
+    use std::sync::mpsc;
     #[cfg(unix)]
     use std::time::{Duration, Instant};
 
@@ -4225,7 +4227,8 @@ tasks:
         )))
         .unwrap();
 
-        let output = maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
+        let output =
+            maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
 
         assert_eq!(output.stdout, "ok");
         assert_eq!(

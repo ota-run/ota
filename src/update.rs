@@ -22,8 +22,8 @@
 
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -31,10 +31,15 @@ use serde_json::Value as JsonValue;
 
 use crate::output::CommandOutput;
 
-const DEFAULT_RELEASES_LATEST_URL: &str = "https://api.github.com/repos/ota-run/ota/releases/latest";
+const DEFAULT_RELEASES_LATEST_URL: &str =
+    "https://api.github.com/repos/ota-run/ota/releases/latest";
 
 fn normalize_version(value: &str) -> String {
-    value.trim().trim_start_matches('v').trim_start_matches('V').to_string()
+    value
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .to_string()
 }
 
 fn latest_release_url() -> String {
@@ -57,7 +62,12 @@ fn temp_script_path() -> PathBuf {
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
     let ext = if cfg!(windows) { "ps1" } else { "sh" };
-    env::temp_dir().join(format!("ota-self-update-{}-{}.{}", std::process::id(), stamp, ext))
+    env::temp_dir().join(format!(
+        "ota-self-update-{}-{}.{}",
+        std::process::id(),
+        stamp,
+        ext
+    ))
 }
 
 fn command_output_to_string(output: std::process::Output) -> CommandOutput {
@@ -65,7 +75,11 @@ fn command_output_to_string(output: std::process::Output) -> CommandOutput {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     CommandOutput {
         stdout,
-        stderr: if stderr.is_empty() { None } else { Some(stderr) },
+        stderr: if stderr.is_empty() {
+            None
+        } else {
+            Some(stderr)
+        },
         exit_code: output.status.code().unwrap_or(1),
     }
 }
@@ -79,7 +93,11 @@ fn run_command(mut command: Command) -> CommandOutput {
 
 fn download_installer(url: &str, path: &Path) -> CommandOutput {
     if cfg!(windows) {
-        let script = format!("Invoke-WebRequest -Uri '{}' -OutFile '{}'", url, path.display());
+        let script = format!(
+            "Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+            url,
+            path.display()
+        );
         let mut pwsh = Command::new("pwsh");
         pwsh.args([
             "-NoLogo",
@@ -135,7 +153,11 @@ fn download_installer(url: &str, path: &Path) -> CommandOutput {
     }
 }
 
-fn execute_installer(path: &Path, version: Option<&str>, release_base: Option<&str>) -> CommandOutput {
+fn execute_installer(
+    path: &Path,
+    version: Option<&str>,
+    release_base: Option<&str>,
+) -> CommandOutput {
     if cfg!(windows) {
         let mut pwsh = Command::new("pwsh");
         if let Some(version) = version {
@@ -144,17 +166,16 @@ fn execute_installer(path: &Path, version: Option<&str>, release_base: Option<&s
         if let Some(release_base) = release_base {
             pwsh.env("OTA_RELEASE_BASE", release_base);
         }
-        pwsh
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-            ])
-            .arg(path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        pwsh.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
         match pwsh.output() {
             Ok(output) => command_output_to_string(output),
             Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -312,8 +333,8 @@ mod tests {
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
 
-    use super::normalize_version;
     use super::maybe_update_notice;
+    use super::normalize_version;
 
     #[test]
     fn normalizes_version_prefixes() {

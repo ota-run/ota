@@ -339,10 +339,10 @@ agent:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("TASKS"));
-    assert!(stdout.contains("AGENT"));
-    assert!(stdout.contains("entrypoint=setup"));
-    assert!(stdout.contains("safe_tasks=setup"));
-    assert!(stdout.contains("writable_paths=src"));
+    assert!(stdout.contains("AGENT:"));
+    assert!(stdout.contains("  entrypoint: setup"));
+    assert!(stdout.contains("  safe_tasks: setup"));
+    assert!(stdout.contains("  writable_paths: src"));
 }
 
 #[test]
@@ -377,9 +377,9 @@ agent:
         "stderr was: {}",
         String::from_utf8_lossy(&text_output.stderr)
     );
-    assert!(stdout.contains("AGENT"));
-    assert!(stdout.contains("entrypoint=setup"));
-    assert!(stdout.contains("safe_tasks=setup"));
+    assert!(stdout.contains("AGENT:"));
+    assert!(stdout.contains("  entrypoint: setup"));
+    assert!(stdout.contains("  safe_tasks: setup"));
 
     let json_output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
     let json = stdout_json(&json_output);
