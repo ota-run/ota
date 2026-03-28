@@ -24,9 +24,22 @@
 
 # Ota Installation
 
-Ota currently installs through Cargo.
+Ota ships prebuilt release binaries for macOS/Linux and Windows.
+Use source install only when developing Ota from a cloned checkout.
 
-## macOS/Linux (shell)
+## macOS/Linux
+
+Install the latest release binary:
+
+```bash
+curl -fsSL https://ota.run/install.sh | sh
+```
+
+Pin a release:
+
+```bash
+OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+```
 
 From a cloned Ota repository:
 
@@ -34,32 +47,22 @@ From a cloned Ota repository:
 ./scripts/install.sh --from-source
 ```
 
-This installs `ota` with:
-
-```bash
-cargo install --path . --locked --force
-```
-
-## Git install (without cloning first)
-
-```bash
-./scripts/install.sh
-```
-
-Defaults:
-
-- `OTA_GIT_URL=https://github.com/ota-run/ota.git`
-- latest git default branch
-
-Optional pinning:
-
-- `OTA_GIT_TAG=v0.1.0`
-- `OTA_GIT_BRANCH=main`
-- `OTA_GIT_REV=<commit-sha>`
-
-Set at most one of `OTA_GIT_TAG`, `OTA_GIT_BRANCH`, `OTA_GIT_REV`.
+The shell installer also supports `OTA_RELEASE_BASE` if you host the release assets on a mirror or CDN.
 
 ## Windows (PowerShell)
+
+Install the latest release binary:
+
+```powershell
+iwr https://ota.run/install.ps1 | iex
+```
+
+Pin a release:
+
+```powershell
+$env:OTA_VERSION = "v0.1.2"
+iwr https://ota.run/install.ps1 | iex
+```
 
 From a cloned Ota repository:
 
@@ -67,18 +70,7 @@ From a cloned Ota repository:
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 ```
 
-Git install:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
-```
-
-Optional pinning uses the same env vars:
-
-- `OTA_GIT_URL`
-- `OTA_GIT_TAG`
-- `OTA_GIT_BRANCH`
-- `OTA_GIT_REV`
+The PowerShell installer also supports `OTA_RELEASE_BASE` for a mirror or CDN.
 
 ## Verify
 

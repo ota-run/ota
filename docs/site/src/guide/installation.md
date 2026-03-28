@@ -24,14 +24,39 @@
 
 # Installation
 
-Prerequisite:
+Ota ships prebuilt release binaries for macOS/Linux and Windows.
+Use source install only when developing Ota from a cloned checkout.
 
-- Rust toolchain with `cargo` on `PATH`
+Latest release:
 
-Choose the path based on your use-case:
+macOS/Linux:
 
-- local development from a cloned repo: install from source
-- quick bootstrap without cloning first: install from git
+```bash
+curl -fsSL https://ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+iwr https://ota.run/install.ps1 | iex
+```
+
+Pinned release:
+
+macOS/Linux:
+
+```bash
+OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+$env:OTA_VERSION = "v0.1.2"
+iwr https://ota.run/install.ps1 | iex
+```
+
+Source install from a cloned repo:
 
 macOS/Linux:
 
@@ -43,16 +68,6 @@ Windows PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
-```
-
-Git install:
-
-```bash
-./scripts/install.sh
-```
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```
 
 Verify installation:
@@ -88,4 +103,6 @@ When:
 
 Why:
 
-- installs from git with optional pinning (`OTA_GIT_TAG`, `OTA_GIT_REV`)
+- installs the release binary directly
+- optional pinning via `OTA_VERSION`
+- optional mirror/CDN override via `OTA_RELEASE_BASE`
