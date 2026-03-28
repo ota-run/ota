@@ -29,8 +29,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Write-OtaHeader {
-    Write-Host "🦦 INSTALL" -ForegroundColor Cyan
-    Write-Host "◉ doctor first, contract second" -ForegroundColor White
+    Write-Host "                █████" -ForegroundColor DarkYellow
+    Write-Host "               ░░███" -ForegroundColor DarkYellow
+    Write-Host "       ██████  ███████    ██████" -ForegroundColor DarkYellow
+    Write-Host "      ███░░███░░░███░    ░░░░░███" -ForegroundColor DarkYellow
+    Write-Host "     ░███ ░███  ░███      ███████" -ForegroundColor DarkYellow
+    Write-Host "     ░███ ░███  ░███ ███ ███░░███" -ForegroundColor DarkYellow
+    Write-Host "     ░░██████   ░░█████ ░░████████" -ForegroundColor DarkYellow
+    Write-Host "      ░░░░░░     ░░░░░   ░░░░░░░░" -ForegroundColor DarkYellow
+    Write-Host ""
+    Write-Host "     DOCTOR FIRST, CONTRACT SECOND" -ForegroundColor DarkYellow
+    Write-Host ""
 }
 
 function Write-OtaInfo {
