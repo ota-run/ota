@@ -647,6 +647,7 @@ fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
 struct CommandSpinner {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    clear_on_stop: bool,
 }
 
 impl CommandSpinner {
@@ -654,21 +655,22 @@ impl CommandSpinner {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_stop = std::sync::Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            let frames = ["◐", "◓", "◑", "◒"];
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut index = 0usize;
             let mut stderr = io::stderr();
             while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
                 let frame = frames[index % frames.len()];
-                let _ = write!(stderr, "\r🦦  {frame}");
+                let _ = write!(stderr, "\r🦦 {frame}");
                 let _ = stderr.flush();
                 index += 1;
-                thread::sleep(Duration::from_millis(90));
+                thread::sleep(Duration::from_millis(160));
             }
         });
 
         Self {
             stop,
             handle: Some(handle),
+            clear_on_stop: false,
         }
     }
 
@@ -677,7 +679,7 @@ impl CommandSpinner {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        if io::stderr().is_terminal() {
+        if self.clear_on_stop && io::stderr().is_terminal() {
             let mut stderr = io::stderr();
             let _ = write!(stderr, "\r\x1b[2K\r");
             let _ = stderr.flush();

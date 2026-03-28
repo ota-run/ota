@@ -752,15 +752,15 @@ impl CheckSpinner {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let handle = thread::spawn(move || {
-            let frames = ["◐", "◓", "◑", "◒"];
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let mut index = 0usize;
             let mut stderr = io::stderr();
             while !thread_stop.load(Ordering::Relaxed) {
                 let frame = frames[index % frames.len()];
-                let _ = write!(stderr, "\r🦦  {frame}");
+                let _ = write!(stderr, "\r🦦 {frame}");
                 let _ = stderr.flush();
                 index += 1;
-                thread::sleep(Duration::from_millis(90));
+                thread::sleep(Duration::from_millis(160));
             }
         });
 
