@@ -68,6 +68,7 @@ Ota currently ships these commands:
 - `ota init`
 - `ota check`
 - `ota up`
+- `ota self-update` / `ota upgrade`
 - `ota diff`
 - `ota detect`
 - `ota workspace init`
@@ -116,6 +117,7 @@ Current progress behavior:
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
+- successful interactive commands may print a best-effort update notice when a newer release exists, and the notice points to `ota self-update` or `ota upgrade`
 
 Hosted validation guidance:
 
@@ -597,6 +599,34 @@ Current behavior:
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
+
+## `ota self-update`
+
+Update the installed Ota binary.
+
+```bash
+ota self-update
+ota self-update --version v0.1.3
+ota self-update --channel stable
+ota upgrade
+ota upgrade --version v0.1.3
+ota upgrade --channel stable
+```
+
+Current behavior:
+
+- `ota self-update` and `ota upgrade` are aliases
+- `--version` pins a specific release
+- `--channel` currently accepts `stable` and `latest`
+- on success, the command runs the installer for the chosen release target
+
+Use this when:
+
+- you already have Ota installed and want to update it in place
+
+Use-case:
+
+- a developer sees the update notice after `ota doctor` and runs `ota self-update`
 
 JSON output:
 

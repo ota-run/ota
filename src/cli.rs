@@ -35,6 +35,7 @@ use crate::runner::ExecutionOverrides;
 mod commands;
 
 #[derive(Debug, Parser)]
+#[command(disable_version_flag = true)]
 #[command(name = "ota")]
 #[command(
     about = "Open repo readiness CLI",
@@ -226,6 +227,16 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Update the installed Ota binary.
+    #[command(alias = "upgrade")]
+    SelfUpdate {
+        /// Pin the update to a specific release version.
+        #[arg(long)]
+        version: Option<String>,
+        /// Select the update channel.
+        #[arg(long, value_enum)]
+        channel: Option<UpdateChannel>,
+    },
     /// Infer a starting contract from repo state.
     Detect {
         /// Print machine-readable JSON output.
@@ -293,6 +304,21 @@ impl From<RunBackend> for crate::schema::Backend {
 enum RunLifecycle {
     Persistent,
     Ephemeral,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UpdateChannel {
+    Stable,
+    Latest,
+}
+
+impl UpdateChannel {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Latest => "latest",
+        }
+    }
 }
 
 impl From<RunLifecycle> for crate::schema::Lifecycle {
@@ -539,7 +565,7 @@ where
 {
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     if is_version_request(&args) {
-        return CommandOutput::success(format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
+        return CommandOutput::success(render_version_output(&args));
     }
 
     match Cli::try_parse_from(args.clone()) {
@@ -567,15 +593,23 @@ where
 }
 
 fn run_cli(cli: Cli) -> CommandOutput {
+    let update_notice_rx = should_show_update_notice(&cli).then(|| {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(crate::update::maybe_update_notice(env!("CARGO_PKG_VERSION")));
+        });
+        rx
+    });
+
     if should_show_command_spinner(&cli) {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let _ = tx.send(dispatch(cli));
         });
-        return wait_with_spinner(rx);
+        return maybe_append_update_notice(wait_with_spinner(rx), update_notice_rx);
     }
 
-    dispatch(cli)
+    maybe_append_update_notice(dispatch(cli), update_notice_rx)
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
@@ -590,6 +624,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
             | Commands::Extensions { .. }
             | Commands::Init { .. }
             | Commands::Detect { .. }
+            | Commands::SelfUpdate { .. }
             | Commands::Workspace {
                 command: WorkspaceCommands::Validate { .. }
                     | WorkspaceCommands::Tasks { .. }
@@ -618,6 +653,31 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
         && !cli.debug
         && spinner_eligible
         && (!command_requests_json(&cli.command) || json_spinner_exception)
+}
+
+fn should_show_update_notice(cli: &Cli) -> bool {
+    io::stderr().is_terminal()
+        && !cli.debug
+        && !command_requests_json(&cli.command)
+        && !matches!(&cli.command, Commands::SelfUpdate { .. })
+}
+
+fn maybe_append_update_notice(
+    output: CommandOutput,
+    update_notice_rx: Option<mpsc::Receiver<Option<String>>>,
+) -> CommandOutput {
+    if output.exit_code != 0 {
+        return output;
+    }
+
+    let Some(rx) = update_notice_rx else {
+        return output;
+    };
+
+    match rx.recv_timeout(Duration::from_millis(50)) {
+        Ok(Some(notice)) => output.with_stderr(Some(notice)),
+        _ => output,
+    }
 }
 
 fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
@@ -703,6 +763,20 @@ fn is_version_request(args: &[OsString]) -> bool {
     }
 
     has_version
+}
+
+fn render_version_output(args: &[OsString]) -> String {
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    if args
+        .iter()
+        .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
+        || !io::stdout().is_terminal()
+        || std::env::var_os("NO_COLOR").is_some()
+    {
+        return format!("🦦 {version}");
+    }
+
+    format!("🦦 \x1b[1m{version}\x1b[0m")
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
@@ -837,6 +911,11 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Clean { member, path } => {
             commands::clean(path.as_deref(), file.as_deref(), &member, debug)
         }
+        Commands::SelfUpdate { version, channel } => commands::self_update(
+            version.as_deref(),
+            channel.as_ref().map(UpdateChannel::as_str),
+            debug,
+        ),
         Commands::Init {
             write: _write,
             bootstrap,
@@ -1169,6 +1248,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Check { .. } => "run `ota check` to review readiness",
         Commands::Up { .. } => "run `ota doctor` to review readiness before `ota up`",
         Commands::Clean { .. } => "ota clean --help",
+        Commands::SelfUpdate { .. } => "run `ota self-update --help` to inspect update options",
         Commands::Detect { .. } => {
             if stderr.contains("failed to parse contract")
                 || stderr.contains("failed to parse existing contract")
@@ -1267,7 +1347,7 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Up { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
         },
-        Commands::Run { .. } | Commands::Clean { .. } => false,
+        Commands::Run { .. } | Commands::Clean { .. } | Commands::SelfUpdate { .. } => false,
     }
 }
 
@@ -1285,6 +1365,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
+        Commands::SelfUpdate { .. } => "ota self-update",
         Commands::Detect { .. } => "ota detect",
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { .. } => "ota workspace init",
@@ -1307,6 +1388,7 @@ mod tests {
     #[cfg(unix)]
     use std::hash::{Hash, Hasher};
     use std::path::PathBuf;
+    use std::sync::mpsc;
     #[cfg(unix)]
     use std::process::Command;
     #[cfg(unix)]
@@ -1319,7 +1401,8 @@ mod tests {
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
 
-    use super::{collapse_blank_lines, commands, run_with};
+    use super::{collapse_blank_lines, commands, maybe_append_update_notice, run_with};
+    use crate::output::CommandOutput;
 
     struct CurrentDirGuard {
         previous: PathBuf,
@@ -1598,26 +1681,24 @@ exec /bin/sh -lc "$1"
     }
 
     fn compact_path(path: &std::path::Path, fallback: &str) -> String {
-        let tail = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(fallback);
-        match path
-            .parent()
-            .and_then(|parent| parent.file_name())
-            .and_then(|name| name.to_str())
-        {
-            Some(parent) => format!("./{parent}/{tail}"),
-            None => tail.to_string(),
-        }
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string()
     }
 
     fn compact_contract(path: &std::path::Path) -> String {
-        compact_path(path, "ota.yaml")
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string()
     }
 
     fn compact_workspace(path: &std::path::Path) -> String {
-        compact_path(path, "ota.workspace.yaml")
+        std::fs::canonicalize(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .display()
+            .to_string()
     }
 
     fn strip_ansi(value: &str) -> String {
@@ -4134,6 +4215,36 @@ tasks:
         let input = "a\n\n\nb\n\n\n\nc\n";
         let output = collapse_blank_lines(input.to_string());
         assert_eq!(output, "a\nb\nc");
+    }
+
+    #[test]
+    fn appends_update_notice_to_successful_output() {
+        let (tx, rx) = mpsc::channel();
+        tx.send(Some(String::from(
+            "A newer Ota release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.",
+        )))
+        .unwrap();
+
+        let output = maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
+
+        assert_eq!(output.stdout, "ok");
+        assert_eq!(
+            output.stderr,
+            Some(String::from(
+                "A newer Ota release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update."
+            ))
+        );
+    }
+
+    #[test]
+    fn version_output_respects_plain_flag() {
+        let output = super::render_version_output(&[
+            std::ffi::OsString::from("ota"),
+            std::ffi::OsString::from("--version"),
+            std::ffi::OsString::from("--plain"),
+        ]);
+
+        assert_eq!(output, format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
