@@ -110,14 +110,12 @@ tasks:
           - plain
           - github
     script: |
-      ota doctor --json . > doctor.json || true
-      sh scripts/emit-ota-findings.sh --mode doctor --format "${OTA_INPUT_RENDER_FORMAT}" --input doctor.json
+      ota doctor --json . | ota annotations --mode doctor --format "${OTA_INPUT_RENDER_FORMAT}" --input -
     variants:
       - when:
           os: windows
         script: |
-          ota doctor --json . > doctor.json
-          powershell -ExecutionPolicy Bypass -File .\scripts\emit-ota-findings.ps1 -Mode doctor -Format $env:OTA_INPUT_RENDER_FORMAT -Input doctor.json
+          ota doctor --json . | ota annotations --mode doctor --format $env:OTA_INPUT_RENDER_FORMAT --input -
     depends_on:
       - setup
     safe_for_agent: true

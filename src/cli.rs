@@ -146,6 +146,21 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Render Ota JSON findings as CI annotations or log lines.
+    Annotations {
+        /// Source JSON mode to render.
+        #[arg(long, value_enum)]
+        mode: AnnotationMode,
+        /// Output format for rendered findings.
+        #[arg(long, value_enum, default_value = "plain")]
+        format: AnnotationFormat,
+        /// Optional custom heading prefix.
+        #[arg(long)]
+        title: Option<String>,
+        /// Path to a JSON file, or `-` to read from stdin.
+        #[arg(long, value_name = "FILE")]
+        input: PathBuf,
+    },
     /// Explain readiness findings as an ordered remediation plan.
     Explain {
         /// Print machine-readable JSON output.
@@ -313,6 +328,18 @@ enum RunLifecycle {
 enum UpdateChannel {
     Stable,
     Latest,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AnnotationMode {
+    Doctor,
+    WorkspaceDoctor,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AnnotationFormat {
+    Plain,
+    Github,
 }
 
 impl UpdateChannel {
@@ -779,7 +806,10 @@ fn should_show_update_notice(cli: &Cli) -> bool {
     io::stderr().is_terminal()
         && !cli.debug
         && !command_requests_json(&cli.command)
-        && !matches!(&cli.command, Commands::SelfUpdate { .. })
+        && !matches!(
+            &cli.command,
+            Commands::SelfUpdate { .. } | Commands::Annotations { .. }
+        )
 }
 
 fn maybe_append_update_notice(
@@ -974,6 +1004,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Annotations {
+            mode,
+            format,
+            title,
+            input,
+        } => commands::annotations(mode, format, title.as_deref(), input.as_path()),
         Commands::Explain { json, member, path } => commands::explain(
             path.as_deref(),
             file.as_deref(),
@@ -1356,6 +1392,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Explain { .. } => {
             "run `ota doctor` to inspect readiness findings before `ota explain`"
         }
+        Commands::Annotations { .. } => "run `ota annotations --help` to inspect rendering options",
         Commands::Diff { .. } => "compare two contract states with `ota diff <base> <target>`",
         Commands::Extensions { run, .. } => {
             if run.is_some() {
@@ -1467,7 +1504,10 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Up { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
         },
-        Commands::Run { .. } | Commands::Clean { .. } | Commands::SelfUpdate { .. } => false,
+        Commands::Run { .. }
+        | Commands::Clean { .. }
+        | Commands::SelfUpdate { .. }
+        | Commands::Annotations { .. } => false,
     }
 }
 
@@ -1478,6 +1518,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Services { .. } => "ota services",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
+        Commands::Annotations { .. } => "ota annotations",
         Commands::Explain { .. } => "ota explain",
         Commands::Extensions { .. } => "ota extensions",
         Commands::Init { .. } => "ota init",
@@ -4769,6 +4810,152 @@ tasks:
         assert!(stdout.contains("start `ota run start`"));
         assert!(stdout.contains("typecheck `ota run typecheck`"));
         assert!(!stdout.contains("Command Preview:"));
+    }
+
+    #[test]
+    fn annotations_renders_doctor_findings_into_github_annotations() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("doctor.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/ota.yaml",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0,
+    "primary_blocker": {
+      "severity": "error",
+      "summary": "Missing execution backend CLI: docker",
+      "why": "Required because execution.preferred=container",
+      "next": "install docker"
+    }
+  },
+  "findings": [
+    {
+      "severity": "error",
+      "summary": "Missing execution backend CLI: docker",
+      "why": "Required because execution.preferred=container",
+      "next": "install docker"
+    },
+    {
+      "severity": "warn",
+      "summary": "Lifecycle is advisory only",
+      "why": "This repo still runs tasks natively when lifecycle is ephemeral",
+      "next": "review execution.lifecycle"
+    }
+  ]
+}
+"#,
+        )
+        .expect("write doctor json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "doctor",
+            "--format",
+            "github",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(
+            "::notice title=ota doctor primary blocker::Missing execution backend CLI: docker | install docker"
+        ));
+        assert!(stdout.contains(
+            "::error title=ota doctor finding::Missing execution backend CLI: docker | install docker"
+        ));
+        assert!(stdout.contains(
+            "::warning title=ota doctor finding::Lifecycle is advisory only | review execution.lifecycle"
+        ));
+    }
+
+    #[test]
+    fn annotations_renders_workspace_doctor_findings_into_plain_lines() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("workspace-doctor.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0,
+    "primary_blocker": {
+      "repo": "api",
+      "severity": "error",
+      "summary": "Missing execution backend CLI: docker",
+      "why": "Required because execution.preferred=container",
+      "next": "install docker"
+    }
+  },
+  "repos": [
+    {
+      "name": "api",
+      "path": "./api",
+      "contract_path": "./api/ota.yaml",
+      "required": true,
+      "ok": false,
+      "summary": {
+        "error_count": 1,
+        "warn_count": 1,
+        "info_count": 0
+      },
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Missing execution backend CLI: docker",
+          "why": "Required because execution.preferred=container",
+          "next": "install docker"
+        },
+        {
+          "severity": "warn",
+          "summary": "Lifecycle is advisory only",
+          "why": "This repo still runs tasks natively when lifecycle is ephemeral",
+          "next": "review execution.lifecycle"
+        }
+      ]
+    }
+  ]
+}
+"#,
+        )
+        .expect("write workspace doctor json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "workspace-doctor",
+            "--format",
+            "plain",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(
+            "NOTICE: ota workspace doctor primary blocker [api]: Missing execution backend CLI: docker | install docker"
+        ));
+        assert!(stdout.contains(
+            "ERROR: ota workspace doctor finding [api]: ./api: Missing execution backend CLI: docker | install docker"
+        ));
+        assert!(stdout.contains(
+            "WARNING: ota workspace doctor finding [api]: ./api: Lifecycle is advisory only | review execution.lifecycle"
+        ));
     }
 
     #[test]

@@ -241,14 +241,13 @@ editor integrations.
 
 Portable adapter:
 
-[`scripts/emit-ota-findings.sh`](../../scripts/emit-ota-findings.sh) turns Ota JSON into either
-plain CI log lines or GitHub Actions annotations on POSIX shells. Windows users can call
-[`scripts/emit-ota-findings.ps1`](../../scripts/emit-ota-findings.ps1) for the same behavior in
-PowerShell. Use `--format plain` when you want a provider-neutral output stream, or
-`--format github` when the CI platform understands annotation syntax.
+`ota annotations` is the canonical JSON-to-CI adapter. It turns Ota JSON into either plain CI log
+lines or GitHub Actions annotations. Use `--format plain` when you want a provider-neutral output
+stream, or `--format github` when the CI platform understands annotation syntax.
 
-For repo-local usage, the canonical entrypoint is `ota run doctor-annotations` with the
-`--render-format` input set to `plain` or `github`.
+For repo-local usage, the canonical entrypoint is `ota run doctor-annotations`, which now shells
+out to `ota annotations` under the hood with the `--render-format` input set to `plain` or
+`github`.
 
 Example shell adapter for GitHub Actions:
 
@@ -256,11 +255,9 @@ Example shell adapter for GitHub Actions:
 #!/usr/bin/env bash
 set -euo pipefail
 
-ota doctor --json > .ota-doctor.json
-scripts/emit-ota-findings.sh --mode doctor --format github --input .ota-doctor.json
+ota doctor --json | ota annotations --mode doctor --format github --input -
 
-ota workspace doctor --json > .ota-workspace-doctor.json
-scripts/emit-ota-findings.sh --mode workspace-doctor --format github --input .ota-workspace-doctor.json
+ota workspace doctor --json | ota annotations --mode workspace-doctor --format github --input -
 ```
 ## Editor and hosted validation overlap
 
