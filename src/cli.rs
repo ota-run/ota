@@ -129,7 +129,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
         /// Task input flags such as `--base-url http://...`.
-        #[arg(allow_hyphen_values = true)]
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
         inputs: Vec<String>,
     },
     /// Diagnose repo readiness from an Ota contract.
@@ -539,7 +539,7 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
         /// Task input flags such as `--base-url http://...`.
-        #[arg(allow_hyphen_values = true)]
+        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
         inputs: Vec<String>,
     },
 }
@@ -568,6 +568,8 @@ where
         return CommandOutput::success(render_version_output(&args));
     }
 
+    let args = rewrite_task_input_path_hint(args);
+
     match Cli::try_parse_from(args.clone()) {
         Ok(cli) => run_cli(cli),
         Err(error) => {
@@ -590,6 +592,43 @@ where
             CommandOutput::failure_with_code(stderr, 2)
         }
     }
+}
+
+fn rewrite_task_input_path_hint(args: Vec<OsString>) -> Vec<OsString> {
+    let mut rewritten = args;
+    let mut index = 1;
+
+    while index + 2 < rewritten.len() {
+        let current = rewritten[index].to_string_lossy();
+        if current.as_ref() == "run" {
+            if rewritten[index + 2]
+                .to_string_lossy()
+                .as_ref()
+                .starts_with('-')
+            {
+                rewritten.insert(index + 2, OsString::from("."));
+            }
+            break;
+        }
+
+        if current.as_ref() == "workspace"
+            && index + 3 < rewritten.len()
+            && rewritten[index + 1].to_string_lossy().as_ref() == "run"
+        {
+            if rewritten[index + 3]
+                .to_string_lossy()
+                .as_ref()
+                .starts_with('-')
+            {
+                rewritten.insert(index + 3, OsString::from("."));
+            }
+            break;
+        }
+
+        index += 1;
+    }
+
+    rewritten
 }
 
 fn run_cli(cli: Cli) -> CommandOutput {
@@ -5770,6 +5809,42 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "http://localhost:8080"
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "setup", "--base-url", "http://localhost:8080"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn run_executes_task_inputs_without_explicit_path() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bump-version:
+    inputs:
+      version:
+        required: true
+    script: |
+      printf '%s' "$OTA_INPUT_VERSION" > version.txt
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "bump-version", "--version", "0.1.3"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("version.txt")).unwrap(),
+            "0.1.3"
         );
     }
 
