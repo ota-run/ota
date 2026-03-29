@@ -42,7 +42,7 @@ These must stay green:
 
 These commands are now bound into CI via:
 
-- `.github/workflows/v1-release-gate.yml`
+- `.github/workflows/release-gate.yml`
 
 ## Binding real-fixture matrix
 

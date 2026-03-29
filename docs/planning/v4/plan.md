@@ -91,7 +91,7 @@ Completed:
 - slice 2 baseline: monorepo member-targeting compatibility tests added for JSON shape, text/status rendering, and exit-code behavior
 - slice 5 sync: compatibility inventory now includes a documented fast gate (`cargo test contract_is_stable`) plus schema/fixture companion gates
 - slice 5 sync: scripted compatibility gate added at `scripts/test-compat.sh` and referenced in contributor guidance
-- slice 5 sync: release gate CI now runs the compatibility script explicitly (`.github/workflows/v1-release-gate.yml`)
+- slice 5 sync: release gate CI now runs the compatibility script explicitly (`.github/workflows/release-gate.yml`)
 - workspace JSON contract-stability tests validated against the new baseline
 - `ota up --json` validation/load failure paths aligned to return JSON errors consistently
 - slice 3 guardrails started: extension execution boundary documented in `docs/spec/extension-execution-boundary.md`
