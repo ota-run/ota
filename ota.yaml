@@ -78,7 +78,7 @@ tasks:
     script: |
       cargo fmt --check
       cargo check
-      cargo test
+      cargo test -- --test-threads=1
     depends_on:
       - setup
     safe_for_agent: true
