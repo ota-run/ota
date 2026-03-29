@@ -23,7 +23,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -35,6 +35,7 @@ use serde_yaml::{Mapping, Value as YamlValue};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
+use super::{AnnotationFormat, AnnotationMode};
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, Finding, FindingSeverity, command_available, command_version,
@@ -6946,6 +6947,222 @@ fn render_tasks_output_text(
     } else {
         render_tasks_text(path, agent, tasks)
     }
+}
+
+pub fn annotations(
+    mode: AnnotationMode,
+    format: AnnotationFormat,
+    title: Option<&str>,
+    input: &Path,
+) -> CommandOutput {
+    let input = match read_annotations_input(input) {
+        Ok(input) => input,
+        Err(error) => return CommandOutput::failure(error),
+    };
+    let report: JsonValue = match serde_json::from_str(&input) {
+        Ok(report) => report,
+        Err(error) => return CommandOutput::failure(format!("invalid JSON input: {error}")),
+    };
+
+    let title = title.unwrap_or(match mode {
+        AnnotationMode::Doctor => "ota doctor",
+        AnnotationMode::WorkspaceDoctor => "ota workspace doctor",
+    });
+
+    let mut lines = Vec::new();
+
+    match mode {
+        AnnotationMode::Doctor => {
+            if let Some(primary_blocker) = report
+                .get("summary")
+                .and_then(|summary| summary.get("primary_blocker"))
+                .and_then(|value| value.as_object())
+            {
+                let summary = primary_blocker
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let next = primary_blocker
+                    .get("next")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                lines.push(render_annotation_primary_blocker(
+                    format,
+                    &format!("{title} primary blocker"),
+                    summary,
+                    next,
+                ));
+            }
+
+            if let Some(findings) = report.get("findings").and_then(|value| value.as_array()) {
+                for finding in findings {
+                    let Some(finding) = finding.as_object() else {
+                        continue;
+                    };
+                    let severity = finding
+                        .get("severity")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("warn");
+                    let summary = finding
+                        .get("summary")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    let next = finding
+                        .get("next")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    lines.push(render_annotation_finding(
+                        format,
+                        severity,
+                        &format!("{title} finding"),
+                        summary,
+                        next,
+                    ));
+                }
+            }
+        }
+        AnnotationMode::WorkspaceDoctor => {
+            if let Some(primary_blocker) = report
+                .get("summary")
+                .and_then(|summary| summary.get("primary_blocker"))
+                .and_then(|value| value.as_object())
+            {
+                let repo = primary_blocker
+                    .get("repo")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let summary = primary_blocker
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let next = primary_blocker
+                    .get("next")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                lines.push(render_annotation_primary_blocker(
+                    format,
+                    &format!("{title} primary blocker [{repo}]"),
+                    summary,
+                    next,
+                ));
+            }
+
+            if let Some(repos) = report.get("repos").and_then(|value| value.as_array()) {
+                for repo in repos {
+                    let Some(repo) = repo.as_object() else {
+                        continue;
+                    };
+                    let name = repo
+                        .get("name")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    let path = repo
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    if let Some(findings) = repo.get("findings").and_then(|value| value.as_array())
+                    {
+                        for finding in findings {
+                            let Some(finding) = finding.as_object() else {
+                                continue;
+                            };
+                            let severity = finding
+                                .get("severity")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("warn");
+                            let summary = finding
+                                .get("summary")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("");
+                            let next = finding
+                                .get("next")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("");
+                            lines.push(render_annotation_finding(
+                                format,
+                                severity,
+                                &format!("{title} finding [{name}]"),
+                                &format!("{path}: {summary}"),
+                                next,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    CommandOutput::success(lines.join("\n"))
+}
+
+fn read_annotations_input(input: &Path) -> Result<String, String> {
+    if input == Path::new("-") {
+        let mut content = String::new();
+        io::stdin()
+            .read_to_string(&mut content)
+            .map_err(|error| format!("failed to read stdin: {error}"))?;
+        return Ok(content);
+    }
+
+    fs::read_to_string(input)
+        .map_err(|error| format!("failed to read {}: {error}", input.display()))
+}
+
+fn render_annotation_finding(
+    format: AnnotationFormat,
+    severity: &str,
+    heading: &str,
+    body: &str,
+    next: &str,
+) -> String {
+    match format {
+        AnnotationFormat::Github => {
+            let severity = if severity == "error" {
+                "error"
+            } else {
+                "warning"
+            };
+            format!(
+                "::{} title={}::{} | {}",
+                severity,
+                escape_github_value(heading),
+                escape_github_value(body),
+                escape_github_value(next)
+            )
+        }
+        AnnotationFormat::Plain => {
+            let severity = if severity == "error" {
+                "ERROR"
+            } else {
+                "WARNING"
+            };
+            format!("{severity}: {heading}: {body} | {next}")
+        }
+    }
+}
+
+fn render_annotation_primary_blocker(
+    format: AnnotationFormat,
+    heading: &str,
+    body: &str,
+    next: &str,
+) -> String {
+    match format {
+        AnnotationFormat::Github => format!(
+            "::notice title={}::{} | {}",
+            escape_github_value(heading),
+            escape_github_value(body),
+            escape_github_value(next)
+        ),
+        AnnotationFormat::Plain => format!("NOTICE: {heading}: {body} | {next}"),
+    }
+}
+
+fn escape_github_value(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
 }
 
 fn render_doctor_text(

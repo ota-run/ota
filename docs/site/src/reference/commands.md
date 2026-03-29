@@ -206,6 +206,50 @@ set -euo pipefail
 ota explain --json ./repo | tee .ota-explain.json
 ```
 
+### `ota annotations`
+
+When to use:
+
+- when CI needs annotations instead of raw JSON
+- when hosted validation should surface blocker and warning lines in the job log
+- when you want a portable wrapper around `ota doctor --json` or `ota workspace doctor --json`
+
+Why:
+
+- keeps Ota’s JSON contract as the source of truth
+- lets GitHub and non-GitHub CI render the same findings differently without changing Ota itself
+- keeps repo-local annotation adapters first-class and deterministic
+
+Use-case:
+
+- a PR gate runs `ota doctor --json | ota annotations --mode doctor --format github --input -` so
+  reviewers see the blocker directly in the checks UI
+
+```bash
+ota annotations --mode doctor --format github --input ./doctor.json
+ota annotations --mode workspace-doctor --format plain --input ./workspace-doctor.json
+ota doctor --json | ota annotations --mode doctor --format github --input -
+```
+
+Current behavior:
+
+- reads Ota JSON from a file or from stdin when `--input -` is used
+- emits one primary blocker line when `summary.primary_blocker` is present
+- emits one line per finding
+- maps `severity: error` to `::error` or `ERROR` and all other severities to
+  `::warning` or `WARNING`
+- scopes workspace findings with the repo name and path so annotations stay actionable
+- serves as the canonical binary entrypoint for repo-local and CI annotation adapters
+
+Text output:
+
+- `NOTICE: ...` for primary blockers
+- `ERROR: ...` and `WARNING: ...` for findings
+
+JSON output:
+
+- none; this is a rendering command, not a contract reader
+
 ### `ota extensions`
 
 When to use:

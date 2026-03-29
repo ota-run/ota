@@ -318,6 +318,35 @@ JSON output:
 - success: `ok`, `path`, `summary`, `steps`
 - failure: `ok`, `path`, and `error`
 
+## `ota annotations`
+
+Render Ota doctor findings as CI annotations or provider-neutral log lines.
+
+```bash
+ota annotations --mode doctor --format github --input ./doctor.json
+ota annotations --mode workspace-doctor --format plain --input ./workspace-doctor.json
+ota doctor --json | ota annotations --mode doctor --format github --input -
+```
+
+Current behavior:
+
+- reads Ota JSON from a file or from stdin when `--input -` is used
+- emits one primary blocker line when `summary.primary_blocker` is present
+- emits one line per finding
+- maps `severity: error` to `::error` or `ERROR` and all other severities to
+  `::warning` or `WARNING`
+- scopes workspace findings with the repo name and path so annotations stay actionable
+- serves as the canonical binary entrypoint for repo-local and CI annotation adapters
+
+Text output:
+
+- `NOTICE: ...` for primary blockers
+- `ERROR: ...` and `WARNING: ...` for findings
+
+JSON output:
+
+- none; this is a rendering command, not a contract reader
+
 ## `ota extensions`
 
 List staged extension descriptors declared in `ota.yaml`.
