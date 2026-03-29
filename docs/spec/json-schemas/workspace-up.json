@@ -4,10 +4,21 @@
   "title": "ota workspace up --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "repos"],
+  "required": ["ok", "path", "summary", "repos"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_count", "warn_count", "info_count", "step_count"],
+      "properties": {
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 },
+        "step_count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "repos": {
       "type": "array",
       "items": {

@@ -48,9 +48,12 @@ For v7 operator workflows, the most useful JSON surfaces are:
 
 - `ota validate --json` and `ota workspace validate --json` for deterministic contract gating
 - `ota doctor --json` for repo readiness and execution metadata
-- `ota workspace doctor --json` for per-repo readiness and execution metadata
+- `ota workspace doctor --json` for per-repo readiness, execution metadata, and workspace roll-up summaries
+- `ota workspace explain --json` for workspace remediation steps and summary counts
+- `ota workspace tasks --json` for workspace task inventory and summary counts
 - `ota workspace list --json` for repo inventory, readiness, and contract presence
 - `ota up --json` for preparation status and backend-driven readiness flow
+- `ota workspace up --json` for workspace preparation roll-up and receipt summary
 - `ota diff --json` for semantic contract comparison
 - `ota explain --json` for remediation plans
 
@@ -61,6 +64,8 @@ Design intent:
 - Exit code behavior and JSON payloads should be consumed together in automation.
 - validation JSON includes a compact `summary.error_count` so hosted gates can read one field
   instead of re-counting errors themselves
+- workspace doctor and explain JSON include top-level summary roll-ups for repo, finding, and step
+  counts so hosted consumers do not have to derive them from nested reports
 
 Common patterns:
 

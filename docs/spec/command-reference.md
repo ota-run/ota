@@ -933,6 +933,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` with `repo_count`, `acquired_count`, and `task_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
 
@@ -969,6 +970,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `status`, `depends_on`
 
@@ -1075,6 +1077,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 ## `ota workspace doctor`
@@ -1151,6 +1154,9 @@ JSON output:
 
 - success: `ok`, `path`, `summary`, `repos`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+The `summary` object on success mirrors the top-level receipt summary and includes
+`error_count`, `warn_count`, `info_count`, and `step_count`.
 
 ## `ota workspace up`
 

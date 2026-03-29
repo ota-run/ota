@@ -51,7 +51,7 @@ use crate::output::{
     WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceUpSuccess,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -4303,6 +4303,7 @@ pub fn workspace_tasks(
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
                         path: &path_display,
+                        summary: workspace_tasks_summary(&repos),
                         repos: &repos,
                     })),
                 }
@@ -6672,6 +6673,22 @@ fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
+}
+
+fn workspace_tasks_summary(repos: &[WorkspaceRepoTasksReport]) -> WorkspaceTasksSummary {
+    let mut summary = WorkspaceTasksSummary {
+        repo_count: repos.len(),
+        ..WorkspaceTasksSummary::default()
+    };
+
+    for repo in repos {
+        if repo.acquired {
+            summary.acquired_count += 1;
+        }
+        summary.task_count += repo.tasks.len();
+    }
+
+    summary
 }
 
 fn workspace_doctor_summary(
@@ -9313,6 +9330,7 @@ fn render_workspace_up(
             stdout: to_json(&WorkspaceUpSuccess {
                 ok: report.ok,
                 path,
+                summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),

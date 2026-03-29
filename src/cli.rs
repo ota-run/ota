@@ -7874,11 +7874,11 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", single_repo.path()]);
         assert_eq!(validate.exit_code, 0);
-        assert_json_top_level_keys(&validate, &["ok", "path"]);
+        assert_json_top_level_keys(&validate, &["ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", single_repo.path()]);
         assert_eq!(tasks.exit_code, 0);
-        assert_json_top_level_keys(&tasks, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&tasks, &["ok", "path", "repos", "summary"]);
 
         let run = run_with([
             "ota",
@@ -7901,7 +7901,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
     #[test]
@@ -8699,11 +8699,11 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
         assert_eq!(validate.exit_code, 1);
-        assert_json_top_level_keys(&validate, &["errors", "ok", "path"]);
+        assert_json_top_level_keys(&validate, &["errors", "ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
-        assert_json_top_level_keys(&tasks, &["errors", "ok", "path"]);
+        assert_json_top_level_keys(&tasks, &["errors", "ok", "path", "summary"]);
 
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
@@ -8719,7 +8719,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
     #[cfg(unix)]
@@ -8994,6 +8994,9 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
+        assert_eq!(json["summary"]["repo_count"], 2);
+        assert_eq!(json["summary"]["acquired_count"], 2);
+        assert_eq!(json["summary"]["task_count"], 4);
         assert_eq!(json["repos"][0]["name"], "db");
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
         assert_eq!(json["repos"][1]["name"], "api");

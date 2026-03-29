@@ -142,9 +142,11 @@ fn workspace_init_schema_exists_and_covers_scaffold_fields() {
 #[test]
 fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-tasks.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let task = &repo["tasks"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("acquired").is_some());
     assert!(repo.get("depends_on").is_some());
     assert!(repo.get("tasks").is_some());
@@ -179,8 +181,10 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
 #[test]
 fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("phase").is_some());
     assert!(repo.get("exit_code").is_some());

@@ -4,10 +4,20 @@
   "title": "ota workspace tasks --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "repos"],
+  "required": ["ok", "path", "summary", "repos"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_count", "acquired_count", "task_count"],
+      "properties": {
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "acquired_count": { "type": "integer", "minimum": 0 },
+        "task_count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "repos": {
       "type": "array",
       "items": {

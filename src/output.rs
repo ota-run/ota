@@ -341,7 +341,15 @@ pub struct WorkspaceRepoTasksReport {
 pub struct WorkspaceTasksSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: WorkspaceTasksSummary,
     pub repos: &'a [WorkspaceRepoTasksReport],
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceTasksSummary {
+    pub repo_count: usize,
+    pub acquired_count: usize,
+    pub task_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -401,6 +409,7 @@ pub struct WorkspaceRepoUpReport {
 pub struct WorkspaceUpSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoUpReport],
 }

@@ -265,6 +265,7 @@ ota up --json
 Receipt:
 
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+- the JSON payload includes a top-level summary mirroring the receipt roll-up
 
 Script example:
 
@@ -699,6 +700,9 @@ set -euo pipefail
 ota workspace tasks --json > .ota-workspace-tasks.json
 ```
 
+`ota workspace tasks --json` includes a top-level summary with repo and task counts so CI and
+editor tooling can read the inventory at a glance.
+
 ### `ota workspace list`
 
 When to use:
@@ -759,6 +763,9 @@ set -euo pipefail
 ota workspace doctor --json > .ota-workspace-doctor.json
 ```
 
+The JSON payload includes a top-level `summary` with repo and finding counts so CI and editor
+consumers can read the roll-up directly.
+
 ### `ota workspace explain`
 
 When to use:
@@ -788,6 +795,9 @@ set -euo pipefail
 
 ota workspace explain --json > .ota-workspace-explain.json
 ```
+
+The JSON payload includes a top-level `summary` with repo, finding, and step counts so hosted
+validation and editors can consume the plan without re-deriving totals from nested steps.
 
 ### `ota workspace check`
 
@@ -828,6 +838,9 @@ Why:
 Receipt:
 
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+
+`ota workspace up --json` includes a top-level summary that mirrors the receipt summary so hosted
+validation and automation can read the roll-up without descending into the receipt object first.
 
 ```bash
 ota workspace run test
