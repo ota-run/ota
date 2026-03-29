@@ -23,3 +23,4 @@
 use std::sync::Mutex;
 
 pub static ENV_MUTEX: Mutex<()> = Mutex::new(());
+pub static CWD_MUTEX: Mutex<()> = Mutex::new(());

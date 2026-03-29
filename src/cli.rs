@@ -1484,6 +1484,7 @@ mod tests {
 
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
+    use crate::test_support::CWD_MUTEX;
 
     use super::{collapse_blank_lines, commands, maybe_append_update_notice, run_with};
     use crate::output::CommandOutput;
@@ -5743,6 +5744,7 @@ tasks:
         )
         .unwrap();
 
+        let _guard = CWD_MUTEX.lock().unwrap();
         let _cwd = CurrentDirGuard::enter(&node_dir);
         let output = run_with(["ota", "init", "--bootstrap"]);
 
@@ -5862,6 +5864,7 @@ tasks:
             "http://localhost:8080"
         );
 
+        let _guard = CWD_MUTEX.lock().unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "run", "setup", "--base-url", "http://localhost:8080"]);
 
@@ -5889,6 +5892,7 @@ tasks:
 "#,
         );
 
+        let _guard = CWD_MUTEX.lock().unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "run", "bump-version", "--version", "0.1.3"]);
 
