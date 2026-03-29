@@ -37,21 +37,23 @@ use time::macros::format_description;
 
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorReport, Finding, FindingSeverity, diagnose_checks_only, diagnose_contract,
-    diagnose_preconditions, diagnose_service, diagnose_services_only,
+    DoctorReport, Finding, FindingSeverity, command_available, command_version,
+    diagnose_checks_only, diagnose_contract, diagnose_preconditions, diagnose_service,
+    diagnose_services_only,
 };
 use crate::output::{
-    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
-    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
+    DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
+    DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, ExecutionReceipt,
+    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
+    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceUpSuccess,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1366,6 +1368,38 @@ pub fn doctor(
 
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
+        Err(ResolveContractError::NotFound { start }) => {
+            let root = Path::new(&start);
+            let report = diagnose_contractless_repo(root);
+            let empty_extensions = BTreeMap::new();
+
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => render_doctor_text(
+                        &compact_repo_path(root),
+                        None,
+                        None,
+                        &empty_extensions,
+                        report,
+                    ),
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&DoctorSuccess {
+                            ok: false,
+                            path: &start,
+                            summary: doctor_summary(&report),
+                            agent: None,
+                            execution: None,
+                            extensions: &empty_extensions,
+                            findings: &report.findings,
+                        }),
+                        stderr: None,
+                        exit_code: 1,
+                    },
+                },
+                debug,
+                vec![String::from("DEBUG command=doctor")],
+            );
+        }
         Err(error) => {
             return finalize_debug(
                 CommandOutput::failure(error.to_string()),
@@ -1664,6 +1698,142 @@ pub fn doctor(
         debug,
         debug_lines,
     )
+}
+
+fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
+    let mut findings = vec![Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("No `ota.yaml` found"),
+        why: format!(
+            "no `ota.yaml` was found from `{}` upward, so Ota cannot validate repo readiness yet",
+            root.display()
+        ),
+        next: String::from(
+            "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
+        ),
+    }];
+
+    let detect_report = match detect_repo(root) {
+        Ok(report) => Some(report),
+        Err(error) => {
+            findings.push(Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Could not inspect repo signals"),
+                why: format!("automatic repo detection failed: {error}"),
+                next: String::from("fix the unreadable repo files and re-run `ota doctor`"),
+            });
+            None
+        }
+    };
+
+    if let Some(report) = detect_report.as_ref() {
+        append_contractless_repo_findings(root, report, &mut findings);
+    }
+
+    DoctorReport {
+        ok: false,
+        findings,
+    }
+}
+
+fn append_contractless_repo_findings(
+    root: &Path,
+    report: &DetectReport,
+    findings: &mut Vec<Finding>,
+) {
+    if report.contract.runtimes.contains_key("rust") || report.contract.tools.contains_key("cargo")
+    {
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| {
+                inference.field == "runtimes.rust" || inference.field == "tools.cargo"
+            })
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("Cargo.toml");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected Rust repo"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Rust contract"),
+        });
+
+        match command_version("cargo") {
+            Some(version) => findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Host tool available: cargo"),
+                why: format!("`cargo --version` returned `{version}`"),
+                next: String::from("no action required"),
+            }),
+            None => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing host tool: cargo"),
+                why: String::from("the repo looks like Rust, but `cargo` is not available on PATH"),
+                next: String::from("install Rust so `cargo` is available before using this repo"),
+            }),
+        }
+    }
+
+    if !report.contract.services.is_empty() {
+        let service_names = report
+            .contract
+            .services
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| inference.field.starts_with("services."))
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("compose.yaml");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!("Detected Docker Compose services: {service_names}"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from(
+                "run `ota detect --dry-run` to preview the service contract before writing `ota.yaml`",
+            ),
+        });
+
+        if command_available("docker") {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Host tool available: docker"),
+                why: String::from("`docker --version` succeeded"),
+                next: String::from("no action required"),
+            });
+        } else {
+            findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing execution backend CLI: docker"),
+                why: String::from(
+                    "Docker Compose signals were detected, so container execution will need Docker once you adopt a contract",
+                ),
+                next: String::from(
+                    "install Docker, or keep the eventual contract on `native` if you do not want container execution",
+                ),
+            });
+        }
+    }
+
+    if report.contract.runtimes.is_empty()
+        && report.contract.tools.is_empty()
+        && report.contract.services.is_empty()
+        && report.contract.tasks.is_empty()
+        && report.contract.project.is_none()
+    {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("No repo signals detected"),
+            why: format!(
+                "`{}` did not expose obvious repo markers yet",
+                root.display()
+            ),
+            next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
+        });
+    }
 }
 
 pub fn explain(
@@ -4303,6 +4473,7 @@ pub fn workspace_tasks(
                     OutputFormat::Json => CommandOutput::success(to_json(&WorkspaceTasksSuccess {
                         ok: true,
                         path: &path_display,
+                        summary: workspace_tasks_summary(&repos),
                         repos: &repos,
                     })),
                 }
@@ -5177,6 +5348,7 @@ fn write_detected_merge(
     let comparison = DetectComparison {
         existing_contract: true,
         changes: collect_detect_changes(&existing_contract, &report.contract),
+        removals: collect_detect_removals(&existing_contract, &report.contract),
         error: None,
     };
 
@@ -5882,11 +6054,13 @@ fn compare_detected_contract(
         Ok(existing) => Some(DetectComparison {
             existing_contract: true,
             changes: collect_detect_changes(&existing, detected),
+            removals: collect_detect_removals(&existing, detected),
             error: None,
         }),
         Err(error) => Some(DetectComparison {
             existing_contract: true,
             changes: Vec::new(),
+            removals: Vec::new(),
             error: Some(format!(
                 "failed to load existing contract for comparison: {error}"
             )),
@@ -6001,6 +6175,110 @@ fn collect_detect_changes(
     changes
 }
 
+fn collect_detect_removals(
+    existing: &Contract,
+    detected: &crate::detector::DetectContract,
+) -> Vec<DetectComparisonRemoval> {
+    let mut removals = Vec::new();
+
+    if detected.project.is_none() {
+        removals.push(DetectComparisonRemoval {
+            field: String::from("project.name"),
+            existing: existing.project.name.clone(),
+        });
+    }
+
+    for (name, requirement) in &existing.runtimes {
+        if !detected.runtimes.contains_key(name) {
+            removals.push(DetectComparisonRemoval {
+                field: format!("runtimes.{name}"),
+                existing: requirement.version().to_string(),
+            });
+        }
+    }
+
+    for (name, requirement) in &existing.tools {
+        if !detected.tools.contains_key(name) {
+            removals.push(DetectComparisonRemoval {
+                field: format!("tools.{name}"),
+                existing: requirement.version().to_string(),
+            });
+        }
+    }
+
+    for (name, service) in &existing.services {
+        let detected_service = detected.services.get(name);
+        if service.provider.is_some()
+            && detected_service
+                .and_then(|value| value.provider.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.provider"),
+                existing: service.provider.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.start.is_some()
+            && detected_service
+                .and_then(|value| value.start.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.start"),
+                existing: service.start.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.stop.is_some()
+            && detected_service
+                .and_then(|value| value.stop.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.stop"),
+                existing: service.stop.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.healthcheck.is_some()
+            && detected_service
+                .and_then(|value| value.healthcheck.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.healthcheck"),
+                existing: service
+                    .healthcheck
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        }
+    }
+
+    for (name, task) in &existing.tasks {
+        let detected_task = detected.tasks.get(name);
+        let existing_run = task.default_execution_body().map(str::to_string);
+        if let Some(existing_run) = existing_run {
+            if detected_task.is_none() {
+                removals.push(DetectComparisonRemoval {
+                    field: format!("tasks.{name}.run"),
+                    existing: existing_run,
+                });
+            }
+        }
+
+        if task.safe_for_agent
+            && detected_task.is_none_or(|detected_task| !detected_task.safe_for_agent)
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("tasks.{name}.safe_for_agent"),
+                existing: String::from("true"),
+            });
+        }
+    }
+
+    removals
+}
+
 fn push_detect_change(
     changes: &mut Vec<DetectComparisonChange>,
     field: &str,
@@ -6048,23 +6326,37 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
             "\n{}  no detected changes against the existing contract",
             list_bullet()
         ));
-        return;
+    } else {
+        for change in &comparison.changes {
+            stdout.push_str(&format!(
+                "\n{}  {}",
+                list_bullet(),
+                paint(&change.field, "1;38;2;102;217;255")
+            ));
+            match change.status {
+                "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
+                "update" => stdout.push_str(&format!(
+                    ": would update `{}` -> `{}`",
+                    change.existing.as_deref().unwrap_or(""),
+                    change.detected
+                )),
+                _ => {}
+            }
+        }
     }
 
-    for change in &comparison.changes {
+    if !comparison.removals.is_empty() {
         stdout.push_str(&format!(
-            "\n{}  {}",
-            list_bullet(),
-            paint(&change.field, "1;38;2;102;217;255")
+            "\n\n{}:",
+            paint_section_title("Existing contract drift")
         ));
-        match change.status {
-            "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
-            "update" => stdout.push_str(&format!(
-                ": would update `{}` -> `{}`",
-                change.existing.as_deref().unwrap_or(""),
-                change.detected
-            )),
-            _ => {}
+        for removal in &comparison.removals {
+            stdout.push_str(&format!(
+                "\n{}  {}: would remove `{}`",
+                list_bullet(),
+                paint(&removal.field, "1;38;2;255;214;79"),
+                removal.existing
+            ));
         }
     }
 }
@@ -6394,6 +6686,7 @@ fn selected_detect_comparison(
         return Some(DetectComparison {
             existing_contract: comparison.existing_contract,
             changes: comparison.changes.clone(),
+            removals: comparison.removals.clone(),
             error: comparison.error.clone(),
         });
     }
@@ -6412,9 +6705,17 @@ fn selected_detect_comparison(
         .cloned()
         .collect::<Vec<_>>();
 
+    let removals = comparison
+        .removals
+        .iter()
+        .filter(|removal| selected_fields.contains(&removal.field))
+        .cloned()
+        .collect::<Vec<_>>();
+
     Some(DetectComparison {
         existing_contract: comparison.existing_contract,
         changes,
+        removals,
         error: comparison.error.clone(),
     })
 }
@@ -6645,7 +6946,8 @@ fn render_doctor_text(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let mut output = render_report_text("DOCTOR", path, agent, execution, report, None);
+    let summary = doctor_summary(&report);
+    let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -6661,6 +6963,7 @@ fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
+    summary.primary_blocker = primary_blocker_from_findings(&report.findings);
     summary
 }
 
@@ -6672,6 +6975,32 @@ fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
+    if let Some(candidate) = primary_blocker_from_findings(&report.findings) {
+        summary.primary_blocker = match summary.primary_blocker.take() {
+            Some(existing)
+                if blocker_rank(existing.severity) >= blocker_rank(candidate.severity) =>
+            {
+                Some(existing)
+            }
+            _ => Some(candidate),
+        };
+    }
+}
+
+fn workspace_tasks_summary(repos: &[WorkspaceRepoTasksReport]) -> WorkspaceTasksSummary {
+    let mut summary = WorkspaceTasksSummary {
+        repo_count: repos.len(),
+        ..WorkspaceTasksSummary::default()
+    };
+
+    for repo in repos {
+        if repo.acquired {
+            summary.acquired_count += 1;
+        }
+        summary.task_count += repo.tasks.len();
+    }
+
+    summary
 }
 
 fn workspace_doctor_summary(
@@ -6698,6 +7027,7 @@ fn workspace_doctor_summary(
         }
     }
 
+    summary.primary_blocker = workspace_primary_blocker(report);
     summary
 }
 
@@ -6767,6 +7097,49 @@ fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSum
     summary
 }
 
+fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBlocker> {
+    findings.first().map(|finding| DoctorPrimaryBlocker {
+        severity: finding.severity,
+        summary: finding.summary.clone(),
+        why: finding.why.clone(),
+        next: finding.next.clone(),
+    })
+}
+
+fn blocker_rank(severity: FindingSeverity) -> usize {
+    match severity {
+        FindingSeverity::Error => 3,
+        FindingSeverity::Warn => 2,
+        FindingSeverity::Info => 1,
+    }
+}
+
+fn workspace_primary_blocker(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> Option<WorkspacePrimaryBlocker> {
+    let mut fallback = None;
+
+    for repo in &report.repos {
+        for finding in &repo.findings {
+            let blocker = WorkspacePrimaryBlocker {
+                repo: repo.name.clone(),
+                severity: finding.severity,
+                summary: finding.summary.clone(),
+                why: finding.why.clone(),
+                next: finding.next.clone(),
+            };
+            if finding.severity == FindingSeverity::Error {
+                return Some(blocker);
+            }
+            if fallback.is_none() {
+                fallback = Some(blocker);
+            }
+        }
+    }
+
+    fallback
+}
+
 fn render_doctor_section(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
@@ -6774,7 +7147,9 @@ fn render_doctor_section(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    let mut output = render_report_section("DOCTOR", path, agent, execution, report, None);
+    let summary = doctor_summary(report);
+    let mut output =
+        render_report_section("DOCTOR", path, agent, execution, report, Some(&summary));
     if !extensions.is_empty() {
         output.push_str(&render_extensions_text(extensions));
     }
@@ -6785,11 +7160,24 @@ fn render_workspace_doctor_text(
     path: &str,
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
+    let summary = workspace_doctor_summary(report);
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE DOCTOR", path),
         render_readiness_status(report.ok)
     );
+    if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
+        stdout.push_str(&render_primary_blocker_text(
+            "Primary blocker",
+            &format!(
+                "{} [{}]",
+                primary_blocker.repo,
+                render_finding_summary(primary_blocker.severity, &primary_blocker.summary)
+            ),
+            &primary_blocker.why,
+            &primary_blocker.next,
+        ));
+    }
 
     for repo in &report.repos {
         stdout.push_str(&format!(
@@ -6848,9 +7236,7 @@ fn render_workspace_doctor_text(
             }
         }
     }
-    stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
-        report,
-    )));
+    stdout.push_str(&render_workspace_summary_text(&summary));
 
     CommandOutput {
         stdout,
@@ -7352,7 +7738,7 @@ fn render_report_section(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: &DoctorReport,
-    _summary: Option<&DoctorSummary>,
+    summary: Option<&DoctorSummary>,
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}",
@@ -7368,6 +7754,14 @@ fn render_report_section(
 
     if let Some(execution) = execution {
         stdout.push_str(&render_execution_summary_text(execution));
+    }
+    if let Some(primary_blocker) = summary.and_then(|summary| summary.primary_blocker.as_ref()) {
+        stdout.push_str(&render_primary_blocker_text(
+            "Primary blocker",
+            &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
+            &primary_blocker.why,
+            &primary_blocker.next,
+        ));
     }
     for finding in &report.findings {
         let next = compact_backticked_paths(&finding.next);
@@ -7408,6 +7802,23 @@ fn render_report_section(
         }
     }
 
+    stdout
+}
+
+fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title(title)));
+    stdout.push_str(&format!("\n{} {}", paint_key("Summary:"), summary));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Why:"),
+        compact_backticked_paths(why)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Next:"),
+        compact_backticked_paths(next)
+    ));
     stdout
 }
 
@@ -8762,6 +9173,7 @@ fn run_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        target: effective_remote_target(contract, backend),
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -9079,6 +9491,14 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             lifecycle
         ));
     }
+    if let Some(target) = receipt.target.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Target:"),
+            target
+        ));
+    }
     if !receipt.acquired.is_empty() {
         stdout.push_str(&format!(
             "\n{} {} {}",
@@ -9313,6 +9733,7 @@ fn render_workspace_up(
             stdout: to_json(&WorkspaceUpSuccess {
                 ok: report.ok,
                 path,
+                summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),
@@ -9397,6 +9818,7 @@ fn render_workspace_run(
                 ok: report.ok,
                 path,
                 task,
+                summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),
@@ -10285,6 +10707,7 @@ fn repo_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        target: effective_remote_target(contract, backend),
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -10366,6 +10789,7 @@ fn workspace_up_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -10428,6 +10852,7 @@ fn workspace_run_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -12355,6 +12780,22 @@ fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
         Lifecycle::Persistent => "persistent",
         Lifecycle::Ephemeral => "ephemeral",
     }
+}
+
+fn effective_remote_target(contract: &Contract, backend: crate::schema::Backend) -> Option<String> {
+    if backend != crate::schema::Backend::Remote {
+        return None;
+    }
+
+    contract
+        .execution
+        .as_ref()?
+        .backends
+        .as_ref()?
+        .remote
+        .as_ref()?
+        .target
+        .clone()
 }
 
 fn init_mode(report: &DetectReport) -> &'static str {

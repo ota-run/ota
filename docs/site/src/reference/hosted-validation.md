@@ -32,6 +32,7 @@ Use hosted validation when Ota needs to gate a pull request or CI run without mu
 - `ota doctor --json`
 - `ota workspace validate --json`
 - `ota workspace doctor --json`
+- `ota workspace explain --json` for ordered workspace remediation
 - `ota workspace list --json` for inventory and readiness summary
 
 ## Infrastructure boundary
@@ -48,6 +49,7 @@ CI runner, OS package manager, or language installer on the host.
 - `summary.error_count > 0` for `ota validate --json` and `ota workspace validate --json`
 - any `error` or `errors`
 - any `severity: error`
+- any `severity: error` from `ota workspace explain --json` when used as a gate
 - non-zero exit when validation is expected to pass
 
 ## What not to do
@@ -67,6 +69,8 @@ ota validate --json | tee .ota-validate.json
 ota doctor --json | tee .ota-doctor.json
 ota workspace validate --json | tee .ota-workspace-validate.json
 ota workspace doctor --json | tee .ota-workspace-doctor.json
+ota workspace list --json | tee .ota-workspace-list.json
+ota workspace explain --json | tee .ota-workspace-explain.json
 ```
 
 ## Example with Postgres
@@ -178,3 +182,37 @@ Postgres setup.
 
 Hosted validation is read-only. It surfaces blockers early and leaves mutation to local,
 explicit commands.
+
+## Annotation delivery
+
+Hosted CI should treat the JSON payload as the source of truth and turn it into annotations or
+check-run summaries without re-parsing text output.
+
+Recommended mapping:
+
+- use `summary.primary_blocker` as the headline when present
+- emit one annotation per finding
+- treat `severity: error` as blocking
+- treat `severity: warn` as non-blocking unless policy says otherwise
+- use `why` as the annotation body
+- use `next` as the suggested fix
+
+For workspace commands, keep the same mapping but scope annotations to the repo name and path in
+the workspace payload.
+
+Example adapter:
+
+```bash
+ota doctor --json > .ota-doctor.json
+jq -r '
+  .summary.primary_blocker?
+  | select(. != null)
+  | "::notice title=ota doctor primary blocker::\(.summary) | \(.next)"
+' .ota-doctor.json
+
+jq -r '
+  .findings[]
+  | if .severity == "error" then "error" else "warning" end as $level
+  | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
+' .ota-doctor.json
+```

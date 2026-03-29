@@ -1654,6 +1654,26 @@ exit 1
     }
 
     #[cfg(unix)]
+    fn install_fake_cargo(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "cargo 1.99.0"
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
     fn install_fake_daytona(path: &std::path::Path) {
         fs::write(
             path,
@@ -3784,7 +3804,9 @@ tasks:
                 .unwrap()
                 .contains("exec sandbox-dev")
         );
-        assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("RECEIPT:"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("RECEIPT:"));
+        assert!(stderr.contains("Target: sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -6039,6 +6061,61 @@ project:
     }
 
     #[test]
+    #[cfg(unix)]
+    fn doctor_without_contract_inspects_repo_and_host_signals() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("Cargo.toml"),
+            "[package]\nname = \"ota-rust\"\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("compose.yaml"),
+            "services:\n  web:\n    image: nginx:latest\n",
+        )
+        .unwrap();
+
+        let bin_dir = TempDir::new().unwrap();
+        #[cfg(unix)]
+        {
+            install_fake_cargo(&bin_dir.path().join("cargo"));
+        }
+        let original_path = std::env::var_os("PATH");
+        unsafe {
+            std::env::set_var("PATH", bin_dir.path());
+        }
+
+        let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Primary blocker:"));
+        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains("Detected Rust repo"));
+        assert!(stdout.contains("Detected Docker Compose services: web"));
+        assert!(stdout.contains("Host tool available: cargo"));
+        assert!(stdout.contains("Missing execution backend CLI: docker"));
+        assert!(stdout.contains("ota detect --dry-run"));
+        assert!(stdout.contains("ota init --bootstrap"));
+
+        let json_output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "No `ota.yaml` found"
+        );
+        assert_eq!(json["summary"]["primary_blocker"]["severity"], "error");
+    }
+
+    #[test]
     fn doctor_text_format_uses_spaced_sections_without_rule_separator() {
         let fixture = ContractFixture::new(
             r#"
@@ -6817,6 +6894,49 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["comparison"]["existing_contract"], true);
         assert_eq!(json["comparison"]["changes"][0]["field"], "project.name");
+    }
+
+    #[test]
+    fn detect_json_reports_existing_contract_drift() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--json",
+            "--merge",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["comparison"]["existing_contract"], true);
+        assert_eq!(json["comparison"]["removals"][0]["field"], "tools.cargo");
+        assert_eq!(
+            json["comparison"]["removals"][1]["field"],
+            "tasks.build.run"
+        );
+        assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 2);
     }
 
     #[test]
@@ -7874,11 +7994,11 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", single_repo.path()]);
         assert_eq!(validate.exit_code, 0);
-        assert_json_top_level_keys(&validate, &["ok", "path"]);
+        assert_json_top_level_keys(&validate, &["ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", single_repo.path()]);
         assert_eq!(tasks.exit_code, 0);
-        assert_json_top_level_keys(&tasks, &["ok", "path", "repos"]);
+        assert_json_top_level_keys(&tasks, &["ok", "path", "repos", "summary"]);
 
         let run = run_with([
             "ota",
@@ -7901,7 +8021,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
     #[test]
@@ -8699,11 +8819,11 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
         assert_eq!(validate.exit_code, 1);
-        assert_json_top_level_keys(&validate, &["errors", "ok", "path"]);
+        assert_json_top_level_keys(&validate, &["errors", "ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
-        assert_json_top_level_keys(&tasks, &["errors", "ok", "path"]);
+        assert_json_top_level_keys(&tasks, &["errors", "ok", "path", "summary"]);
 
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
@@ -8719,7 +8839,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos"]);
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
     #[cfg(unix)]
@@ -8994,6 +9114,9 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
+        assert_eq!(json["summary"]["repo_count"], 2);
+        assert_eq!(json["summary"]["acquired_count"], 2);
+        assert_eq!(json["summary"]["task_count"], 4);
         assert_eq!(json["repos"][0]["name"], "db");
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
         assert_eq!(json["repos"][1]["name"], "api");
@@ -10636,7 +10759,12 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["task"], "setup");
+        assert_eq!(json["summary"]["repo_count"], 1);
+        assert_eq!(json["summary"]["ready_count"], 0);
+        assert_eq!(json["summary"]["not_ready_count"], 1);
+        assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(json["receipt"]["scope"], "workspace");
+        assert_eq!(json["receipt"]["summary"]["step_count"], 1);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["status"], "TASK FAILED");
         assert_eq!(json["repos"][0]["task"], "setup");

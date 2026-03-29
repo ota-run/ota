@@ -82,9 +82,20 @@ Editors, hosted validation systems, and CI should consume the same JSON surfaces
 
 Recommended commands:
 
+- `ota validate --json`
 - `ota doctor --json`
+- `ota workspace validate --json`
 - `ota workspace doctor --json`
+- `ota workspace explain --json`
+- `ota workspace tasks --json`
 - `ota workspace list --json`
+- `ota workspace check --json`
+- `ota run --json`
+- `ota workspace run --json`
+- `ota up --json`
+- `ota workspace up --json`
+- `ota diff --json`
+- `ota explain --json`
 - `ota extensions --json`
 
 Consumption rules:

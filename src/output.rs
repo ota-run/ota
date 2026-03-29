@@ -70,11 +70,21 @@ pub struct WorkspaceDoctorSuccess<'a> {
     pub repos: &'a [WorkspaceRepoDoctorReport],
 }
 
-#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct DoctorSummary {
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_blocker: Option<DoctorPrimaryBlocker>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorPrimaryBlocker {
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +139,8 @@ pub struct ExecutionReceipt {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub acquired: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -170,7 +182,7 @@ pub struct ExplainFailure<'a> {
     pub error: &'a str,
 }
 
-#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct WorkspaceDoctorSummary {
     pub repo_count: usize,
     pub ready_count: usize,
@@ -178,6 +190,17 @@ pub struct WorkspaceDoctorSummary {
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_blocker: Option<WorkspacePrimaryBlocker>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkspacePrimaryBlocker {
+    pub repo: String,
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -341,7 +364,15 @@ pub struct WorkspaceRepoTasksReport {
 pub struct WorkspaceTasksSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: WorkspaceTasksSummary,
     pub repos: &'a [WorkspaceRepoTasksReport],
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceTasksSummary {
+    pub repo_count: usize,
+    pub acquired_count: usize,
+    pub task_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -401,6 +432,7 @@ pub struct WorkspaceRepoUpReport {
 pub struct WorkspaceUpSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoUpReport],
 }
@@ -428,6 +460,7 @@ pub struct WorkspaceRunSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub task: &'a str,
+    pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoRunReport],
 }
@@ -478,6 +511,8 @@ pub struct DetectComparison {
     pub existing_contract: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<DetectComparisonChange>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removals: Vec<DetectComparisonRemoval>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -489,6 +524,12 @@ pub struct DetectComparisonChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing: Option<String>,
     pub detected: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectComparisonRemoval {
+    pub field: String,
+    pub existing: String,
 }
 
 #[derive(Debug, Serialize)]
