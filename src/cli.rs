@@ -569,6 +569,36 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    struct RunStateGuard {
+        original_plain_mode: Option<OsString>,
+        original_json_mode: Option<OsString>,
+    }
+
+    impl Drop for RunStateGuard {
+        fn drop(&mut self) {
+            commands::set_plain_mode(false);
+            commands::set_concise_mode(false);
+            commands::set_json_mode(false);
+
+            unsafe {
+                match self.original_plain_mode.take() {
+                    Some(value) => std::env::set_var("OTA_PLAIN_MODE", value),
+                    None => std::env::remove_var("OTA_PLAIN_MODE"),
+                }
+                match self.original_json_mode.take() {
+                    Some(value) => std::env::set_var("OTA_JSON_MODE", value),
+                    None => std::env::remove_var("OTA_JSON_MODE"),
+                }
+            }
+        }
+    }
+
+    let _guard = RunStateGuard {
+        original_plain_mode: std::env::var_os("OTA_PLAIN_MODE"),
+        original_json_mode: std::env::var_os("OTA_JSON_MODE"),
+    };
+    commands::take_failure_locus();
+
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     if is_version_request(&args) {
         return CommandOutput::success(render_version_output(&args));
