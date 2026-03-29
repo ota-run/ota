@@ -40,12 +40,12 @@ if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
   exit 0
 fi
 
-if [ "$#" -ne 1 ]; then
+new_version="${OTA_INPUT_VERSION-${1-}}"
+if [ -z "${new_version}" ]; then
   usage >&2
   exit 2
 fi
 
-new_version="$1"
 if ! printf '%s' "$new_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$'; then
   echo "error: version must look like semver (for example 0.2.0 or 0.2.0-rc.1)" >&2
   exit 2
