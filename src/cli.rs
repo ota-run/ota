@@ -6231,6 +6231,65 @@ tasks:
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_reports_container_execution_banner_with_container_name() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    run: exit 0
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("MODE: container"));
+        assert!(stderr.contains("RUN setup in container `ota-"));
+        assert!(stderr.contains("Lifecycle note: reusing persistent container backend"));
+        assert!(stderr.contains("More details: `ota tasks --use setup`"));
+    }
+
     #[test]
     fn run_backend_override_native_bypasses_container_contract() {
         let fixture = ContractFixture::new(

@@ -64,7 +64,7 @@ use crate::runner::{
     ExecutionOverrides, RunError, clean_execution, effective_execution, resolve_task_env_details,
     run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
-    run_task_with_progress_and_overrides,
+    run_task_with_progress_and_overrides, task_execution_banner,
 };
 use crate::schema::{Contract, ExtensionSpec, Lifecycle};
 use crate::update;
@@ -9356,6 +9356,7 @@ fn run_single_contract_target(
     task_inputs: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
+    let details_footer = task_use_details_footer(task_name, member);
     match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
@@ -9376,6 +9377,15 @@ fn run_single_contract_target(
                 None,
             );
             let mut output = String::new();
+            if let Some(banner) = task_execution_banner(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+            ) {
+                output.push_str(&banner);
+                output.push('\n');
+            }
             if let Some(notice) = lifecycle_notice_with_member(&target.contract, overrides, member)
             {
                 output.push_str(&notice);
@@ -9389,6 +9399,10 @@ fn run_single_contract_target(
                     output.push_str(&receipt_text);
                 }
             }
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(&details_footer);
             Ok(output)
         }
         Ok(outcome) => Err(RunCommandFailure {
@@ -9408,7 +9422,9 @@ fn run_single_contract_target(
                     outcome.exit_code,
                     false,
                     Some(format!(
-                        "inspect task `{task_name}` output and rerun `ota run {task_name}`"
+                        "{}; {}",
+                        format!("inspect task `{task_name}` output and rerun `ota run {task_name}`"),
+                        details_footer
                     )),
                 ))
             }),
@@ -9427,11 +9443,22 @@ fn run_single_contract_target(
                     1,
                     false,
                     Some(format!(
-                        "repair task `{task_name}` and rerun `ota run {task_name}`"
+                        "{}; {}",
+                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                        details_footer
                     )),
                 ))
             }),
         }),
+    }
+}
+
+fn task_use_details_footer(task_name: &str, member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!(
+            "More details: `ota workspace tasks --use {task_name} --repo {member}`"
+        ),
+        None => format!("More details: `ota tasks --use {task_name}`"),
     }
 }
 
