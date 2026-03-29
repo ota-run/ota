@@ -43,11 +43,16 @@ checks:
 tasks:
   setup:
     description: Fetch Rust dependencies
+    notes: |
+      Use this as the first step in a fresh checkout or after dependency changes.
+      It prepares the workspace without compiling the crate.
     category: setup
     run: cargo fetch
     safe_for_agent: true
   build:
     description: Compile the CLI
+    notes: |
+      Use this when you want to confirm the crate still builds after code changes.
     category: build
     run: cargo build
     depends_on:
@@ -55,11 +60,15 @@ tasks:
     safe_for_agent: true
   fmt:
     description: Check Rust formatting
+    notes: |
+      Use this before committing to catch formatting drift early.
     category: test
     run: cargo fmt --check
     safe_for_agent: true
   check:
     description: Type-check the crate
+    notes: |
+      Use this for a fast compiler-only verification pass without running tests.
     category: test
     run: cargo check
     depends_on:
@@ -67,6 +76,8 @@ tasks:
     safe_for_agent: true
   test:
     description: Run the Rust test suite
+    notes: |
+      Use this when you want the full unit and integration test coverage.
     category: test
     run: cargo test
     depends_on:
@@ -74,6 +85,9 @@ tasks:
     safe_for_agent: true
   ci:
     description: Run the standard local verification suite
+    notes: |
+      Use this as the canonical local pre-commit gate.
+      It matches the light-weight verification path used during development.
     category: test
     script: |
       cargo fmt --check
@@ -84,6 +98,9 @@ tasks:
     safe_for_agent: true
   doctor-annotations:
     description: Render ota doctor findings for CI or local review
+    notes: |
+      Use this to turn ota doctor JSON into plain CI output or GitHub annotations.
+      It is the repo-side adapter for hosted validation demos and PR checks.
     category: dev
     inputs:
       render_format:
@@ -106,6 +123,8 @@ tasks:
     safe_for_agent: true
   compat:
     description: Run the compatibility test gate
+    notes: |
+      Use this to validate schema stability and fixture coverage before release work.
     category: test
     script: |
       cargo test contract_is_stable
@@ -116,6 +135,8 @@ tasks:
     safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite
+    notes: |
+      Use this to verify the repo against the release gate checks that run in GitHub Actions.
     category: test
     script: |
       cargo test --test real_repo_fixtures
@@ -126,6 +147,8 @@ tasks:
     safe_for_agent: true
   bump-version:
     description: Bump Cargo.toml to a new release version
+    notes: |
+      Use this when preparing a release and you need to update Cargo.toml consistently.
     category: release
     script: |
       ./scripts/bump-version.sh
@@ -137,6 +160,8 @@ tasks:
       - ci
   install:
     description: Reinstall ota from the local workspace
+    notes: |
+      Use this after local changes when you want the installed ota binary to point at this checkout.
     category: dev
     run: ./scripts/install.sh --from-source
     variants:

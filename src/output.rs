@@ -754,6 +754,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: &'a BTreeMap<String, String>,
@@ -780,6 +782,7 @@ impl<'a> TaskSummary<'a> {
         Self {
             name,
             description: task.description.as_deref(),
+            notes: task.notes.as_deref(),
             category: task.category.as_deref(),
             env: &task.env,
             inputs: &task.inputs,

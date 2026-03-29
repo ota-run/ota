@@ -260,6 +260,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default)]
     pub category: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,

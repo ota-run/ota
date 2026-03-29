@@ -129,6 +129,8 @@ Success:
   "tasks": [
     {
       "name": "setup",
+      "description": "Prepare the repo",
+      "notes": "Use this after cloning the repo.\n",
       "kind": "script",
       "script": "printf ready > prepared.txt\n",
       "env": {
@@ -161,6 +163,7 @@ Root monorepo summary output can also include grouped member results:
           "name": "test",
           "kind": "run",
           "run": "cargo test",
+          "notes": "Use this to verify the code before merging.\n",
           "env": {
             "BASE_URL": "http://localhost:8080"
           },

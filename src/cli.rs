@@ -4554,6 +4554,8 @@ project:
 tasks:
   test:
     description: Run tests
+    notes: |
+      Use this to verify the code before merging.
     run: cargo test
     safe_for_agent: true
   build:
@@ -4575,6 +4577,10 @@ tasks:
         assert_eq!(json["tasks"][0]["depends_on"][0], "test");
         assert_eq!(json["tasks"][1]["name"], "test");
         assert_eq!(json["tasks"][1]["safe_for_agent"], true);
+        assert_eq!(
+            json["tasks"][1]["notes"],
+            "Use this to verify the code before merging.\n"
+        );
     }
 
     #[test]
@@ -4621,6 +4627,9 @@ project:
   name: ota
 tasks:
   setup:
+    description: Prepare the repo
+    notes: |
+      Use this after cloning the repo.
     script: |
       printf ready > prepared.txt
 "#,
@@ -4697,6 +4706,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("setup"));
         assert!(stdout.contains("Kind: script"));
+        assert!(stdout.contains("Notes:"));
         assert!(stdout.contains("Use: `ota run setup`"));
     }
 
