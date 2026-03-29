@@ -71,6 +71,13 @@ agent:
   writable_paths:
     - src
     - docs
+  protected_paths:
+    - ota.yaml
+    - Cargo.lock
+    - LICENSE
+  notes: |
+    Use `ota validate` before execution and `ota doctor` after contract changes.
+    Keep the contract and the implementation aligned through the `test` task.
 metadata:
   owner: ota
   team: platform

@@ -45,3 +45,21 @@ checks:
     kind: precondition
     severity: error
     run: rustc --version
+agent:
+  entrypoint: setup
+  default_task: test
+  safe_tasks:
+    - setup
+    - build
+    - test
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+    - tests
+    - docs
+  protected_paths:
+    - ota.yaml
+  notes: |
+    Use `ota run test` after edits and keep changes small and reviewable.
+    Build, test, and fetch steps are the safe paths in this example.
