@@ -113,6 +113,17 @@ fn run_command(mut command: Command) -> CommandOutput {
     }
 }
 
+fn run_command_streaming(mut command: Command) -> CommandOutput {
+    match command.status() {
+        Ok(status) => CommandOutput {
+            stdout: String::new(),
+            stderr: None,
+            exit_code: status.code().unwrap_or(1),
+        },
+        Err(error) => CommandOutput::failure(error.to_string()),
+    }
+}
+
 fn download_installer(url: &str, path: &Path) -> CommandOutput {
     if cfg!(windows) {
         let script = format!(
@@ -196,10 +207,14 @@ fn execute_installer(
             "-File",
         ])
         .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-        match pwsh.output() {
-            Ok(output) => command_output_to_string(output),
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+        match pwsh.status() {
+            Ok(status) => CommandOutput {
+                stdout: String::new(),
+                stderr: None,
+                exit_code: status.code().unwrap_or(1),
+            },
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let mut powershell = Command::new("powershell");
                 if let Some(version) = version {
@@ -217,9 +232,9 @@ fn execute_installer(
                         "-File",
                     ])
                     .arg(path)
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                run_command(powershell)
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit());
+                run_command_streaming(powershell)
             }
             Err(error) => CommandOutput::failure(error.to_string()),
         }
@@ -231,8 +246,10 @@ fn execute_installer(
         if let Some(release_base) = release_base {
             sh.env("OTA_RELEASE_BASE", release_base);
         }
-        sh.arg(path).stdout(Stdio::piped()).stderr(Stdio::piped());
-        run_command(sh)
+        sh.arg(path)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        run_command_streaming(sh)
     }
 }
 
