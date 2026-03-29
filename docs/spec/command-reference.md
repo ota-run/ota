@@ -179,8 +179,8 @@ Text output:
 
 JSON output:
 
-- success: `ok`, `path`
-- failure: `ok`, `path`, and either `errors` or `error`
+- success: `ok`, `path`, `summary.error_count`
+- failure: `ok`, `path`, `summary.error_count`, and either `errors` or `error`
 
 ## `ota tasks`
 
@@ -903,8 +903,8 @@ Text output:
 
 JSON output:
 
-- success: `ok`, `path`
-- failure: `ok`, `path`, and either `errors` or `error`
+- success: `ok`, `path`, `summary.error_count`
+- failure: `ok`, `path`, `summary.error_count`, and either `errors` or `error`
 
 ## `ota workspace tasks`
 

@@ -38,13 +38,17 @@ Success:
 ```json
 {
   "ok": true,
-  "path": "/abs/path/to/ota.yaml"
+  "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "error_count": 0
+  }
 }
 ```
 
 Failure shape can also include:
 
 - `next`: optional safe follow-up command, used for trust-sensitive refusal and review-first flows
+- `summary.error_count`: stable machine-facing count of validation errors or load failures
 
 Failure:
 
@@ -52,6 +56,9 @@ Failure:
 {
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "error_count": 2
+  },
   "errors": ["..."]
 }
 ```
@@ -62,6 +69,9 @@ Or:
 {
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "error_count": 1
+  },
   "error": "..."
 }
 ```
@@ -206,7 +216,10 @@ Success:
 ```json
 {
   "ok": true,
-  "path": "/abs/path/to/ota.workspace.yaml"
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "error_count": 0
+  }
 }
 ```
 
@@ -216,6 +229,9 @@ Failure:
 {
   "ok": false,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "error_count": 1
+  },
   "errors": ["..."]
 }
 ```

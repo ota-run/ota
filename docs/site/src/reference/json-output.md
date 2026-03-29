@@ -46,6 +46,7 @@ and declared extension descriptors.
 
 For v7 operator workflows, the most useful JSON surfaces are:
 
+- `ota validate --json` and `ota workspace validate --json` for deterministic contract gating
 - `ota doctor --json` for repo readiness and execution metadata
 - `ota workspace doctor --json` for per-repo readiness and execution metadata
 - `ota workspace list --json` for repo inventory, readiness, and contract presence
@@ -58,6 +59,8 @@ Design intent:
 - JSON shapes are treated as stable integration surfaces.
 - Human text output and JSON output are intentionally separate.
 - Exit code behavior and JSON payloads should be consumed together in automation.
+- validation JSON includes a compact `summary.error_count` so hosted gates can read one field
+  instead of re-counting errors themselves
 
 Common patterns:
 

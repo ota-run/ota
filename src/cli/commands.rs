@@ -47,8 +47,8 @@ use crate::output::{
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
     InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
     WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
     WorkspaceTasksSuccess, WorkspaceUpSuccess,
@@ -480,6 +480,7 @@ pub fn validate(
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
                         path: &path_display,
+                        summary: Some(ValidateSummary { error_count: 0 }),
                     })),
                 },
                 Err(errors) => match format {
@@ -494,6 +495,9 @@ pub fn validate(
                     OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                         ok: false,
                         path: &path_display,
+                        summary: Some(ValidateSummary {
+                            error_count: errors.len(),
+                        }),
                         errors,
                         error: None,
                     })),
@@ -504,6 +508,9 @@ pub fn validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
+                    summary: Some(ValidateSummary {
+                        error_count: errors.errors().len(),
+                    }),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -513,6 +520,7 @@ pub fn validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
+                    summary: Some(ValidateSummary { error_count: 1 }),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -1418,6 +1426,7 @@ pub fn doctor(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: errors
@@ -1441,6 +1450,7 @@ pub fn doctor(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: Vec::new(),
@@ -1550,6 +1560,7 @@ pub fn doctor(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: errors
@@ -1573,6 +1584,7 @@ pub fn doctor(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: Vec::new(),
@@ -1631,6 +1643,7 @@ pub fn doctor(
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -1640,6 +1653,7 @@ pub fn doctor(
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -1839,6 +1853,7 @@ pub fn check(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: errors
@@ -1862,6 +1877,7 @@ pub fn check(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: Vec::new(),
@@ -1970,6 +1986,7 @@ pub fn check(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: errors
@@ -1993,6 +2010,7 @@ pub fn check(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: Vec::new(),
@@ -2046,6 +2064,7 @@ pub fn check(
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -2055,6 +2074,7 @@ pub fn check(
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -2179,6 +2199,7 @@ pub fn extensions(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: errors
@@ -2202,6 +2223,7 @@ pub fn extensions(
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
+                                                        summary: None,
                                                         ok: false,
                                                         path: &path_display,
                                                         errors: Vec::new(),
@@ -2282,6 +2304,7 @@ pub fn extensions(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: errors
@@ -2305,6 +2328,7 @@ pub fn extensions(
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
                                                 ok: false,
                                                 path: &path_display,
                                                 errors: Vec::new(),
@@ -2339,6 +2363,7 @@ pub fn extensions(
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -2348,6 +2373,7 @@ pub fn extensions(
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -2517,6 +2543,7 @@ pub fn up(
                                             }
                                             OutputFormat::Json => {
                                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                                    summary: None,
                                                     ok: false,
                                                     path: &path_display,
                                                     errors: errors
@@ -2536,6 +2563,7 @@ pub fn up(
                                             }
                                             OutputFormat::Json => {
                                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                                    summary: None,
                                                     ok: false,
                                                     path: &path_display,
                                                     errors: Vec::new(),
@@ -2649,6 +2677,7 @@ pub fn up(
                                     }
                                     OutputFormat::Json => {
                                         CommandOutput::failure(to_json(&ValidateFailure {
+                                            summary: None,
                                             ok: false,
                                             path: &path_display,
                                             errors: errors
@@ -2666,6 +2695,7 @@ pub fn up(
                                     OutputFormat::Text => CommandOutput::failure(error.to_string()),
                                     OutputFormat::Json => {
                                         CommandOutput::failure(to_json(&ValidateFailure {
+                                            summary: None,
                                             ok: false,
                                             path: &path_display,
                                             errors: Vec::new(),
@@ -2735,6 +2765,7 @@ pub fn up(
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -2744,6 +2775,7 @@ pub fn up(
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -3172,6 +3204,7 @@ pub fn workspace_validate(
                 OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                     ok: true,
                     path: &path_display,
+                    summary: Some(ValidateSummary { error_count: 0 }),
                 })),
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
@@ -3187,6 +3220,9 @@ pub fn workspace_validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
+                    summary: Some(ValidateSummary {
+                        error_count: errors.errors().len(),
+                    }),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -3200,6 +3236,7 @@ pub fn workspace_validate(
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     ok: false,
                     path: &path_display,
+                    summary: Some(ValidateSummary { error_count: 1 }),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -4147,6 +4184,7 @@ pub fn workspace_tasks(
                     return match format {
                         OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                         OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                            summary: None,
                             ok: false,
                             path: &path_display,
                             errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4162,6 +4200,7 @@ pub fn workspace_tasks(
                             OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
                                     ok: false,
                                     path: &path_display,
                                     errors: errors
@@ -4198,6 +4237,7 @@ pub fn workspace_tasks(
                                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json(&ValidateFailure {
+                                        summary: None,
                                         ok: false,
                                         path: &path_display,
                                         errors: Vec::new(),
@@ -4213,6 +4253,7 @@ pub fn workspace_tasks(
                             OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
                                     ok: false,
                                     path: &path_display,
                                     errors: errors
@@ -4269,6 +4310,7 @@ pub fn workspace_tasks(
             Err(error) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4317,6 +4359,7 @@ pub fn workspace_list(
                             OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
                                     ok: false,
                                     path: &path_display,
                                     errors: errors
@@ -4355,6 +4398,7 @@ pub fn workspace_list(
                             OutputFormat::Text => CommandOutput::failure(error),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
                                     ok: false,
                                     path: &path_display,
                                     errors: Vec::new(),
@@ -4423,6 +4467,7 @@ pub fn workspace_list(
             Err(error) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4524,6 +4569,7 @@ pub fn workspace_doctor(
                             OutputFormat::Text => CommandOutput::failure(error),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
                                     ok: false,
                                     path: &path_display,
                                     errors: Vec::new(),
@@ -4554,6 +4600,7 @@ pub fn workspace_doctor(
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4563,6 +4610,7 @@ pub fn workspace_doctor(
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4644,6 +4692,7 @@ pub fn workspace_explain(
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4653,6 +4702,7 @@ pub fn workspace_explain(
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4719,6 +4769,7 @@ pub fn workspace_check(
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4728,6 +4779,7 @@ pub fn workspace_check(
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4819,6 +4871,7 @@ pub fn workspace_up(
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4828,6 +4881,7 @@ pub fn workspace_up(
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),
@@ -4924,6 +4978,7 @@ pub fn workspace_run(
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
@@ -4933,6 +4988,7 @@ pub fn workspace_run(
             Err(WorkspaceProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
                     ok: false,
                     path: &path_display,
                     errors: Vec::new(),

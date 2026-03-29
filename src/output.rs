@@ -555,12 +555,21 @@ impl CommandOutput {
 pub struct ValidateSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ValidateSummary>,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ValidateSummary {
+    pub error_count: usize,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ValidateFailure<'a> {
     pub ok: bool,
     pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ValidateSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
