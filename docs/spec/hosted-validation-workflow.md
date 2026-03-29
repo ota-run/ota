@@ -134,7 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Ota
-        run: curl -fsSL https://ota.run/install.sh | sh
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
       - name: Diagnose readiness
@@ -193,7 +193,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Ota
-        run: curl -fsSL https://ota.run/install.sh | sh
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
       - name: Prepare repo
