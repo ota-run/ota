@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ota.run/spec/json-schemas/up.json",
+  "$id": "https://dist.ota.run/spec/json-schemas/up.json",
   "title": "ota up --json",
   "oneOf": [
     {
