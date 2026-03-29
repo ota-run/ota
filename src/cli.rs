@@ -758,8 +758,8 @@ fn maybe_append_update_notice(
         return output;
     };
 
-    match rx.recv_timeout(Duration::from_millis(50)) {
-        Ok(Some(notice)) => output.with_stderr(Some(format!("\x1b[1m{notice}\x1b[0m"))),
+    match rx.recv_timeout(Duration::from_millis(500)) {
+        Ok(Some(notice)) => output.with_stderr(Some(format!("\n{notice}"))),
         _ => output,
     }
 }
@@ -4314,7 +4314,7 @@ tasks:
     fn appends_update_notice_to_successful_output() {
         let (tx, rx) = mpsc::channel();
         tx.send(Some(String::from(
-            "A newer `ota` release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.",
+            "A newer `\u{1b}[38;5;130mota\u{1b}[0m` release is available: v9.9.9\nRun `\u{1b}[38;5;130mota self-update\u{1b}[0m` or `\u{1b}[38;5;130mota upgrade\u{1b}[0m` to update.",
         )))
         .unwrap();
 
@@ -4325,7 +4325,7 @@ tasks:
         assert_eq!(
             output.stderr,
             Some(String::from(
-                "\x1b[1mA newer `ota` release is available: v9.9.9\nRun `ota self-update` or `ota upgrade` to update.\x1b[0m"
+                "\nA newer `\x1b[38;5;130mota\x1b[0m` release is available: v9.9.9\nRun `\x1b[38;5;130mota self-update\x1b[0m` or `\x1b[38;5;130mota upgrade\x1b[0m` to update."
             ))
         );
     }
