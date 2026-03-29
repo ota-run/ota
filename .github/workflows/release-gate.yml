@@ -190,12 +190,43 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  publish-schemas:
+    name: Publish JSON Schemas to R2
+    needs: release-tag
+    if: needs.release-tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: release
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_BUCKET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Publish schema files
+        run: |
+          version="${{ needs.release-tag.outputs.version }}"
+          find docs/spec/json-schemas -maxdepth 1 -type f | sort | while read -r file; do
+            filename="$(basename "${file}")"
+            for prefix in "spec/json-schemas/latest" "spec/json-schemas/v${version}"; do
+              key="${prefix}/${filename}"
+              npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/${key}" \
+                --file "${file}" \
+                --remote \
+                --content-type application/json
+            done
+          done
+
   publish-release:
     name: Publish GitHub Release
     needs:
       - release-tag
       - release-assets-linux
       - release-assets-macos
+      - publish-schemas
     if: needs.release-tag.outputs.created == 'true'
     runs-on: ubuntu-latest
     permissions:
