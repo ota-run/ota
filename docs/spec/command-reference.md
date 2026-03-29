@@ -442,12 +442,14 @@ ota doctor --member api [PATH]
 ota doctor --member api --member web --json [PATH]
 ```
 
-Current behavior:
+- Current behavior:
 
-- validates the contract first
+- when no contract exists, inspects repo and host signals and reports the best next step instead of only telling the user to create a contract
+- validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
+- prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - checks configured env requirements
 - checks preferred execution backend prerequisites such as `docker`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
 - warns on suspicious remote target shape:

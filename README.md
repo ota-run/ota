@@ -193,7 +193,7 @@ Current behavior:
 - `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
-- `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action
+- `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, and leads with the highest-priority blocker first
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness

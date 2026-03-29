@@ -124,12 +124,14 @@ When to use:
 Why:
 
 - shows actionable blockers and warnings with explicit next steps
+- still gives a useful repo/host diagnosis even before `ota.yaml` exists
+- leads with the highest-priority blocker first so the next action is obvious
 - `--concise` keeps severity/summary/next action and omits `Why` detail
 - also surfaces inert top-level `extensions` entries so adapter metadata is visible without execution
 
 Use-case:
 
-- teammate cannot run a repo; doctor reports missing runtime/tool/env quickly
+- teammate cannot run a repo; doctor reports missing runtime/tool/env quickly, or they have not created `ota.yaml` yet and need the best next step
 
 ```bash
 ota doctor

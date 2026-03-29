@@ -1654,6 +1654,26 @@ exit 1
     }
 
     #[cfg(unix)]
+    fn install_fake_cargo(path: &std::path::Path) {
+        fs::write(
+            path,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "cargo 1.99.0"
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
     fn install_fake_daytona(path: &std::path::Path) {
         fs::write(
             path,
@@ -6038,6 +6058,61 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("No tasks defined in contract"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn doctor_without_contract_inspects_repo_and_host_signals() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("Cargo.toml"),
+            "[package]\nname = \"ota-rust\"\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("compose.yaml"),
+            "services:\n  web:\n    image: nginx:latest\n",
+        )
+        .unwrap();
+
+        let bin_dir = TempDir::new().unwrap();
+        #[cfg(unix)]
+        {
+            install_fake_cargo(&bin_dir.path().join("cargo"));
+        }
+        let original_path = std::env::var_os("PATH");
+        unsafe {
+            std::env::set_var("PATH", bin_dir.path());
+        }
+
+        let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Primary blocker:"));
+        assert!(stdout.contains("No `ota.yaml` found"));
+        assert!(stdout.contains("Detected Rust repo"));
+        assert!(stdout.contains("Detected Docker Compose services: web"));
+        assert!(stdout.contains("Host tool available: cargo"));
+        assert!(stdout.contains("Missing execution backend CLI: docker"));
+        assert!(stdout.contains("ota detect --dry-run"));
+        assert!(stdout.contains("ota init --bootstrap"));
+
+        let json_output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "No `ota.yaml` found"
+        );
+        assert_eq!(json["summary"]["primary_blocker"]["severity"], "error");
     }
 
     #[test]

@@ -70,11 +70,21 @@ pub struct WorkspaceDoctorSuccess<'a> {
     pub repos: &'a [WorkspaceRepoDoctorReport],
 }
 
-#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct DoctorSummary {
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_blocker: Option<DoctorPrimaryBlocker>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorPrimaryBlocker {
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -172,7 +182,7 @@ pub struct ExplainFailure<'a> {
     pub error: &'a str,
 }
 
-#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct WorkspaceDoctorSummary {
     pub repo_count: usize,
     pub ready_count: usize,
@@ -180,6 +190,17 @@ pub struct WorkspaceDoctorSummary {
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary_blocker: Option<WorkspacePrimaryBlocker>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkspacePrimaryBlocker {
+    pub repo: String,
+    pub severity: FindingSeverity,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]

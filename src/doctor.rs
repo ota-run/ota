@@ -797,7 +797,7 @@ fn map_check_severity(severity: CheckSeverity) -> FindingSeverity {
     }
 }
 
-fn command_version(name: &str) -> Option<String> {
+pub(crate) fn command_version(name: &str) -> Option<String> {
     let output = version_command(name).output().ok()?;
     if !output.status.success() {
         return None;
@@ -812,7 +812,7 @@ fn command_version(name: &str) -> Option<String> {
     extract_version_token(&combined)
 }
 
-fn command_available(name: &str) -> bool {
+pub(crate) fn command_available(name: &str) -> bool {
     Command::new(name).output().is_ok()
 }
 

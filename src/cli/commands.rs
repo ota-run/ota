@@ -37,21 +37,23 @@ use time::macros::format_description;
 
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorReport, Finding, FindingSeverity, diagnose_checks_only, diagnose_contract,
-    diagnose_preconditions, diagnose_service, diagnose_services_only,
+    DoctorReport, Finding, FindingSeverity, command_available, command_version,
+    diagnose_checks_only, diagnose_contract, diagnose_preconditions, diagnose_service,
+    diagnose_services_only,
 };
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorSuccess, DoctorSummary,
-    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorPrimaryBlocker,
+    DoctorSuccess, DoctorSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
+    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
+    WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1366,6 +1368,38 @@ pub fn doctor(
 
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
+        Err(ResolveContractError::NotFound { start }) => {
+            let root = Path::new(&start);
+            let report = diagnose_contractless_repo(root);
+            let empty_extensions = BTreeMap::new();
+
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => render_doctor_text(
+                        &compact_repo_path(root),
+                        None,
+                        None,
+                        &empty_extensions,
+                        report,
+                    ),
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&DoctorSuccess {
+                            ok: false,
+                            path: &start,
+                            summary: doctor_summary(&report),
+                            agent: None,
+                            execution: None,
+                            extensions: &empty_extensions,
+                            findings: &report.findings,
+                        }),
+                        stderr: None,
+                        exit_code: 1,
+                    },
+                },
+                debug,
+                vec![String::from("DEBUG command=doctor")],
+            );
+        }
         Err(error) => {
             return finalize_debug(
                 CommandOutput::failure(error.to_string()),
@@ -1664,6 +1698,142 @@ pub fn doctor(
         debug,
         debug_lines,
     )
+}
+
+fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
+    let mut findings = vec![Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("No `ota.yaml` found"),
+        why: format!(
+            "no `ota.yaml` was found from `{}` upward, so Ota cannot validate repo readiness yet",
+            root.display()
+        ),
+        next: String::from(
+            "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
+        ),
+    }];
+
+    let detect_report = match detect_repo(root) {
+        Ok(report) => Some(report),
+        Err(error) => {
+            findings.push(Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Could not inspect repo signals"),
+                why: format!("automatic repo detection failed: {error}"),
+                next: String::from("fix the unreadable repo files and re-run `ota doctor`"),
+            });
+            None
+        }
+    };
+
+    if let Some(report) = detect_report.as_ref() {
+        append_contractless_repo_findings(root, report, &mut findings);
+    }
+
+    DoctorReport {
+        ok: false,
+        findings,
+    }
+}
+
+fn append_contractless_repo_findings(
+    root: &Path,
+    report: &DetectReport,
+    findings: &mut Vec<Finding>,
+) {
+    if report.contract.runtimes.contains_key("rust") || report.contract.tools.contains_key("cargo")
+    {
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| {
+                inference.field == "runtimes.rust" || inference.field == "tools.cargo"
+            })
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("Cargo.toml");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Detected Rust repo"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from("run `ota detect --dry-run` to review the inferred Rust contract"),
+        });
+
+        match command_version("cargo") {
+            Some(version) => findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Host tool available: cargo"),
+                why: format!("`cargo --version` returned `{version}`"),
+                next: String::from("no action required"),
+            }),
+            None => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing host tool: cargo"),
+                why: String::from("the repo looks like Rust, but `cargo` is not available on PATH"),
+                next: String::from("install Rust so `cargo` is available before using this repo"),
+            }),
+        }
+    }
+
+    if !report.contract.services.is_empty() {
+        let service_names = report
+            .contract
+            .services
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = report
+            .inferences
+            .iter()
+            .find(|inference| inference.field.starts_with("services."))
+            .map(|inference| inference.source.as_str())
+            .unwrap_or("compose.yaml");
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!("Detected Docker Compose services: {service_names}"),
+            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            next: String::from(
+                "run `ota detect --dry-run` to preview the service contract before writing `ota.yaml`",
+            ),
+        });
+
+        if command_available("docker") {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Host tool available: docker"),
+                why: String::from("`docker --version` succeeded"),
+                next: String::from("no action required"),
+            });
+        } else {
+            findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing execution backend CLI: docker"),
+                why: String::from(
+                    "Docker Compose signals were detected, so container execution will need Docker once you adopt a contract",
+                ),
+                next: String::from(
+                    "install Docker, or keep the eventual contract on `native` if you do not want container execution",
+                ),
+            });
+        }
+    }
+
+    if report.contract.runtimes.is_empty()
+        && report.contract.tools.is_empty()
+        && report.contract.services.is_empty()
+        && report.contract.tasks.is_empty()
+        && report.contract.project.is_none()
+    {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("No repo signals detected"),
+            why: format!(
+                "`{}` did not expose obvious repo markers yet",
+                root.display()
+            ),
+            next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
+        });
+    }
 }
 
 pub fn explain(
@@ -6646,7 +6816,8 @@ fn render_doctor_text(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let mut output = render_report_text("DOCTOR", path, agent, execution, report, None);
+    let summary = doctor_summary(&report);
+    let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -6662,6 +6833,7 @@ fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
+    summary.primary_blocker = primary_blocker_from_findings(&report.findings);
     summary
 }
 
@@ -6672,6 +6844,16 @@ fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
             FindingSeverity::Warn => summary.warn_count += 1,
             FindingSeverity::Info => summary.info_count += 1,
         }
+    }
+    if let Some(candidate) = primary_blocker_from_findings(&report.findings) {
+        summary.primary_blocker = match summary.primary_blocker.take() {
+            Some(existing)
+                if blocker_rank(existing.severity) >= blocker_rank(candidate.severity) =>
+            {
+                Some(existing)
+            }
+            _ => Some(candidate),
+        };
     }
 }
 
@@ -6715,6 +6897,7 @@ fn workspace_doctor_summary(
         }
     }
 
+    summary.primary_blocker = workspace_primary_blocker(report);
     summary
 }
 
@@ -6784,6 +6967,49 @@ fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSum
     summary
 }
 
+fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBlocker> {
+    findings.first().map(|finding| DoctorPrimaryBlocker {
+        severity: finding.severity,
+        summary: finding.summary.clone(),
+        why: finding.why.clone(),
+        next: finding.next.clone(),
+    })
+}
+
+fn blocker_rank(severity: FindingSeverity) -> usize {
+    match severity {
+        FindingSeverity::Error => 3,
+        FindingSeverity::Warn => 2,
+        FindingSeverity::Info => 1,
+    }
+}
+
+fn workspace_primary_blocker(
+    report: &crate::workspace::WorkspaceDoctorReport,
+) -> Option<WorkspacePrimaryBlocker> {
+    let mut fallback = None;
+
+    for repo in &report.repos {
+        for finding in &repo.findings {
+            let blocker = WorkspacePrimaryBlocker {
+                repo: repo.name.clone(),
+                severity: finding.severity,
+                summary: finding.summary.clone(),
+                why: finding.why.clone(),
+                next: finding.next.clone(),
+            };
+            if finding.severity == FindingSeverity::Error {
+                return Some(blocker);
+            }
+            if fallback.is_none() {
+                fallback = Some(blocker);
+            }
+        }
+    }
+
+    fallback
+}
+
 fn render_doctor_section(
     path: &str,
     agent: Option<&AgentSummary<'_>>,
@@ -6791,7 +7017,9 @@ fn render_doctor_section(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    let mut output = render_report_section("DOCTOR", path, agent, execution, report, None);
+    let summary = doctor_summary(report);
+    let mut output =
+        render_report_section("DOCTOR", path, agent, execution, report, Some(&summary));
     if !extensions.is_empty() {
         output.push_str(&render_extensions_text(extensions));
     }
@@ -6802,11 +7030,24 @@ fn render_workspace_doctor_text(
     path: &str,
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
+    let summary = workspace_doctor_summary(report);
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE DOCTOR", path),
         render_readiness_status(report.ok)
     );
+    if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
+        stdout.push_str(&render_primary_blocker_text(
+            "Primary blocker",
+            &format!(
+                "{} [{}]",
+                primary_blocker.repo,
+                render_finding_summary(primary_blocker.severity, &primary_blocker.summary)
+            ),
+            &primary_blocker.why,
+            &primary_blocker.next,
+        ));
+    }
 
     for repo in &report.repos {
         stdout.push_str(&format!(
@@ -6865,9 +7106,7 @@ fn render_workspace_doctor_text(
             }
         }
     }
-    stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
-        report,
-    )));
+    stdout.push_str(&render_workspace_summary_text(&summary));
 
     CommandOutput {
         stdout,
@@ -7369,7 +7608,7 @@ fn render_report_section(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: &DoctorReport,
-    _summary: Option<&DoctorSummary>,
+    summary: Option<&DoctorSummary>,
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}",
@@ -7385,6 +7624,14 @@ fn render_report_section(
 
     if let Some(execution) = execution {
         stdout.push_str(&render_execution_summary_text(execution));
+    }
+    if let Some(primary_blocker) = summary.and_then(|summary| summary.primary_blocker.as_ref()) {
+        stdout.push_str(&render_primary_blocker_text(
+            "Primary blocker",
+            &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
+            &primary_blocker.why,
+            &primary_blocker.next,
+        ));
     }
     for finding in &report.findings {
         let next = compact_backticked_paths(&finding.next);
@@ -7425,6 +7672,23 @@ fn render_report_section(
         }
     }
 
+    stdout
+}
+
+fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!("{}:", paint_section_title(title)));
+    stdout.push_str(&format!("\n{} {}", paint_key("Summary:"), summary));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Why:"),
+        compact_backticked_paths(why)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Next:"),
+        compact_backticked_paths(next)
+    ));
     stdout
 }
 

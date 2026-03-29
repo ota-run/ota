@@ -207,7 +207,9 @@ additive policy keys may appear there as well.
 metadata that editors and remote-runner tooling can consume.
 
 `ota doctor --json` also includes a top-level `summary` object with finding counts so hosted
-validation and editor tooling do not need to recompute them.
+validation and editor tooling do not need to recompute them. When there is at least one finding,
+the summary may also include `primary_blocker` with the highest-priority blocker details so CI and
+editors can answer the question “what should I fix first?” without scanning the full list.
 
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
@@ -223,7 +225,9 @@ underlying repo contract declares execution metadata.
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
 
 `ota workspace doctor --json` also includes a top-level `summary` object with repo and finding
-counts for hosted validation and editor consumers.
+counts for hosted validation and editor consumers. When there is at least one finding, the
+summary may also include `primary_blocker` with the highest-priority blocker details and the repo
+name that owns it.
 
 ```json
 {
