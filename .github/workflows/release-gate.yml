@@ -1,0 +1,171 @@
+name: Release Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  release-gate:
+    name: Release Gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install ota
+        run: cargo install --path . --locked
+
+      - name: Validate contract
+        run: ota validate
+
+      - name: Run release gate
+        run: ota run release-gate
+
+  release-tag:
+    name: Create Release Tag
+    outputs:
+      created: ${{ steps.tag.outputs.created }}
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    needs: release-gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: meta
+        run: |
+          version="$(awk -F'"' '/^version = / {print $2; exit}' Cargo.toml)"
+          tag="v${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release tag
+        id: tag
+        run: |
+          tag="${{ steps.meta.outputs.tag }}"
+          git fetch --tags --force
+          if git rev-parse "${tag}" >/dev/null 2>&1; then
+            echo "tag already exists: ${tag}"
+            echo "created=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${tag}" -m "Release ${tag}"
+          git push origin "${tag}"
+          echo "created=true" >> "${GITHUB_OUTPUT}"
+
+  release-assets-linux:
+    name: Build Release Asset (Linux)
+    needs: release-tag
+    if: needs.release-tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package release asset
+        run: |
+          target="$(rustc -vV | awk '/host:/{print $2; exit}')"
+          asset="ota-${target}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/${asset}" -C target/release ota
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-release-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release-assets-macos:
+    name: Build Release Asset (macOS)
+    needs: release-tag
+    if: needs.release-tag.outputs.created == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package release asset
+        run: |
+          target="$(rustc -vV | awk '/host:/{print $2; exit}')"
+          asset="ota-${target}.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/${asset}" -C target/release ota
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-release-macos
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - release-tag
+      - release-assets-linux
+      - release-assets-macos
+    if: needs.release-tag.outputs.created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: ota-release-*
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-tag.outputs.tag }}
+          name: ${{ needs.release-tag.outputs.tag }}
+          files: dist/**/*.tar.gz
+          generate_release_notes: true
