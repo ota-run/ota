@@ -275,7 +275,6 @@ jq -c '.repos[] | {name, path, findings}' .ota-workspace-doctor.json \
       ' <<<"$repo"
     done
 ```
-
 ## Editor and hosted validation overlap
 
 Hosted validation systems and editor integrations should consume the same JSON shapes:
