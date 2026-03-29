@@ -47,7 +47,7 @@ jobs:
           fi
           jq -r '
             .findings[]
-            | if .severity == "error" then "error" else "warning" end as $level
+            | (if .severity == "error" then "error" else "warning" end) as $level
             | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
           ' doctor.json
 
