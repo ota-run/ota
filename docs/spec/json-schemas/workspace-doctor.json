@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dist.ota.run/spec/json-schemas/workspace-doctor.json",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-doctor.json",
   "title": "ota workspace doctor --json",
   "type": "object",
   "additionalProperties": false,
