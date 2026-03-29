@@ -221,6 +221,24 @@ Example PR policy:
 - post warnings as annotations
 - keep JSON artifacts for traceability
 
+## CI and PR annotation delivery
+
+The annotation layer should be a thin consumer of JSON, not a second diagnosis engine.
+
+Recommended mapping:
+
+- use `summary.primary_blocker` as the first check summary when present
+- emit one annotation per finding
+- map `severity: error` to failing annotations or a failed check
+- map `severity: warn` to non-blocking annotations unless policy says otherwise
+- use `summary` as the check-run headline
+- use `why` as the annotation body
+- use `next` as the suggested fix or link target
+
+For workspace commands, keep the same mapping but scope annotations to the repo name and path in
+the workspace payload. That keeps PR feedback aligned with the same JSON fields used by local
+editor integrations.
+
 ## Editor and hosted validation overlap
 
 Hosted validation systems and editor integrations should consume the same JSON shapes:

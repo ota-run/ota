@@ -182,3 +182,20 @@ Postgres setup.
 
 Hosted validation is read-only. It surfaces blockers early and leaves mutation to local,
 explicit commands.
+
+## Annotation delivery
+
+Hosted CI should treat the JSON payload as the source of truth and turn it into annotations or
+check-run summaries without re-parsing text output.
+
+Recommended mapping:
+
+- use `summary.primary_blocker` as the headline when present
+- emit one annotation per finding
+- treat `severity: error` as blocking
+- treat `severity: warn` as non-blocking unless policy says otherwise
+- use `why` as the annotation body
+- use `next` as the suggested fix
+
+For workspace commands, keep the same mapping but scope annotations to the repo name and path in
+the workspace payload.
