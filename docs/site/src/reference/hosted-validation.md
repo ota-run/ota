@@ -200,19 +200,23 @@ Recommended mapping:
 For workspace commands, keep the same mapping but scope annotations to the repo name and path in
 the workspace payload.
 
+Portable adapter:
+
+[`scripts/emit-ota-findings.sh`](../../../../scripts/emit-ota-findings.sh) turns Ota JSON into either
+plain CI log lines or GitHub Actions annotations on POSIX shells. Windows users can call
+[`scripts/emit-ota-findings.ps1`](../../../../scripts/emit-ota-findings.ps1) for the same behavior
+in PowerShell. Use `--format plain` for any provider, or `--format github` when the CI platform
+understands annotation syntax.
+
+For repo-local usage, the canonical entrypoint is `ota run doctor-annotations` with the
+`--render-format` input set to `plain` or `github`.
+
 Example adapter:
 
 ```bash
 ota doctor --json > .ota-doctor.json
-jq -r '
-  .summary.primary_blocker?
-  | select(. != null)
-  | "::notice title=ota doctor primary blocker::\(.summary) | \(.next)"
-' .ota-doctor.json
+scripts/emit-ota-findings.sh --mode doctor --format github --input .ota-doctor.json
 
-jq -r '
-  .findings[]
-  | if .severity == "error" then "error" else "warning" end as $level
-  | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
-' .ota-doctor.json
+ota workspace doctor --json > .ota-workspace-doctor.json
+scripts/emit-ota-findings.sh --mode workspace-doctor --format github --input .ota-workspace-doctor.json
 ```

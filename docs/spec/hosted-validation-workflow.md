@@ -239,41 +239,28 @@ For workspace commands, keep the same mapping but scope annotations to the repo 
 the workspace payload. That keeps PR feedback aligned with the same JSON fields used by local
 editor integrations.
 
+Portable adapter:
+
+[`scripts/emit-ota-findings.sh`](../../scripts/emit-ota-findings.sh) turns Ota JSON into either
+plain CI log lines or GitHub Actions annotations on POSIX shells. Windows users can call
+[`scripts/emit-ota-findings.ps1`](../../scripts/emit-ota-findings.ps1) for the same behavior in
+PowerShell. Use `--format plain` when you want a provider-neutral output stream, or
+`--format github` when the CI platform understands annotation syntax.
+
+For repo-local usage, the canonical entrypoint is `ota run doctor-annotations` with the
+`--render-format` input set to `plain` or `github`.
+
 Example shell adapter for GitHub Actions:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
-emit_ota_annotations() {
-  local kind="$1"
-  local json="$2"
-
-  jq -r --arg kind "$kind" '
-    if .summary.primary_blocker? then
-      .summary.primary_blocker
-      | "::notice title=\($kind) primary blocker::\(.summary) | \(.next)"
-    else empty end,
-    .findings[]
-    | if .severity == "error" then "error" else "warning" end as $level
-    | "::\($level) title=\($kind) finding::\(.summary) | \(.next)"
-  ' "$json"
-}
-
 ota doctor --json > .ota-doctor.json
-emit_ota_annotations "ota doctor" .ota-doctor.json
+scripts/emit-ota-findings.sh --mode doctor --format github --input .ota-doctor.json
 
 ota workspace doctor --json > .ota-workspace-doctor.json
-jq -c '.repos[] | {name, path, findings}' .ota-workspace-doctor.json \
-  | while read -r repo; do
-      name="$(jq -r '.name' <<<"$repo")"
-      path="$(jq -r '.path' <<<"$repo")"
-      jq -r --arg repo "$name" --arg path "$path" '
-        .findings[]
-        | if .severity == "error" then "error" else "warning" end as $level
-        | "::\($level) file=\($path),title=\($repo)::\(.summary) | \(.next)"
-      ' <<<"$repo"
-    done
+scripts/emit-ota-findings.sh --mode workspace-doctor --format github --input .ota-workspace-doctor.json
 ```
 ## Editor and hosted validation overlap
 
