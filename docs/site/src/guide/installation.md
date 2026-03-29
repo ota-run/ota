@@ -33,13 +33,13 @@ Latest release:
 macOS/Linux:
 
 ```bash
-curl -fsSL https://ota.run/install.sh | sh
+curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-iwr https://ota.run/install.ps1 | iex
+iwr https://dist.ota.run/install.ps1 | iex
 ```
 
 Pinned release:
@@ -47,14 +47,14 @@ Pinned release:
 macOS/Linux:
 
 ```bash
-OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:OTA_VERSION = "v0.1.2"
-iwr https://ota.run/install.ps1 | iex
+$env:OTA_VERSION = "vX.Y.Z"
+iwr https://dist.ota.run/install.ps1 | iex
 ```
 
 Source install from a cloned repo:

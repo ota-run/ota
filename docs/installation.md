@@ -33,13 +33,13 @@ The installers include a branded otter banner and a compact success receipt so t
 Install the latest release binary:
 
 ```bash
-curl -fsSL https://ota.run/install.sh | sh
+curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 Pin a release:
 
 ```bash
-OTA_VERSION=v0.1.2 curl -fsSL https://ota.run/install.sh | sh
+OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
 From a cloned Ota repository:
@@ -55,14 +55,14 @@ The shell installer also supports `OTA_RELEASE_BASE` if you host the release ass
 Install the latest release binary:
 
 ```powershell
-iwr https://ota.run/install.ps1 | iex
+iwr https://dist.ota.run/install.ps1 | iex
 ```
 
 Pin a release:
 
 ```powershell
-$env:OTA_VERSION = "v0.1.2"
-iwr https://ota.run/install.ps1 | iex
+$env:OTA_VERSION = "vX.Y.Z"
+iwr https://dist.ota.run/install.ps1 | iex
 ```
 
 From a cloned Ota repository:
