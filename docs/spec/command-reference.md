@@ -203,16 +203,18 @@ Current behavior:
 - resolves the execution form for the current OS
 - includes task metadata when present
 - includes task `env` and `inputs` when present
-- includes task `description` and optional `notes` when present
+- includes task `description` and optional `notes` when present, where `notes` carries purpose and
+  extra guidance
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
+- `--use` keeps the usage line but also shows `description` and `notes` when present
 
 Text output:
 
 - header: `TASKS <path>`
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
 - each task may include `env` and `inputs`
-- each task may include `Description` and `Notes`
+- each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes a short execution preview
 
 JSON output:

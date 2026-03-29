@@ -392,6 +392,7 @@ Use-case:
 
 - quickly inspect what the repo considers safe/official entrypoint tasks
 - read the task `description` and optional `notes` before running a task
+- use `--use` when you want the command line form plus the task purpose
 
 ```bash
 ota tasks
