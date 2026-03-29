@@ -85,10 +85,10 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 Use an existing contract:
 
 ```bash
-cargo run -- validate
-cargo run -- tasks --json
-cargo run -- doctor
-cargo run -- up
+ota validate
+ota tasks --json
+ota doctor
+ota up
 ```
 
 If the contract declares agent guidance, `ota tasks --json` and `ota doctor --json` surface the
@@ -97,21 +97,21 @@ same safe-task, verification, and writable-path hints that humans can review in 
 Infer a starting contract from an existing repo:
 
 ```bash
-cargo run -- init
-cargo run -- detect --dry-run /path/to/repo
+ota init
+ota detect --dry-run /path/to/repo
 ```
 
 Write a conservative first contract:
 
 ```bash
-cargo run -- detect --write /path/to/repo
+ota detect --write /path/to/repo
 ```
 
 Review or conservatively merge into an existing contract:
 
 ```bash
-cargo run -- detect --merge --dry-run /path/to/repo
-cargo run -- detect --merge /path/to/repo
+ota detect --merge --dry-run /path/to/repo
+ota detect --merge /path/to/repo
 ```
 
 Example contracts:
