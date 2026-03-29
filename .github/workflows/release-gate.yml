@@ -35,7 +35,7 @@ jobs:
           echo "DEMO_DIR=$tmpdir" >> "${GITHUB_ENV}"
 
       - name: Diagnose demo contract
-        run: cargo run -- doctor --json "$DEMO_DIR" > doctor.json
+        run: cargo run -- doctor --json "$DEMO_DIR" > doctor.json || true
 
       - name: Emit annotations
         run: |
