@@ -1,0 +1,72 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+name: ota-annotations-demo
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  annotations:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Create demo contract
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          cat > "$tmpdir/ota.yaml" <<'EOF'
+          version: 1
+          project:
+            name: annotations-demo
+          env:
+            DEMO_REQUIRED:
+              required: true
+          EOF
+          echo "DEMO_DIR=$tmpdir" >> "$GITHUB_ENV"
+
+      - name: Diagnose demo contract
+        run: cargo run -- doctor --json "$DEMO_DIR" > doctor.json
+
+      - name: Emit annotations
+        run: |
+          set -euo pipefail
+          primary_blocker="$(jq -r '.summary.primary_blocker?.summary // empty' doctor.json)"
+          if [ -n "$primary_blocker" ]; then
+            next="$(jq -r '.summary.primary_blocker?.next // empty' doctor.json)"
+            echo "::notice title=ota doctor primary blocker::$primary_blocker | $next"
+          fi
+          jq -r '
+            .findings[]
+            | if .severity == "error" then "error" else "warning" end as $level
+            | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
+          ' doctor.json
+
+      - name: Fail on blocker
+        run: jq -e '.summary.error_count > 0' doctor.json >/dev/null

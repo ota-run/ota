@@ -199,3 +199,20 @@ Recommended mapping:
 
 For workspace commands, keep the same mapping but scope annotations to the repo name and path in
 the workspace payload.
+
+Example adapter:
+
+```bash
+ota doctor --json > .ota-doctor.json
+jq -r '
+  .summary.primary_blocker?
+  | select(. != null)
+  | "::notice title=ota doctor primary blocker::\(.summary) | \(.next)"
+' .ota-doctor.json
+
+jq -r '
+  .findings[]
+  | if .severity == "error" then "error" else "warning" end as $level
+  | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
+' .ota-doctor.json
+```

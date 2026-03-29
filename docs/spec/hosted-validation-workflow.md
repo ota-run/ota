@@ -239,6 +239,43 @@ For workspace commands, keep the same mapping but scope annotations to the repo 
 the workspace payload. That keeps PR feedback aligned with the same JSON fields used by local
 editor integrations.
 
+Example shell adapter for GitHub Actions:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+emit_ota_annotations() {
+  local kind="$1"
+  local json="$2"
+
+  jq -r --arg kind "$kind" '
+    if .summary.primary_blocker? then
+      .summary.primary_blocker
+      | "::notice title=\($kind) primary blocker::\(.summary) | \(.next)"
+    else empty end,
+    .findings[]
+    | if .severity == "error" then "error" else "warning" end as $level
+    | "::\($level) title=\($kind) finding::\(.summary) | \(.next)"
+  ' "$json"
+}
+
+ota doctor --json > .ota-doctor.json
+emit_ota_annotations "ota doctor" .ota-doctor.json
+
+ota workspace doctor --json > .ota-workspace-doctor.json
+jq -c '.repos[] | {name, path, findings}' .ota-workspace-doctor.json \
+  | while read -r repo; do
+      name="$(jq -r '.name' <<<"$repo")"
+      path="$(jq -r '.path' <<<"$repo")"
+      jq -r --arg repo "$name" --arg path "$path" '
+        .findings[]
+        | if .severity == "error" then "error" else "warning" end as $level
+        | "::\($level) file=\($path),title=\($repo)::\(.summary) | \(.next)"
+      ' <<<"$repo"
+    done
+```
+
 ## Editor and hosted validation overlap
 
 Hosted validation systems and editor integrations should consume the same JSON shapes:
