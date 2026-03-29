@@ -34,7 +34,9 @@ use crate::output::CommandOutput;
 const DEFAULT_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/ota-run/ota/releases/latest";
 const DEFAULT_RELEASES_LIST_URL: &str = "https://api.github.com/repos/ota-run/ota/releases";
-const ANSI_UPDATE_ACCENT: &str = "\x1b[38;5;130m";
+const ANSI_BRIGHT_GREEN: &str = "\x1b[92m";
+const ANSI_GOLD_BROWN: &str = "\x1b[38;5;130m";
+const ANSI_FG_RESET: &str = "\x1b[39m";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateTrack {
@@ -299,9 +301,11 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
     }
 
     Some(format!(
-        "A newer `{accent}ota{reset}` release is available: v{latest}\nRun `{accent}ota self-update{reset}` or `{accent}ota upgrade{reset}` to update.",
-        accent = ANSI_UPDATE_ACCENT,
-        reset = "\x1b[0m"
+        "A newer `{ota}ota{reset}` release is available: {version}v{latest}{reset}\nRun `{command}ota self-update{reset}` or `{command}ota upgrade{reset}` to update.",
+        ota = ANSI_GOLD_BROWN,
+        version = ANSI_BRIGHT_GREEN,
+        command = ANSI_GOLD_BROWN,
+        reset = ANSI_FG_RESET
     ))
 }
 
@@ -467,7 +471,7 @@ mod tests {
         assert_eq!(
             notice,
             Some(String::from(
-                "A newer `\u{1b}[38;5;130mota\u{1b}[0m` release is available: v9.9.9\nRun `\u{1b}[38;5;130mota self-update\u{1b}[0m` or `\u{1b}[38;5;130mota upgrade\u{1b}[0m` to update."
+                "A newer `\u{1b}[38;5;130mota\u{1b}[39m` release is available: \u{1b}[92mv9.9.9\u{1b}[39m\nRun `\u{1b}[38;5;130mota self-update\u{1b}[39m` or `\u{1b}[38;5;130mota upgrade\u{1b}[39m` to update."
             ))
         );
     }
