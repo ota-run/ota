@@ -127,10 +127,10 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
-        /// Path to an ota.yaml file or a directory containing one.
+        /// Optional repo path. Put it after the task name and before task inputs.
         #[arg(index = 2)]
         path: Option<PathBuf>,
-        /// Task input flags such as `--base-url http://...`.
+        /// Task inputs such as `--base-url http://...`, placed after the path.
         #[arg(index = 3)]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
@@ -540,10 +540,10 @@ enum WorkspaceCommands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
-        /// Path to an ota.workspace.yaml file or a directory containing one.
+        /// Optional workspace path. Put it after the task name and before task inputs.
         #[arg(index = 2)]
         path: Option<PathBuf>,
-        /// Task input flags such as `--base-url http://...`.
+        /// Task inputs such as `--base-url http://...`, placed after the path.
         #[arg(index = 3)]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
