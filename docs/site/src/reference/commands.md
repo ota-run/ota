@@ -391,6 +391,7 @@ Why:
 Use-case:
 
 - quickly inspect what the repo considers safe/official entrypoint tasks
+- read the task `description` and optional `notes` before running a task
 
 ```bash
 ota tasks

@@ -203,6 +203,7 @@ Current behavior:
 - resolves the execution form for the current OS
 - includes task metadata when present
 - includes task `env` and `inputs` when present
+- includes task `description` and optional `notes` when present
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
 
@@ -211,6 +212,7 @@ Text output:
 - header: `TASKS <path>`
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
 - each task may include `env` and `inputs`
+- each task may include `Description` and `Notes`
 - each task includes a short execution preview
 
 JSON output:

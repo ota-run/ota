@@ -467,6 +467,7 @@ extensions:
 Fields:
 
 - `description`: optional string
+- `notes`: optional multiline guidance for humans and agents
 - `category`: optional string
 - `env`: optional map of fixed task-scoped environment overrides
 - `inputs`: optional map of named task inputs
@@ -501,6 +502,10 @@ Example:
 ```yaml
 tasks:
   api-automation-tests:
+    description: Run API automation tests
+    notes: |
+      Use this to verify the API against a running local service.
+      Prefer after `ota run setup` and before merging contract changes.
     inputs:
       base_url:
         description: API base URL for the live suite
@@ -535,6 +540,7 @@ ota run version:bump --version 0.2.0
 Input fields:
 
 - `description`: optional string
+- `notes`: optional multiline string
 - `required`: optional boolean
 - `default`: optional string
 - `allowed`: optional list of accepted string values

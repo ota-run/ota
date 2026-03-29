@@ -6870,6 +6870,9 @@ fn render_tasks_text(
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
+        if let Some(notes) = task.notes {
+            output.push_str(&format!("\n  {} {notes}", paint_key("Notes:")));
+        }
     }
 
     output
