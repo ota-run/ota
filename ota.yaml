@@ -105,7 +105,12 @@ tasks:
   bump-version:
     description: Bump Cargo.toml to a new release version
     category: release
-    run: ./scripts/bump-version.sh "$1"
+    script: |
+      ./scripts/bump-version.sh
+    inputs:
+      version:
+        description: New release version to apply
+        required: true
     depends_on:
       - ci
   install:
