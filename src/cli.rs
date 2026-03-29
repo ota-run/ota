@@ -600,8 +600,12 @@ where
     commands::take_failure_locus();
 
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    let version_update_notice_rx = io::stderr().is_terminal().then(spawn_update_notice);
     if is_version_request(&args) {
-        return CommandOutput::success(render_version_output(&args));
+        return maybe_append_update_notice(
+            CommandOutput::success(render_version_output(&args)),
+            version_update_notice_rx,
+        );
     }
 
     let args = rewrite_task_input_path_hint(args);
@@ -705,15 +709,7 @@ fn run_command_value_span(flag: &str) -> Option<usize> {
 }
 
 fn run_cli(cli: Cli) -> CommandOutput {
-    let update_notice_rx = should_show_update_notice(&cli).then(|| {
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let _ = tx.send(crate::update::maybe_update_notice(env!(
-                "CARGO_PKG_VERSION"
-            )));
-        });
-        rx
-    });
+    let update_notice_rx = should_show_update_notice(&cli).then(spawn_update_notice);
 
     if should_show_command_spinner(&cli) {
         let (tx, rx) = mpsc::channel();
@@ -724,6 +720,14 @@ fn run_cli(cli: Cli) -> CommandOutput {
     }
 
     maybe_append_update_notice(dispatch(cli), update_notice_rx)
+}
+
+fn spawn_update_notice() -> mpsc::Receiver<Option<String>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(crate::update::maybe_update_notice(env!("CARGO_PKG_VERSION")));
+    });
+    rx
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
