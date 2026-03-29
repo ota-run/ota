@@ -38,6 +38,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
+- use `ota workspace check --json` when you want checks-only workspace readiness with a roll-up summary
 - use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
 - use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
@@ -52,6 +53,7 @@ human text output:
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps`
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
+- `ota workspace check --json`: use the top-level `summary` and per-repo findings
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json` and `ota explain --json`: use the change summary and remediation steps
@@ -565,6 +567,14 @@ Optional per-repo fields:
 {
   "ok": false,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0
+  },
   "repos": [
     {
       "name": "web",
@@ -584,6 +594,9 @@ Optional per-repo fields:
   ]
 }
 ```
+
+`summary` mirrors the workspace doctor roll-up so hosted gates can read the same repo and finding
+counts from checks-only output.
 
 ## `ota init --json`
 

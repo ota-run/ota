@@ -826,6 +826,9 @@ set -euo pipefail
 ota workspace check --json > .ota-workspace-check.json
 ```
 
+The JSON payload includes a top-level `summary` that mirrors the workspace doctor roll-up so CI
+and editor tooling can read repo and finding counts directly.
+
 ### `ota workspace run <task>`
 
 When to use:

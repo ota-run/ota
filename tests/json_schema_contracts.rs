@@ -171,8 +171,10 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
 #[test]
 fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-check.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());

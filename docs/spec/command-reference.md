@@ -1124,6 +1124,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 Current non-goals:
@@ -1203,6 +1204,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 Current non-goals:
