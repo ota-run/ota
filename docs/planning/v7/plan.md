@@ -28,12 +28,12 @@ Status: active.
 
 Source direction:
 
-- [/Users/bobai/Desktop/Ota.run/Spec/New/22-v7-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/22-v7-spec.md)
-- [Remote runner and editor surface](/Users/bobai/Workspace/Ota.run/ota/docs/spec/remote-runner-and-editor-surface.md)
-- [Hosted validation workflow](/Users/bobai/Workspace/Ota.run/ota/docs/spec/hosted-validation-workflow.md)
-- [JSON output reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/json-output-reference.md)
-- [Command reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/command-reference.md)
-- [Semantic diff and explain](/Users/bobai/Workspace/Ota.run/ota/docs/spec/semantic-diff-and-explain.md)
+- `/Users/bobai/Desktop/Ota.run/Spec/New/22-v7-spec.md`
+- [Remote runner and editor surface](../../spec/remote-runner-and-editor-surface.md)
+- [Hosted validation workflow](../../spec/hosted-validation-workflow.md)
+- [JSON output reference](../../spec/json-output-reference.md)
+- [Command reference](../../spec/command-reference.md)
+- [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
 
 V7 theme:
 

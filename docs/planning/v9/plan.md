@@ -28,7 +28,7 @@ Status: planned.
 
 Source direction:
 
-- [Env resolution and policy](/Users/bobai/Workspace/Ota.run/ota/docs/spec/env-resolution-and-policy.md)
+- [Env resolution and policy](../../spec/env-resolution-and-policy.md)
 
 V9 theme:
 

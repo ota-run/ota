@@ -11,6 +11,17 @@
         "summary": { "type": "string" },
         "why": { "type": "string" },
         "next": { "type": "string" },
+        "ownership": {
+          "enum": [
+            "repo_contract",
+            "host",
+            "service",
+            "workspace_acquisition",
+            "org_policy",
+            "remote_backend"
+          ]
+        },
+        "provenance": { "type": "string" },
         "policy_outcome": {
           "enum": [
             "satisfied",

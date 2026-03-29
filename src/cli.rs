@@ -4959,6 +4959,53 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_contract_drift_as_warning_findings() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+tasks:
+  ci:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[package]
+name = "detected"
+version = "0.1.0"
+"#,
+        )
+        .expect("write Cargo.toml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json["summary"]["warn_count"].as_u64().unwrap_or(0) >= 1);
+        assert!(
+            json["findings"].as_array().expect("findings array").iter().any(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("Contract drift:")
+                    && finding["ownership"] == "repo_contract"
+                    && finding["provenance"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("ota detect")
+            }),
+            "expected at least one contract-drift warning"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"

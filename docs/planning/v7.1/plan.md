@@ -28,11 +28,11 @@ Status: planned.
 
 Source direction:
 
-- [Doctor quality bar](/Users/bobai/Workspace/Ota.run/ota/docs/design/doctor-quality-bar.md)
-- [Semantic diff and explain](/Users/bobai/Workspace/Ota.run/ota/docs/spec/semantic-diff-and-explain.md)
-- [Hosted validation workflow](/Users/bobai/Workspace/Ota.run/ota/docs/spec/hosted-validation-workflow.md)
-- [JSON output reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/json-output-reference.md)
-- [Command reference](/Users/bobai/Workspace/Ota.run/ota/docs/spec/command-reference.md)
+- [Doctor quality bar](../../design/doctor-quality-bar.md)
+- [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
+- [Hosted validation workflow](../../spec/hosted-validation-workflow.md)
+- [JSON output reference](../../spec/json-output-reference.md)
+- [Command reference](../../spec/command-reference.md)
 
 V7.1 theme:
 

@@ -126,6 +126,8 @@ Why:
 - shows actionable blockers and warnings with explicit next steps
 - still gives a useful repo/host diagnosis even before `ota.yaml` exists
 - leads with the highest-priority blocker first so the next action is obvious
+- reports contract drift as warnings when repo signals no longer match the declared contract
+- tags drift warnings with repo-contract ownership and provenance so consumers can separate stale contract truth from host or service failures
 - `--concise` keeps severity/summary/next action and omits `Why` detail
 - also surfaces inert top-level `extensions` entries so adapter metadata is visible without execution
 

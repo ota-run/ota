@@ -27,13 +27,13 @@
 Status: complete (started 2026-03-24, completed 2026-03-26).
 
 Source direction:
-- [/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md](/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md)
-- [/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md)
-- [Policy pack model](/Users/bobai/Workspace/Ota.run/ota/docs/spec/policy-packs.md)
-- [Conventions and templates](/Users/bobai/Workspace/Ota.run/ota/docs/spec/conventions-and-templates.md)
-- [Audit and provenance](/Users/bobai/Workspace/Ota.run/ota/docs/spec/audit-and-provenance.md)
-- [Remote runner metadata and editor surface](/Users/bobai/Workspace/Ota.run/ota/docs/spec/remote-runner-and-editor-surface.md)
-- [Mutation controls and caching](/Users/bobai/Workspace/Ota.run/ota/docs/spec/mutation-controls-and-caching.md)
+- `/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md`
+- `/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md`
+- [Policy pack model](../../spec/policy-packs.md)
+- [Conventions and templates](../../spec/conventions-and-templates.md)
+- [Audit and provenance](../../spec/audit-and-provenance.md)
+- [Remote runner metadata and editor surface](../../spec/remote-runner-and-editor-surface.md)
+- [Mutation controls and caching](../../spec/mutation-controls-and-caching.md)
 
 V5 theme:
 

@@ -61,6 +61,12 @@ struct PolicyFindingContext<'a> {
     mutation_allowed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DriftFindingContext<'a> {
+    ownership: &'a str,
+    provenance: &'a str,
+}
+
 impl Finding {
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
         match self.summary.as_str() {
@@ -92,6 +98,17 @@ impl Finding {
             _ => None,
         }
     }
+
+    fn drift_context(&self) -> Option<DriftFindingContext<'_>> {
+        if self.summary.starts_with("Contract drift:") {
+            Some(DriftFindingContext {
+                ownership: "repo_contract",
+                provenance: "repo signals were compared against the declared contract with `ota detect`",
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl Serialize for Finding {
@@ -100,8 +117,11 @@ impl Serialize for Finding {
         S: Serializer,
     {
         let policy = self.policy_context();
-        let mut state =
-            serializer.serialize_struct("Finding", 4 + policy.map(|_| 5).unwrap_or_default())?;
+        let drift = self.drift_context();
+        let mut state = serializer.serialize_struct(
+            "Finding",
+            4 + policy.map(|_| 5).unwrap_or_default() + drift.map(|_| 2).unwrap_or_default(),
+        )?;
 
         state.serialize_field("severity", &self.severity)?;
         state.serialize_field("summary", &self.summary)?;
@@ -114,6 +134,11 @@ impl Serialize for Finding {
             state.serialize_field("policy_source", policy.source)?;
             state.serialize_field("install_scope", policy.install_scope)?;
             state.serialize_field("mutation_allowed", &policy.mutation_allowed)?;
+        }
+
+        if let Some(drift) = drift {
+            state.serialize_field("ownership", drift.ownership)?;
+            state.serialize_field("provenance", drift.provenance)?;
         }
 
         state.end()
