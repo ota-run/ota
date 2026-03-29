@@ -113,6 +113,7 @@ enum Commands {
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
+        #[arg(index = 1)]
         task: String,
         /// Override the execution backend for this invocation.
         #[arg(long, value_enum)]
@@ -127,9 +128,11 @@ enum Commands {
         #[arg(long)]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
+        #[arg(index = 2)]
         path: Option<PathBuf>,
         /// Task input flags such as `--base-url http://...`.
-        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+        #[arg(index = 3)]
+        #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
     },
     /// Diagnose repo readiness from an Ota contract.
@@ -523,6 +526,7 @@ enum WorkspaceCommands {
     /// Run a task across workspace repos.
     Run {
         /// Task name to execute.
+        #[arg(index = 1)]
         task: String,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -537,9 +541,11 @@ enum WorkspaceCommands {
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
         /// Path to an ota.workspace.yaml file or a directory containing one.
+        #[arg(index = 2)]
         path: Option<PathBuf>,
         /// Task input flags such as `--base-url http://...`.
-        #[arg(allow_hyphen_values = true, trailing_var_arg = true)]
+        #[arg(index = 3)]
+        #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
     },
 }
@@ -596,39 +602,76 @@ where
 
 fn rewrite_task_input_path_hint(args: Vec<OsString>) -> Vec<OsString> {
     let mut rewritten = args;
-    let mut index = 1;
+    let Some((_, mut index)) = locate_task_command(&rewritten) else {
+        return rewritten;
+    };
 
-    while index + 2 < rewritten.len() {
-        let current = rewritten[index].to_string_lossy();
-        if current.as_ref() == "run" {
-            if rewritten[index + 2]
-                .to_string_lossy()
-                .as_ref()
-                .starts_with('-')
-            {
-                rewritten.insert(index + 2, OsString::from("."));
-            }
+    let mut input_flag_index = None;
+
+    while index < rewritten.len() {
+        let token = rewritten[index].to_string_lossy().to_string();
+        let token_str = token.as_str();
+
+        if token_str == "--" {
+            input_flag_index = Some(index + 1);
             break;
         }
 
-        if current.as_ref() == "workspace"
-            && index + 3 < rewritten.len()
-            && rewritten[index + 1].to_string_lossy().as_ref() == "run"
-        {
-            if rewritten[index + 3]
-                .to_string_lossy()
-                .as_ref()
-                .starts_with('-')
-            {
-                rewritten.insert(index + 3, OsString::from("."));
-            }
+        if let Some(skip) = run_command_value_span(token_str) {
+            index += skip;
+            continue;
+        }
+
+        if token_str.starts_with('-') {
+            input_flag_index = Some(index);
             break;
         }
 
-        index += 1;
+        // A non-flag token after the task-specific flags is the explicit path.
+        return rewritten;
+    }
+
+    if let Some(index) = input_flag_index {
+        if index < rewritten.len() {
+            rewritten.insert(index, OsString::from("."));
+        }
     }
 
     rewritten
+}
+
+fn locate_task_command(args: &[OsString]) -> Option<(usize, usize)> {
+    let mut index = 1;
+    while index < args.len() {
+        let current = args[index].to_string_lossy();
+        if current.as_ref() == "run" {
+            return Some((index, index + 2));
+        }
+        if current.as_ref() == "workspace"
+            && index + 1 < args.len()
+            && args[index + 1].to_string_lossy().as_ref() == "run"
+        {
+            return Some((index + 1, index + 3));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn run_command_value_span(flag: &str) -> Option<usize> {
+    if let Some((name, _)) = flag.split_once('=') {
+        return match name {
+            "--backend" | "--lifecycle" | "--member" | "--jobs" => Some(1),
+            "--receipt" | "--json" | "--stream" => Some(1),
+            _ => None,
+        };
+    }
+
+    match flag {
+        "--backend" | "--lifecycle" | "--member" | "--jobs" => Some(2),
+        "--receipt" | "--json" | "--stream" => Some(1),
+        _ => None,
+    }
 }
 
 fn run_cli(cli: Cli) -> CommandOutput {
