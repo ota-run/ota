@@ -31,6 +31,31 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
 - `path` refers to the resolved contract path as rendered by current CLI path compaction (often cwd-relative such as `./ota.yaml`)
 
+## Which JSON surface to use
+
+- use `ota validate --json` or `ota workspace validate --json` for contract gating
+- use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
+- use `ota workspace explain --json` when you want an ordered workspace remediation plan
+- use `ota workspace tasks --json` when you want workspace inventory and task availability
+- use `ota workspace list --json` when you want lightweight workspace inventory and readiness
+- use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
+- use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
+- use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
+
+## Editor and IDE contract rules
+
+Editor and IDE consumers should prefer the smallest stable fields for the job instead of parsing
+human text output:
+
+- `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
+- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
+- `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps`
+- `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
+- `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
+- `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota diff --json` and `ota explain --json`: use the change summary and remediation steps
+
 ## `ota validate --json`
 
 Success:
@@ -477,6 +502,39 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
   "ok": true,
   "path": "/abs/path/to/ota.workspace.yaml",
   "task": "setup",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 1,
+    "repo_count": 1,
+    "ready_count": 1,
+    "not_ready_count": 0
+  },
+  "receipt": {
+    "ok": true,
+    "path": "/abs/path/to/ota.workspace.yaml",
+    "scope": "workspace",
+    "contract": "/abs/path/to/ota.workspace.yaml",
+    "workspace": "ota-dev",
+    "steps": [
+      {
+        "order": 1,
+        "label": "web",
+        "status": "READY",
+        "detail": "task `setup`"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1,
+      "repo_count": 1,
+      "ready_count": 1,
+      "not_ready_count": 0
+    }
+  },
   "repos": [
     {
       "name": "web",
@@ -491,6 +549,9 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
   ]
 }
 ```
+
+`receipt` mirrors the workspace execution roll-up and keeps backend-aware execution metadata on the
+same surface as the repo-level execution commands.
 
 Optional per-repo fields:
 

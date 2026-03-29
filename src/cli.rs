@@ -3784,7 +3784,9 @@ tasks:
                 .unwrap()
                 .contains("exec sandbox-dev")
         );
-        assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("RECEIPT:"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("RECEIPT:"));
+        assert!(stderr.contains("Target: sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -10639,7 +10641,12 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["task"], "setup");
+        assert_eq!(json["summary"]["repo_count"], 1);
+        assert_eq!(json["summary"]["ready_count"], 0);
+        assert_eq!(json["summary"]["not_ready_count"], 1);
+        assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(json["receipt"]["scope"], "workspace");
+        assert_eq!(json["receipt"]["summary"]["step_count"], 1);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["status"], "TASK FAILED");
         assert_eq!(json["repos"][0]["task"], "setup");

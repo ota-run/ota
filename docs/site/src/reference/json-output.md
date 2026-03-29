@@ -44,6 +44,29 @@ Editor and CI tooling should prefer the JSON surfaces here over parsing human-re
 output. The stable inputs are `ok`, `errors`, `findings`, `summary`, per-repo results, `execution`,
 and declared extension descriptors.
 
+Use the smallest surface that matches the job:
+
+- `validate` for contract gating
+- `doctor` for readiness diagnosis
+- `workspace explain` for ordered remediation
+- `workspace tasks` for workspace inventory and task availability
+- `workspace list` for lightweight workspace inventory and readiness
+- `up` and `workspace up` for preparation and readiness roll-up
+- `workspace run` for coordinated multi-repo execution roll-up and receipts
+- `diff` and `explain` for change impact and remediation planning
+
+Editor and IDE consumers should prefer the smallest stable fields for the job instead of parsing
+human-readable text output:
+
+- `ota validate --json` and `ota workspace validate --json` for `ok`, `summary.error_count`, `errors` or `error`, and `next`
+- `ota doctor --json` and `ota workspace doctor --json` for the top-level `summary`, per-repo `findings`, and `execution`
+- `ota workspace explain --json` for the top-level `summary`, per-repo `findings`, and per-repo `steps`
+- `ota workspace tasks --json` for the top-level `summary`, per-repo `tasks`, and dependency order
+- `ota workspace list --json` for the top-level `summary`, per-repo readiness, and contract presence
+- `ota up --json` and `ota workspace up --json` for the top-level `summary`, `receipt`, and per-repo results
+- `ota workspace run --json` for the top-level `summary`, `receipt`, and per-repo results
+- `ota diff --json` and `ota explain --json` for the change summary and remediation steps
+
 For v7 operator workflows, the most useful JSON surfaces are:
 
 - `ota validate --json` and `ota workspace validate --json` for deterministic contract gating
@@ -53,6 +76,7 @@ For v7 operator workflows, the most useful JSON surfaces are:
 - `ota workspace tasks --json` for workspace task inventory and summary counts
 - `ota workspace list --json` for repo inventory, readiness, and contract presence
 - `ota up --json` for preparation status and backend-driven readiness flow
+- `ota workspace run --json` for coordinated multi-repo execution roll-ups and execution receipts
 - `ota workspace up --json` for workspace preparation roll-up and receipt summary
 - `ota diff --json` for semantic contract comparison
 - `ota explain --json` for remediation plans

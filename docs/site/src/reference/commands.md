@@ -57,8 +57,8 @@ When to use debug:
 Hosted validation:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
-- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
-- use `ota workspace list --json` for preflight inventory and readiness summaries
+- use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
+- use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 
 Execution modes:
@@ -364,6 +364,7 @@ ota run version:bump --version 0.2.0
 Receipt:
 
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
+- the receipt includes backend, lifecycle, remote target when set, env sources, and step summary data
 
 Script example:
 
@@ -837,10 +838,11 @@ Why:
 
 Receipt:
 
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus `receipt` in JSON output
+- the receipt includes backend, lifecycle, remote target when set, env sources, and step summary data
 
-`ota workspace up --json` includes a top-level summary that mirrors the receipt summary so hosted
-validation and automation can read the roll-up without descending into the receipt object first.
+`ota workspace run --json` includes a top-level summary and receipt so hosted validation and
+automation can read the roll-up without descending into the receipt object first.
 
 ```bash
 ota workspace run test

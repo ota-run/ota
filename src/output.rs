@@ -129,6 +129,8 @@ pub struct ExecutionReceipt {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub acquired: Vec<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -437,6 +439,7 @@ pub struct WorkspaceRunSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub task: &'a str,
+    pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoRunReport],
 }

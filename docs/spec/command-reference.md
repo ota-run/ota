@@ -123,8 +123,8 @@ Current progress behavior:
 Hosted validation guidance:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
-- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
-- use `ota workspace list --json` for preflight inventory and readiness summaries
+- use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
+- use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 
 ## Current exit semantics
@@ -426,6 +426,7 @@ ota run version:bump --version 0.2.0
 - applies configured environment values and task input env variables
 - prints task progress and advisory notes on stderr
 - prints a summary in text output, and emits an execution receipt on stderr after task output
+- execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -599,7 +600,7 @@ Current behavior:
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 
@@ -1043,6 +1044,8 @@ JSON output:
 - `ok`
 - `path`
 - `task`
+- `summary`
+- `receipt`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, and optional `exit_code`/`stdout`/`stderr`
 

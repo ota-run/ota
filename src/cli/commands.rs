@@ -8779,6 +8779,7 @@ fn run_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        target: effective_remote_target(contract, backend),
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -9094,6 +9095,14 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             paint("♦", "1;38;2;255;214;79"),
             paint_key("Lifecycle:"),
             lifecycle
+        ));
+    }
+    if let Some(target) = receipt.target.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            paint("♦", "1;38;2;255;214;79"),
+            paint_key("Target:"),
+            target
         ));
     }
     if !receipt.acquired.is_empty() {
@@ -9415,6 +9424,7 @@ fn render_workspace_run(
                 ok: report.ok,
                 path,
                 task,
+                summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
             }),
@@ -10303,6 +10313,7 @@ fn repo_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        target: effective_remote_target(contract, backend),
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -10384,6 +10395,7 @@ fn workspace_up_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -10446,6 +10458,7 @@ fn workspace_run_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
@@ -12373,6 +12386,22 @@ fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
         Lifecycle::Persistent => "persistent",
         Lifecycle::Ephemeral => "ephemeral",
     }
+}
+
+fn effective_remote_target(contract: &Contract, backend: crate::schema::Backend) -> Option<String> {
+    if backend != crate::schema::Backend::Remote {
+        return None;
+    }
+
+    contract
+        .execution
+        .as_ref()?
+        .backends
+        .as_ref()?
+        .remote
+        .as_ref()?
+        .target
+        .clone()
 }
 
 fn init_mode(report: &DetectReport) -> &'static str {
