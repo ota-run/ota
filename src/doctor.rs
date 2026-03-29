@@ -976,6 +976,28 @@ mod tests {
         diagnose_contract, diagnose_preconditions, tool_executable_name, version_matches,
     };
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    fn write_fake_command(bin_dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = if cfg!(windows) {
+            bin_dir.join(format!("{name}.cmd"))
+        } else {
+            bin_dir.join(name)
+        };
+
+        fs::write(&path, body).unwrap();
+
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
+
+        path
+    }
+
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
         let contract = parse_contract_str(
@@ -1508,6 +1530,30 @@ tasks:
 
     #[test]
     fn reports_optional_tool_version_mismatches_as_warnings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let _rustc_path = write_fake_command(
+            &bin_dir,
+            "rustc",
+            if cfg!(windows) {
+                "@echo off\r\necho rustc 1.99.0 (fake)\r\n"
+            } else {
+                "#!/bin/sh\nprintf 'rustc 1.99.0 (fake)\\n'\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -1526,6 +1572,16 @@ tasks:
         .unwrap();
 
         let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
