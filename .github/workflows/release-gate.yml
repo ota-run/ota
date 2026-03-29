@@ -38,18 +38,7 @@ jobs:
         run: cargo run -- doctor --json "$DEMO_DIR" > doctor.json || true
 
       - name: Emit annotations
-        run: |
-          set -euo pipefail
-          primary_blocker="$(jq -r '.summary.primary_blocker?.summary // empty' doctor.json)"
-          if [ -n "$primary_blocker" ]; then
-            next="$(jq -r '.summary.primary_blocker?.next // empty' doctor.json)"
-            echo "::notice title=ota doctor primary blocker::$primary_blocker | $next"
-          fi
-          jq -r '
-            .findings[]
-            | (if .severity == "error" then "error" else "warning" end) as $level
-            | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
-          ' doctor.json
+        run: sh scripts/emit-ota-findings.sh --mode doctor --format github --input doctor.json
 
       - name: Fail on blocker
         run: jq -e '.summary.error_count > 0' doctor.json >/dev/null

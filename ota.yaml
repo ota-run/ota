@@ -82,6 +82,28 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  doctor-annotations:
+    description: Render ota doctor findings for CI or local review
+    category: dev
+    inputs:
+      render_format:
+        description: Output format for findings rendering
+        default: plain
+        allowed:
+          - plain
+          - github
+    script: |
+      ota doctor --json . > doctor.json || true
+      sh scripts/emit-ota-findings.sh --mode doctor --format "${OTA_INPUT_RENDER_FORMAT}" --input doctor.json
+    variants:
+      - when:
+          os: windows
+        script: |
+          ota doctor --json . > doctor.json
+          powershell -ExecutionPolicy Bypass -File .\scripts\emit-ota-findings.ps1 -Mode doctor -Format $env:OTA_INPUT_RENDER_FORMAT -Input doctor.json
+    depends_on:
+      - setup
+    safe_for_agent: true
   compat:
     description: Run the compatibility test gate
     category: test
@@ -133,6 +155,7 @@ agent:
     - check
     - test
     - ci
+    - doctor-annotations
   verify_after_changes:
     - fmt
     - check
