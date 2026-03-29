@@ -33,6 +33,7 @@ Global output modifiers:
 
 - `--concise`: shorter text output for high-noise commands while preserving decisions/actions.
 - `--verbose`: full explanatory text output.
+- `--debug`: command-phase tracing to stderr for multi-step or diagnosis-heavy commands.
 - `--json`: stable machine output; not affected by concise/verbose text shaping.
 
 Progress behavior:
@@ -47,12 +48,28 @@ Progress behavior:
 - `ota workspace list` shows execution metadata when the repo contract declares it
 - successful interactive commands may print a best-effort update notice when a newer release exists, and the notice points to `ota self-update` or `ota upgrade`
 
+When to use debug:
+
+- `ota up`, `ota run <task>`, `ota workspace up`, and `ota workspace run <task>` are the best candidates for debug traces because they orchestrate multiple steps or multiple repos
+- `ota doctor`, `ota detect`, `ota diff`, and `ota explain` also benefit from debug traces when you are diagnosing a failure or reviewing provenance
+- `ota validate`, `ota tasks`, `ota workspace validate`, `ota workspace tasks`, and `ota workspace list` should usually remain summary-only unless you are actively debugging
+
 Hosted validation:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
 - use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
 - use `ota workspace list --json` for preflight inventory and readiness summaries
 - do not mutate contracts during hosted validation
+
+Execution modes:
+
+- `native` runs tasks on the host machine and is useful when you want to debug against the real local environment
+- `container` runs tasks in Docker using the image declared in `ota.yaml` and is useful when you want a fixed toolchain and CI-like behavior
+- `remote` runs tasks on a separate machine or workspace through a provider and is useful when work must happen off-host
+- use `ota run <task> --backend native|container|remote` and `ota up --backend native|container|remote` to override the contract for one invocation
+- use `ota run <task> --lifecycle persistent|ephemeral` and `ota up --lifecycle persistent|ephemeral` to override container reuse for one invocation
+- container execution requires Docker plus a valid `execution.backends.container.image`
+- Ota provisions declared repo services through `ota up`, but it does not replace the OS package manager or language installer on the host
 
 ## Start with this flow
 
@@ -62,6 +79,7 @@ Hosted validation:
 1. `ota diff <base> <target>` to compare contract impact before writing changes.
 1. `ota explain` to turn findings into an ordered remediation plan.
 1. `ota detect --dry-run` before writing any new contract.
+1. `ota workspace explain` when you want workspace-level remediation ordering.
 
 ## Repo commands
 

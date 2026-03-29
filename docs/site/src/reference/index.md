@@ -45,6 +45,7 @@ Use this section when you need precision:
 ## Key references
 
 - [Commands](commands.md)
+- [Remote runner metadata and editor surface](remote-runner-and-editor-surface.md)
 - [JSON output](json-output.md)
 - [Hosted validation](hosted-validation.md)
 - [Semantic diff and explain](semantic-diff-and-explain.md)

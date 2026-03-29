@@ -66,12 +66,14 @@ Execution model:
 - `ota workspace validate` checks workspace contract correctness.
 - `ota workspace up` can acquire missing repos from `source.git`.
 - workspace orchestration reuses repo-level `ota up` and `ota run` behavior.
+- `ota workspace explain` turns workspace readiness findings into ordered remediation steps.
 - dependency order is deterministic.
 
 ## Practical workflow
 
 1. `ota workspace validate`
 1. `ota workspace doctor`
+1. `ota workspace explain`
 1. `ota workspace up`
 1. `ota workspace run <task>`
 
