@@ -269,6 +269,38 @@ name that owns it.
 }
 ```
 
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0
+  },
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": false,
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Repo not acquired: web",
+          "why": "...",
+          "next": "..."
+        }
+      ]
+    }
+  ]
+}
+```
+
 `ota workspace list --json` also includes a top-level `summary` object with repo inventory counts
 for editor, CI, and hosted preflight tooling.
 

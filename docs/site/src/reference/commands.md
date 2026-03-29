@@ -850,6 +850,9 @@ Receipt:
 `ota workspace run --json` includes a top-level summary and receipt so hosted validation and
 automation can read the roll-up without descending into the receipt object first.
 
+`ota workspace up --json` includes a top-level summary that mirrors the receipt summary so hosted
+validation and automation can read the roll-up without descending into the receipt object first.
+
 ```bash
 ota workspace run test
 ota workspace run test --json
