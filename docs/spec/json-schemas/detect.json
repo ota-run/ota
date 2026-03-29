@@ -32,6 +32,18 @@
                 }
               }
             },
+            "removals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["field", "existing"],
+                "properties": {
+                  "field": { "type": "string" },
+                  "existing": { "type": "string" }
+                }
+              }
+            },
             "error": { "type": "string" }
           }
         },

@@ -64,8 +64,10 @@ fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
+    let comparison = &success["comparison"]["properties"];
 
     assert!(success.get("comparison").is_some());
+    assert!(comparison.get("removals").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(failure.get("next").is_some());

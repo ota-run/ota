@@ -6897,6 +6897,49 @@ project:
     }
 
     #[test]
+    fn detect_json_reports_existing_contract_drift() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--json",
+            "--merge",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["comparison"]["existing_contract"], true);
+        assert_eq!(json["comparison"]["removals"][0]["field"], "tools.cargo");
+        assert_eq!(
+            json["comparison"]["removals"][1]["field"],
+            "tasks.build.run"
+        );
+        assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
     fn detect_merge_requires_existing_contract() {
         let fixture = ContractFixture::new_dir();
 

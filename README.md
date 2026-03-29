@@ -199,8 +199,9 @@ Current behavior:
 - `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
 - `ota detect --write` writes a contract conservatively from `high` confidence fields only
-- `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing
+- `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing and surfaces stale contract fields that no longer match repo reality
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
+- there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run` and trust/readiness drift stays on `ota doctor`
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
 - `ota workspace tasks` lists workspace repo tasks in dependency order without executing them
 - `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting

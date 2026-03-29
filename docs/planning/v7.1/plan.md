@@ -50,6 +50,11 @@ V7.1 theme:
 - drift reporting in `ota detect --merge --dry-run` and `ota doctor`
 - CI/PR annotation delivery from JSON output
 
+## Non-goals
+
+- do not add a standalone `ota drift` command in v7.1
+- do not split drift into a third implementation path; reuse `doctor` and `detect`
+
 ## Priorities
 
 1. Make `ota doctor` the fastest correct answer to “why is this repo not runnable?”
@@ -89,4 +94,3 @@ V7.1 theme:
 - `ota detect` and `ota doctor` can report drift without blurring inference and diagnosis
 - hosted CI can present findings without custom per-repo parsing
 - editor and agent consumers can use the same JSON surfaces as hosted CI
-

@@ -762,7 +762,8 @@ Current merge-preview behavior:
 - `ota detect --merge --dry-run` is a review-only mode
 - it requires an existing `ota.yaml`
 - it does not write
-- it reuses the comparison preview instead of applying changes
+- it reuses the comparison preview instead of applying changes, including stale contract fields that no longer match repo reality
+- there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run`, and operator-facing trust/readiness drift stays on `ota doctor`
 
 Current merge-write behavior:
 

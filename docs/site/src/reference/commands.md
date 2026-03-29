@@ -513,6 +513,7 @@ Why:
 
 - speeds adoption while preserving trust with confidence/provenance model
 - `--write` stays conservative and only writes high-confidence fields
+- there is no standalone `ota drift` command yet; use `ota detect --merge --dry-run` for contract-vs-repo drift review, including stale contract fields, and `ota doctor` for operator-facing trust/readiness drift
 
 Use-case:
 

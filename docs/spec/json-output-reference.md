@@ -718,6 +718,7 @@ Example contract-validation failure (before `up` execution starts):
 - `written: true` when additive high-confidence fields were applied
 - `written: false` when there was nothing eligible to add
 - `comparison` describing detected adds and updates against the existing contract
+- `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison` may include lower-confidence add candidates that remain preview-only
 
 ```json
@@ -736,6 +737,16 @@ Example contract-validation failure (before `up` execution starts):
         "status": "update",
         "existing": "existing",
         "detected": "ota-web"
+      }
+    ],
+    "removals": [
+      {
+        "field": "tools.cargo",
+        "existing": "1.78"
+      },
+      {
+        "field": "tasks.build.run",
+        "existing": "cargo build"
       }
     ]
   },

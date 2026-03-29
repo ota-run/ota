@@ -42,18 +42,18 @@ use crate::doctor::{
     diagnose_services_only,
 };
 use crate::output::{
-    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
-    WorkspaceTasksSummary, WorkspaceUpSuccess,
+    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
+    DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
+    DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, ExecutionReceipt,
+    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
+    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -5348,6 +5348,7 @@ fn write_detected_merge(
     let comparison = DetectComparison {
         existing_contract: true,
         changes: collect_detect_changes(&existing_contract, &report.contract),
+        removals: collect_detect_removals(&existing_contract, &report.contract),
         error: None,
     };
 
@@ -6053,11 +6054,13 @@ fn compare_detected_contract(
         Ok(existing) => Some(DetectComparison {
             existing_contract: true,
             changes: collect_detect_changes(&existing, detected),
+            removals: collect_detect_removals(&existing, detected),
             error: None,
         }),
         Err(error) => Some(DetectComparison {
             existing_contract: true,
             changes: Vec::new(),
+            removals: Vec::new(),
             error: Some(format!(
                 "failed to load existing contract for comparison: {error}"
             )),
@@ -6172,6 +6175,110 @@ fn collect_detect_changes(
     changes
 }
 
+fn collect_detect_removals(
+    existing: &Contract,
+    detected: &crate::detector::DetectContract,
+) -> Vec<DetectComparisonRemoval> {
+    let mut removals = Vec::new();
+
+    if detected.project.is_none() {
+        removals.push(DetectComparisonRemoval {
+            field: String::from("project.name"),
+            existing: existing.project.name.clone(),
+        });
+    }
+
+    for (name, requirement) in &existing.runtimes {
+        if !detected.runtimes.contains_key(name) {
+            removals.push(DetectComparisonRemoval {
+                field: format!("runtimes.{name}"),
+                existing: requirement.version().to_string(),
+            });
+        }
+    }
+
+    for (name, requirement) in &existing.tools {
+        if !detected.tools.contains_key(name) {
+            removals.push(DetectComparisonRemoval {
+                field: format!("tools.{name}"),
+                existing: requirement.version().to_string(),
+            });
+        }
+    }
+
+    for (name, service) in &existing.services {
+        let detected_service = detected.services.get(name);
+        if service.provider.is_some()
+            && detected_service
+                .and_then(|value| value.provider.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.provider"),
+                existing: service.provider.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.start.is_some()
+            && detected_service
+                .and_then(|value| value.start.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.start"),
+                existing: service.start.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.stop.is_some()
+            && detected_service
+                .and_then(|value| value.stop.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.stop"),
+                existing: service.stop.as_deref().unwrap_or_default().to_string(),
+            });
+        }
+        if service.healthcheck.is_some()
+            && detected_service
+                .and_then(|value| value.healthcheck.as_ref())
+                .is_none()
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("services.{name}.healthcheck"),
+                existing: service
+                    .healthcheck
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        }
+    }
+
+    for (name, task) in &existing.tasks {
+        let detected_task = detected.tasks.get(name);
+        let existing_run = task.default_execution_body().map(str::to_string);
+        if let Some(existing_run) = existing_run {
+            if detected_task.is_none() {
+                removals.push(DetectComparisonRemoval {
+                    field: format!("tasks.{name}.run"),
+                    existing: existing_run,
+                });
+            }
+        }
+
+        if task.safe_for_agent
+            && detected_task.is_none_or(|detected_task| !detected_task.safe_for_agent)
+        {
+            removals.push(DetectComparisonRemoval {
+                field: format!("tasks.{name}.safe_for_agent"),
+                existing: String::from("true"),
+            });
+        }
+    }
+
+    removals
+}
+
 fn push_detect_change(
     changes: &mut Vec<DetectComparisonChange>,
     field: &str,
@@ -6219,23 +6326,37 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
             "\n{}  no detected changes against the existing contract",
             list_bullet()
         ));
-        return;
+    } else {
+        for change in &comparison.changes {
+            stdout.push_str(&format!(
+                "\n{}  {}",
+                list_bullet(),
+                paint(&change.field, "1;38;2;102;217;255")
+            ));
+            match change.status {
+                "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
+                "update" => stdout.push_str(&format!(
+                    ": would update `{}` -> `{}`",
+                    change.existing.as_deref().unwrap_or(""),
+                    change.detected
+                )),
+                _ => {}
+            }
+        }
     }
 
-    for change in &comparison.changes {
+    if !comparison.removals.is_empty() {
         stdout.push_str(&format!(
-            "\n{}  {}",
-            list_bullet(),
-            paint(&change.field, "1;38;2;102;217;255")
+            "\n\n{}:",
+            paint_section_title("Existing contract drift")
         ));
-        match change.status {
-            "add" => stdout.push_str(&format!(": would add `{}`", change.detected)),
-            "update" => stdout.push_str(&format!(
-                ": would update `{}` -> `{}`",
-                change.existing.as_deref().unwrap_or(""),
-                change.detected
-            )),
-            _ => {}
+        for removal in &comparison.removals {
+            stdout.push_str(&format!(
+                "\n{}  {}: would remove `{}`",
+                list_bullet(),
+                paint(&removal.field, "1;38;2;255;214;79"),
+                removal.existing
+            ));
         }
     }
 }
@@ -6565,6 +6686,7 @@ fn selected_detect_comparison(
         return Some(DetectComparison {
             existing_contract: comparison.existing_contract,
             changes: comparison.changes.clone(),
+            removals: comparison.removals.clone(),
             error: comparison.error.clone(),
         });
     }
@@ -6583,9 +6705,17 @@ fn selected_detect_comparison(
         .cloned()
         .collect::<Vec<_>>();
 
+    let removals = comparison
+        .removals
+        .iter()
+        .filter(|removal| selected_fields.contains(&removal.field))
+        .cloned()
+        .collect::<Vec<_>>();
+
     Some(DetectComparison {
         existing_contract: comparison.existing_contract,
         changes,
+        removals,
         error: comparison.error.clone(),
     })
 }

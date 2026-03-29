@@ -511,6 +511,8 @@ pub struct DetectComparison {
     pub existing_contract: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub changes: Vec<DetectComparisonChange>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub removals: Vec<DetectComparisonRemoval>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -522,6 +524,12 @@ pub struct DetectComparisonChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing: Option<String>,
     pub detected: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DetectComparisonRemoval {
+    pub field: String,
+    pub existing: String,
 }
 
 #[derive(Debug, Serialize)]
