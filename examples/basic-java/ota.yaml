@@ -39,3 +39,20 @@ checks:
     kind: precondition
     severity: error
     run: java --version
+agent:
+  entrypoint: build
+  default_task: test
+  safe_tasks:
+    - build
+    - test
+  verify_after_changes:
+    - test
+  writable_paths:
+    - src
+    - test
+    - docs
+  protected_paths:
+    - ota.yaml
+  notes: |
+    Use `ota validate` before execution and `ota run test` after changes.
+    Build and test are the primary safe paths for this example.

@@ -45,3 +45,20 @@ checks:
     kind: precondition
     severity: error
     run: python --version
+agent:
+  entrypoint: setup
+  default_task: api-test
+  safe_tasks:
+    - setup
+    - api-test
+  verify_after_changes:
+    - api-test
+  writable_paths:
+    - src
+    - app
+    - docs
+  protected_paths:
+    - ota.yaml
+  notes: |
+    Use `ota run api-test` after code changes to keep the contract honest.
+    The setup step is the only safe path for dependency installation.
