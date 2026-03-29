@@ -28,7 +28,11 @@ Status: spec candidate.
 
 This document defines the planned env resolution layer for Ota.
 
-The current `env` contract already supports:
+This spec adds the next layer: policy-controlled env resolution and injection.
+
+## Current baseline
+
+The shipped contract already supports:
 
 - required values
 - defaults
@@ -36,7 +40,7 @@ The current `env` contract already supports:
 - validation in `doctor`
 - default application in `run`
 
-This spec adds the next layer: policy-controlled env resolution and injection.
+The policy layer described here should extend, not replace, that baseline.
 
 ## Goal
 
@@ -57,22 +61,33 @@ It should support:
 - injecting env into `ota run` and `ota up`
 - resolving env from approved sources under org policy
 - reporting provenance for resolved env values
+- keeping workspace and repo inheritance deterministic
 
-## Proposed precedence
+## Resolution model
 
-The exact precedence should be explicit and deterministic.
+Resolution should be deterministic and layer-aware.
 
-A good starting order is:
+For task execution, the recommended precedence is:
 
-1. repo contract
-2. workspace override
-3. org policy source
-4. runtime shell environment
-5. declared default
+1. task-scoped overrides
+2. member contract values
+3. workspace contract values
+4. repo contract values
+5. org policy values
+6. shell process environment
+7. declared defaults
 
-The final precedence rules must be documented and stable.
+The policy layer must not silently rewrite repo-declared truth. It may only supply
+approved values, explain why they won, and leave a provenance trail.
 
-## Proposed contract shape
+Runtime and tool resolution follow the same inheritance principle:
+
+- repo declarations remain canonical for required versions and tool names
+- workspace overlays may tighten or specialize member expectations
+- policy may provide approved defaults or provisioning hints
+- provenance must record which layer supplied the final value
+
+## Contract shape
 
 The `env` section should continue to describe requirements, while policy may add
 resolution metadata.
@@ -90,6 +105,27 @@ Future policy-controlled resolution may add:
 - source provenance
 - injection hints
 - optional fallback rules
+
+Workspace-level policy should remain additive. It can describe shared defaults or approved
+sources for member repos, but it should not become a second repo contract.
+
+## Provenance
+
+Resolution output should identify the winning source for each value using the existing
+audit/provenance vocabulary:
+
+- repo-declared
+- policy-derived
+- template-derived
+- detector-inferred
+- user-mutated
+
+For env resolution, `doctor`, `detect`, and execution receipts should explain:
+
+- which value won
+- which layer supplied it
+- why lower-priority candidates lost
+- whether the result is safe to reuse or only safe to run
 
 ## Use cases
 
@@ -112,3 +148,4 @@ Future policy-controlled resolution may add:
 - `diff` should show env requirement impact
 - `explain` should turn env failures into a fix plan
 - receipts should record which env source won
+- `workspace doctor` should preserve root/member provenance instead of flattening it
