@@ -6894,6 +6894,12 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint(task.name, "1"),
             paint_code(&usage)
         ));
+        if let Some(description) = task.description {
+            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
+        }
+        if let Some(notes) = task.notes {
+            output.push_str(&format!("\n  {} {notes}", paint_key("Notes:")));
+        }
     }
     output
 }

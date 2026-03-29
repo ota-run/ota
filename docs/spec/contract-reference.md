@@ -483,6 +483,7 @@ Use cases:
 - use `script` when the task needs multiple lines, shell setup, or cleanup steps
 - use `env` when a task needs fixed environment values that should override repo-level env for that task
 - use `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`
+- use `description` for the short summary and `notes` for the task purpose plus extra guidance
 - use `depends_on` to model a build/package/upload chain without hiding order in shell scripts
 
 Task input semantics:
@@ -540,7 +541,7 @@ ota run version:bump --version 0.2.0
 Input fields:
 
 - `description`: optional string
-- `notes`: optional multiline string
+- `notes`: optional multiline string for purpose, when to use, and any operator guidance
 - `required`: optional boolean
 - `default`: optional string
 - `allowed`: optional list of accepted string values

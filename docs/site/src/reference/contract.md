@@ -133,12 +133,13 @@ Use `checks` for explicit preconditions and health checks that should be run and
 ### `tasks`
 
 Use `tasks` for deterministic repo commands such as `setup`, `test`, `lint`, and `dev`.
-Use task `description` for the short summary and task `notes` for longer operator guidance like
-when to run it or what it is for.
+Use task `description` for the short summary and task `notes` for the task purpose plus extra
+guidance like when to run it or what it is for.
 Use task `env` when a task needs fixed environment values that should override repo-level env for that task.
 Use task `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`.
 Input names use lowercase snake_case. Ota maps them to `--kebab-case` flags and injects them as `OTA_INPUT_<NAME>`.
-Defaults are optional; `required: true` makes an input mandatory unless a default exists; `allowed` limits accepted values.
+Defaults are optional; `required: true` makes an input mandatory unless a default exists; `allowed`
+limits accepted values.
 If every declared input has a default, the task can be run with no input flags.
 
 Example:

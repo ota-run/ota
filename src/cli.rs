@@ -4745,10 +4745,15 @@ project:
   name: ota
 tasks:
   dev:
+    description: Start the dev server
+    notes: |
+      Use this for local development and manual verification.
     run: cargo run
   start:
+    description: Start the release server
     run: cargo run --release
   typecheck:
+    description: Type-check the crate
     run: cargo check
 "#,
         );
@@ -4759,6 +4764,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("TASKS "));
         assert!(stdout.contains("dev `ota run dev`"));
+        assert!(stdout.contains("Description: Start the dev server"));
+        assert!(stdout.contains("Notes:"));
         assert!(stdout.contains("start `ota run start`"));
         assert!(stdout.contains("typecheck `ota run typecheck`"));
         assert!(!stdout.contains("Command Preview:"));
