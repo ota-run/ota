@@ -1826,7 +1826,11 @@ tasks:
 
         let output = run_with(["ota", "validate", "--json", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code, 0,
+            "stdout={:?} stderr={:?}",
+            output.stdout, output.stderr
+        );
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -1901,7 +1905,11 @@ tasks:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code, 0,
+            "stdout={:?} stderr={:?}",
+            output.stdout, output.stderr
+        );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
