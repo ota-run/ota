@@ -86,9 +86,20 @@ Editors, hosted validation systems, and CI should consume the same stable JSON s
 
 Recommended inputs:
 
+- `ota validate --json` for repo contract gating
 - `ota doctor --json` for repo readiness diagnostics
+- `ota workspace validate --json` for workspace contract gating
 - `ota workspace doctor --json` for workspace readiness diagnostics
+- `ota workspace explain --json` for workspace remediation ordering
+- `ota workspace tasks --json` for workspace task inventory and dependency order
 - `ota workspace list --json` for repo inventory, contract presence, readiness, and execution metadata
+- `ota workspace check --json` for checks-only workspace readiness
+- `ota run --json` for repo task execution metadata
+- `ota workspace run --json` for workspace task execution roll-ups and receipts
+- `ota up --json` for repo preparation roll-ups and execution receipts
+- `ota workspace up --json` for workspace preparation roll-ups and execution receipts
+- `ota diff --json` for semantic contract comparison
+- `ota explain --json` for remediation plans
 - `ota extensions --json` for declared adapter descriptors when a repo exposes them
 
 Recommended consumption rules:

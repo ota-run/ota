@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ota.run/spec/json-schemas/check.json",
+  "$id": "https://dist.ota.run/spec/json-schemas/check.json",
   "title": "ota check --json",
   "type": "object",
   "additionalProperties": false,

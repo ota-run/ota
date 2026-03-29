@@ -64,8 +64,10 @@ fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
+    let comparison = &success["comparison"]["properties"];
 
     assert!(success.get("comparison").is_some());
+    assert!(comparison.get("removals").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(failure.get("next").is_some());
@@ -142,9 +144,11 @@ fn workspace_init_schema_exists_and_covers_scaffold_fields() {
 #[test]
 fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-tasks.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let task = &repo["tasks"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("acquired").is_some());
     assert!(repo.get("depends_on").is_some());
     assert!(repo.get("tasks").is_some());
@@ -169,8 +173,10 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
 #[test]
 fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-check.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
@@ -179,8 +185,10 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
 #[test]
 fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
 
+    assert!(properties.get("summary").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("phase").is_some());
     assert!(repo.get("exit_code").is_some());

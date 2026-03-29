@@ -57,8 +57,8 @@ When to use debug:
 Hosted validation:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
-- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
-- use `ota workspace list --json` for preflight inventory and readiness summaries
+- use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
+- use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 
 Execution modes:
@@ -124,12 +124,14 @@ When to use:
 Why:
 
 - shows actionable blockers and warnings with explicit next steps
+- still gives a useful repo/host diagnosis even before `ota.yaml` exists
+- leads with the highest-priority blocker first so the next action is obvious
 - `--concise` keeps severity/summary/next action and omits `Why` detail
 - also surfaces inert top-level `extensions` entries so adapter metadata is visible without execution
 
 Use-case:
 
-- teammate cannot run a repo; doctor reports missing runtime/tool/env quickly
+- teammate cannot run a repo; doctor reports missing runtime/tool/env quickly, or they have not created `ota.yaml` yet and need the best next step
 
 ```bash
 ota doctor
@@ -265,6 +267,7 @@ ota up --json
 Receipt:
 
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+- the JSON payload includes a top-level summary mirroring the receipt roll-up
 
 Script example:
 
@@ -363,6 +366,7 @@ ota run version:bump --version 0.2.0
 Receipt:
 
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
+- the receipt includes backend, lifecycle, remote target when set, env sources, and step summary data
 
 Script example:
 
@@ -509,6 +513,7 @@ Why:
 
 - speeds adoption while preserving trust with confidence/provenance model
 - `--write` stays conservative and only writes high-confidence fields
+- there is no standalone `ota drift` command yet; use `ota detect --merge --dry-run` for contract-vs-repo drift review, including stale contract fields, and `ota doctor` for operator-facing trust/readiness drift
 
 Use-case:
 
@@ -699,6 +704,9 @@ set -euo pipefail
 ota workspace tasks --json > .ota-workspace-tasks.json
 ```
 
+`ota workspace tasks --json` includes a top-level summary with repo and task counts so CI and
+editor tooling can read the inventory at a glance.
+
 ### `ota workspace list`
 
 When to use:
@@ -759,6 +767,9 @@ set -euo pipefail
 ota workspace doctor --json > .ota-workspace-doctor.json
 ```
 
+The JSON payload includes a top-level `summary` with repo and finding counts so CI and editor
+consumers can read the roll-up directly.
+
 ### `ota workspace explain`
 
 When to use:
@@ -789,6 +800,9 @@ set -euo pipefail
 ota workspace explain --json > .ota-workspace-explain.json
 ```
 
+The JSON payload includes a top-level `summary` with repo, finding, and step counts so hosted
+validation and editors can consume the plan without re-deriving totals from nested steps.
+
 ### `ota workspace check`
 
 When to use:
@@ -815,6 +829,9 @@ set -euo pipefail
 ota workspace check --json > .ota-workspace-check.json
 ```
 
+The JSON payload includes a top-level `summary` that mirrors the workspace doctor roll-up so CI
+and editor tooling can read repo and finding counts directly.
+
 ### `ota workspace run <task>`
 
 When to use:
@@ -827,7 +844,11 @@ Why:
 
 Receipt:
 
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus `receipt` in JSON output
+- the receipt includes backend, lifecycle, remote target when set, env sources, and step summary data
+
+`ota workspace run --json` includes a top-level summary and receipt so hosted validation and
+automation can read the roll-up without descending into the receipt object first.
 
 ```bash
 ota workspace run test

@@ -8,6 +8,52 @@ on:
   workflow_dispatch:
 
 jobs:
+  annotations-demo:
+    name: Annotations Demo
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'codex/ota-annotations-demo'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Create demo contract
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          cat > "$tmpdir/ota.yaml" <<'EOF'
+          version: 1
+          project:
+            name: annotations-demo
+          env:
+            DEMO_REQUIRED:
+              required: true
+          EOF
+          echo "DEMO_DIR=$tmpdir" >> "${GITHUB_ENV}"
+
+      - name: Diagnose demo contract
+        run: cargo run -- doctor --json "$DEMO_DIR" > doctor.json || true
+
+      - name: Emit annotations
+        run: |
+          set -euo pipefail
+          primary_blocker="$(jq -r '.summary.primary_blocker?.summary // empty' doctor.json)"
+          if [ -n "$primary_blocker" ]; then
+            next="$(jq -r '.summary.primary_blocker?.next // empty' doctor.json)"
+            echo "::notice title=ota doctor primary blocker::$primary_blocker | $next"
+          fi
+          jq -r '
+            .findings[]
+            | (if .severity == "error" then "error" else "warning" end) as $level
+            | "::\($level) title=ota doctor finding::\(.summary) | \(.next)"
+          ' doctor.json
+
+      - name: Fail on blocker
+        run: jq -e '.summary.error_count > 0' doctor.json >/dev/null
+
   release-gate:
     name: Release Gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

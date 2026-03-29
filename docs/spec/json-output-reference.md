@@ -31,6 +31,41 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
 - `path` refers to the resolved contract path as rendered by current CLI path compaction (often cwd-relative such as `./ota.yaml`)
 
+## Which JSON surface to use
+
+- use `ota validate --json` or `ota workspace validate --json` for contract gating
+- use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
+- use `ota workspace explain --json` when you want an ordered workspace remediation plan
+- use `ota workspace tasks --json` when you want workspace inventory and task availability
+- use `ota workspace list --json` when you want lightweight workspace inventory and readiness
+- use `ota workspace check --json` when you want checks-only workspace readiness with a roll-up summary
+- use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
+- use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
+- use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
+
+## Editor and IDE contract rules
+
+Editor and IDE consumers should prefer the smallest stable fields for the job instead of parsing
+human text output:
+
+- `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
+- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
+- `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps`
+- `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
+- `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
+- `ota workspace check --json`: use the top-level `summary` and per-repo findings
+- `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota diff --json` and `ota explain --json`: use the change summary and remediation steps
+
+Hosted CI can use the same fields as annotations or check-run summaries:
+
+- `summary.primary_blocker` when present, for the headline
+- `findings[]` or per-repo `findings[]` as the annotation stream
+- `severity` to decide blocking versus warning annotations
+- `why` for the annotation body
+- `next` for the suggested fix or link target
+
 ## `ota validate --json`
 
 Success:
@@ -180,7 +215,9 @@ additive policy keys may appear there as well.
 metadata that editors and remote-runner tooling can consume.
 
 `ota doctor --json` also includes a top-level `summary` object with finding counts so hosted
-validation and editor tooling do not need to recompute them.
+validation and editor tooling do not need to recompute them. When there is at least one finding,
+the summary may also include `primary_blocker` with the highest-priority blocker details so CI and
+editors can answer the question “what should I fix first?” without scanning the full list.
 
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
@@ -196,7 +233,41 @@ underlying repo contract declares execution metadata.
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
 
 `ota workspace doctor --json` also includes a top-level `summary` object with repo and finding
-counts for hosted validation and editor consumers.
+counts for hosted validation and editor consumers. When there is at least one finding, the
+summary may also include `primary_blocker` with the highest-priority blocker details and the repo
+name that owns it.
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0
+  },
+  "repos": [
+    {
+      "name": "web",
+      "path": "/abs/path/to/apps/web",
+      "contract_path": "/abs/path/to/apps/web/ota.yaml",
+      "required": true,
+      "ok": false,
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Repo not acquired: web",
+          "why": "...",
+          "next": "..."
+        }
+      ]
+    }
+  ]
+}
+```
 
 `ota workspace list --json` also includes a top-level `summary` object with repo inventory counts
 for editor, CI, and hosted preflight tooling.
@@ -205,6 +276,48 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious
 `ssh`/`tsh` targets without `user@host` or `kubectl` targets that do not start with `pod/`.
+
+## `ota workspace explain --json`
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 2,
+    "ready_count": 0,
+    "not_ready_count": 2,
+    "error_count": 2,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "repos": [
+    {
+      "name": "api",
+      "path": "/abs/path/to/api",
+      "contract_path": "/abs/path/to/api/ota.yaml",
+      "required": true,
+      "ok": false,
+      "summary": {
+        "error_count": 1,
+        "warn_count": 0,
+        "info_count": 0,
+        "step_count": 1
+      },
+      "steps": [
+        {
+          "order": 1,
+          "severity": "error",
+          "summary": "No tasks defined in contract",
+          "why": "...",
+          "next": "..."
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## `ota workspace validate --json`
 
@@ -403,6 +516,39 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
   "ok": true,
   "path": "/abs/path/to/ota.workspace.yaml",
   "task": "setup",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 1,
+    "repo_count": 1,
+    "ready_count": 1,
+    "not_ready_count": 0
+  },
+  "receipt": {
+    "ok": true,
+    "path": "/abs/path/to/ota.workspace.yaml",
+    "scope": "workspace",
+    "contract": "/abs/path/to/ota.workspace.yaml",
+    "workspace": "ota-dev",
+    "steps": [
+      {
+        "order": 1,
+        "label": "web",
+        "status": "READY",
+        "detail": "task `setup`"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1,
+      "repo_count": 1,
+      "ready_count": 1,
+      "not_ready_count": 0
+    }
+  },
   "repos": [
     {
       "name": "web",
@@ -418,6 +564,9 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
 }
 ```
 
+`receipt` mirrors the workspace execution roll-up and keeps backend-aware execution metadata on the
+same surface as the repo-level execution commands.
+
 Optional per-repo fields:
 
 - `exit_code`
@@ -430,6 +579,14 @@ Optional per-repo fields:
 {
   "ok": false,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0
+  },
   "repos": [
     {
       "name": "web",
@@ -449,6 +606,9 @@ Optional per-repo fields:
   ]
 }
 ```
+
+`summary` mirrors the workspace doctor roll-up so hosted gates can read the same repo and finding
+counts from checks-only output.
 
 ## `ota init --json`
 
@@ -566,6 +726,7 @@ Example contract-validation failure (before `up` execution starts):
 - `written: true` when additive high-confidence fields were applied
 - `written: false` when there was nothing eligible to add
 - `comparison` describing detected adds and updates against the existing contract
+- `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison` may include lower-confidence add candidates that remain preview-only
 
 ```json
@@ -584,6 +745,16 @@ Example contract-validation failure (before `up` execution starts):
         "status": "update",
         "existing": "existing",
         "detected": "ota-web"
+      }
+    ],
+    "removals": [
+      {
+        "field": "tools.cargo",
+        "existing": "1.78"
+      },
+      {
+        "field": "tasks.build.run",
+        "existing": "cargo build"
       }
     ]
   },
@@ -620,6 +791,12 @@ Failure example:
 {
   "ok": true,
   "path": "/abs/path/to/ota.workspace.yaml",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 4
+  },
   "repos": [
     {
       "name": "web",
@@ -634,6 +811,9 @@ Failure example:
   ]
 }
 ```
+
+`summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
+without opening `receipt` first.
 
 Optional per-repo fields:
 

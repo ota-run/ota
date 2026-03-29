@@ -123,8 +123,8 @@ Current progress behavior:
 Hosted validation guidance:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
-- use `ota workspace validate --json` and `ota workspace doctor --json` for workspace gating
-- use `ota workspace list --json` for preflight inventory and readiness summaries
+- use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
+- use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 
 ## Current exit semantics
@@ -426,6 +426,7 @@ ota run version:bump --version 0.2.0
 - applies configured environment values and task input env variables
 - prints task progress and advisory notes on stderr
 - prints a summary in text output, and emits an execution receipt on stderr after task output
+- execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.
@@ -441,12 +442,14 @@ ota doctor --member api [PATH]
 ota doctor --member api --member web --json [PATH]
 ```
 
-Current behavior:
+- Current behavior:
 
-- validates the contract first
+- when no contract exists, inspects repo and host signals and reports the best next step instead of only telling the user to create a contract
+- validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
+- prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - checks configured env requirements
 - checks preferred execution backend prerequisites such as `docker`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
 - warns on suspicious remote target shape:
@@ -599,7 +602,7 @@ Current behavior:
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 
@@ -759,7 +762,8 @@ Current merge-preview behavior:
 - `ota detect --merge --dry-run` is a review-only mode
 - it requires an existing `ota.yaml`
 - it does not write
-- it reuses the comparison preview instead of applying changes
+- it reuses the comparison preview instead of applying changes, including stale contract fields that no longer match repo reality
+- there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run`, and operator-facing trust/readiness drift stays on `ota doctor`
 
 Current merge-write behavior:
 
@@ -933,6 +937,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` with `repo_count`, `acquired_count`, and `task_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
 
@@ -969,6 +974,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `status`, `depends_on`
 
@@ -1041,6 +1047,8 @@ JSON output:
 - `ok`
 - `path`
 - `task`
+- `summary`
+- `receipt`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `ok`, `status`, `task`, `findings`, and optional `exit_code`/`stdout`/`stderr`
 
@@ -1075,6 +1083,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 ## `ota workspace doctor`
@@ -1118,6 +1127,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 Current non-goals:
@@ -1151,6 +1161,9 @@ JSON output:
 
 - success: `ok`, `path`, `summary`, `repos`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+The `summary` object on success mirrors the top-level receipt summary and includes
+`error_count`, `warn_count`, `info_count`, and `step_count`.
 
 ## `ota workspace up`
 
@@ -1194,6 +1207,7 @@ JSON output:
 
 - `ok`
 - `path`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 
 Current non-goals:

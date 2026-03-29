@@ -48,9 +48,12 @@ Use the following commands as the canonical hosted-validation stack:
 1. `ota doctor --json` for repo readiness and actionable findings
 1. `ota workspace validate --json` for workspace contract syntax and structure
 1. `ota workspace doctor --json` for workspace readiness and per-repo findings
+1. `ota workspace explain --json` when you need ordered workspace remediation for blockers
+1. `ota workspace list --json` when you want lightweight workspace inventory and readiness
 
 For workspace inventory and readiness summaries, `ota workspace list --json` can be used as a
-lightweight preflight signal.
+lightweight preflight signal. For ticketing or automated follow-up, `ota workspace explain --json`
+gives an ordered plan without mutating state.
 
 ## Infrastructure boundary
 
@@ -74,6 +77,7 @@ Hosted validation should treat the following as failures:
 - `summary.error_count > 0` in `ota validate --json` or `ota workspace validate --json`
 - any `error` or `errors` field from a contract-validation command
 - any `severity: error` finding from `doctor` or workspace doctor output
+- any `severity: error` finding from `ota workspace explain --json` when the plan is being used as a gate
 - non-zero process exit when the command is expected to validate successfully
 
 Warnings should be surfaced to humans, but they do not necessarily fail the gate unless policy
@@ -99,6 +103,8 @@ ota validate --json | tee .ota-validate.json
 ota doctor --json | tee .ota-doctor.json
 ota workspace validate --json | tee .ota-workspace-validate.json
 ota workspace doctor --json | tee .ota-workspace-doctor.json
+ota workspace list --json | tee .ota-workspace-list.json
+ota workspace explain --json | tee .ota-workspace-explain.json
 ```
 
 ## Example with a Postgres service container
@@ -215,6 +221,61 @@ Example PR policy:
 - post warnings as annotations
 - keep JSON artifacts for traceability
 
+## CI and PR annotation delivery
+
+The annotation layer should be a thin consumer of JSON, not a second diagnosis engine.
+
+Recommended mapping:
+
+- use `summary.primary_blocker` as the first check summary when present
+- emit one annotation per finding
+- map `severity: error` to failing annotations or a failed check
+- map `severity: warn` to non-blocking annotations unless policy says otherwise
+- use `summary` as the check-run headline
+- use `why` as the annotation body
+- use `next` as the suggested fix or link target
+
+For workspace commands, keep the same mapping but scope annotations to the repo name and path in
+the workspace payload. That keeps PR feedback aligned with the same JSON fields used by local
+editor integrations.
+
+Example shell adapter for GitHub Actions:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+emit_ota_annotations() {
+  local kind="$1"
+  local json="$2"
+
+  jq -r --arg kind "$kind" '
+    if .summary.primary_blocker? then
+      .summary.primary_blocker
+      | "::notice title=\($kind) primary blocker::\(.summary) | \(.next)"
+    else empty end,
+    .findings[]
+    | if .severity == "error" then "error" else "warning" end as $level
+    | "::\($level) title=\($kind) finding::\(.summary) | \(.next)"
+  ' "$json"
+}
+
+ota doctor --json > .ota-doctor.json
+emit_ota_annotations "ota doctor" .ota-doctor.json
+
+ota workspace doctor --json > .ota-workspace-doctor.json
+jq -c '.repos[] | {name, path, findings}' .ota-workspace-doctor.json \
+  | while read -r repo; do
+      name="$(jq -r '.name' <<<"$repo")"
+      path="$(jq -r '.path' <<<"$repo")"
+      jq -r --arg repo "$name" --arg path "$path" '
+        .findings[]
+        | if .severity == "error" then "error" else "warning" end as $level
+        | "::\($level) file=\($path),title=\($repo)::\(.summary) | \(.next)"
+      ' <<<"$repo"
+    done
+```
+
 ## Editor and hosted validation overlap
 
 Hosted validation systems and editor integrations should consume the same JSON shapes:
@@ -223,6 +284,7 @@ Hosted validation systems and editor integrations should consume the same JSON s
 - `ota doctor --json`
 - `ota workspace validate --json`
 - `ota workspace doctor --json`
+- `ota workspace explain --json`
 - `ota workspace list --json`
 
 That keeps PR gating, local diagnostics, and editor feedback aligned.
