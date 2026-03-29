@@ -165,6 +165,7 @@ ota workspace run <task>
 ota workspace check
 ota workspace doctor
 ota workspace up
+ota run bump-version --version x.y.z
 ```
 
 Global flag:
