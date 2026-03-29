@@ -112,6 +112,9 @@ ota validate
 ota doctor --json > .ota-doctor.json
 ```
 
+JSON output for `ota validate --json` includes `summary.error_count` so hosted gates can read a
+single machine-facing error count before parsing `errors`.
+
 ### `ota doctor`
 
 When to use:
@@ -668,6 +671,9 @@ set -euo pipefail
 
 ota workspace validate --json > .ota-workspace-validate.json
 ```
+
+JSON output for `ota workspace validate --json` includes `summary.error_count` so hosted gates
+can read a single machine-facing error count before parsing `errors`.
 
 ### `ota workspace tasks`
 

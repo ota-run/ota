@@ -71,6 +71,7 @@ That means the CI workflow stays thin, while the repo contract carries the real 
 Hosted validation should treat the following as failures:
 
 - `ok: false` in a JSON payload
+- `summary.error_count > 0` in `ota validate --json` or `ota workspace validate --json`
 - any `error` or `errors` field from a contract-validation command
 - any `severity: error` finding from `doctor` or workspace doctor output
 - non-zero process exit when the command is expected to validate successfully

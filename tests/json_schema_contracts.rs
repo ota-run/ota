@@ -72,6 +72,24 @@ fn detect_schema_includes_comparison_preview() {
 }
 
 #[test]
+fn validate_schema_includes_summary_counts() {
+    let schema = load_schema("docs/spec/json-schemas/validate.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert!(success.get("summary").is_some());
+    assert!(failure.get("summary").is_some());
+    assert_eq!(
+        schema["oneOf"][0]["required"],
+        serde_json::json!(["ok", "path"])
+    );
+    assert_eq!(
+        schema["oneOf"][1]["required"],
+        serde_json::json!(["ok", "path"])
+    );
+}
+
+#[test]
 fn shared_finding_schema_includes_optional_policy_context() {
     let schema = load_schema("docs/spec/json-schemas/shared.json");
     let finding = &schema["$defs"]["finding"]["properties"];

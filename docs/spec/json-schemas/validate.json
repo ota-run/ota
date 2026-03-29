@@ -9,7 +9,15 @@
       "required": ["ok", "path"],
       "properties": {
         "ok": { "const": true },
-        "path": { "type": "string" }
+        "path": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error_count"],
+          "properties": {
+            "error_count": { "type": "integer" }
+          }
+        }
       }
     },
     {
@@ -19,6 +27,14 @@
       "properties": {
         "ok": { "const": false },
         "path": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error_count"],
+          "properties": {
+            "error_count": { "type": "integer" }
+          }
+        },
         "errors": {
           "type": "array",
           "items": { "type": "string" }

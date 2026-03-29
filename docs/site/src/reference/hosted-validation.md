@@ -45,6 +45,7 @@ CI runner, OS package manager, or language installer on the host.
 ## What to fail on
 
 - `ok: false`
+- `summary.error_count > 0` for `ota validate --json` and `ota workspace validate --json`
 - any `error` or `errors`
 - any `severity: error`
 - non-zero exit when validation is expected to pass

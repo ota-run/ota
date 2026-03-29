@@ -725,7 +725,9 @@ fn run_cli(cli: Cli) -> CommandOutput {
 fn spawn_update_notice() -> mpsc::Receiver<Option<String>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let _ = tx.send(crate::update::maybe_update_notice(env!("CARGO_PKG_VERSION")));
+        let _ = tx.send(crate::update::maybe_update_notice(env!(
+            "CARGO_PKG_VERSION"
+        )));
     });
     rx
 }
@@ -1871,6 +1873,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["summary"]["error_count"], 0);
     }
 
     #[test]
@@ -1896,6 +1899,7 @@ tasks:
         let stderr = output.stderr.unwrap();
         let json: Value = serde_json::from_str(&stderr).unwrap();
         assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(
             json["errors"][0],
             "task `dev` depends on unknown task `setup`"
@@ -1948,6 +1952,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
+        assert_eq!(json["summary"]["error_count"], 0);
     }
 
     #[test]
@@ -7541,6 +7546,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.workspace_file().display().to_string());
+        assert_eq!(json["summary"]["error_count"], 0);
     }
 
     #[test]
@@ -7570,7 +7576,7 @@ tasks:
 
         let validate = run_with(["ota", "validate", "--json", fixture.path()]);
         assert_eq!(validate.exit_code, 0);
-        assert_json_top_level_keys(&validate, &["ok", "path"]);
+        assert_json_top_level_keys(&validate, &["ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 0);
@@ -7626,7 +7632,7 @@ tasks:
         assert_eq!(validate.exit_code, 1);
         assert_eq!(
             json_top_level_keys_named("validate", &validate),
-            vec!["errors", "ok", "path"],
+            vec!["errors", "ok", "path", "summary"],
             "validate failure keys"
         );
 
