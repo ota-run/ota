@@ -494,13 +494,6 @@ fn run_task_internal(
         combined_env.extend(input_overrides);
         let command = execution.body;
 
-        if let TaskExecutionMode::Stream {
-            emit_progress: true,
-        } = mode
-        {
-            eprintln!("RUN {task_name}");
-        }
-
         let command_output = execute_task_command(
             task_name,
             &command,
@@ -799,6 +792,37 @@ fn resolve_execution_backend(
                     cwd: remote.cwd.clone(),
                 })
             }),
+    }
+}
+
+pub(crate) fn task_execution_banner(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+) -> Option<String> {
+    let backend = resolve_execution_backend(contract, task_name, overrides).ok()?;
+    match backend {
+        ResolvedExecutionBackend::Native => Some(format!(
+            "MODE: native\nTASK: {task_name}\nNOTE: running on the host environment"
+        )),
+        ResolvedExecutionBackend::Container { image, lifecycle } => {
+            let working_dir = contract_working_dir(contract_path);
+            match lifecycle {
+                Lifecycle::Persistent => {
+                    let container_name = persistent_container_name(working_dir, &image);
+                    Some(format!(
+                        "MODE: container\nTASK: {task_name}\nTARGET: `{container_name}`\nLIFECYCLE: persistent\nNOTE: reusing persistent container backend"
+                    ))
+                }
+                Lifecycle::Ephemeral => Some(format!(
+                    "MODE: container\nTASK: {task_name}\nTARGET: `{image}`\nLIFECYCLE: ephemeral\nNOTE: using a fresh container image for this run"
+                )),
+            }
+        }
+        ResolvedExecutionBackend::Remote { provider, target, .. } => Some(format!(
+            "MODE: remote ({provider})\nTASK: {task_name}\nTARGET: `{target}`\nNOTE: executing through the `{provider}` remote backend"
+        )),
     }
 }
 
@@ -1175,6 +1199,7 @@ fn docker_command_exit_code(
 ) -> Result<i32, RunError> {
     let mut docker = Command::new("docker");
     docker.args(args);
+    docker.stdout(Stdio::null()).stderr(Stdio::null());
     if let Some(working_dir) = working_dir {
         docker.current_dir(working_dir);
     }
@@ -1185,7 +1210,7 @@ fn docker_command_exit_code(
     Ok(status.code().unwrap_or(1))
 }
 
-fn persistent_container_name(working_dir: &Path, image: &str) -> String {
+pub(crate) fn persistent_container_name(working_dir: &Path, image: &str) -> String {
     let mut hasher = DefaultHasher::new();
     working_dir.display().to_string().hash(&mut hasher);
     image.hash(&mut hasher);
