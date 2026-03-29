@@ -32,6 +32,97 @@ Ota is a readiness contract and CLI for modern repositories. It gives every repo
 
 Doctor first, contract second.
 
+## Installation
+
+Install the latest release binary:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+iwr https://dist.ota.run/install.ps1 | iex
+```
+
+Pin a release:
+
+```bash
+OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+$env:OTA_VERSION = "vX.Y.Z"
+iwr https://dist.ota.run/install.ps1 | iex
+```
+
+Update an existing install:
+
+```bash
+ota self-update
+ota upgrade
+```
+
+Install from a local checkout:
+
+```bash
+./scripts/install.sh --from-source
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+```
+
+See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and source fallback details.
+
+## Quickstart
+
+Use an existing contract:
+
+```bash
+cargo run -- validate
+cargo run -- tasks --json
+cargo run -- doctor
+cargo run -- up
+```
+
+If the contract declares agent guidance, `ota tasks --json` and `ota doctor --json` surface the
+same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+
+Infer a starting contract from an existing repo:
+
+```bash
+cargo run -- init
+cargo run -- detect --dry-run /path/to/repo
+```
+
+Write a conservative first contract:
+
+```bash
+cargo run -- detect --write /path/to/repo
+```
+
+Review or conservatively merge into an existing contract:
+
+```bash
+cargo run -- detect --merge --dry-run /path/to/repo
+cargo run -- detect --merge /path/to/repo
+```
+
+Example contracts:
+- [basic-node](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
+- [basic-java](/Users/bobai/Workspace/Ota.run/ota/examples/basic-java/ota.yaml)
+- [basic-rust](/Users/bobai/Workspace/Ota.run/ota/examples/basic-rust/ota.yaml)
+- [basic-script](/Users/bobai/Workspace/Ota.run/ota/examples/basic-script/ota.yaml)
+- [basic-services](/Users/bobai/Workspace/Ota.run/ota/examples/basic-services/ota.yaml)
+- [full-contract](/Users/bobai/Workspace/Ota.run/ota/examples/full-contract/ota.yaml)
+- [workspace-acquire](/Users/bobai/Workspace/Ota.run/ota/examples/workspace-acquire/ota.workspace.yaml)
+
 ## Why Ota exists
 
 Repo setup truth is usually fragmented across:
@@ -200,97 +291,6 @@ Ota does not accept external code contributions. See [docs/policy/commercial-pol
 Use the GitHub issue templates for bug reports, feature requests, and docs feedback.
 
 See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md) for the current support and enterprise boundary.
-
-## Installation
-
-Install the latest release binary:
-
-```bash
-curl -fsSL https://dist.ota.run/install.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-iwr https://dist.ota.run/install.ps1 | iex
-```
-
-Pin a release:
-
-```bash
-OTA_VERSION=v0.1.2 curl -fsSL https://dist.ota.run/install.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-$env:OTA_VERSION = "v0.1.2"
-iwr https://dist.ota.run/install.ps1 | iex
-```
-
-Update an existing install:
-
-```bash
-ota self-update
-ota upgrade
-```
-
-Install from a local checkout:
-
-```bash
-./scripts/install.sh --from-source
-```
-
-Windows PowerShell:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
-```
-
-See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and source fallback details.
-
-## Quickstart
-
-Use an existing contract:
-
-```bash
-cargo run -- validate
-cargo run -- tasks --json
-cargo run -- doctor
-cargo run -- up
-```
-
-If the contract declares agent guidance, `ota tasks --json` and `ota doctor --json` surface the
-same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
-
-Infer a starting contract from an existing repo:
-
-```bash
-cargo run -- init
-cargo run -- detect --dry-run /path/to/repo
-```
-
-Write a conservative first contract:
-
-```bash
-cargo run -- detect --write /path/to/repo
-```
-
-Review or conservatively merge into an existing contract:
-
-```bash
-cargo run -- detect --merge --dry-run /path/to/repo
-cargo run -- detect --merge /path/to/repo
-```
-
-Example contracts:
-- [basic-node](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
-- [basic-java](/Users/bobai/Workspace/Ota.run/ota/examples/basic-java/ota.yaml)
-- [basic-rust](/Users/bobai/Workspace/Ota.run/ota/examples/basic-rust/ota.yaml)
-- [basic-script](/Users/bobai/Workspace/Ota.run/ota/examples/basic-script/ota.yaml)
-- [basic-services](/Users/bobai/Workspace/Ota.run/ota/examples/basic-services/ota.yaml)
-- [full-contract](/Users/bobai/Workspace/Ota.run/ota/examples/full-contract/ota.yaml)
-- [workspace-acquire](/Users/bobai/Workspace/Ota.run/ota/examples/workspace-acquire/ota.workspace.yaml)
 
 ## Documentation
 

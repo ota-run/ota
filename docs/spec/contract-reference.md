@@ -42,7 +42,7 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `project`: stable repo identity and high-level classification.
 - `runtimes`: required language/runtime versions for the repo to be runnable.
 - `tools`: external CLI and tool dependencies the repo expects on PATH.
-- `env`: required environment variables, defaults, and allowed values.
+- `env`: required environment variables, defaults, allowed values, and provenance-aware resolution.
 - `services`: supporting services such as databases, queues, or local infra.
 - `checks`: explicit preconditions and health checks that should pass.
 - `tasks`: named commands humans and agents can run deterministically.
@@ -345,6 +345,7 @@ Rules:
 - versions must not be empty
 - `provider`, when set, must not be empty
 - `distribution`, when set, must not be empty
+- workspace overlays may specialize member runtime requirements, but the winning value must be explainable
 
 Version syntax examples:
 
@@ -388,6 +389,7 @@ Rules:
 - versions must not be empty
 - `required` defaults to `true`
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
+- workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 
 ## `env`
 
@@ -411,11 +413,22 @@ Fields:
 - `default`: optional string
 - `allowed`: optional list of allowed values
 
+Policy-aware source selection and workspace inheritance are described in
+[env-resolution-and-policy.md](env-resolution-and-policy.md).
+
 Current behavior:
 
 - `run` uses `default` only when the process environment is missing the variable
 - `run` rejects disallowed values
 - `doctor` reports missing required vars and invalid values
+
+Resolution and provenance:
+
+- repo-declared requirements remain the canonical source of truth
+- workspace overlays may add or specialize member values when explicitly configured
+- policy-derived values should be reported distinctly from repo-declared values
+- execution receipts should explain which layer supplied the value that won
+- `doctor` and `detect` should expose provenance instead of flattening the result into a bare string
 
 ## `tasks`
 
