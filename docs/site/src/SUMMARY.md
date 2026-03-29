@@ -32,6 +32,7 @@
   - [Commands](reference/commands.md)
   - [Contract](reference/contract.md)
   - [Workspace](reference/workspace.md)
+  - [Remote Runner Metadata and Editor Surface](reference/remote-runner-and-editor-surface.md)
   - [JSON Output](reference/json-output.md)
   - [Exit Codes](reference/exit-codes.md)
 - [Contributing](contributing/index.md)

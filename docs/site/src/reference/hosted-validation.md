@@ -39,6 +39,8 @@ Use hosted validation when Ota needs to gate a pull request or CI run without mu
 GitHub Actions or your CI runner still provisions infrastructure such as service containers.
 Ota removes the duplicated repo logic above it by keeping validation, readiness, env intent, and
 task execution in the contract.
+That means Ota can provision declared repo services through `ota up`, but it does not replace the
+CI runner, OS package manager, or language installer on the host.
 
 ## What to fail on
 

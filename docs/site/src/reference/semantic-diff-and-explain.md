@@ -46,9 +46,13 @@ The spec keeps them separate from:
 `ota diff` compares two repo or workspace contracts as structured YAML and reports added,
 missing-in-target, and changed fields in deterministic order.
 The summary counts appear after the field-level sections.
+Use it before writing contract changes or in CI when you need semantic impact instead of a raw YAML
+diff.
 
 ## `ota explain`
 
 `ota explain` turns readiness findings into ordered remediation steps.
 
 It stays read-only and deterministic.
+Use it when you want a blocker list converted into a fix order that a human or agent can follow
+without re-reading the raw findings.

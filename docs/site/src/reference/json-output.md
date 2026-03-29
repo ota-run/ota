@@ -32,6 +32,7 @@ When to use:
 - editor tooling
 - agent workflows
 - scripts that need stable parsing
+- editor/IDE integrations that need contract, readiness, and execution metadata
 
 JSON output is part of Ota’s integration contract for:
 
@@ -42,6 +43,15 @@ JSON output is part of Ota’s integration contract for:
 Editor and CI tooling should prefer the JSON surfaces here over parsing human-readable command
 output. The stable inputs are `ok`, `errors`, `findings`, `summary`, per-repo results, `execution`,
 and declared extension descriptors.
+
+For v7 operator workflows, the most useful JSON surfaces are:
+
+- `ota doctor --json` for repo readiness and execution metadata
+- `ota workspace doctor --json` for per-repo readiness and execution metadata
+- `ota workspace list --json` for repo inventory, readiness, and contract presence
+- `ota up --json` for preparation status and backend-driven readiness flow
+- `ota diff --json` for semantic contract comparison
+- `ota explain --json` for remediation plans
 
 Design intent:
 
@@ -54,6 +64,7 @@ Common patterns:
 - success payloads include `ok: true`
 - failure payloads include `ok: false` and structured error/findings context
 - workspace commands include per-repo result objects when applicable
+- execution metadata is descriptive and should be consumed directly rather than reconstructed from text output
 
 ## Practical integration pattern
 

@@ -107,6 +107,7 @@ Global output modifiers:
 - `--concise`: reduce high-noise text output while preserving decisions and actions
 - `--verbose`: preserve full explanatory text output
 - `--json`: unaffected by `--concise`/`--verbose`
+- `--debug` emits command-phase tracing to stderr
 
 Current progress behavior:
 
@@ -144,7 +145,9 @@ Current intent:
 
 - help humans and agents understand which path or mode a command resolved
 - keep normal stdout stable
-- avoid persistent logs or verbose default output
+- avoid persistent trace output or verbose default output
+- use the trace channel for multi-step commands like `ota up`, `ota run`, `ota workspace up`,
+  `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and `ota explain`
 
 ## `ota validate`
 

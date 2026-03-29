@@ -188,6 +188,34 @@ tasks:
 
 Use `execution` to describe where Ota should run those tasks when native execution is not enough.
 
+Supported backend values today:
+
+- `native`
+- `container`
+- `remote`
+
+Use `native` when you want the task to run on the host machine with the tools already installed there.
+Use `container` when you want a fixed toolchain in Docker.
+Use `remote` when execution should happen on another machine or workspace through a provider.
+
+Container execution requires:
+
+- `execution.backends.container.image`
+- Docker installed and running
+
+Remote execution requires:
+
+- `execution.backends.remote.provider`
+- `execution.backends.remote.target`
+- optional `execution.backends.remote.cwd`
+
+Current shipped behavior:
+
+- `ota run` supports native, container, and shipped remote providers
+- `ota up` can use the same backend path for `setup`
+- `ota clean` removes persistent container state when container lifecycle is persistent
+- remote cleanup is not implemented yet
+
 ### `extensions`
 
 Use `extensions` for adapter contract data. Each entry is a typed adapter descriptor with `kind`,
