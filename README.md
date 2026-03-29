@@ -62,7 +62,6 @@ iwr https://dist.ota.run/install.ps1 | iex
 Update an existing install:
 
 ```bash
-ota self-update
 ota upgrade
 ```
 
@@ -115,13 +114,13 @@ ota detect --merge /path/to/repo
 ```
 
 Example contracts:
-- [basic-node](/Users/bobai/Workspace/Ota.run/ota/examples/basic-node/ota.yaml)
-- [basic-java](/Users/bobai/Workspace/Ota.run/ota/examples/basic-java/ota.yaml)
-- [basic-rust](/Users/bobai/Workspace/Ota.run/ota/examples/basic-rust/ota.yaml)
-- [basic-script](/Users/bobai/Workspace/Ota.run/ota/examples/basic-script/ota.yaml)
-- [basic-services](/Users/bobai/Workspace/Ota.run/ota/examples/basic-services/ota.yaml)
-- [full-contract](/Users/bobai/Workspace/Ota.run/ota/examples/full-contract/ota.yaml)
-- [workspace-acquire](/Users/bobai/Workspace/Ota.run/ota/examples/workspace-acquire/ota.workspace.yaml)
+- [basic-node](examples/basic-node/ota.yaml)
+- [basic-java](examples/basic-java/ota.yaml)
+- [basic-rust](examples/basic-rust/ota.yaml)
+- [basic-script](examples/basic-script/ota.yaml)
+- [basic-services](examples/basic-services/ota.yaml)
+- [full-contract](examples/full-contract/ota.yaml)
+- [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml)
 
 ## Why Ota exists
 

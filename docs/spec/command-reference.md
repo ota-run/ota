@@ -494,6 +494,10 @@ ota doctor --member api --member web --json [PATH]
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
 - warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run` and the `setup` phase of `ota up`, not the full repo lifecycle
+- reports contract drift as warning findings when repo signals no longer match the declared
+  contract, and still preserves the most important blocker first
+- tags contract-drift findings with repo-contract ownership and provenance so consumers can
+  distinguish stale contract truth from host or service failures
 - reports an error when no `tasks` are declared, because the contract is not operational for `ota run`
 - runs configured checks
 - orders findings by severity

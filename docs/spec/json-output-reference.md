@@ -222,6 +222,12 @@ validation and editor tooling do not need to recompute them. When there is at le
 the summary may also include `primary_blocker` with the highest-priority blocker details so CI and
 editors can answer the question “what should I fix first?” without scanning the full list.
 
+When the repo signals no longer match the declared contract, `ota doctor --json` may include
+warning findings that describe the drift and point back to `ota detect --merge --dry-run` for the
+comparison preview. Drift findings also include optional `ownership` and `provenance` fields so
+CI and editors can classify the mismatch as a repo-contract issue and trace the source of the
+comparison.
+
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
 `api_version`, plus optional `description` and `config`. Supported kinds today are `checker` and

@@ -28,11 +28,11 @@ Status: complete.
 
 Source direction:
 
-- [/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
-- [Extension execution boundary](/Users/bobai/Workspace/Ota.run/ota/docs/spec/extension-execution-boundary.md)
-- [Compatibility policy](/Users/bobai/Workspace/Ota.run/ota/docs/spec/compatibility-policy.md)
-- [Remote runner and editor surface](/Users/bobai/Workspace/Ota.run/ota/docs/spec/remote-runner-and-editor-surface.md)
-- [Mutation controls and caching](/Users/bobai/Workspace/Ota.run/ota/docs/spec/mutation-controls-and-caching.md)
+- `/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md`
+- [Extension execution boundary](../../spec/extension-execution-boundary.md)
+- [Compatibility policy](../../spec/compatibility-policy.md)
+- [Remote runner and editor surface](../../spec/remote-runner-and-editor-surface.md)
+- [Mutation controls and caching](../../spec/mutation-controls-and-caching.md)
 
 V6 theme:
 

@@ -92,6 +92,10 @@ Design intent:
   instead of re-counting errors themselves
 - workspace doctor and explain JSON include top-level summary roll-ups for repo, finding, and step
   counts so hosted consumers do not have to derive them from nested reports
+- doctor JSON can also surface contract-drift warning findings when repo signals no longer match
+  the declared contract; those findings include `ownership` and `provenance` so hosted consumers
+  can classify the mismatch as repo-contract drift and point users to `ota detect --merge --dry-run`
+  for the comparison preview
 
 Common patterns:
 

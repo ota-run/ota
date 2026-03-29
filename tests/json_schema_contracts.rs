@@ -96,6 +96,8 @@ fn shared_finding_schema_includes_optional_policy_context() {
     let schema = load_schema("docs/spec/json-schemas/shared.json");
     let finding = &schema["$defs"]["finding"]["properties"];
 
+    assert!(finding.get("ownership").is_some());
+    assert!(finding.get("provenance").is_some());
     assert!(finding.get("policy_outcome").is_some());
     assert!(finding.get("policy_reason").is_some());
     assert!(finding.get("policy_source").is_some());

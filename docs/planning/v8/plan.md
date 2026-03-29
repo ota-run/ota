@@ -28,8 +28,8 @@ Status: planned.
 
 Source direction:
 
-- [Execution receipt](/Users/bobai/Workspace/Ota.run/ota/docs/spec/execution-receipt.md)
-- [Semantic diff and explain](/Users/bobai/Workspace/Ota.run/ota/docs/spec/semantic-diff-and-explain.md)
+- [Execution receipt](../../spec/execution-receipt.md)
+- [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
 
 V8 theme:
 

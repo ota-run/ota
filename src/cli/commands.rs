@@ -1424,7 +1424,12 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let report = diagnose_contract(&target.contract, &target.contract_path);
+                let mut report = diagnose_contract(&target.contract, &target.contract_path);
+                append_contract_drift_findings(
+                    &target.contract,
+                    &target.contract_path,
+                    &mut report.findings,
+                );
                 let agent_summary = target
                     .contract
                     .agent
@@ -1501,6 +1506,11 @@ pub fn doctor(
                             let member_report = diagnose_contract(
                                 &member_target.contract,
                                 &member_target.contract_path,
+                            );
+                            append_contract_drift_findings(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                                &mut member_report.findings.clone(),
                             );
                             if !member_report.ok {
                                 overall_ok = false;
@@ -1632,7 +1642,12 @@ pub fn doctor(
                                 );
                             }
                         };
-                    let report = diagnose_contract(&target.contract, &target.contract_path);
+                    let mut report = diagnose_contract(&target.contract, &target.contract_path);
+                    append_contract_drift_findings(
+                        &target.contract,
+                        &target.contract_path,
+                        &mut report.findings,
+                    );
                     if !report.ok {
                         overall_ok = false;
                     }
@@ -1837,6 +1852,65 @@ fn append_contractless_repo_findings(
     }
 }
 
+fn append_contract_drift_findings(
+    contract: &Contract,
+    contract_path: &Path,
+    findings: &mut Vec<Finding>,
+) {
+    let root = contract_path.parent().unwrap_or(contract_path);
+    let Ok(detect_report) = detect_repo(root) else {
+        return;
+    };
+
+    let mut drift_findings = Vec::new();
+
+    for change in collect_detect_changes(contract, &detect_report.contract)
+        .into_iter()
+        .filter(|change| change.status == "update")
+    {
+        let existing = change.existing.unwrap_or_default();
+        drift_findings.push(Finding {
+            severity: FindingSeverity::Warn,
+            summary: format!("Contract drift: `{}` differs from repo signals", change.field),
+            why: format!(
+                "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` now detects `{}`",
+                change.field,
+                existing,
+                root.display(),
+                change.detected
+            ),
+            next: format!(
+                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
+                compact_repo_path(root),
+                compact_repo_path(root)
+            ),
+        });
+    }
+
+    for removal in collect_detect_removals(contract, &detect_report.contract) {
+        if removal.field.starts_with("tasks.") {
+            continue;
+        }
+        drift_findings.push(Finding {
+            severity: FindingSeverity::Warn,
+            summary: format!("Contract drift: `{}` is no longer detected", removal.field),
+            why: format!(
+                "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` no longer detects it",
+                removal.field,
+                removal.existing,
+                root.display()
+            ),
+            next: format!(
+                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
+                compact_repo_path(root),
+                compact_repo_path(root)
+            ),
+        });
+    }
+
+    findings.extend(drift_findings);
+}
+
 pub fn explain(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -1893,7 +1967,12 @@ pub fn explain(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) => {
-                let report = diagnose_contract(&target.contract, &target.contract_path);
+                let mut report = diagnose_contract(&target.contract, &target.contract_path);
+                append_contract_drift_findings(
+                    &target.contract,
+                    &target.contract_path,
+                    &mut report.findings,
+                );
                 let summary = explain_summary(&report);
                 let steps = explain_steps(&report.findings);
 
