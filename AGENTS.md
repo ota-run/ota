@@ -36,6 +36,8 @@ Ota is open infrastructure for repo readiness. It is both:
 
 Agents must optimize for correctness, trust, determinism, and adoption usefulness.
 
+The authoritative machine-readable agent contract for this repository lives in [`ota.yaml`](ota.yaml). This file is human-facing guidance that must stay aligned with that contract and must not override it.
+
 ---
 
 ## Core Product Context
