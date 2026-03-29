@@ -1482,9 +1482,9 @@ mod tests {
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
 
+    use crate::test_support::CWD_MUTEX;
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
-    use crate::test_support::CWD_MUTEX;
 
     use super::{collapse_blank_lines, commands, maybe_append_update_notice, run_with};
     use crate::output::CommandOutput;
@@ -1940,6 +1940,7 @@ project:
 
     #[test]
     fn validate_member_rejects_unknown_monorepo_member() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -1955,13 +1956,8 @@ workspace:
         let output = run_with(["ota", "validate", "--member", "web", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("does not declare monorepo member `web`")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("does not declare monorepo member `web`"));
     }
 
     #[test]
@@ -4071,6 +4067,7 @@ tasks:
 
     #[test]
     fn run_with_unsupported_remote_provider_fails_cleanly() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4091,17 +4088,13 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("unsupported remote provider `unknown`")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("unsupported remote provider `unknown`"));
     }
 
     #[test]
     fn run_with_kubectl_remote_provider_missing_target_fails_with_guidance() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4121,13 +4114,10 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            output
-                .stderr
-                .as_deref()
-                .unwrap()
-                .contains("provider `kubectl` requires `execution.backends.remote.target` (example: `pod/ota-dev`)")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains(
+            "provider `kubectl` requires `execution.backends.remote.target` (example: `pod/ota-dev`)"
+        ));
     }
 
     #[test]
@@ -5905,6 +5895,7 @@ tasks:
 
     #[test]
     fn run_reports_ephemeral_lifecycle_as_advisory_note() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5922,7 +5913,7 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stderr = output.stderr.as_deref().unwrap_or("");
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or(""));
         assert!(stderr.contains(
             "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
         ));
@@ -9163,6 +9154,7 @@ repos:
 
     #[test]
     fn validate_not_found_splits_why_and_next_actions() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with(["ota", "validate", fixture.path().to_str().unwrap()]);
@@ -9179,6 +9171,7 @@ repos:
 
     #[test]
     fn doctor_not_found_uses_shared_next_actions() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
@@ -10380,6 +10373,7 @@ tasks:
 
     #[test]
     fn workspace_up_rejects_stream_with_json() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new();
 
         let output = run_with([
@@ -10393,13 +10387,14 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--stream` is only supported for text output")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--stream` is only supported for text output"
         );
     }
 
     #[test]
     fn workspace_up_rejects_stream_with_parallel_jobs() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new();
 
         let output = run_with([
@@ -10414,8 +10409,8 @@ tasks:
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(
-            output.stderr.as_deref(),
-            Some("`--stream` currently requires `--jobs 1`")
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "`--stream` currently requires `--jobs 1`"
         );
     }
 
