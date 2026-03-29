@@ -7003,22 +7003,6 @@ fn workspace_tasks_summary(repos: &[WorkspaceRepoTasksReport]) -> WorkspaceTasks
     summary
 }
 
-fn workspace_tasks_summary(repos: &[WorkspaceRepoTasksReport]) -> WorkspaceTasksSummary {
-    let mut summary = WorkspaceTasksSummary {
-        repo_count: repos.len(),
-        ..WorkspaceTasksSummary::default()
-    };
-
-    for repo in repos {
-        if repo.acquired {
-            summary.acquired_count += 1;
-        }
-        summary.task_count += repo.tasks.len();
-    }
-
-    summary
-}
-
 fn workspace_doctor_summary(
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> WorkspaceDoctorSummary {

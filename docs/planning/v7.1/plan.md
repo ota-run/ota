@@ -54,7 +54,6 @@ V7.1 theme:
 
 - do not add a standalone `ota drift` command in v7.1
 - do not split drift into a third implementation path; reuse `doctor` and `detect`
-
 ## Priorities
 
 1. Make `ota doctor` the fastest correct answer to “why is this repo not runnable?”
