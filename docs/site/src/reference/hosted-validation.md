@@ -32,6 +32,7 @@ Use hosted validation when Ota needs to gate a pull request or CI run without mu
 - `ota doctor --json`
 - `ota workspace validate --json`
 - `ota workspace doctor --json`
+- `ota workspace explain --json` for ordered workspace remediation
 - `ota workspace list --json` for inventory and readiness summary
 
 ## Infrastructure boundary
@@ -48,6 +49,7 @@ CI runner, OS package manager, or language installer on the host.
 - `summary.error_count > 0` for `ota validate --json` and `ota workspace validate --json`
 - any `error` or `errors`
 - any `severity: error`
+- any `severity: error` from `ota workspace explain --json` when used as a gate
 - non-zero exit when validation is expected to pass
 
 ## What not to do
@@ -67,6 +69,8 @@ ota validate --json | tee .ota-validate.json
 ota doctor --json | tee .ota-doctor.json
 ota workspace validate --json | tee .ota-workspace-validate.json
 ota workspace doctor --json | tee .ota-workspace-doctor.json
+ota workspace list --json | tee .ota-workspace-list.json
+ota workspace explain --json | tee .ota-workspace-explain.json
 ```
 
 ## Example with Postgres
