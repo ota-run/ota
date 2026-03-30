@@ -6191,6 +6191,12 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     stdout.push_str(&format!(
         "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
+        paint("Readiness impact:", "1;38;2;102;217;255"),
+        paint(&summary.readiness_impact, "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint("Added:", "1;38;2;0;255;120"),
         paint(&summary.added_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -6299,7 +6305,22 @@ fn summarize_diff_changes(changes: &[DiffChange]) -> DiffSummary {
             _ => {}
         }
     }
+    summary.readiness_impact = diff_readiness_impact(&summary);
     summary
+}
+
+fn diff_readiness_impact(summary: &DiffSummary) -> &'static str {
+    let positive = summary.added_count > 0 || summary.strengthened_count > 0;
+    let negative = summary.removed_count > 0 || summary.weakened_count > 0;
+    let changed = summary.changed_count > 0;
+
+    match (positive, negative, changed) {
+        (false, false, false) => "unchanged",
+        (true, false, false) => "improves",
+        (false, true, false) => "degrades",
+        (true, true, _) => "mixed",
+        _ => "changed",
+    }
 }
 
 fn collect_diff_changes(base: &YamlValue, target: &YamlValue) -> Vec<DiffChange> {

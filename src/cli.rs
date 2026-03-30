@@ -2200,6 +2200,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DIFF"));
         assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Readiness impact:"));
         assert!(stdout.contains("»"));
         assert!(stdout.contains("DIFFERENT"));
         assert!(stdout.contains("Added:"));
@@ -2245,6 +2246,7 @@ tasks:
         assert_eq!(json["summary"]["added_count"], 1);
         assert_eq!(json["summary"]["removed_count"], 0);
         assert_eq!(json["summary"]["changed_count"], 2);
+        assert_eq!(json["summary"]["readiness_impact"], "changed");
         let paths = json["changes"]
             .as_array()
             .unwrap()

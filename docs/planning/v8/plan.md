@@ -37,11 +37,19 @@ V8 theme:
 - semantic contract impact
 - remediation visibility for humans and agents
 
+This is the next active slice after v7.2.
+
 ## Included capabilities
 
 - deterministic execution receipt for `ota run` and `ota up`
 - semantic impact diff
 - deterministic remediation plan
+
+## Current implementation gaps
+
+- receipts exist, but text and JSON still need tighter normalization across repo and workspace execution surfaces
+- semantic diff exists as a command surface, but the impact model still needs to be tightened into a stable contract-facing artifact
+- remediation output exists, but it should become more deterministic and explicitly ordered
 
 ## Priorities
 
@@ -53,18 +61,21 @@ V8 theme:
 
 1. Execution receipt schema
 
-- define the receipt as a deterministic machine-readable artifact
-- keep it aligned with execution commands only
+- normalize the receipt as the deterministic machine-readable artifact for execution commands
+- keep repo, workspace, and JSON receipt fields aligned
+- preserve stable summary data without duplicating business logic in renderers
 
 1. Semantic impact diff
 
 - compare contract states by meaning, not raw YAML
-- report readiness impact and safe next actions
+- report readiness impact, execution impact, and safe next actions
+- keep the impact model deterministic and contract-focused
 
 1. Deterministic remediation plan
 
 - turn findings into ordered fix steps
 - keep it read-only and explicit
+- make the remediation order stable for humans and agents
 
 ## Success criteria
 

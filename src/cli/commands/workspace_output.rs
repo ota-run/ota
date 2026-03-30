@@ -30,6 +30,7 @@ pub(crate) fn render_workspace_up(
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
+            let workspace_root = Path::new(path).parent();
             let mut stdout = format!(
                 "\n{}\n\n{}",
                 format_command_header("WORKSPACE UP", path),
@@ -56,7 +57,11 @@ pub(crate) fn render_workspace_up(
                 stdout.push_str(&format!(
                     "\n{} {}",
                     paint_key("Contract:"),
-                    compact_repo_path(Path::new(&repo.contract_path))
+                    compact_contract_file_path_relative_to(
+                        Path::new(&repo.contract_path),
+                        DEFAULT_CONTRACT_FILE,
+                        workspace_root,
+                    )
                 ));
                 stdout.push_str(&format!("\n{} {}", paint_key("Phase:"), repo.phase));
                 if let Some(service) = &repo.service {
@@ -128,6 +133,7 @@ pub(crate) fn render_workspace_run(
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => {
+            let workspace_root = Path::new(path).parent();
             let mut stdout = format!(
                 "{}\n\n{}",
                 format_command_header("WORKSPACE RUN", &format!("{task} {path}")),
@@ -154,7 +160,11 @@ pub(crate) fn render_workspace_run(
                 stdout.push_str(&format!(
                     "\n{} {}",
                     paint_key("Contract:"),
-                    compact_repo_path(Path::new(&repo.contract_path))
+                    compact_contract_file_path_relative_to(
+                        Path::new(&repo.contract_path),
+                        DEFAULT_CONTRACT_FILE,
+                        workspace_root,
+                    )
                 ));
                 stdout.push_str(&format!("\n{} {}", paint_key("Task:"), repo.task));
                 if let Some(exit_code) = repo.exit_code {
