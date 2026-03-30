@@ -5,12 +5,48 @@
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["severity", "summary", "why", "next"],
+      "required": ["code", "category", "owner", "severity", "summary", "why", "next", "evidence"],
       "properties": {
+        "code": { "type": "string" },
+        "category": {
+          "enum": [
+            "contract",
+            "execution",
+            "policy",
+            "service",
+            "environment",
+            "remote",
+            "workspace"
+          ]
+        },
+        "owner": {
+          "enum": [
+            "repo_contract",
+            "host",
+            "service",
+            "workspace_acquisition",
+            "org_policy",
+            "remote_backend",
+            "agent_safety"
+          ]
+        },
         "severity": { "enum": ["error", "warn", "info"] },
         "summary": { "type": "string" },
         "why": { "type": "string" },
         "next": { "type": "string" },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["observed", "expected", "source", "checked_at", "command", "path"],
+          "properties": {
+            "observed": { "type": "string" },
+            "expected": { "type": "string" },
+            "source": { "type": "string" },
+            "checked_at": { "type": "string" },
+            "command": { "type": "string" },
+            "path": { "type": "string" }
+          }
+        },
         "ownership": {
           "enum": [
             "repo_contract",

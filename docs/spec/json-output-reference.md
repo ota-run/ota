@@ -196,18 +196,32 @@ Root monorepo summary output can also include grouped member results:
     "entrypoint": "setup",
     "verify_after_changes": ["test"]
   },
-  "findings": [
+ "findings": [
     {
+      "code": "OTA_TASKS_MISSING",
+      "category": "contract",
+      "owner": "repo_contract",
       "severity": "warn",
       "summary": "...",
       "why": "...",
-      "next": "..."
+      "next": "...",
+      "evidence": {
+        "observed": "...",
+        "expected": "...",
+        "source": "...",
+        "checked_at": "...",
+        "command": "...",
+        "path": "..."
+      }
     }
   ]
 }
 ```
 
-Finding objects may include additive policy context keys when policy-aware diagnosis is surfaced:
+Finding objects always include stable identity fields:
+`code`, `category`, `owner`, and `evidence`.
+
+Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
 
