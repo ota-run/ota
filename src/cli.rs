@@ -9921,6 +9921,46 @@ project:
     }
 
     #[test]
+    fn workspace_tasks_uses_repo_path_in_command_preview() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  site:
+    path: qredex-site
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.dir.path().join("qredex-site")).unwrap();
+        fs::write(
+            fixture.dir.path().join("qredex-site").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: site
+tasks:
+  typecheck:
+    run: npm run typecheck
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "tasks", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Use:"));
+        assert!(stdout.contains("ota run typecheck"));
+        assert!(stdout.contains("qredex-site"));
+        assert!(!stdout.contains("workspace run typecheck --repo"));
+    }
+
+    #[test]
     fn workspace_validate_discovers_workspace_from_nested_directory() {
         let fixture = WorkspaceFixture::new();
         let nested = fixture.dir.path().join("apps").join("web").join("src");
