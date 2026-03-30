@@ -146,7 +146,7 @@ pub fn set_json_mode(enabled: bool) {
 }
 
 pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
-    if message.contains("Where:") || message.contains("Why:") || message.contains("◉ ERROR") {
+    if message.contains("Where:") {
         return message.to_string();
     }
 
@@ -179,7 +179,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     }
 
     if let Some(missing) = detect_missing_contract_context(&compact_message) {
-        render_missing_contract_guidance(&mut out, &compact_message, missing);
+        render_missing_contract_guidance(&mut out, where_label, &compact_message, missing);
         return out;
     }
 
@@ -338,9 +338,15 @@ fn detect_missing_contract_context(message: &str) -> Option<MissingContractConte
 
 fn render_missing_contract_guidance(
     out: &mut String,
+    where_label: &str,
     message: &str,
     context: MissingContractContext,
 ) {
+    out.push_str(&format!(
+        "\n{} {}",
+        error_key("Where:"),
+        paint_code(where_label)
+    ));
     out.push_str(&format!("\n{} {}", error_key("Why:"), message));
     match context {
         MissingContractContext::Repo => {
@@ -3489,7 +3495,12 @@ fn render_workspace_validate_failure(
         Some(error) => {
             let compact_error = compact_backticked_paths(error);
             if let Some(missing) = detect_missing_contract_context(&compact_error) {
-                render_missing_contract_guidance(&mut out, &compact_error, missing);
+                render_missing_contract_guidance(
+                    &mut out,
+                    "ota workspace validate",
+                    &compact_error,
+                    missing,
+                );
             } else {
                 out.push_str(&format!("\n{} {}", error_key("Why:"), compact_error));
             }
@@ -7224,7 +7235,18 @@ fn render_doctor_text(
     report: DoctorReport,
 ) -> CommandOutput {
     let summary = doctor_summary(&report);
+    let first_why = report.findings.first().map(|finding| finding.why.clone());
     let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
+    if output.stderr.is_none()
+        && summary
+            .primary_blocker
+            .as_ref()
+            .is_some_and(|primary| primary.severity == FindingSeverity::Error)
+    {
+        if let Some(why) = first_why.as_deref() {
+            output.stderr = Some(stylize_text_failure("ota doctor", why));
+        }
+    }
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -8089,11 +8111,13 @@ fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str
         stdout.push('\n');
     }
     stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint_key("Why:"),
-        compact_backticked_paths(why)
-    ));
+    if !concise_mode() {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Why:"),
+            compact_backticked_paths(why)
+        ));
+    }
     stdout.push_str(&format!(
         "\n{} {}",
         paint_key("Next:"),

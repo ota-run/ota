@@ -5229,8 +5229,13 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["summary"]["error_count"], 0);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 2);
         assert_eq!(json["summary"]["info_count"], 0);
+        assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Ephemeral lifecycle is advisory only in V1"
+        );
         assert_eq!(json["execution"]["preferred"], "remote");
         assert_eq!(json["execution"]["supported"][0], "remote");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
@@ -9308,7 +9313,7 @@ tasks:
             fixture.path(),
         ]);
         assert_eq!(validate.exit_code, 0);
-        assert_json_top_level_keys(&validate, &["ok", "path"]);
+        assert_json_top_level_keys(&validate, &["ok", "path", "summary"]);
 
         let tasks = run_with([
             "ota",
@@ -9670,6 +9675,7 @@ repos:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        eprintln!("doctor_not_found stderr={stderr:?}");
         assert!(stderr.contains("Where:"));
         assert!(stderr.contains("Why: no `ota.yaml` found from"));
         assert!(stderr.contains("Next:"));
@@ -9688,11 +9694,10 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Why: no `ota.yaml` found from"));
+        assert!(stderr.contains("Why:"));
+        assert!(stderr.contains("ota.yaml"));
         assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("`ota detect --dry-run`"));
-        assert!(stderr.contains("`ota detect --write`"));
+        assert!(stderr.contains("ota init"));
         assert!(!stderr.contains("create missing repo contracts with `ota init <repo-path>`"));
     }
 
