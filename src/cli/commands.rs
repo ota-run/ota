@@ -7676,6 +7676,11 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
+            paint_key("Code:"),
+            paint_code(step.code)
+        ));
+        stdout.push_str(&format!(
+            "\n  {} {}",
             paint_key("Why:"),
             compact_backticked_paths(&step.why)
         ));
@@ -7746,6 +7751,7 @@ fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
         .enumerate()
         .map(|(index, finding)| ExplainStep {
             order: index + 1,
+            code: finding.code(),
             severity: finding.severity,
             summary: finding.summary.clone(),
             why: finding.why.clone(),

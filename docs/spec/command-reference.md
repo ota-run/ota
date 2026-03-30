@@ -311,12 +311,14 @@ Current behavior:
 Text output:
 
 - ordered remediation steps
+- stable finding code for each step
 - `Why` and `Next` lines for each step
 - summary counts at the end
 
 JSON output:
 
 - success: `ok`, `path`, `summary`, `steps`
+- each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
 - failure: `ok`, `path`, and `error`
 
 ## `ota annotations`

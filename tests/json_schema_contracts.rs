@@ -271,6 +271,7 @@ fn explain_schema_includes_steps_and_summary_counts() {
     assert!(summary.get("info_count").is_some());
     assert!(summary.get("step_count").is_some());
     assert!(step.get("order").is_some());
+    assert!(step.get("code").is_some());
     assert!(step.get("severity").is_some());
     assert!(step.get("summary").is_some());
     assert!(step.get("why").is_some());
@@ -292,6 +293,7 @@ fn workspace_explain_schema_includes_repo_steps() {
     assert!(repo.get("summary").is_some());
     assert!(repo.get("steps").is_some());
     assert!(step.get("order").is_some());
+    assert!(step.get("code").is_some());
     assert!(step.get("severity").is_some());
     assert!(step.get("summary").is_some());
 }

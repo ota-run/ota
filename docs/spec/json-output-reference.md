@@ -305,6 +305,31 @@ Root monorepo summary output can also include grouped member findings under `mem
 Doctor JSON findings also include remote target-shape warnings when relevant, such as suspicious
 `ssh`/`tsh` targets without `user@host` or `kubectl` targets that do not start with `pod/`.
 
+## `ota explain --json`
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "steps": [
+    {
+      "order": 1,
+      "code": "OTA_TASKS_MISSING",
+      "severity": "error",
+      "summary": "No tasks defined in contract",
+      "why": "...",
+      "next": "..."
+    }
+  ]
+}
+```
+
 ## `ota workspace explain --json`
 
 ```json
@@ -336,6 +361,7 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
       "steps": [
         {
           "order": 1,
+          "code": "OTA_TASKS_MISSING",
           "severity": "error",
           "summary": "No tasks defined in contract",
           "why": "...",

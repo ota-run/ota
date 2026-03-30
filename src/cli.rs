@@ -2306,6 +2306,7 @@ project:
         let steps = json["steps"].as_array().unwrap();
         assert_eq!(steps.len(), 2);
         assert_eq!(steps[0]["order"], 1);
+        assert_eq!(steps[0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
     }
 
@@ -2428,6 +2429,7 @@ project:
         let repos = json["repos"].as_array().unwrap();
         assert_eq!(repos.len(), 2);
         assert_eq!(repos[0]["steps"].as_array().unwrap().len(), 1);
+        assert_eq!(repos[0]["steps"][0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(
             repos[0]["steps"][0]["summary"],
             "No tasks defined in contract"

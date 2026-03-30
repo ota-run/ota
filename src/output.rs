@@ -174,6 +174,7 @@ pub struct ExecutionReceipt {
 #[derive(Debug, Serialize)]
 pub struct ExplainStep {
     pub order: usize,
+    pub code: &'static str,
     pub severity: FindingSeverity,
     pub summary: String,
     pub why: String,
