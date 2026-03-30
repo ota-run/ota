@@ -115,7 +115,7 @@ pub(crate) fn render_workspace_doctor_text(
             stdout.push_str(&format!(
                 "\n{} {}",
                 paint_key("Contract:"),
-                compact_contract_path(Path::new(&repo.contract_path))
+                compact_repo_path(Path::new(&repo.contract_path))
             ));
         }
 
@@ -191,7 +191,7 @@ pub(crate) fn render_workspace_explain_text(
             stdout.push_str(&format!(
                 "\n{} {}",
                 paint_key("Contract:"),
-                compact_contract_path(Path::new(&repo.contract_path))
+                compact_repo_path(Path::new(&repo.contract_path))
             ));
         }
 
@@ -379,7 +379,7 @@ pub(crate) fn render_workspace_check_text(
             stdout.push_str(&format!(
                 "\n{} {}",
                 paint_key("Contract:"),
-                compact_contract_path(Path::new(&repo.contract_path))
+                compact_repo_path(Path::new(&repo.contract_path))
             ));
         }
         if let Some(execution) = repo.execution.as_ref() {
