@@ -399,7 +399,8 @@ fn run_executes_task_variant_from_nested_directory_real_fixture() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
-    assert!(stderr.contains("RUN setup"));
+    assert!(stderr.contains("RUN SUMMARY"));
+    assert!(stderr.contains("Task:       setup"));
 
     let expected = match std::env::consts::OS {
         "macos" => "macos",
@@ -1366,7 +1367,7 @@ services:
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json["ok"], false);
     assert!(json.get("path").is_some());
-    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 3);
     assert_eq!(json["findings"][0]["severity"], "error");
     assert_eq!(
         json["findings"][0]["summary"],
@@ -1407,7 +1408,7 @@ tasks:
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
 }
 
 #[cfg(unix)]
@@ -1440,7 +1441,7 @@ tasks:
 
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json["ok"], false);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
     assert_eq!(json["findings"][0]["severity"], "error");
     assert_eq!(
         json["findings"][0]["summary"],
@@ -1603,7 +1604,7 @@ services:
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
     assert_eq!(json["findings"][0]["severity"], "warn");
     assert_eq!(
         json["findings"][0]["summary"],
