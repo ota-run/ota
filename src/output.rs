@@ -72,11 +72,23 @@ pub struct WorkspaceDoctorSuccess<'a> {
 
 #[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct DoctorSummary {
+    pub verdict: DoctorVerdict,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub primary_blocker: Option<DoctorPrimaryBlocker>,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DoctorVerdict {
+    #[default]
+    Ready,
+    Risky,
+    NotReady,
+    PolicyBlocked,
+    AgentBlocked,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -187,6 +199,7 @@ pub struct WorkspaceDoctorSummary {
     pub repo_count: usize,
     pub ready_count: usize,
     pub not_ready_count: usize,
+    pub verdict: DoctorVerdict,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,

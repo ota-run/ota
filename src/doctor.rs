@@ -110,7 +110,7 @@ impl Finding {
         }
     }
 
-    fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &'static str {
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
             "Ephemeral lifecycle is only enforced for backend-backed task execution" => {

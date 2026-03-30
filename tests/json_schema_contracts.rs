@@ -57,6 +57,7 @@ fn doctor_schema_includes_agent_summary() {
     assert!(properties.get("members").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
+    assert!(properties["summary"]["properties"].get("verdict").is_some());
 }
 
 #[test]
@@ -129,10 +130,12 @@ fn init_schema_includes_optional_next_on_failures() {
 fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-doctor.json");
     let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let summary = &schema["properties"]["summary"]["properties"];
 
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
+    assert!(summary.get("verdict").is_some());
 }
 
 #[test]
