@@ -11,8 +11,11 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["error_count", "warn_count", "info_count"],
+      "required": ["verdict", "error_count", "warn_count", "info_count"],
       "properties": {
+        "verdict": {
+          "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+        },
         "error_count": { "type": "integer", "minimum": 0 },
         "warn_count": { "type": "integer", "minimum": 0 },
         "info_count": { "type": "integer", "minimum": 0 }

@@ -49,7 +49,7 @@ use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
     AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
     DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
+    DoctorSuccess, DoctorSummary, DoctorVerdict, ExecutionReceipt, ExecutionReceiptEnvSource,
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
     ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
@@ -6970,6 +6970,7 @@ fn render_doctor_text(
 
 fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
     let mut summary = DoctorSummary::default();
+    summary.verdict = doctor_verdict_from_findings(&report.findings);
     for finding in &report.findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
@@ -7041,8 +7042,47 @@ fn workspace_doctor_summary(
         }
     }
 
+    summary.verdict = doctor_verdict_from_findings(
+        &report
+            .repos
+            .iter()
+            .flat_map(|repo| repo.findings.iter())
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
     summary.primary_blocker = workspace_primary_blocker(report);
     summary
+}
+
+fn doctor_verdict_from_findings(findings: &[Finding]) -> DoctorVerdict {
+    if findings.iter().any(|finding| {
+        finding.code() == "OTA_POLICY_PACK_VIOLATION" || finding.code() == "OTA_POLICY_PACK_INVALID"
+    }) {
+        return DoctorVerdict::PolicyBlocked;
+    }
+
+    if findings
+        .iter()
+        .any(|finding| finding.code().starts_with("OTA_AGENT_"))
+    {
+        return DoctorVerdict::AgentBlocked;
+    }
+
+    if findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error)
+    {
+        return DoctorVerdict::NotReady;
+    }
+
+    if findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Warn)
+    {
+        return DoctorVerdict::Risky;
+    }
+
+    DoctorVerdict::Ready
 }
 
 fn workspace_explain_summary(
