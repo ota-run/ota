@@ -8356,7 +8356,7 @@ tasks:
             multi_repo.path(),
         ]);
         assert_eq!(run.exit_code, 0);
-        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "task"]);
+        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "summary", "task"]);
 
         let check = run_with(["ota", "workspace", "check", "--json", single_repo.path()]);
         assert_eq!(check.exit_code, 0);
