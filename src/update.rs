@@ -86,6 +86,39 @@ fn installer_url() -> String {
     })
 }
 
+fn release_target_triple() -> String {
+    match env::consts::OS {
+        "macos" => format!("{}-apple-darwin", env::consts::ARCH),
+        "linux" => format!("{}-unknown-linux-gnu", env::consts::ARCH),
+        "windows" => format!("{}-pc-windows-msvc", env::consts::ARCH),
+        other => format!("{}-unknown-{}", env::consts::ARCH, other),
+    }
+}
+
+fn render_up_to_date_output(version: &str) -> String {
+    format!(
+        r#"
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+     DOCTOR FIRST, CONTRACT SECOND
+
+checking release channel for {target}...
+you already have the latest version installed
+🦦 UP TO DATE
+➤ v{version}
+"#,
+        target = release_target_triple(),
+        version = normalize_version(version)
+    )
+}
+
 fn temp_script_path() -> PathBuf {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -313,6 +346,18 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
         (None, Some(track)) => fetch_release_tag(track),
         (None, None) => None,
     };
+    let current_version = normalize_version(env!("CARGO_PKG_VERSION"));
+    let latest_release = if version.is_none() && resolved_track.is_none() {
+        fetch_release_tag(UpdateTrack::Stable)
+    } else {
+        None
+    };
+    let update_target = resolved_version.as_deref().or(latest_release.as_deref());
+    if let Some(target_version) = update_target
+        && normalize_version(target_version) == current_version
+    {
+        return CommandOutput::success(render_up_to_date_output(target_version));
+    }
 
     let installer = installer_url();
     let release_base = env::var("OTA_RELEASE_BASE").ok();
@@ -458,6 +503,8 @@ mod tests {
     use super::fetch_release_tag;
     use super::maybe_update_notice;
     use super::normalize_version;
+    use super::render_up_to_date_output;
+    use super::self_update as update_self_update;
 
     #[test]
     fn normalizes_version_prefixes() {
@@ -513,6 +560,55 @@ mod tests {
                 "A newer `\u{1b}[38;5;130mota\u{1b}[39m` release is available: \u{1b}[92mv9.9.9\u{1b}[39m\nRun `\u{1b}[38;5;130mota self-update\u{1b}[39m` or `\u{1b}[38;5;130mota upgrade\u{1b}[39m` to update."
             ))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_install_when_current_version_matches_latest_release() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION"));
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let original = env::var_os("OTA_UPDATE_CHECK_URL");
+        unsafe {
+            env::set_var(
+                "OTA_UPDATE_CHECK_URL",
+                format!("http://127.0.0.1:{}/latest", addr.port()),
+            );
+        }
+
+        let output = update_self_update(None, None);
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var("OTA_UPDATE_CHECK_URL", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_UPDATE_CHECK_URL");
+            },
+        }
+
+        handle.join().unwrap();
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.stdout,
+            render_up_to_date_output(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(output.stderr.is_none());
     }
 
     #[cfg(unix)]
