@@ -1369,6 +1369,9 @@ services:
     assert_eq!(json["ok"], false);
     assert!(json.get("path").is_some());
     assert_eq!(json["findings"].as_array().unwrap().len(), 3);
+    assert_eq!(json["findings"][0]["code"], "OTA_SERVICE_CHECK_FAILED");
+    assert_eq!(json["findings"][0]["category"], "service");
+    assert_eq!(json["findings"][0]["owner"], "service");
     assert_eq!(json["findings"][0]["severity"], "error");
     assert_eq!(
         json["findings"][0]["summary"],
@@ -1376,11 +1379,56 @@ services:
     );
     assert!(json["findings"][0]["why"].is_string());
     assert!(json["findings"][0]["next"].is_string());
+    assert_eq!(json["findings"][0]["evidence"]["source"], "service");
     assert_eq!(json["findings"][1]["severity"], "warn");
     assert_eq!(
         json["findings"][1]["summary"],
         "Ephemeral lifecycle is advisory only in V1"
     );
+}
+
+#[test]
+fn doctor_json_includes_finding_identity_and_evidence() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: ota
+"#,
+    )
+    .unwrap();
+    fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+    fs::write(
+        fixture.path().join(".ota").join("org-policy.yaml"),
+        r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json =
+        serde_json::from_slice::<Value>(&output.stdout).expect("stdout should be valid JSON");
+
+    assert_eq!(output.status.code(), Some(1));
+    let finding = &json["findings"][0];
+    assert_eq!(finding["code"], "OTA_POLICY_PACK_VIOLATION");
+    assert_eq!(finding["category"], "policy");
+    assert_eq!(finding["owner"], "org_policy");
+    assert_eq!(finding["severity"], "error");
+    assert_eq!(finding["summary"], "Repo does not satisfy org policy pack");
+    assert_eq!(finding["policy_outcome"], "blocked_by_policy");
+    assert_eq!(finding["policy_reason"], "missing_required_sections");
+    assert_eq!(finding["policy_source"], "org");
+    assert_eq!(finding["install_scope"], "repo_local");
+    assert_eq!(finding["mutation_allowed"], false);
+    assert_eq!(finding["evidence"]["source"], "org_policy");
+    assert!(finding["evidence"]["observed"].is_string());
+    assert!(finding["evidence"]["expected"].is_string());
 }
 
 #[cfg(unix)]

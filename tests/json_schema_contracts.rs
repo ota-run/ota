@@ -96,6 +96,10 @@ fn shared_finding_schema_includes_optional_policy_context() {
     let schema = load_schema("docs/spec/json-schemas/shared.json");
     let finding = &schema["$defs"]["finding"]["properties"];
 
+    assert!(finding.get("code").is_some());
+    assert!(finding.get("category").is_some());
+    assert!(finding.get("owner").is_some());
+    assert!(finding.get("evidence").is_some());
     assert!(finding.get("ownership").is_some());
     assert!(finding.get("provenance").is_some());
     assert!(finding.get("policy_outcome").is_some());
@@ -103,6 +107,14 @@ fn shared_finding_schema_includes_optional_policy_context() {
     assert!(finding.get("policy_source").is_some());
     assert!(finding.get("install_scope").is_some());
     assert!(finding.get("mutation_allowed").is_some());
+
+    let evidence = &finding["evidence"]["properties"];
+    assert!(evidence.get("observed").is_some());
+    assert!(evidence.get("expected").is_some());
+    assert!(evidence.get("source").is_some());
+    assert!(evidence.get("checked_at").is_some());
+    assert!(evidence.get("command").is_some());
+    assert!(evidence.get("path").is_some());
 }
 
 #[test]

@@ -5199,12 +5199,18 @@ policies:
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let finding = &json["findings"][0];
+        assert_eq!(finding["code"], "OTA_POLICY_PACK_VIOLATION");
+        assert_eq!(finding["category"], "policy");
+        assert_eq!(finding["owner"], "org_policy");
         assert_eq!(finding["summary"], "Repo does not satisfy org policy pack");
         assert_eq!(finding["policy_outcome"], "blocked_by_policy");
         assert_eq!(finding["policy_reason"], "missing_required_sections");
         assert_eq!(finding["policy_source"], "org");
         assert_eq!(finding["install_scope"], "repo_local");
         assert_eq!(finding["mutation_allowed"], false);
+        assert_eq!(finding["evidence"]["source"], "org_policy");
+        assert!(finding["evidence"]["observed"].is_string());
+        assert!(finding["evidence"]["expected"].is_string());
     }
 
     #[test]

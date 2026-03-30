@@ -53,6 +53,16 @@ pub struct Finding {
     pub next: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct FindingEvidence {
+    pub observed: String,
+    pub expected: String,
+    pub source: String,
+    pub checked_at: String,
+    pub command: String,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PolicyFindingContext<'a> {
     outcome: &'a str,
@@ -100,6 +110,233 @@ impl Finding {
         }
     }
 
+    fn code(&self) -> &'static str {
+        match self.summary.as_str() {
+            "No tasks defined in contract" => "OTA_TASKS_MISSING",
+            "Ephemeral lifecycle is only enforced for backend-backed task execution" => {
+                "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
+            }
+            "Ephemeral lifecycle is advisory only in V1" => "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
+            s if s.starts_with("Missing execution backend CLI: ") => "OTA_BACKEND_CLI_MISSING",
+            s if s.starts_with("Missing container execution backend CLI: ") => {
+                "OTA_CONTAINER_BACKEND_CLI_MISSING"
+            }
+            s if s.starts_with("Unsupported remote execution backend provider: ") => {
+                "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+            }
+            s if s.starts_with("Suspicious remote target for ") => "OTA_REMOTE_TARGET_SUSPICIOUS",
+            s if s.starts_with("Service healthcheck failed: ") => "OTA_SERVICE_CHECK_FAILED",
+            s if s.starts_with("Service healthcheck timed out: ") => "OTA_SERVICE_CHECK_TIMED_OUT",
+            s if s.starts_with("Required service cannot be verified: ") => {
+                "OTA_SERVICE_UNVERIFIABLE"
+            }
+            s if s.starts_with("Missing environment variable: ") => "OTA_ENV_MISSING",
+            s if s.starts_with("Invalid environment value: ") => "OTA_ENV_INVALID",
+            s if s.starts_with("Version mismatch for runtime: ") => "OTA_RUNTIME_VERSION_MISMATCH",
+            s if s.starts_with("Missing runtime: ") => "OTA_RUNTIME_MISSING",
+            s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
+            s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
+            "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
+            s if s.starts_with("Check failed: ") => "OTA_CHECK_FAILED",
+            s if s.starts_with("Check timed out: ") => "OTA_CHECK_TIMED_OUT",
+            s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
+            _ => "OTA_DOCTOR_FINDING_UNKNOWN",
+        }
+    }
+
+    fn category(&self) -> &'static str {
+        match self.code() {
+            "OTA_TASKS_MISSING" => "contract",
+            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
+                "execution"
+            }
+            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => "execution",
+            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => "remote",
+            "OTA_SERVICE_CHECK_FAILED"
+            | "OTA_SERVICE_CHECK_TIMED_OUT"
+            | "OTA_SERVICE_UNVERIFIABLE" => "service",
+            "OTA_ENV_MISSING"
+            | "OTA_ENV_INVALID"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_MISSING"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_MISSING" => "environment",
+            "OTA_POLICY_PACK_VIOLATION" | "OTA_POLICY_PACK_INVALID" => "policy",
+            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => "execution",
+            "OTA_CONTRACT_DRIFT" => "contract",
+            _ => "contract",
+        }
+    }
+
+    fn owner(&self) -> &'static str {
+        match self.code() {
+            "OTA_TASKS_MISSING"
+            | "OTA_CONTRACT_DRIFT"
+            | "OTA_CHECK_FAILED"
+            | "OTA_CHECK_TIMED_OUT" => "repo_contract",
+            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
+                "repo_contract"
+            }
+            "OTA_BACKEND_CLI_MISSING"
+            | "OTA_CONTAINER_BACKEND_CLI_MISSING"
+            | "OTA_ENV_MISSING"
+            | "OTA_ENV_INVALID"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_MISSING"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_MISSING" => "host",
+            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => {
+                "remote_backend"
+            }
+            "OTA_SERVICE_CHECK_FAILED"
+            | "OTA_SERVICE_CHECK_TIMED_OUT"
+            | "OTA_SERVICE_UNVERIFIABLE" => "service",
+            "OTA_POLICY_PACK_VIOLATION" | "OTA_POLICY_PACK_INVALID" => "org_policy",
+            _ => "repo_contract",
+        }
+    }
+
+    fn evidence(&self) -> FindingEvidence {
+        let (observed, expected, source, command, path) = match self.code() {
+            "OTA_TASKS_MISSING" => (
+                "no runnable task entry was declared".to_string(),
+                "at least one runnable task is declared".to_string(),
+                "contract".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => (
+                "ephemeral lifecycle was requested".to_string(),
+                "isolated backend-backed execution is available".to_string(),
+                "execution".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => (
+                "required backend CLI was not found on PATH".to_string(),
+                "a supported backend CLI is available on PATH".to_string(),
+                "host".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" => (
+                "the declared remote backend provider is unsupported".to_string(),
+                "a supported remote backend provider is declared".to_string(),
+                "remote_backend".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_TARGET_SUSPICIOUS" => (
+                "the remote target shape did not match provider expectations".to_string(),
+                "a provider-compatible remote target is declared".to_string(),
+                "remote_backend".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_SERVICE_CHECK_FAILED" => (
+                "the configured service healthcheck failed".to_string(),
+                "the service healthcheck passes".to_string(),
+                "service".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_SERVICE_CHECK_TIMED_OUT" => (
+                "the configured service healthcheck timed out".to_string(),
+                "the service healthcheck completes within its timeout".to_string(),
+                "service".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_SERVICE_UNVERIFIABLE" => (
+                "the service cannot be verified from the contract".to_string(),
+                "the service declares enough information to verify readiness".to_string(),
+                "service".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_ENV_MISSING" => (
+                "a required environment variable was missing".to_string(),
+                "the environment variable is present".to_string(),
+                "contract".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_ENV_INVALID" => (
+                "the resolved environment value is outside the allowed set".to_string(),
+                "the environment value satisfies the allowed set".to_string(),
+                "contract".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => (
+                "the installed version did not match the contract requirement".to_string(),
+                "the installed version satisfies the contract requirement".to_string(),
+                "host".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => (
+                "the required runtime or tool was not available".to_string(),
+                "the required runtime or tool is available on PATH".to_string(),
+                "host".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_POLICY_PACK_VIOLATION" => (
+                "the repo failed org policy validation".to_string(),
+                "the repo satisfies the org policy pack".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_POLICY_PACK_INVALID" => (
+                "the org policy pack failed to load or validate".to_string(),
+                "the org policy pack loads and validates".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CHECK_FAILED" => (
+                "the configured check failed".to_string(),
+                "the configured check succeeds".to_string(),
+                "execution".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CHECK_TIMED_OUT" => (
+                "the configured check timed out".to_string(),
+                "the configured check completes within the timeout".to_string(),
+                "execution".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTRACT_DRIFT" => (
+                "repo signals differ from the declared contract".to_string(),
+                "repo signals match the declared contract".to_string(),
+                "detect".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            _ => (
+                self.summary.clone(),
+                self.why.clone(),
+                "doctor".to_string(),
+                String::new(),
+                String::new(),
+            ),
+        };
+
+        FindingEvidence {
+            observed,
+            expected,
+            source,
+            checked_at: String::new(),
+            command,
+            path,
+        }
+    }
+
     fn drift_context(&self) -> Option<DriftFindingContext<'_>> {
         if self.summary.starts_with("Contract drift:") {
             Some(DriftFindingContext {
@@ -121,13 +358,17 @@ impl Serialize for Finding {
         let drift = self.drift_context();
         let mut state = serializer.serialize_struct(
             "Finding",
-            4 + policy.map(|_| 5).unwrap_or_default() + drift.map(|_| 2).unwrap_or_default(),
+            8 + policy.map(|_| 5).unwrap_or_default() + drift.map(|_| 2).unwrap_or_default(),
         )?;
 
+        state.serialize_field("code", self.code())?;
+        state.serialize_field("category", self.category())?;
+        state.serialize_field("owner", self.owner())?;
         state.serialize_field("severity", &self.severity)?;
         state.serialize_field("summary", &self.summary)?;
         state.serialize_field("why", &self.why)?;
         state.serialize_field("next", &self.next)?;
+        state.serialize_field("evidence", &self.evidence())?;
 
         if let Some(policy) = policy {
             state.serialize_field("policy_outcome", policy.outcome)?;
