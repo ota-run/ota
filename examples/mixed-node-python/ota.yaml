@@ -61,4 +61,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota run api-test` after code changes to keep the contract honest.
-    The setup step is the only safe path for dependency installation.
+    Keep dependency installation in `setup` and verify the app with the test task.

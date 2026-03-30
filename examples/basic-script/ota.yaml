@@ -53,4 +53,4 @@ agent:
     - ota.yaml
   notes: |
     Use the setup step to prepare generated files before validation.
-    The test task is the confirmation path after edits.
+    Use `ota run test` as the confirmation path after edits.

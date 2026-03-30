@@ -62,4 +62,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota run test` after edits and keep changes small and reviewable.
-    Build, test, and fetch steps are the safe paths in this example.
+    Use `ota run build` to confirm the crate still compiles before broader verification.

@@ -59,4 +59,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota run service-test` after application changes.
-    Keep the Node and Go paths in sync through the contract, not ad hoc scripts.
+    Use `ota run build` and `ota run test` to keep the Node and Go paths in sync through the contract.
