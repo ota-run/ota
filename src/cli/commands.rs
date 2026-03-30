@@ -7445,7 +7445,7 @@ fn render_workspace_doctor_text(
     );
     if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
         stdout.push_str(&render_primary_blocker_text(
-            "Primary blocker",
+            "Primary Blocker",
             &format!(
                 "{} [{}]",
                 primary_blocker.repo,
@@ -8034,7 +8034,7 @@ fn render_report_section(
     }
     if let Some(primary_blocker) = summary.and_then(|summary| summary.primary_blocker.as_ref()) {
         stdout.push_str(&render_primary_blocker_text(
-            "Primary blocker",
+            "Primary Blocker",
             &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
             &primary_blocker.why,
             &primary_blocker.next,
@@ -8084,8 +8084,11 @@ fn render_report_section(
 
 fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title(title)));
-    stdout.push_str(&format!("\n{} {}", paint_key("Summary:"), summary));
+    if !title.is_empty() {
+        stdout.push_str(&paint_section_title(title));
+        stdout.push('\n');
+    }
+    stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));
     stdout.push_str(&format!(
         "\n{} {}",
         paint_key("Why:"),
