@@ -120,7 +120,9 @@ Use `tools` for command-line dependencies that must be present on PATH.
 
 ### `env`
 
-Use `env` for required environment values, defaults, and allowed values.
+Use `env` for required environment values, defaults, and allowed values. If `secret: true` is
+set, Ota redacts the value in execution receipts and refuses to inline it through remote shell
+wrappers.
 
 ### `services`
 

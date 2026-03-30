@@ -77,6 +77,12 @@ pub enum RunError {
     UnsupportedBackend { task: String, backend: &'static str },
     #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
     UnsupportedRemoteProvider { task: String, provider: String },
+    #[error(
+        "task `{task}` uses secret environment variables that cannot be passed through remote execution: {names}"
+    )]
+    SecretEnvNotSupportedForRemote { task: String, names: String },
+    #[error("secret environment variable `{name}` cannot define a default value")]
+    SecretEnvCannotHaveDefault { name: String },
     #[error("task `{task}` input `{input}` is not declared in ota.yaml")]
     UnknownTaskInput { task: String, input: String },
     #[error("task `{task}` input `{input}` is required but was not provided")]
@@ -115,6 +121,7 @@ pub enum EnvResolutionSource {
 pub struct ResolvedEnvValue {
     pub value: String,
     pub source: EnvResolutionSource,
+    pub secret: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -183,6 +190,9 @@ pub fn resolve_task_env_details(
     let mut resolved_values = BTreeMap::new();
 
     for (name, requirement) in &contract.env {
+        if requirement.secret && requirement.default.is_some() {
+            return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
+        }
         let process_value = std::env::var(name).ok();
         let resolved = process_value
             .map(|value| (value, EnvResolutionSource::Process))
@@ -205,7 +215,14 @@ pub fn resolve_task_env_details(
                     });
                 }
 
-                resolved_values.insert(name.clone(), ResolvedEnvValue { value, source });
+                resolved_values.insert(
+                    name.clone(),
+                    ResolvedEnvValue {
+                        value,
+                        source,
+                        secret: requirement.secret,
+                    },
+                );
             }
             None if requirement.required => {
                 return Err(RunError::MissingRequiredEnv { name: name.clone() });
@@ -216,11 +233,21 @@ pub fn resolve_task_env_details(
 
     if let Some(task_env) = task_env {
         for (name, value) in task_env {
+            let secret = resolved_values
+                .get(name)
+                .map(|resolved| resolved.secret)
+                .unwrap_or_else(|| {
+                    contract
+                        .env
+                        .get(name)
+                        .is_some_and(|requirement| requirement.secret)
+                });
             resolved_values.insert(
                 name.clone(),
                 ResolvedEnvValue {
                     value: value.clone(),
                     source: EnvResolutionSource::Task,
+                    secret,
                 },
             );
         }
@@ -505,6 +532,20 @@ fn run_task_internal(
                 os: current_os.to_string(),
             });
         };
+        let env_details = resolve_task_env_details(contract, Some(&task.env))?;
+        let secret_env_names: BTreeSet<String> = env_details
+            .iter()
+            .filter(|(_, value)| value.secret)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if matches!(backend, ResolvedExecutionBackend::Remote { .. })
+            && !secret_env_names.is_empty()
+        {
+            return Err(RunError::SecretEnvNotSupportedForRemote {
+                task: task_name.clone(),
+                names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
+            });
+        }
         let env_overrides = resolve_task_env(contract, Some(&task.env))?;
         let input_overrides = if task_name == &requested_task_name {
             resolve_task_inputs(task_name, task, input_args)?
@@ -520,6 +561,7 @@ fn run_task_internal(
             &command,
             working_dir,
             &combined_env,
+            &secret_env_names,
             &backend,
             mode,
         )?;
@@ -556,6 +598,7 @@ fn execute_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
@@ -612,6 +655,7 @@ fn execute_task_command(
             command,
             working_dir,
             env_overrides,
+            secret_env_names,
             image,
             engine,
             *lifecycle,
@@ -1021,6 +1065,7 @@ fn execute_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
     lifecycle: Lifecycle,
@@ -1032,6 +1077,7 @@ fn execute_container_task_command(
             command,
             working_dir,
             env_overrides,
+            secret_env_names,
             image,
             engine,
             mode,
@@ -1041,6 +1087,7 @@ fn execute_container_task_command(
             command,
             working_dir,
             env_overrides,
+            secret_env_names,
             image,
             engine,
             mode,
@@ -1053,6 +1100,7 @@ fn execute_ephemeral_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
     mode: TaskExecutionMode,
@@ -1067,7 +1115,12 @@ fn execute_ephemeral_container_task_command(
         .arg("-w")
         .arg("/workspace");
     for (name, value) in env_overrides {
-        container.arg("--env").arg(format!("{name}={value}"));
+        if secret_env_names.contains(name) {
+            container.env(name, value);
+            container.arg("--env").arg(name);
+        } else {
+            container.arg("--env").arg(format!("{name}={value}"));
+        }
     }
     container.arg(image).arg("sh").arg("-lc").arg(command);
 
@@ -1117,6 +1170,7 @@ fn execute_persistent_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
     mode: TaskExecutionMode,
@@ -1169,7 +1223,12 @@ fn execute_persistent_container_task_command(
     let mut container = Command::new(engine);
     container.arg("exec").arg("-i");
     for (name, value) in env_overrides {
-        container.arg("--env").arg(format!("{name}={value}"));
+        if secret_env_names.contains(name) {
+            container.env(name, value);
+            container.arg("--env").arg(name);
+        } else {
+            container.arg("--env").arg(format!("{name}={value}"));
+        }
     }
     container
         .arg(&container_name)
@@ -1411,6 +1470,8 @@ tasks:
             EnvResolutionSource::Default
         );
         assert_eq!(resolved["OTA_TEST_DEFAULT"].value, "ready");
+        assert!(!resolved["OTA_TEST_PROCESS"].secret);
+        assert!(!resolved["OTA_TEST_DEFAULT"].secret);
 
         match original_process {
             Some(value) => unsafe { env::set_var("OTA_TEST_PROCESS", value) },
@@ -1485,6 +1546,72 @@ tasks:
             Some(value) => unsafe { env::set_var("OTA_TEST_ENV", value) },
             None => unsafe { env::remove_var("OTA_TEST_ENV") },
         }
+    }
+
+    #[test]
+    fn rejects_secret_env_defaults() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_SECRET:
+    secret: true
+    default: leaked
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let error = resolve_task_env_details(&contract, None).unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::SecretEnvCannotHaveDefault { name } if name == "OTA_TEST_SECRET"
+        ));
+    }
+
+    #[test]
+    fn rejects_secret_envs_for_remote_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_SECRET:
+    secret: true
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: ssh
+      target: user@host
+tasks:
+  test:
+    env:
+      OTA_TEST_SECRET: task-secret
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let error = run_task_with_overrides(
+            &contract,
+            Path::new("ota.yaml"),
+            "test",
+            ExecutionOverrides::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::SecretEnvNotSupportedForRemote { task, names } if task == "test" && names == "OTA_TEST_SECRET"
+        ));
     }
 
     #[test]
