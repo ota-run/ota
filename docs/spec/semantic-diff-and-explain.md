@@ -87,6 +87,7 @@ Useful cases:
 Text output:
 
 - ordered remediation steps
+- stable finding code for each step
 - confidence or priority where relevant
 - explicit commands when safe
 
@@ -95,7 +96,7 @@ JSON output:
 - `ok`
 - `path`
 - `summary`
-- `steps`
+- `steps` with `order`, `code`, `severity`, `summary`, `why`, and `next`
 
 ## Non-goals
 

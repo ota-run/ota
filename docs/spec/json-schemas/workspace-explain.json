@@ -58,9 +58,10 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["order", "severity", "summary", "why", "next"],
+              "required": ["order", "code", "severity", "summary", "why", "next"],
               "properties": {
                 "order": { "type": "integer", "minimum": 1 },
+                "code": { "type": "string" },
                 "severity": { "enum": ["error", "warn", "info"] },
                 "summary": { "type": "string" },
                 "why": { "type": "string" },
