@@ -410,7 +410,8 @@ env:
 Fields:
 
 - `required`: optional boolean
-- `secret`: optional boolean
+- `secret`: optional boolean; secret values are redacted in execution receipts and are not
+  passed through remote shell wrappers
 - `default`: optional string
 - `allowed`: optional list of allowed values
 
@@ -422,6 +423,10 @@ Current behavior:
 - `run` uses `default` only when the process environment is missing the variable
 - `run` rejects disallowed values
 - `doctor` reports missing required vars and invalid values
+- `secret: true` may not be combined with a default value
+- secret env values are redacted in execution receipts
+- remote task execution rejects secret env values instead of inlining them into remote shell
+  command strings
 
 Resolution and provenance:
 

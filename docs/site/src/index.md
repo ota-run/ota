@@ -26,7 +26,7 @@
 
 ![Ota Logo](assets/brand/ota-logo.svg)
 
-Ota is open infrastructure for repo readiness.
+Ota is open infrastructure for repo readiness, not another task runner or package manager. It gives every repo one explicit contract for what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents can answer why a repo is or is not runnable without guesswork.
 
 Doctor first, contract second.
 

@@ -3229,6 +3229,7 @@ tasks:
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         fixture.dir.path().display().to_string().hash(&mut hasher);
         "ghcr.io/ota/test:latest".hash(&mut hasher);
+        "docker".hash(&mut hasher);
         let container_name = format!("ota-{:x}", hasher.finish());
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();

@@ -65,10 +65,10 @@ use crate::parser::{
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, clean_execution, effective_execution, resolve_task_env_details,
-    run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
-    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
-    run_task_with_progress_and_overrides,
+    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
+    effective_execution, resolve_task_env_details, run_task_captured_with_args_with_overrides,
+    run_task_captured_with_overrides, run_task_with_args_with_overrides,
+    run_task_with_progress_and_args_and_overrides, run_task_with_progress_and_overrides,
 };
 use crate::schema::{Contract, ExtensionSpec};
 use crate::update;
@@ -7845,7 +7845,13 @@ fn compact_contract_file_path_relative_to(
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_contract_file_path_relative_to, compact_path_relative_to};
+    use std::path::Path;
+
+    use super::{
+        compact_contract_file_path_relative_to, compact_path_relative_to, run_execution_receipt,
+    };
+    use crate::parser::parse_contract_str;
+    use crate::runner::ExecutionOverrides;
 
     #[test]
     fn compacts_paths_inside_current_dir_and_keeps_full_paths_outside() {
@@ -7889,6 +7895,43 @@ mod tests {
             compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
             outer_contract.display().to_string()
         );
+    }
+
+    #[test]
+    fn execution_receipt_redacts_secret_env_values() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_SECRET:
+    secret: true
+tasks:
+  test:
+    env:
+      OTA_TEST_SECRET: task-secret
+    run: echo test
+"#,
+        )
+        .unwrap();
+        let contract_path = Path::new("/tmp/ota.yaml");
+        let receipt = run_execution_receipt(
+            &contract,
+            contract_path,
+            ExecutionOverrides::default(),
+            "test",
+            None,
+            &["test".to_string()],
+            0,
+            true,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.env["OTA_TEST_SECRET"], "<redacted>");
+        assert_eq!(receipt.env_sources[0].value, "<redacted>");
     }
 }
 
@@ -8808,6 +8851,22 @@ fn task_use_details_footer(member: Option<&str>) -> String {
     }
 }
 
+fn receipt_env_value(resolved: &ResolvedEnvValue) -> String {
+    if resolved.secret {
+        String::from("<redacted>")
+    } else {
+        resolved.value.clone()
+    }
+}
+
+fn receipt_env_source(resolved: &ResolvedEnvValue) -> String {
+    match resolved.source {
+        EnvResolutionSource::Process => String::from("process"),
+        EnvResolutionSource::Default => String::from("default"),
+        EnvResolutionSource::Task => String::from("task"),
+    }
+}
+
 fn run_execution_receipt(
     contract: &Contract,
     contract_path: &Path,
@@ -8857,18 +8916,14 @@ fn run_execution_receipt(
         acquired: Vec::new(),
         env: env_details
             .iter()
-            .map(|(name, value)| (name.clone(), value.value.clone()))
+            .map(|(name, value)| (name.clone(), receipt_env_value(value)))
             .collect(),
         env_sources: env_details
             .iter()
             .map(|(name, value)| ExecutionReceiptEnvSource {
                 name: name.clone(),
-                value: value.value.clone(),
-                source: match value.source {
-                    crate::runner::EnvResolutionSource::Process => String::from("process"),
-                    crate::runner::EnvResolutionSource::Default => String::from("default"),
-                    crate::runner::EnvResolutionSource::Task => String::from("task"),
-                },
+                value: receipt_env_value(value),
+                source: receipt_env_source(value),
             })
             .collect(),
         policy: Vec::new(),
@@ -10126,18 +10181,14 @@ fn repo_execution_receipt(
         acquired: Vec::new(),
         env: env_details
             .iter()
-            .map(|(name, value)| (name.clone(), value.value.clone()))
+            .map(|(name, value)| (name.clone(), receipt_env_value(value)))
             .collect(),
         env_sources: env_details
             .iter()
             .map(|(name, value)| ExecutionReceiptEnvSource {
                 name: name.clone(),
-                value: value.value.clone(),
-                source: match value.source {
-                    crate::runner::EnvResolutionSource::Process => String::from("process"),
-                    crate::runner::EnvResolutionSource::Default => String::from("default"),
-                    crate::runner::EnvResolutionSource::Task => String::from("task"),
-                },
+                value: receipt_env_value(value),
+                source: receipt_env_source(value),
             })
             .collect(),
         policy: Vec::new(),
