@@ -664,6 +664,7 @@ Current behavior:
 - `stable` resolves the latest stable release tag
 - `latest` resolves the newest release entry, including prereleases if present
 - `--version` overrides the channel when both are set
+- when the chosen target matches the installed binary, the command exits successfully and prints the up-to-date banner instead of reinstalling
 - on success, the command runs the installer for the chosen release target
 
 Use this when:
