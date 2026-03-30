@@ -508,6 +508,7 @@ Text output:
 
 - header: `DOCTOR <path>`
 - status line: `READY` or `NOT READY`
+- summary includes repo verdict and agent verdict before per-finding details
 - with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
 
 JSON output:
@@ -1113,7 +1114,7 @@ Text output:
 
 - header: `WORKSPACE CHECK <path>`
 - status line: `READY` or `NOT READY`
-- summary roll-up with repo counts and finding totals at the bottom of the report
+- summary roll-up includes repo verdict and agent verdict before the counts at the bottom of the report
 - each repo includes required/optional status, contract path, and findings
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
@@ -1157,7 +1158,7 @@ Text output:
 
 - header: `WORKSPACE DOCTOR <path>`
 - status line: `READY` or `NOT READY`
-- summary roll-up with repo counts and finding totals before per-repo details
+- summary roll-up includes repo verdict and agent verdict before the counts and per-repo details
 - each repo includes required/optional status, contract path, and findings
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 

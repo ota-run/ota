@@ -7511,6 +7511,18 @@ fn render_report_section(
             stdout.push_str(&summary);
         }
     }
+    if let Some(summary) = summary {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Repo Verdict:"),
+            render_doctor_verdict(summary.verdict)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Agent Verdict:"),
+            render_doctor_verdict(summary.agent_verdict)
+        ));
+    }
 
     if let Some(execution) = execution {
         stdout.push_str(&render_execution_summary_text(execution));
@@ -7585,6 +7597,16 @@ fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str
         compact_backticked_paths(next)
     ));
     stdout
+}
+
+fn render_doctor_verdict(verdict: DoctorVerdict) -> String {
+    match verdict {
+        DoctorVerdict::Ready => paint("ready", "1;38;2;0;255;120"),
+        DoctorVerdict::Risky => paint("risky", "1;33"),
+        DoctorVerdict::NotReady => paint("not ready", "1;38;2;255;235;59"),
+        DoctorVerdict::PolicyBlocked => paint("policy blocked", "1;31"),
+        DoctorVerdict::AgentBlocked => paint("agent blocked", "1;31"),
+    }
 }
 
 fn render_explain_section(

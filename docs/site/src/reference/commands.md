@@ -128,6 +128,7 @@ Why:
 - leads with the highest-priority blocker first so the next action is obvious
 - reports contract drift as warnings when repo signals no longer match the declared contract
 - tags drift warnings with repo-contract ownership and provenance so consumers can separate stale contract truth from host or service failures
+- text output includes repo verdict and agent verdict before per-finding details
 - `--concise` keeps severity/summary/next action and omits `Why` detail
 - also surfaces inert top-level `extensions` entries so adapter metadata is visible without execution
 
@@ -495,6 +496,7 @@ When to use:
 Why:
 
 - faster signal for CI or pre-commit verification
+- text output includes repo verdict and agent verdict before per-finding details
 
 Use-case:
 
@@ -795,6 +797,7 @@ Why:
 
 - central view of blockers without hiding per-repo context
 - text output includes a summary roll-up with repo counts and finding totals before per-repo details
+- summary roll-up also includes repo verdict and agent verdict before the counts
 - `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 - `--stream` is text-only and emits repo completion updates while the final report is being built
 
@@ -862,6 +865,7 @@ Why:
 
 - lightweight CI signal across multiple repositories
 - text output includes a summary roll-up with repo counts and finding totals at the bottom
+- summary roll-up also includes repo verdict and agent verdict before the counts
 - `--concise` keeps repo status + finding summary/next action and omits per-repo path/contract and `Why` detail
 
 ```bash
