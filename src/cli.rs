@@ -3427,8 +3427,11 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Lifecycle note: running task in an ephemeral container backend"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(
+            "Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
+        ));
+        assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -3760,8 +3763,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Lifecycle note: running task in an ephemeral container backend"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Note:       using a fresh container image for this run"));
+        assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "ready"
@@ -6304,7 +6308,8 @@ tasks:
         assert!(rendered.contains("SUMMARY"));
         assert!(rendered.contains("Mode:       container"));
         assert!(rendered.contains("Task:       setup"));
-        assert!(rendered.contains("Target:     `ota-"));
+        assert!(rendered.contains("Target:"));
+        assert!(rendered.contains("ota-"));
         assert!(rendered.contains("Lifecycle:  persistent"));
         assert!(rendered.contains("Note:       reusing persistent container backend"));
         assert!(rendered.contains("Next:"));
@@ -7977,14 +7982,16 @@ tasks:
         let output = run_with(["ota", "--debug", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(
-            stderr.contains(
-                "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1"
-            )
-        );
-        assert!(stderr.contains("DEBUG command=run"));
-        assert!(stderr.contains("DEBUG task=setup"));
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(rendered.contains("DEBUG command=run"));
+        assert!(rendered.contains("DEBUG task=setup"));
+        assert!(rendered.contains("Note:"));
+        assert!(rendered.contains("running on the host environment"));
+        assert!(rendered.contains("execution.lifecycle: ephemeral"));
     }
 
     #[test]
