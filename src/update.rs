@@ -40,7 +40,8 @@ const DEFAULT_RELEASES_LATEST_URL: &str =
     "https://api.github.com/repos/ota-run/ota/releases/latest";
 const DEFAULT_RELEASES_LIST_URL: &str = "https://api.github.com/repos/ota-run/ota/releases";
 const ANSI_BRIGHT_GREEN: &str = "\x1b[92m";
-const ANSI_GOLD_BROWN: &str = "\x1b[38;5;130m";
+const ANSI_GOLD_ACCENT: &str = "\x1b[1;38;2;214;161;95m";
+const ANSI_BOLD_WHITE: &str = "\x1b[1;37m";
 const ANSI_FG_RESET: &str = "\x1b[39m";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,13 +97,19 @@ fn release_target_triple() -> String {
 }
 
 fn render_up_to_date_output(version: &str) -> String {
-    let up_to_date = format!("{ANSI_BRIGHT_GREEN}🦦 UP TO DATE{ANSI_FG_RESET}");
+    let up_to_date = format!("{ANSI_GOLD_ACCENT}🦦 UP TO DATE{ANSI_FG_RESET}");
     let version = format!(
-        "{ANSI_GOLD_BROWN}➤ v{}{ANSI_FG_RESET}",
+        "{ANSI_GOLD_ACCENT}➤{ANSI_FG_RESET} {ANSI_BOLD_WHITE}v{}{ANSI_FG_RESET}",
         normalize_version(version)
     );
+    let checking = format!(
+        "{ANSI_BOLD_WHITE}checking release channel for {target}...{ANSI_FG_RESET}",
+        target = release_target_triple()
+    );
+    let latest =
+        format!("{ANSI_BOLD_WHITE}you already have the latest version installed{ANSI_FG_RESET}");
     format!(
-        r#"
+        r#"{gold}
                 █████
                ░░███
        ██████  ███████    ██████
@@ -114,12 +121,14 @@ fn render_up_to_date_output(version: &str) -> String {
 
      DOCTOR FIRST, CONTRACT SECOND
 
-checking release channel for {target}...
-you already have the latest version installed
+ {checking}
+ {latest}
 {up_to_date}
 {version}
 "#,
-        target = release_target_triple(),
+        gold = ANSI_GOLD_ACCENT,
+        checking = checking,
+        latest = latest,
         up_to_date = up_to_date,
         version = version
     )
@@ -392,9 +401,9 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
 
     Some(format!(
         "A newer `{ota}ota{reset}` release is available: {version}v{latest}{reset}\nRun `{command}ota self-update{reset}` or `{command}ota upgrade{reset}` to update.",
-        ota = ANSI_GOLD_BROWN,
+        ota = ANSI_GOLD_ACCENT,
         version = ANSI_BRIGHT_GREEN,
-        command = ANSI_GOLD_BROWN,
+        command = ANSI_GOLD_ACCENT,
         reset = ANSI_FG_RESET
     ))
 }
@@ -563,7 +572,7 @@ mod tests {
         assert_eq!(
             notice,
             Some(String::from(
-                "A newer `\u{1b}[38;5;130mota\u{1b}[39m` release is available: \u{1b}[92mv9.9.9\u{1b}[39m\nRun `\u{1b}[38;5;130mota self-update\u{1b}[39m` or `\u{1b}[38;5;130mota upgrade\u{1b}[39m` to update."
+                "A newer `\u{1b}[1;38;2;214;161;95mota\u{1b}[39m` release is available: \u{1b}[92mv9.9.9\u{1b}[39m\nRun `\u{1b}[1;38;2;214;161;95mota self-update\u{1b}[39m` or `\u{1b}[1;38;2;214;161;95mota upgrade\u{1b}[39m` to update."
             ))
         );
     }
