@@ -3849,9 +3849,15 @@ tasks:
                 .unwrap()
                 .contains("exec sandbox-dev")
         );
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("RECEIPT"));
-        assert!(stderr.contains("Target: sandbox-dev"));
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(rendered.contains("Steps:"));
+        assert!(rendered.contains("Summary:"));
+        assert!(rendered.contains("Target:"));
+        assert!(rendered.contains("sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -11153,7 +11159,8 @@ tasks:
         assert!(stdout.contains("web [optional] (WARN)"));
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Exit code: 7"));
-        assert!(stdout.contains("RECEIPT"));
+        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("Summary:"));
     }
 
     #[test]
