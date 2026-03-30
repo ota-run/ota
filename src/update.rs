@@ -96,6 +96,8 @@ fn release_target_triple() -> String {
 }
 
 fn render_up_to_date_output(version: &str) -> String {
+    let up_to_date = format!("{ANSI_BRIGHT_GREEN}🦦 UP TO DATE{ANSI_FG_RESET}");
+    let version = format!("{ANSI_GOLD_BROWN}➤ v{}{ANSI_FG_RESET}", normalize_version(version));
     format!(
         r#"
                 █████
@@ -111,11 +113,12 @@ fn render_up_to_date_output(version: &str) -> String {
 
 checking release channel for {target}...
 you already have the latest version installed
-🦦 UP TO DATE
-➤ v{version}
+{up_to_date}
+{version}
 "#,
         target = release_target_triple(),
-        version = normalize_version(version)
+        up_to_date = up_to_date,
+        version = version
     )
 }
 
