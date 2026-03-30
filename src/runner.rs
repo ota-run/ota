@@ -26,7 +26,6 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::cli::plain_mode;
 use crate::schema::{Backend, Contract, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
@@ -122,6 +121,7 @@ pub struct RunPlan {
 pub struct RunOutcome {
     pub executed_tasks: Vec<String>,
     pub exit_code: i32,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -130,6 +130,7 @@ pub struct CapturedRunOutcome {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -338,6 +339,7 @@ pub fn run_task_with_progress_and_args_and_overrides(
     Ok(RunOutcome {
         executed_tasks: outcome.executed_tasks,
         exit_code: outcome.exit_code,
+        target: outcome.target,
     })
 }
 
@@ -435,6 +437,7 @@ struct TaskCommandOutput {
     exit_code: i32,
     stdout: String,
     stderr: String,
+    target: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -466,6 +469,7 @@ fn run_task_internal(
     let mut executed_tasks = Vec::new();
     let mut stdout = String::new();
     let mut stderr = String::new();
+    let mut target = None;
     let current_os = current_os();
 
     for task_name in &plan.tasks {
@@ -505,6 +509,9 @@ fn run_task_internal(
         )?;
         stdout.push_str(&command_output.stdout);
         stderr.push_str(&command_output.stderr);
+        if target.is_none() {
+            target = command_output.target;
+        }
 
         executed_tasks.push(task_name.clone());
 
@@ -514,6 +521,7 @@ fn run_task_internal(
                 exit_code: command_output.exit_code,
                 stdout,
                 stderr,
+                target,
             });
         }
     }
@@ -523,6 +531,7 @@ fn run_task_internal(
         exit_code: 0,
         stdout,
         stderr,
+        target,
     })
 }
 
@@ -553,6 +562,7 @@ fn execute_task_command(
                     exit_code: status.code().unwrap_or(1),
                     stdout: String::new(),
                     stderr: String::new(),
+                    target: None,
                 })
             }
             TaskExecutionMode::Capture => {
@@ -573,6 +583,7 @@ fn execute_task_command(
                     exit_code: output.status.code().unwrap_or(1),
                     stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                     stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                    target: None,
                 })
             }
         },
@@ -796,83 +807,6 @@ fn resolve_execution_backend(
     }
 }
 
-pub(crate) fn task_execution_banner(
-    contract: &Contract,
-    contract_path: &Path,
-    overrides: ExecutionOverrides,
-    task_name: &str,
-) -> Option<String> {
-    let backend = resolve_execution_backend(contract, task_name, overrides).ok()?;
-    let (_, lifecycle) = effective_execution(contract, overrides);
-    match backend {
-        ResolvedExecutionBackend::Native => {
-            let note = match lifecycle {
-                Some(Lifecycle::Ephemeral) => {
-                    "running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
-                }
-                _ => "running on the host environment",
-            };
-            Some(render_execution_summary_text(
-                task_name,
-                "native",
-                None,
-                None,
-                note,
-            ))
-        }
-        ResolvedExecutionBackend::Container { image, lifecycle } => {
-            let working_dir = contract_working_dir(contract_path);
-            match lifecycle {
-                Lifecycle::Persistent => {
-                    let container_name = persistent_container_name(working_dir, &image);
-                    Some(render_execution_summary_text(
-                        task_name,
-                        "container",
-                        Some(&format!("`{container_name}`")),
-                        Some("persistent"),
-                        "reusing persistent container backend",
-                    ))
-                }
-                Lifecycle::Ephemeral => Some(render_execution_summary_text(
-                    task_name,
-                    "container",
-                    Some(&format!("`{image}`")),
-                    Some("ephemeral"),
-                    "using a fresh container image for this run",
-                )),
-            }
-        }
-        ResolvedExecutionBackend::Remote { provider, target, .. } => Some(render_execution_summary_text(
-            task_name,
-            &format!("remote ({provider})"),
-            Some(&format!("`{target}`")),
-            None,
-            &format!("executing through the `{provider}` remote backend"),
-        )),
-    }
-}
-
-fn render_execution_summary_text(
-    task_name: &str,
-    mode: &str,
-    target: Option<&str>,
-    lifecycle: Option<&str>,
-    note: &str,
-) -> String {
-    let mut lines = vec![String::new(), paint("🦦 RUN SUMMARY", "1;36")];
-    lines.push(String::new());
-    lines.push(format!("Mode:       {mode}"));
-    if let Some(target) = target {
-        lines.push(format!("Target:     {target}"));
-    }
-    lines.push(format!("Task:         {task_name}"));
-    if let Some(lifecycle) = lifecycle {
-        lines.push(format!("Lifecycle:  {lifecycle}"));
-    }
-    lines.push(format!("Note:       {note}"));
-    lines.join("\n")
-}
-
 fn remote_target_example(provider: &str) -> &'static str {
     match provider {
         "daytona" => "sandbox-dev",
@@ -926,6 +860,7 @@ fn execute_remote_task_command(
                 exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
+                target: Some(target.to_string()),
             })
         }
         TaskExecutionMode::Capture => {
@@ -944,6 +879,7 @@ fn execute_remote_task_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: Some(target.to_string()),
             })
         }
     }
@@ -1117,6 +1053,7 @@ fn execute_ephemeral_container_task_command(
                 exit_code: status.code().unwrap_or(1),
                 stdout: String::new(),
                 stderr: String::new(),
+                target: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -1135,6 +1072,7 @@ fn execute_ephemeral_container_task_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: None,
             })
         }
     }
@@ -1176,6 +1114,7 @@ fn execute_persistent_container_task_command(
                 exit_code: status,
                 stdout: String::new(),
                 stderr: String::new(),
+                target: Some(container_name.clone()),
             });
         }
     } else {
@@ -1185,6 +1124,7 @@ fn execute_persistent_container_task_command(
                 exit_code: status,
                 stdout: String::new(),
                 stderr: String::new(),
+                target: Some(container_name.clone()),
             });
         }
     }
@@ -1216,6 +1156,7 @@ fn execute_persistent_container_task_command(
                 exit_code: status.code().unwrap_or(1),
                 stdout: String::new(),
                 stderr: String::new(),
+                target: Some(container_name.clone()),
             })
         }
         TaskExecutionMode::Capture => {
@@ -1234,6 +1175,7 @@ fn execute_persistent_container_task_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: Some(container_name),
             })
         }
     }
@@ -1663,6 +1605,7 @@ tasks:
                 exit_code: 0,
                 stdout: String::from("hello"),
                 stderr: String::from("error"),
+                target: None,
             }
         );
     }

@@ -34,8 +34,6 @@ use crate::runner::ExecutionOverrides;
 
 mod commands;
 
-pub(crate) use commands::plain_mode;
-
 #[derive(Debug, Parser)]
 #[command(disable_version_flag = true)]
 #[command(name = "ota")]
@@ -3848,7 +3846,7 @@ tasks:
                 .contains("exec sandbox-dev")
         );
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("RECEIPT:"));
+        assert!(stderr.contains("RECEIPT"));
         assert!(stderr.contains("Target: sandbox-dev"));
     }
 
@@ -4992,17 +4990,21 @@ version = "0.1.0"
         assert_eq!(json["ok"], true);
         assert!(json["summary"]["warn_count"].as_u64().unwrap_or(0) >= 1);
         assert!(
-            json["findings"].as_array().expect("findings array").iter().any(|finding| {
-                finding["summary"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .starts_with("Contract drift:")
-                    && finding["ownership"] == "repo_contract"
-                    && finding["provenance"]
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"]
                         .as_str()
                         .unwrap_or_default()
-                        .contains("ota detect")
-            }),
+                        .starts_with("Contract drift:")
+                        && finding["ownership"] == "repo_contract"
+                        && finding["provenance"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("ota detect")
+                }),
             "expected at least one contract-drift warning"
         );
     }
@@ -6232,12 +6234,14 @@ tasks:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         ));
-        assert!(rendered.contains("RUN SUMMARY"));
-        assert!(rendered.contains("Mode       native"));
-        assert!(rendered.contains("Task       setup"));
+        assert!(rendered.contains("SUMMARY"));
+        assert!(rendered.contains("Mode:       native"));
+        assert!(rendered.contains("Task:       setup"));
         assert!(rendered.contains(
-            "Note       Running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
+            "Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
         ));
+        assert!(rendered.contains("Next:"));
+        assert!(rendered.contains("ota tasks --use"));
     }
 
     #[cfg(unix)]
@@ -6297,13 +6301,14 @@ tasks:
             output.stdout,
             output.stderr.as_deref().unwrap_or_default()
         ));
-        assert!(rendered.contains("RUN SUMMARY ota-"));
-        assert!(rendered.contains("Mode       container"));
-        assert!(rendered.contains("Task       setup"));
-        assert!(rendered.contains("Target     `ota-"));
-        assert!(rendered.contains("Lifecycle  persistent"));
-        assert!(rendered.contains("Note       Reusing persistent container backend"));
-        assert!(rendered.contains("Next       ota tasks --use"));
+        assert!(rendered.contains("SUMMARY"));
+        assert!(rendered.contains("Mode:       container"));
+        assert!(rendered.contains("Task:       setup"));
+        assert!(rendered.contains("Target:     `ota-"));
+        assert!(rendered.contains("Lifecycle:  persistent"));
+        assert!(rendered.contains("Note:       reusing persistent container backend"));
+        assert!(rendered.contains("Next:"));
+        assert!(rendered.contains("ota tasks --use"));
     }
 
     #[test]
@@ -6624,11 +6629,11 @@ checks:
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Check failed: api-health"));
-        assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("Errors:"));
         assert!(stdout.contains("Warnings:"));
         assert!(stdout.contains("Info:"));
-        assert!(stdout.rfind("SUMMARY:") > stdout.rfind("Check failed: api-health"));
+        assert!(stdout.rfind("SUMMARY") > stdout.rfind("Check failed: api-health"));
         assert!(stdout.contains("\n\n"));
     }
 
@@ -10141,14 +10146,14 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution:"));
-        assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("»"));
         assert!(stdout.contains("Repos: 2"));
         assert!(stdout.contains("Ready: 2"));
         assert!(stdout.contains("Preferred: remote"));
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Remote Target: user@host"));
-        assert!(stdout.rfind("SUMMARY:") > stdout.rfind("Preferred: remote"));
+        assert!(stdout.rfind("SUMMARY") > stdout.rfind("Preferred: remote"));
     }
 
     #[test]
@@ -10186,7 +10191,7 @@ checks:
         let body = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(body.contains("SUMMARY:"));
+        assert!(body.contains("SUMMARY"));
         assert!(body.contains("»"));
         assert!(body.contains("Repos:"));
         assert!(body.contains("Errors:"));
@@ -10234,9 +10239,9 @@ repos:
             compact_workspace(&fixture.workspace_file())
         )));
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("SUMMARY:"));
+        assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("Phase: post-setup diagnosis"));
-        assert!(!stdout.contains("RECEIPT:"));
+        assert!(!stdout.contains("RECEIPT"));
         assert!(!stdout.contains("\n---\n"));
     }
 
@@ -11141,7 +11146,7 @@ tasks:
         assert!(stdout.contains("web [optional] (WARN)"));
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Exit code: 7"));
-        assert!(stdout.contains("RECEIPT:"));
+        assert!(stdout.contains("RECEIPT"));
     }
 
     #[test]

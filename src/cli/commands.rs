@@ -61,10 +61,10 @@ use crate::parser::{
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, clean_execution, effective_execution, resolve_task_env_details,
-    run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
-    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
-    run_task_with_progress_and_overrides, task_execution_banner,
+    ExecutionOverrides, RunError, clean_execution, effective_execution, persistent_container_name,
+    resolve_task_env_details, run_task_captured_with_args_with_overrides,
+    run_task_captured_with_overrides, run_task_with_args_with_overrides,
+    run_task_with_progress_and_args_and_overrides, run_task_with_progress_and_overrides,
 };
 use crate::schema::{Contract, ExtensionSpec, Lifecycle};
 use crate::update;
@@ -8406,6 +8406,11 @@ fn render_up_result(
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&result.receipt));
             }
+            stdout.push_str(&render_execution_receipt_summary_block(
+                &result.receipt,
+                result.task.as_deref().or(Some(result.phase)),
+                "TASK SUMMARY",
+            ));
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -9374,18 +9379,10 @@ fn run_single_contract_target(
                 &outcome.executed_tasks,
                 outcome.exit_code,
                 true,
+                outcome.target.clone(),
                 None,
             );
             let mut output = String::new();
-            if let Some(banner) = task_execution_banner(
-                &target.contract,
-                &target.contract_path,
-                overrides,
-                task_name,
-            ) {
-                output.push_str(&banner);
-                output.push('\n');
-            }
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
                 if output.is_empty() {
@@ -9393,7 +9390,13 @@ fn run_single_contract_target(
                 } else {
                     output.push_str(&receipt_text);
                 }
+                output.push('\n');
             }
+            output.push_str(&render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name),
+                "RUN SUMMARY",
+            ));
             if !output.is_empty() {
                 output.push('\n');
             }
@@ -9416,9 +9419,12 @@ fn run_single_contract_target(
                     &outcome.executed_tasks,
                     outcome.exit_code,
                     false,
+                    outcome.target.clone(),
                     Some(format!(
                         "{}; {}",
-                        format!("inspect task `{task_name}` output and rerun `ota run {task_name}`"),
+                        format!(
+                            "inspect task `{task_name}` output and rerun `ota run {task_name}`"
+                        ),
                         details_footer
                     )),
                 ))
@@ -9437,6 +9443,7 @@ fn run_single_contract_target(
                     &[],
                     1,
                     false,
+                    None,
                     Some(format!(
                         "{}; {}",
                         format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
@@ -9450,8 +9457,8 @@ fn run_single_contract_target(
 
 fn task_use_details_footer(member: Option<&str>) -> String {
     match member {
-        Some(_) => format!("Next:\n▸  {}", paint_code("ota workspace tasks --use")),
-        None => format!("Next:\n▸  {}", paint_code("ota tasks --use")),
+        Some(_) => format!("\n\nNext:\n▸  {}", paint_code("ota workspace tasks --use")),
+        None => format!("\n\nNext:\n▸  {}", paint_code("ota tasks --use")),
     }
 }
 
@@ -9464,9 +9471,11 @@ fn run_execution_receipt(
     executed_tasks: &[String],
     exit_code: i32,
     ok: bool,
+    target: Option<String>,
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let target = target.or_else(|| execution_target(contract, contract_path, backend, lifecycle));
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
     let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
     let step_detail = if executed_tasks.is_empty() {
@@ -9498,7 +9507,7 @@ fn run_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
-        target: effective_remote_target(contract, backend),
+        target,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -9529,6 +9538,37 @@ fn run_execution_receipt(
             not_ready_count: None,
         },
         next,
+    }
+}
+
+fn execution_target(
+    contract: &Contract,
+    contract_path: &Path,
+    backend: crate::schema::Backend,
+    lifecycle: Option<Lifecycle>,
+) -> Option<String> {
+    match backend {
+        crate::schema::Backend::Remote => effective_remote_target(contract, backend),
+        crate::schema::Backend::Container => {
+            if lifecycle == Some(Lifecycle::Persistent) {
+                let image = contract
+                    .execution
+                    .as_ref()?
+                    .backends
+                    .as_ref()?
+                    .container
+                    .as_ref()?
+                    .image
+                    .clone();
+                Some(persistent_container_name(
+                    contract_path.parent().unwrap_or(contract_path),
+                    &image,
+                ))
+            } else {
+                None
+            }
+        }
+        crate::schema::Backend::Native => None,
     }
 }
 
@@ -9623,10 +9663,14 @@ fn render_up_text(
 ) -> CommandOutput {
     let mut stdout =
         render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
-    stdout.push_str(&render_execution_receipt_summary_text(&receipt.summary));
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
     }
+    stdout.push_str(&render_execution_receipt_summary_block(
+        receipt,
+        task.or(Some(phase)),
+        "TASK SUMMARY",
+    ));
 
     CommandOutput {
         stdout,
@@ -9652,6 +9696,11 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(&result.receipt));
     }
+    stdout.push_str(&render_execution_receipt_summary_block(
+        &result.receipt,
+        result.task.as_deref().or(Some(result.phase)),
+        "TASK SUMMARY",
+    ));
     stdout
 }
 
@@ -9714,8 +9763,9 @@ fn render_up_section_from_parts(
 
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = String::from("\n\n");
+    stdout.push_str(&paint_section_title("RECEIPT"));
     if !receipt.steps.is_empty() {
-        stdout.push_str(&format!("{}:", paint_section_title("Steps")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Steps:")));
         for step in &receipt.steps {
             if step.order > 1 {
                 stdout.push_str("\n\n");
@@ -9748,8 +9798,42 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         stdout.push_str("\n");
     }
 
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Summary")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Errors:", "1;31"),
+        paint(
+            &receipt.summary.error_count.to_string(),
+            "1;38;2;255;255;255"
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Warnings:", "1;33"),
+        paint(
+            &receipt.summary.warn_count.to_string(),
+            "1;38;2;255;255;255"
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Info:", "1;36"),
+        paint(
+            &receipt.summary.info_count.to_string(),
+            "1;38;2;255;255;255"
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint("Steps:", "1;38;2;102;217;255"),
+        paint(
+            &receipt.summary.step_count.to_string(),
+            "1;38;2;255;255;255"
+        )
+    ));
+
     if !receipt.blocked.is_empty() {
-        stdout.push_str(&format!("\n{}:", paint_section_title("Blocked")));
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Blocked:")));
         stdout.push_str(&format!(
             "\n{} {} {}",
             paint("♦", "1;38;2;255;214;79"),
@@ -9758,11 +9842,19 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         ));
     }
 
-    if let Some(next) = receipt.next.as_deref() {
-        stdout.push_str(&format!("\n\n{} {}", paint_next_header(), next));
-    }
+    stdout
+}
 
-    stdout.push_str(&format!("\n\n{}:", paint_section_title("RECEIPT")));
+fn render_execution_receipt_summary_block(
+    receipt: &ExecutionReceipt,
+    task: Option<&str>,
+    title: &str,
+) -> String {
+    let mut lines = vec![
+        String::new(),
+        paint_section_title(&format!("🦦  {title}")),
+        String::new(),
+    ];
     let path_display = if receipt.scope == "repo" {
         Path::new(receipt.path.as_str())
             .parent()
@@ -9774,172 +9866,43 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         compact_path(Path::new(receipt.path.as_str()), ".")
     };
     let contract_display = compact_path(Path::new(receipt.contract.as_str()), ".");
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        paint("♦", "1;38;2;255;214;79"),
-        paint_key("Scope:"),
-        receipt.scope
-    ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        paint("♦", "1;38;2;255;214;79"),
-        paint_key("Path:"),
-        path_display
-    ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        paint("♦", "1;38;2;255;214;79"),
-        paint_key("Contract:"),
-        contract_display
-    ));
+    let mode = receipt
+        .backend
+        .as_deref()
+        .unwrap_or("native")
+        .trim()
+        .to_string();
+    let note = match (mode.as_str(), receipt.lifecycle.as_deref()) {
+        ("container", Some("persistent")) => String::from("reusing persistent container backend"),
+        ("container", Some("ephemeral")) => {
+            String::from("using a fresh container image for this run")
+        }
+        ("native", _) => String::from("running on the host environment"),
+        (other, _) => format!("executing through the `{other}` backend"),
+    };
+    let task = task.unwrap_or_else(|| {
+        receipt
+            .steps
+            .first()
+            .map(|step| step.label.as_str())
+            .unwrap_or("setup")
+    });
+    lines.push(format!("Scope: {}", receipt.scope));
+    lines.push(format!("Path: {}", path_display));
+    lines.push(format!("Contract: {}", contract_display));
     if let Some(workspace) = receipt.workspace.as_deref() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Workspace:"),
-            workspace
-        ));
-    }
-    if let Some(backend) = receipt.backend.as_deref() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Backend:"),
-            backend
-        ));
+        lines.push(format!("Workspace: {}", workspace));
     }
     if let Some(lifecycle) = receipt.lifecycle.as_deref() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Lifecycle:"),
-            lifecycle
-        ));
+        lines.push(format!("Lifecycle: {}", lifecycle));
     }
+    lines.push(format!("Mode:      {}", mode));
     if let Some(target) = receipt.target.as_deref() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Target:"),
-            target
-        ));
+        lines.push(format!("Target:    {}", target));
     }
-    if !receipt.acquired.is_empty() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Acquired:"),
-            receipt.acquired.join(", ")
-        ));
-    }
-    if !receipt.env.is_empty() {
-        let env = if receipt.env_sources.is_empty() {
-            receipt
-                .env
-                .iter()
-                .map(|(key, value)| format!("{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        } else {
-            receipt
-                .env_sources
-                .iter()
-                .map(|entry| format!("{}={} ({})", entry.name, entry.value, entry.source))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Env:"),
-            env
-        ));
-    }
-    if !receipt.policy.is_empty() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            paint("♦", "1;38;2;255;214;79"),
-            paint_key("Policy:"),
-            receipt.policy.join(", ")
-        ));
-    }
-
-    stdout
-}
-
-fn render_execution_receipt_summary_text(summary: &ExecutionReceiptSummary) -> String {
-    let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
-    if let Some(repo_count) = summary.repo_count {
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint("»", "1;38;2;255;214;79"),
-            paint("Repos:", "1;38;2;102;217;255")
-        ));
-        stdout.push_str(&format!(
-            " {}",
-            paint(&repo_count.to_string(), "1;38;2;255;255;255")
-        ));
-        if let Some(ready_count) = summary.ready_count {
-            stdout.push_str(&format!(
-                "\n{} {}",
-                paint("»", "1;38;2;255;214;79"),
-                paint("Ready:", "1;38;2;0;255;120")
-            ));
-            stdout.push_str(&format!(
-                " {}",
-                paint(&ready_count.to_string(), "1;38;2;255;255;255")
-            ));
-        }
-        if let Some(not_ready_count) = summary.not_ready_count {
-            stdout.push_str(&format!(
-                "\n{} {}",
-                paint("»", "1;38;2;255;214;79"),
-                paint("Not Ready:", "1;38;2;255;235;59")
-            ));
-            stdout.push_str(&format!(
-                " {}",
-                paint(&not_ready_count.to_string(), "1;38;2;255;255;255")
-            ));
-        }
-    }
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Errors:", "1;31")
-    ));
-    stdout.push_str(&format!(
-        " {}",
-        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
-    ));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Warnings:", "1;33")
-    ));
-    stdout.push_str(&format!(
-        " {}",
-        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
-    ));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Info:", "1;36")
-    ));
-    stdout.push_str(&format!(
-        " {}",
-        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
-    ));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Steps:", "1;38;2;102;217;255")
-    ));
-    stdout.push_str(&format!(
-        " {}",
-        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
-    ));
-    stdout
+    lines.push(format!("Task:      {}", task));
+    lines.push(format!("Note:      {}", note));
+    lines.join("\n")
 }
 
 fn render_execution_receipt_status(status: &str) -> String {
@@ -10041,12 +10004,18 @@ fn render_workspace_up(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
-            stdout.push_str(&render_execution_receipt_summary_text(
-                &report.receipt.summary,
-            ));
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
+            stdout.push_str(&render_execution_receipt_summary_block(
+                &report.receipt,
+                report
+                    .repos
+                    .first()
+                    .and_then(|repo| repo.task.as_deref())
+                    .or(report.receipt.steps.first().map(|step| step.label.as_str())),
+                "RUN SUMMARY",
+            ));
 
             CommandOutput {
                 stdout,
@@ -10125,12 +10094,14 @@ fn render_workspace_run(
                 append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
                 append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
             }
-            stdout.push_str(&render_execution_receipt_summary_text(
-                &report.receipt.summary,
-            ));
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
+            stdout.push_str(&render_execution_receipt_summary_block(
+                &report.receipt,
+                Some(task),
+                "RUN SUMMARY",
+            ));
 
             CommandOutput {
                 stdout,
@@ -11008,6 +10979,7 @@ fn repo_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let target = execution_target(contract, path, backend, lifecycle);
     let task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| &task.env);
@@ -11032,7 +11004,7 @@ fn repo_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
-        target: effective_remote_target(contract, backend),
+        target,
         acquired: Vec::new(),
         env: env_details
             .iter()
