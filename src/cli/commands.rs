@@ -23,7 +23,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{self, IsTerminal, Read};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
@@ -10935,14 +10935,11 @@ fn load_and_run_workspace_up(
             {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(
-                            &workspace_name,
-                            "BLOCKED",
-                            &report.name,
-                            Some(&format!("({dependency})"))
-                        )
+                    emit_workspace_progress_line(
+                        &workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -10959,10 +10956,7 @@ fn load_and_run_workspace_up(
             .into_iter()
             .map(|(order, repo)| {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None)
-                    );
+                    emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 let tx = tx.clone();
                 thread::spawn(move || {
@@ -10984,10 +10978,7 @@ fn load_and_run_workspace_up(
         for _ in 0..handles.len() {
             let (order, report) = rx.recv().expect("workspace up worker should send a report");
             if emit_progress {
-                eprintln!(
-                    "{}",
-                    workspace_progress_line(&workspace_name, &report.status, &report.name, None)
-                );
+                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
             }
             if report.required && !report.ok {
                 ok = false;
@@ -11082,14 +11073,11 @@ fn load_and_run_workspace_task(
             {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(
-                            &workspace_name,
-                            "BLOCKED",
-                            &report.name,
-                            Some(&format!("({dependency})"))
-                        )
+                    emit_workspace_progress_line(
+                        &workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -11108,20 +11096,14 @@ fn load_and_run_workspace_task(
             .into_iter()
             .map(|(order, repo)| {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None)
-                    );
+                    emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(
-                            &workspace_name,
-                            "RUN",
-                            &repo.name,
-                            Some(&task_name)
-                        )
+                    emit_workspace_progress_line(
+                        &workspace_name,
+                        "RUN",
+                        &repo.name,
+                        Some(&task_name),
                     );
                 }
                 let tx = tx.clone();
@@ -11153,10 +11135,7 @@ fn load_and_run_workspace_task(
                 .recv()
                 .expect("workspace run worker should send a report");
             if emit_progress {
-                eprintln!(
-                    "{}",
-                    workspace_progress_line(&workspace_name, &report.status, &report.name, None)
-                );
+                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
             }
             if report.required && !report.ok {
                 ok = false;
@@ -11199,31 +11178,27 @@ fn run_workspace_task_streaming(
             Some(dependency) => {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(
-                            workspace_name,
-                            "BLOCKED",
-                            &report.name,
-                            Some(&format!("({dependency})"))
-                        )
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
                     );
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
-                    );
+                    emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 let report =
                     run_workspace_repo_task(repo, task, task_args, RepoExecutionMode::Stream);
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, &report.status, &report.name, None)
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        &report.status,
+                        &report.name,
+                        None,
                     );
                 }
                 report
@@ -11260,36 +11235,29 @@ fn run_workspace_up_streaming(
             Some(dependency) => {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(
-                            workspace_name,
-                            "BLOCKED",
-                            &report.name,
-                            Some(&format!("({dependency})"))
-                        )
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
                     );
                 }
                 report
             }
             None => {
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None)
-                    );
+                    emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, "RUN", &repo.name, None)
-                    );
+                    emit_workspace_progress_line(workspace_name, "RUN", &repo.name, None);
                 }
                 let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream);
                 if emit_progress {
-                    eprintln!(
-                        "{}",
-                        workspace_progress_line(workspace_name, &report.status, &report.name, None)
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        &report.status,
+                        &report.name,
+                        None,
                     );
                 }
                 report
@@ -11361,6 +11329,23 @@ fn workspace_progress_status(status: &str) -> String {
         value if value.contains("FAILED") => paint(value, "1;31"),
         value => paint(value, "1;37"),
     }
+}
+
+fn emit_workspace_progress_line(
+    workspace_name: &str,
+    status: &str,
+    repo_name: &str,
+    tail: Option<&str>,
+) {
+    if io::stderr().is_terminal() {
+        let mut stderr = io::stderr();
+        let _ = write!(stderr, "\r\x1b[2K\r");
+        let _ = stderr.flush();
+    }
+    eprintln!(
+        "{}",
+        workspace_progress_line(workspace_name, status, repo_name, tail)
+    );
 }
 
 fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> WorkspaceRepoUpReport {
@@ -12378,10 +12363,7 @@ fn load_and_diagnose_workspace_streaming(
                 .expect("workspace doctor worker should send a report");
             if emit_progress {
                 let status = if report.ok { "READY" } else { "NOT READY" };
-                eprintln!(
-                    "{}",
-                    workspace_progress_line(&workspace_name, status, &report.name, None)
-                );
+                emit_workspace_progress_line(&workspace_name, status, &report.name, None);
             }
             if report.required && !report.ok {
                 ok = false;
