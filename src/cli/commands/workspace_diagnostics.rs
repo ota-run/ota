@@ -214,13 +214,13 @@ pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
     stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
     stdout.push_str(&format!(
         " {}  {} {}",
-        paint("➡", "1;38;2;255;214;95"),
+        paint("●", "1;38;2;255;214;95"),
         paint_key("Repo:"),
         render_doctor_verdict(summary.verdict)
     ));
     stdout.push_str(&format!(
         "\n {}  {} {}",
-        paint("➡", "1;38;2;255;214;95"),
+        paint("●", "1;38;2;255;214;95"),
         paint_key("Agent:"),
         render_doctor_verdict(summary.agent_verdict)
     ));
@@ -249,13 +249,13 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
     stdout.push_str(&format!(
         " {}  {} {}",
-        paint("➡", "1;38;2;255;214;95"),
+        paint("●", "1;38;2;255;214;95"),
         paint_key("Repo:"),
         render_doctor_verdict(summary.verdict)
     ));
     stdout.push_str(&format!(
         "\n {}  {} {}",
-        paint("➡", "1;38;2;255;214;95"),
+        paint("●", "1;38;2;255;214;95"),
         paint_key("Agent:"),
         render_doctor_verdict(summary.agent_verdict)
     ));
