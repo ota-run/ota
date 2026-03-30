@@ -214,6 +214,16 @@ pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {}",
+        paint_key("Repo Verdict:"),
+        render_doctor_verdict(summary.verdict)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Agent Verdict:"),
+        render_doctor_verdict(summary.agent_verdict)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
         paint("Errors:", "1;38;2;255;255;255"),
         paint(&summary.error_count.to_string(), "1;31")
     ));
@@ -233,6 +243,16 @@ pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
 fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Repo Verdict:"),
+        render_doctor_verdict(summary.verdict)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Agent Verdict:"),
+        render_doctor_verdict(summary.agent_verdict)
+    ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
