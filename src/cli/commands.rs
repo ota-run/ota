@@ -8409,7 +8409,7 @@ fn render_up_result(
             stdout.push_str(&render_execution_receipt_summary_block(
                 &result.receipt,
                 result.task.as_deref().or(Some(result.phase)),
-                "TASK SUMMARY",
+                "UP SUMMARY",
             ));
             CommandOutput {
                 stdout,
@@ -9669,7 +9669,7 @@ fn render_up_text(
     stdout.push_str(&render_execution_receipt_summary_block(
         receipt,
         task.or(Some(phase)),
-        "TASK SUMMARY",
+                "UP SUMMARY",
     ));
 
     CommandOutput {
@@ -9699,7 +9699,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
     stdout.push_str(&render_execution_receipt_summary_block(
         &result.receipt,
         result.task.as_deref().or(Some(result.phase)),
-        "TASK SUMMARY",
+        "UP SUMMARY",
     ));
     stdout
 }
@@ -9798,9 +9798,10 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         stdout.push_str("\n");
     }
 
-    stdout.push_str(&format!("\n\n{}", paint_section_title("Summary")));
+    stdout.push_str(&format!("\n\n{}:", paint_section_title("Summary")));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint("Errors:", "1;31"),
         paint(
             &receipt.summary.error_count.to_string(),
@@ -9808,7 +9809,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         )
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint("Warnings:", "1;33"),
         paint(
             &receipt.summary.warn_count.to_string(),
@@ -9816,7 +9818,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         )
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint("Info:", "1;36"),
         paint(
             &receipt.summary.info_count.to_string(),
@@ -9824,7 +9827,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         )
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(
             &receipt.summary.step_count.to_string(),
@@ -9852,7 +9856,7 @@ fn render_execution_receipt_summary_block(
 ) -> String {
     let mut lines = vec![
         String::new(),
-        paint_section_title(&format!("🦦  {title}")),
+        paint(&format!("🦦  {title}"), "1"),
         String::new(),
     ];
     let path_display = if receipt.scope == "repo" {
