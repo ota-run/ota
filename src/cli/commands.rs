@@ -9960,6 +9960,7 @@ fn render_workspace_up(
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
+            stdout.push('\n');
             stdout.push_str(&render_execution_receipt_summary_block(
                 &report.receipt,
                 report
@@ -10050,6 +10051,7 @@ fn render_workspace_run(
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
             }
+            stdout.push('\n');
             stdout.push_str(&render_execution_receipt_summary_block(
                 &report.receipt,
                 Some(task),
