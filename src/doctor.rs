@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
+use crate::execution::container_engine_candidates;
 use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
 use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
 
@@ -308,9 +309,7 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
     };
 
     match execution.preferred {
-        Some(Backend::Container) => {
-            diagnose_backend_cli("docker", "container execution backend", findings)
-        }
+        Some(Backend::Container) => diagnose_container_backend_cli(contract, findings),
         Some(Backend::Remote) => {
             let Some(remote) = execution
                 .backends
@@ -646,6 +645,25 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
         summary: format!("Missing execution backend CLI: {name}"),
         why: format!("{backend} requires `{name}` to be available on PATH"),
         next: format!("install {name} and make it available on PATH"),
+    });
+}
+
+fn diagnose_container_backend_cli(contract: &Contract, findings: &mut Vec<Finding>) {
+    let engines = container_engine_candidates(contract);
+    if engines.iter().any(|engine| command_available(engine)) {
+        return;
+    }
+
+    let supported = engines.join(", ");
+    findings.push(Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Missing container execution backend CLI: {supported}"),
+        why: format!(
+            "container execution requires one of these CLIs to be available on PATH: {supported}"
+        ),
+        next: String::from(
+            "install one of the supported container engines or run `ota run --backend native` if the contract allows it",
+        ),
     });
 }
 
@@ -1159,7 +1177,7 @@ tasks:
             report
                 .findings
                 .iter()
-                .any(|finding| finding.summary == "Missing execution backend CLI: docker")
+                .any(|finding| finding.summary == "Missing container execution backend CLI: docker")
         );
     }
 

@@ -4850,17 +4850,17 @@ tasks:
     "info_count": 0,
     "primary_blocker": {
       "severity": "error",
-      "summary": "Missing execution backend CLI: docker",
+      "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install docker"
+      "next": "install one of the supported container engines"
     }
   },
   "findings": [
     {
       "severity": "error",
-      "summary": "Missing execution backend CLI: docker",
+      "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install docker"
+      "next": "install one of the supported container engines"
     },
     {
       "severity": "warn",
@@ -4888,10 +4888,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(
-            "::notice title=ota doctor primary blocker::Missing execution backend CLI: docker | install docker"
+            "::notice title=ota doctor primary blocker::Missing container execution backend CLI: docker, podman | install one of the supported container engines"
         ));
         assert!(stdout.contains(
-            "::error title=ota doctor finding::Missing execution backend CLI: docker | install docker"
+            "::error title=ota doctor finding::Missing container execution backend CLI: docker, podman | install one of the supported container engines"
         ));
         assert!(stdout.contains(
             "::warning title=ota doctor finding::Lifecycle is advisory only | review execution.lifecycle"
@@ -4918,9 +4918,9 @@ tasks:
     "primary_blocker": {
       "repo": "api",
       "severity": "error",
-      "summary": "Missing execution backend CLI: docker",
+      "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install docker"
+      "next": "install one of the supported container engines"
     }
   },
   "repos": [
@@ -4938,9 +4938,9 @@ tasks:
       "findings": [
         {
           "severity": "error",
-          "summary": "Missing execution backend CLI: docker",
+          "summary": "Missing container execution backend CLI: docker, podman",
           "why": "Required because execution.preferred=container",
-          "next": "install docker"
+          "next": "install one of the supported container engines"
         },
         {
           "severity": "warn",
@@ -4970,10 +4970,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(
-            "NOTICE: ota workspace doctor primary blocker [api]: Missing execution backend CLI: docker | install docker"
+            "NOTICE: ota workspace doctor primary blocker [api]: Missing container execution backend CLI: docker, podman | install one of the supported container engines"
         ));
         assert!(stdout.contains(
-            "ERROR: ota workspace doctor finding [api]: ./api: Missing execution backend CLI: docker | install docker"
+            "ERROR: ota workspace doctor finding [api]: ./api: Missing container execution backend CLI: docker, podman | install one of the supported container engines"
         ));
         assert!(stdout.contains(
             "WARNING: ota workspace doctor finding [api]: ./api: Lifecycle is advisory only | review execution.lifecycle"
@@ -6459,7 +6459,7 @@ project:
         assert!(stdout.contains("Detected Rust repo"));
         assert!(stdout.contains("Detected Docker Compose services: web"));
         assert!(stdout.contains("Host tool available: cargo"));
-        assert!(stdout.contains("Missing execution backend CLI: docker"));
+        assert!(stdout.contains("Missing container execution backend CLI: docker, podman"));
         assert!(stdout.contains("ota detect --dry-run"));
         assert!(stdout.contains("ota init --bootstrap"));
 

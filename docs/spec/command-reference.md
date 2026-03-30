@@ -446,7 +446,7 @@ ota run version:bump --version 0.2.0
 - resolves task dependencies before execution
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
-- when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the local `docker` CLI
+- when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the first available configured container engine CLI, falling back to `docker` when no engines are listed
 - when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
 - supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
@@ -484,7 +484,7 @@ ota doctor --member api --member web --json [PATH]
 - repeated `--member` values diagnose those members in the provided order
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - checks configured env requirements
-- checks preferred execution backend prerequisites such as `docker`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
+- checks preferred execution backend prerequisites such as `docker` / `podman` / `nerdctl`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
 - warns on suspicious remote target shape:
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`

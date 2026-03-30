@@ -22,6 +22,7 @@
 
 use std::path::Path;
 
+use crate::doctor::command_available;
 use crate::schema::{Backend, Contract, Lifecycle};
 
 pub(crate) fn format_backend(backend: Backend) -> &'static str {
@@ -66,9 +67,16 @@ pub(crate) fn execution_target(
                     .as_ref()?
                     .image
                     .clone();
+                let engine = selected_container_engine(contract).unwrap_or_else(|| {
+                    container_engine_candidates(contract)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| String::from("docker"))
+                });
                 Some(crate::runner::persistent_container_name(
                     contract_path.parent().unwrap_or(contract_path),
                     &image,
+                    &engine,
                 ))
             } else {
                 None
@@ -76,4 +84,26 @@ pub(crate) fn execution_target(
         }
         Backend::Native => None,
     }
+}
+
+pub(crate) fn container_engine_candidates(contract: &Contract) -> Vec<String> {
+    let engines = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.backends.as_ref())
+        .and_then(|backends| backends.container.as_ref())
+        .map(|container| container.engines.clone())
+        .unwrap_or_default();
+
+    if engines.is_empty() {
+        vec![String::from("docker")]
+    } else {
+        engines
+    }
+}
+
+pub(crate) fn selected_container_engine(contract: &Contract) -> Option<String> {
+    container_engine_candidates(contract)
+        .into_iter()
+        .find(|engine| command_available(engine))
 }

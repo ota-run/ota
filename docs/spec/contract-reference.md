@@ -227,6 +227,7 @@ Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 - `execution.preferred: container` requires `execution.backends.container.image`
+- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, Ota falls back to `docker`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
 - `execution.preferred: remote` requires `execution.backends.remote.target`
 - remote target guidance by provider:
@@ -237,7 +238,7 @@ Current validation rule:
 Current implementation:
 
 - `ota run` now supports `execution.preferred: container` when `execution.backends.container.image` is configured
-- the first container path uses the local `docker` CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
+- the first container path uses the first available configured container engine CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
 - `ota up` now runs the `setup` task through the same configured execution backend when one exists
 - `ota run` now supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
@@ -248,7 +249,7 @@ Current implementation:
 Current lifecycle meaning:
 
 - `persistent`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` reuse a persistent named container for the effective contract directory
-- `ephemeral`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` use a fresh `docker run --rm` container for each invocation
+- `ephemeral`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` use a fresh `run --rm` container with the first available configured engine for each invocation
 - outside backend-backed task execution, such as service commands, healthchecks, and diagnosis, lifecycle remains advisory today
 
 Current command behavior:
