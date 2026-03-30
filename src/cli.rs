@@ -6439,7 +6439,7 @@ project:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Primary blocker:"));
+        assert!(!stdout.contains("Primary blocker:"));
         assert!(stdout.contains("No `ota.yaml` found"));
         assert!(stdout.contains("Detected Rust repo"));
         assert!(stdout.contains("Detected Docker Compose services: web"));
