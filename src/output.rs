@@ -73,6 +73,7 @@ pub struct WorkspaceDoctorSuccess<'a> {
 #[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
 pub struct DoctorSummary {
     pub verdict: DoctorVerdict,
+    pub agent_verdict: DoctorVerdict,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
@@ -200,6 +201,7 @@ pub struct WorkspaceDoctorSummary {
     pub ready_count: usize,
     pub not_ready_count: usize,
     pub verdict: DoctorVerdict,
+    pub agent_verdict: DoctorVerdict,
     pub error_count: usize,
     pub warn_count: usize,
     pub info_count: usize,
