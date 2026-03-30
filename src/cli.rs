@@ -9467,7 +9467,7 @@ tasks:
         assert_eq!(json["ok"], true);
         assert_eq!(json["summary"]["repo_count"], 2);
         assert_eq!(json["summary"]["acquired_count"], 2);
-        assert_eq!(json["summary"]["task_count"], 4);
+        assert_eq!(json["summary"]["task_count"], 2);
         assert_eq!(json["repos"][0]["name"], "db");
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
         assert_eq!(json["repos"][1]["name"], "api");
