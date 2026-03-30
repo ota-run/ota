@@ -246,3 +246,16 @@ fn up_schema_includes_member_grouping() {
     assert!(member_properties.get("phase").is_some());
     assert_eq!(validate_failure_ref, "./validate.json#/oneOf/1");
 }
+
+#[test]
+fn diff_schema_includes_readiness_impact_summary() {
+    let schema = load_schema("docs/spec/json-schemas/diff.json");
+    let summary = &schema["properties"]["summary"]["properties"];
+
+    assert!(summary.get("readiness_impact").is_some());
+    assert!(summary.get("added_count").is_some());
+    assert!(summary.get("removed_count").is_some());
+    assert!(summary.get("changed_count").is_some());
+    assert!(summary.get("weakened_count").is_some());
+    assert!(summary.get("strengthened_count").is_some());
+}

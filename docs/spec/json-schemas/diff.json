@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/diff.json",
+  "title": "ota diff --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "base", "target", "summary", "changes"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "base": { "type": "string" },
+    "target": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "readiness_impact",
+        "added_count",
+        "removed_count",
+        "changed_count",
+        "weakened_count",
+        "strengthened_count"
+      ],
+      "properties": {
+        "readiness_impact": {
+          "enum": ["unchanged", "improves", "degrades", "mixed", "changed"]
+        },
+        "added_count": { "type": "integer", "minimum": 0 },
+        "removed_count": { "type": "integer", "minimum": 0 },
+        "changed_count": { "type": "integer", "minimum": 0 },
+        "weakened_count": { "type": "integer", "minimum": 0 },
+        "strengthened_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "status"],
+        "properties": {
+          "path": { "type": "string" },
+          "status": { "enum": ["add", "remove", "change", "weaken", "strengthen"] },
+          "base": { "type": "string" },
+          "target": { "type": "string" }
+        }
+      }
+    }
+  }
+}
