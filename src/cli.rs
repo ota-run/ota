@@ -2295,11 +2295,11 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 0);
+        assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
-        assert_eq!(json["summary"]["step_count"], 1);
+        assert_eq!(json["summary"]["step_count"], 2);
         let steps = json["steps"].as_array().unwrap();
-        assert_eq!(steps.len(), 1);
+        assert_eq!(steps.len(), 2);
         assert_eq!(steps[0]["order"], 1);
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
     }
@@ -2940,9 +2940,9 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 0);
+        assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
-        assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+        assert_eq!(json["findings"].as_array().unwrap().len(), 1);
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["ok"], false);
@@ -6595,7 +6595,7 @@ checks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 2);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["findings"][0]["summary"], "Check failed: root-health");
         let members = json["members"].as_array().unwrap();
