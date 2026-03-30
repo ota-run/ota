@@ -7917,6 +7917,7 @@ fn render_up_result(
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&result.receipt));
             }
+            stdout.push('\n');
             stdout.push_str(&render_execution_receipt_summary_block(
                 &result.receipt,
                 result.task.as_deref().or(Some(result.phase)),
@@ -9170,6 +9171,7 @@ fn render_up_text(
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
     }
+    stdout.push_str("\n\n");
     stdout.push_str(&render_execution_receipt_summary_block(
         receipt,
         task.or(Some(phase)),
@@ -9200,6 +9202,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(&result.receipt));
     }
+    stdout.push_str("\n");
     stdout.push_str(&render_execution_receipt_summary_block(
         &result.receipt,
         result.task.as_deref().or(Some(result.phase)),
