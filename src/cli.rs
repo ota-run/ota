@@ -2295,7 +2295,7 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 2);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["step_count"], 2);
         let steps = json["steps"].as_array().unwrap();
@@ -2940,7 +2940,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 2);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["findings"].as_array().unwrap().len(), 1);
         let members = json["members"].as_array().unwrap();
@@ -5229,7 +5229,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["summary"]["error_count"], 0);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 2);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
         assert_eq!(
