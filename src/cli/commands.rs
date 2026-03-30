@@ -9704,9 +9704,8 @@ fn render_up_section_from_parts(
 
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&paint_section_title("RECEIPT"));
     if !receipt.steps.is_empty() {
-        stdout.push_str(&format!("\n\n{}", paint_section_title("Steps:")));
+        stdout.push_str(&paint_section_title("Steps:"));
         for step in &receipt.steps {
             if step.order > 1 {
                 stdout.push_str("\n\n");
@@ -9736,10 +9735,10 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 ));
             }
         }
-        stdout.push_str("\n");
+        stdout.push_str("\n\n");
     }
 
-    stdout.push_str(&format!("\n\n{}:", paint_section_title("Summary")));
+    stdout.push_str(&format!("{}:", paint_section_title("Summary")));
     stdout.push_str(&format!(
         "\n{} {} {}",
         paint("»", "1;38;2;255;214;79"),
@@ -9786,6 +9785,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             receipt.blocked.join(", ")
         ));
     }
+
+    stdout.push('\n');
 
     stdout
 }
