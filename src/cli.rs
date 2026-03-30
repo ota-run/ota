@@ -3428,9 +3428,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains(
-            "Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
-        ));
+        assert!(stdout.contains("Note:       using a fresh container image for this run"));
         assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
@@ -6254,9 +6252,7 @@ tasks:
         assert!(rendered.contains("SUMMARY"));
         assert!(rendered.contains("Mode:       native"));
         assert!(rendered.contains("Task:       setup"));
-        assert!(rendered.contains(
-            "Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
-        ));
+        assert!(rendered.contains("Note:       running on the host environment"));
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
     }
