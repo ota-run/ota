@@ -9174,11 +9174,11 @@ tasks:
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
-        assert_json_top_level_keys(&tasks, &["errors", "ok", "path", "summary"]);
+        assert_json_top_level_keys(&tasks, &["errors", "ok", "path"]);
 
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
-        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "task"]);
+        assert_json_top_level_keys(&run, &["ok", "path", "receipt", "repos", "summary", "task"]);
 
         let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 1);
@@ -9661,7 +9661,7 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(!stderr.contains("Where: ota workspace list"));
+        assert!(stderr.contains("Where: ota workspace list"));
         assert!(stderr.contains("no `ota.workspace.yaml` found"));
         assert!(stderr.contains("Next: run `ota workspace init` to create a starter workspace"));
     }
