@@ -259,13 +259,13 @@ In this repository, the container image is:
 ```yaml
 execution:
   preferred: container
+  lifecycle: persistent
   supported:
     - native
     - container
-  lifecycle: persistent
   backends:
     container:
-      image: maven:3.9.9-eclipse-temurin-21
+      image: rust:1.85
 ```
 
 ### Native backend
