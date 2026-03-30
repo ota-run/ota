@@ -34,6 +34,8 @@ use crate::runner::ExecutionOverrides;
 
 mod commands;
 
+pub(crate) use commands::plain_mode;
+
 #[derive(Debug, Parser)]
 #[command(disable_version_flag = true)]
 #[command(name = "ota")]
@@ -6225,9 +6227,16 @@ tasks:
         let output = run_with(["ota", "run", "setup", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or(""));
-        assert!(stderr.contains(
-            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment"
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(rendered.contains("RUN SUMMARY"));
+        assert!(rendered.contains("Mode       native"));
+        assert!(rendered.contains("Task       setup"));
+        assert!(rendered.contains(
+            "Note       Running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
         ));
     }
 
@@ -6283,11 +6292,18 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 0);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("MODE: container"));
-        assert!(stderr.contains("RUN setup in container `ota-"));
-        assert!(stderr.contains("Lifecycle note: reusing persistent container backend"));
-        assert!(stderr.contains("More details: `ota tasks --use setup`"));
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(rendered.contains("RUN SUMMARY ota-"));
+        assert!(rendered.contains("Mode       container"));
+        assert!(rendered.contains("Task       setup"));
+        assert!(rendered.contains("Target     `ota-"));
+        assert!(rendered.contains("Lifecycle  persistent"));
+        assert!(rendered.contains("Note       Reusing persistent container backend"));
+        assert!(rendered.contains("Next       ota tasks --use"));
     }
 
     #[test]

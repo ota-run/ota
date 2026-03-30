@@ -9356,7 +9356,7 @@ fn run_single_contract_target(
     task_inputs: &[String],
     show_receipt: bool,
 ) -> Result<String, RunCommandFailure> {
-    let details_footer = task_use_details_footer(task_name, member);
+    let details_footer = task_use_details_footer(member);
     match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
@@ -9384,11 +9384,6 @@ fn run_single_contract_target(
                 task_name,
             ) {
                 output.push_str(&banner);
-                output.push('\n');
-            }
-            if let Some(notice) = lifecycle_notice_with_member(&target.contract, overrides, member)
-            {
-                output.push_str(&notice);
                 output.push('\n');
             }
             if show_receipt {
@@ -9453,12 +9448,10 @@ fn run_single_contract_target(
     }
 }
 
-fn task_use_details_footer(task_name: &str, member: Option<&str>) -> String {
+fn task_use_details_footer(member: Option<&str>) -> String {
     match member {
-        Some(member) => format!(
-            "More details: `ota workspace tasks --use {task_name} --repo {member}`"
-        ),
-        None => format!("More details: `ota tasks --use {task_name}`"),
+        Some(_) => format!("Next:\n▸  {}", paint_code("ota workspace tasks --use")),
+        None => format!("Next:\n▸  {}", paint_code("ota tasks --use")),
     }
 }
 
@@ -10618,7 +10611,7 @@ fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
     }
 }
 
-fn plain_mode() -> bool {
+pub(crate) fn plain_mode() -> bool {
     PLAIN_MODE.with(Cell::get)
 }
 
