@@ -2760,10 +2760,6 @@ pub fn up(
                         workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
                     })
                 {
-                    let mut lifecycle_notes =
-                        up_lifecycle_notice_with_member(&target.contract, overrides, None)
-                            .into_iter()
-                            .collect::<Vec<_>>();
                     let root_result = match execute_repo_up(
                         &target.contract,
                         &target.contract_path,
@@ -2835,13 +2831,6 @@ pub fn up(
                             if !member_result.ok {
                                 overall_ok = false;
                             }
-                            if let Some(notice) = up_lifecycle_notice_with_member(
-                                &member_target.contract,
-                                overrides,
-                                Some(member.as_str()),
-                            ) {
-                                lifecycle_notes.push(notice);
-                            }
                             text_sections.push(render_up_section_with_receipt(
                                 &display_contract_target(
                                     &compact_path_display,
@@ -2868,8 +2857,7 @@ pub fn up(
                             stdout: text_sections.join("\n\n"),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
-                        }
-                        .with_stderr(join_notices(lifecycle_notes)),
+                        },
                         OutputFormat::Json => CommandOutput {
                             stdout: to_json_value(json!({
                                 "ok": overall_ok,
@@ -2885,8 +2873,7 @@ pub fn up(
                             })),
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
-                        }
-                        .with_stderr(join_notices(lifecycle_notes)),
+                        },
                     }
                 } else {
                     match execute_repo_up(
@@ -2901,12 +2888,7 @@ pub fn up(
                             result,
                             format,
                             show_receipt,
-                        )
-                        .with_stderr(up_lifecycle_notice_with_member(
-                            &target.contract,
-                            overrides,
-                            single_member,
-                        )),
+                        ),
                         Err(error) => CommandOutput::failure(error),
                     }
                 }
@@ -2915,7 +2897,6 @@ pub fn up(
                 let mut overall_ok = true;
                 let mut text_sections = Vec::new();
                 let mut member_results = Vec::new();
-                let mut lifecycle_notes = Vec::new();
                 for member in members {
                     let target =
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
@@ -2967,13 +2948,6 @@ pub fn up(
                     if !result.ok {
                         overall_ok = false;
                     }
-                    if let Some(notice) = up_lifecycle_notice_with_member(
-                        &target.contract,
-                        overrides,
-                        Some(member.as_str()),
-                    ) {
-                        lifecycle_notes.push(notice);
-                    }
                     text_sections.push(render_up_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         &result,
@@ -2995,8 +2969,7 @@ pub fn up(
                         stdout: text_sections.join("\n\n"),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
-                    }
-                    .with_stderr(join_notices(lifecycle_notes)),
+                    },
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json_value(json!({
                             "ok": overall_ok,
@@ -3008,8 +2981,7 @@ pub fn up(
                         })),
                         stderr: None,
                         exit_code: if overall_ok { 0 } else { 1 },
-                    }
-                    .with_stderr(join_notices(lifecycle_notes)),
+                    },
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
@@ -9572,37 +9544,6 @@ fn execution_target(
     }
 }
 
-fn lifecycle_notice_with_member(
-    contract: &Contract,
-    overrides: ExecutionOverrides,
-    member: Option<&str>,
-) -> Option<String> {
-    lifecycle_notice(contract, overrides).map(|notice| match member {
-        Some(member) => format!("[member {member}] {notice}"),
-        None => notice,
-    })
-}
-
-fn up_lifecycle_notice_with_member(
-    contract: &Contract,
-    overrides: ExecutionOverrides,
-    member: Option<&str>,
-) -> Option<String> {
-    if !contract.tasks.contains_key("setup") {
-        return None;
-    }
-
-    lifecycle_notice_with_member(contract, overrides, member)
-}
-
-fn join_notices(notices: Vec<String>) -> Option<String> {
-    if notices.is_empty() {
-        None
-    } else {
-        Some(notices.join("\n"))
-    }
-}
-
 struct RunCommandFailure {
     message: String,
     exit_code: i32,
@@ -9669,7 +9610,7 @@ fn render_up_text(
     stdout.push_str(&render_execution_receipt_summary_block(
         receipt,
         task.or(Some(phase)),
-                "UP SUMMARY",
+        "UP SUMMARY",
     ));
 
     CommandOutput {
@@ -9881,6 +9822,9 @@ fn render_execution_receipt_summary_block(
         ("container", Some("ephemeral")) => {
             String::from("using a fresh container image for this run")
         }
+        ("native", Some("ephemeral")) => String::from(
+            "running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1",
+        ),
         ("native", _) => String::from("running on the host environment"),
         (other, _) => format!("executing through the `{other}` backend"),
     };
@@ -9891,22 +9835,26 @@ fn render_execution_receipt_summary_block(
             .map(|step| step.label.as_str())
             .unwrap_or("setup")
     });
-    lines.push(format!("Scope: {}", receipt.scope));
-    lines.push(format!("Path: {}", path_display));
-    lines.push(format!("Contract: {}", contract_display));
+    lines.push(summary_detail_line("Scope:", &receipt.scope));
+    lines.push(summary_detail_line("Path:", &path_display));
+    lines.push(summary_detail_line("Contract:", &contract_display));
     if let Some(workspace) = receipt.workspace.as_deref() {
-        lines.push(format!("Workspace: {}", workspace));
+        lines.push(summary_detail_line("Workspace:", workspace));
     }
     if let Some(lifecycle) = receipt.lifecycle.as_deref() {
-        lines.push(format!("Lifecycle: {}", lifecycle));
+        lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
-    lines.push(format!("Mode:      {}", mode));
+    lines.push(summary_detail_line("Mode:", &mode));
     if let Some(target) = receipt.target.as_deref() {
-        lines.push(format!("Target:    {}", target));
+        lines.push(summary_detail_line("Target:", target));
     }
-    lines.push(format!("Task:      {}", task));
-    lines.push(format!("Note:      {}", note));
+    lines.push(summary_detail_line("Task:", task));
+    lines.push(summary_detail_line("Note:", &note));
     lines.join("\n")
+}
+
+fn summary_detail_line(label: &str, value: &str) -> String {
+    format!("{label:<11} {value}")
 }
 
 fn render_execution_receipt_status(status: &str) -> String {
@@ -10018,7 +9966,7 @@ fn render_workspace_up(
                     .first()
                     .and_then(|repo| repo.task.as_deref())
                     .or(report.receipt.steps.first().map(|step| step.label.as_str())),
-                "RUN SUMMARY",
+                "WORKSPACE RUN SUMMARY",
             ));
 
             CommandOutput {
@@ -12827,21 +12775,6 @@ fn run_shell_command(
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
-    }
-}
-
-fn lifecycle_notice(contract: &Contract, overrides: ExecutionOverrides) -> Option<String> {
-    match effective_execution(contract, overrides) {
-        (crate::schema::Backend::Container, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: running task in an ephemeral container backend",
-        )),
-        (crate::schema::Backend::Container, Some(Lifecycle::Persistent)) => Some(String::from(
-            "Lifecycle note: reusing persistent container backend",
-        )),
-        (_, Some(Lifecycle::Ephemeral)) => Some(String::from(
-            "Lifecycle note: `execution.lifecycle: ephemeral` is advisory only in V1; Ota still executes tasks in the current shell environment",
-        )),
-        _ => None,
     }
 }
 
