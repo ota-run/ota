@@ -30,8 +30,9 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
+use crate::execution::{format_backend, format_lifecycle};
 use crate::parser::{LoadContractError, load_contract};
-use crate::schema::{Backend, Contract, ExtensionSpec, Lifecycle};
+use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
 
 pub const DEFAULT_WORKSPACE_FILE: &str = "ota.workspace.yaml";
@@ -167,21 +168,6 @@ impl WorkspaceExecutionSummary {
                 }
             }),
         })
-    }
-}
-
-fn format_backend(backend: Backend) -> &'static str {
-    match backend {
-        Backend::Native => "native",
-        Backend::Container => "container",
-        Backend::Remote => "remote",
-    }
-}
-
-fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
-    match lifecycle {
-        Lifecycle::Persistent => "persistent",
-        Lifecycle::Ephemeral => "ephemeral",
     }
 }
 

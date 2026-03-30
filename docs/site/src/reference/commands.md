@@ -892,8 +892,8 @@ Why:
 
 Receipt:
 
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus `receipt` in JSON output
-- the receipt includes backend, lifecycle, remote target when set, env sources, and step summary data
+- prints a summary in text output and emits an execution receipt when `--receipt` is set
+- the canonical receipt and summary layout lives in [`docs/spec/command-reference.md`](../../../spec/command-reference.md) and [`docs/spec/output-style.md`](../../../spec/output-style.md)
 
 `ota workspace run --json` includes a top-level summary and receipt so hosted validation and
 automation can read the roll-up without descending into the receipt object first.
@@ -958,7 +958,8 @@ Why:
 
 Receipt:
 
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and JSON output
+- prints a summary in text output and emits an execution receipt when `--receipt` is set
+- the canonical receipt and summary layout lives in [`docs/spec/command-reference.md`](../../../spec/command-reference.md) and [`docs/spec/output-style.md`](../../../spec/output-style.md)
 
 ```bash
 ota workspace up
