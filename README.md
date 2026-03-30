@@ -114,14 +114,14 @@ ota detect --merge /path/to/repo
 ```
 
 Example contracts:
-- [basic-node](examples/basic-node/ota.yaml)
-- [basic-dotnet](examples/basic-dotnet/ota.yaml)
-- [basic-java](examples/basic-java/ota.yaml)
-- [basic-rust](examples/basic-rust/ota.yaml)
-- [basic-script](examples/basic-script/ota.yaml)
-- [basic-services](examples/basic-services/ota.yaml)
-- [full-contract](examples/full-contract/ota.yaml)
-- [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml)
+- [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
+- [basic-dotnet](examples/basic-dotnet/ota.yaml) - C# / .NET starter
+- [basic-java](examples/basic-java/ota.yaml) - Maven starter
+- [basic-rust](examples/basic-rust/ota.yaml) - Cargo starter
+- [basic-script](examples/basic-script/ota.yaml) - Script-only starter
+- [basic-services](examples/basic-services/ota.yaml) - Service-backed repo starter
+- [full-contract](examples/full-contract/ota.yaml) - Full contract surface
+- [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
 
 ## Why Ota exists
 
@@ -481,19 +481,19 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 ## Examples
 
 ### Minimal contracts
-- [Basic Node](examples/basic-node/ota.yaml)
-- [Basic .NET](examples/basic-dotnet/ota.yaml)
-- [Basic Java](examples/basic-java/ota.yaml)
-- [Basic Python](examples/basic-python/ota.yaml)
-- [Basic Go](examples/basic-go/ota.yaml)
-- [Basic Rust](examples/basic-rust/ota.yaml)
-- [Basic Script](examples/basic-script/ota.yaml)
+- [Basic Node](examples/basic-node/ota.yaml) - Node / TypeScript starter
+- [Basic .NET](examples/basic-dotnet/ota.yaml) - C# / .NET starter
+- [Basic Java](examples/basic-java/ota.yaml) - Maven starter
+- [Basic Python](examples/basic-python/ota.yaml) - Python starter
+- [Basic Go](examples/basic-go/ota.yaml) - Go module starter
+- [Basic Rust](examples/basic-rust/ota.yaml) - Cargo starter
+- [Basic Script](examples/basic-script/ota.yaml) - Script-only starter
 
 ### Mixed and realistic repos
-- [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
-- [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml)
-- [Full contract example](examples/full-contract/ota.yaml)
+- [Mixed Node + Python](examples/mixed-node-python/ota.yaml) - Polyglot app example
+- [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml) - Frontend/backend split example
+- [Full contract example](examples/full-contract/ota.yaml) - Exhaustive contract reference
 
 ### Workspace
-- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml)
-- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)
+- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter
+- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
