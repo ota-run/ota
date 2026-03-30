@@ -115,6 +115,7 @@ ota detect --merge /path/to/repo
 
 Example contracts:
 - [basic-node](examples/basic-node/ota.yaml)
+- [basic-dotnet](examples/basic-dotnet/ota.yaml)
 - [basic-java](examples/basic-java/ota.yaml)
 - [basic-rust](examples/basic-rust/ota.yaml)
 - [basic-script](examples/basic-script/ota.yaml)
@@ -481,6 +482,7 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 
 ### Minimal contracts
 - [Basic Node](examples/basic-node/ota.yaml)
+- [Basic .NET](examples/basic-dotnet/ota.yaml)
 - [Basic Java](examples/basic-java/ota.yaml)
 - [Basic Python](examples/basic-python/ota.yaml)
 - [Basic Go](examples/basic-go/ota.yaml)

@@ -30,6 +30,7 @@ fn example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     vec![
         root.join("basic-go").join("ota.yaml"),
+        root.join("basic-dotnet").join("ota.yaml"),
         root.join("basic-java").join("ota.yaml"),
         root.join("basic-node").join("ota.yaml"),
         root.join("basic-python").join("ota.yaml"),
