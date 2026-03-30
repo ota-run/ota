@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/workspace-check.json](json-schemas/workspace-check.json)
 - [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
+- [json-schemas/diff.json](json-schemas/diff.json)
 
 ## General notes
 
@@ -56,7 +57,8 @@ human text output:
 - `ota workspace check --json`: use the top-level `summary` and per-repo findings
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
-- `ota diff --json` and `ota explain --json`: use the change summary and remediation steps
+- `ota diff --json`: use the readiness-impact summary and changes
+- `ota explain --json`: use the remediation steps
 
 Hosted CI can use the same fields as annotations or check-run summaries:
 

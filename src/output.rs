@@ -639,6 +639,7 @@ pub struct DiffSummary {
     pub changed_count: usize,
     pub weakened_count: usize,
     pub strengthened_count: usize,
+    pub readiness_impact: &'static str,
 }
 
 #[derive(Debug, Serialize)]

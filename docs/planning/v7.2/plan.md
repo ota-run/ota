@@ -24,7 +24,7 @@
 
 # V7.2 Plan
 
-Status: planned.
+Status: complete.
 
 Source direction:
 
@@ -38,6 +38,8 @@ V7.2 theme:
 - make `ota doctor` findings machine-stable
 - separate diagnosis text from diagnostic identity
 - keep the current doctor response shape intact while adding stronger metadata
+
+This slice is complete. V8 is the next active plan.
 
 ## Included capabilities
 
