@@ -4746,6 +4746,8 @@ project:
   name: ota
 tasks:
   setup:
+    notes: |
+      Use this to initialize the repo before running other tasks.
     script: |
       printf ready > prepared.txt
 "#,
