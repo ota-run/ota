@@ -216,7 +216,7 @@ Current behavior:
 Ota supports three execution backends for task-oriented commands:
 
 - `native` runs tasks on the host machine.
-- `container` runs tasks in a Docker container using the image defined by the repo contract.
+- `container` runs tasks in an OCI-compatible container using the image defined by the repo contract.
 - `remote` runs tasks on a separate machine or workspace through a remote provider.
 
 ### Why the three modes exist
@@ -251,9 +251,9 @@ Benefits:
 
 Requirements:
 
-- Docker must be installed and running
+- at least one supported container engine CLI must be installed and running
 - the contract must declare `execution.backends.container.image`
-- the image must be pullable and runnable by Docker
+- the image must be pullable and runnable by the selected engine
 
 In this repository, the container image is:
 
@@ -277,7 +277,7 @@ Native execution is useful when:
 - the repo already has the required toolchain installed
 - you want the fewest moving parts and no container boundary
 
-Native execution does not require Docker, but it does require the host tools that the task depends on.
+Native execution does not require a container engine, but it does require the host tools that the task depends on.
 
 ### Remote backend
 
@@ -407,7 +407,7 @@ The current shipped foundation includes:
 - separate workspace contract validation, diagnosis, and bootstrap
 - generic git-based workspace acquisition for missing repos
 - monorepo root/member loading for repo commands via `--member`
-- fixture-backed coverage for Java detection, Docker-heavy, Docker-only, conflict-heavy Node, mixed Node/Python, legacy Python, and ugly/polyglot mixed-reality repo shapes
+- fixture-backed coverage for Java detection, container-heavy, container-only, conflict-heavy Node, mixed Node/Python, legacy Python, and ugly/polyglot mixed-reality repo shapes
 
 Current planning state:
 
