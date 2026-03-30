@@ -495,5 +495,5 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 - [Full contract example](examples/full-contract/ota.yaml) - Exhaustive contract reference
 
 ### Workspace
-- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter
-- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
+- [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; use `ota workspace doctor` to review readiness and `ota workspace up` to prepare the stack.
+- [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow; use `ota workspace init` first, then `ota workspace up` to acquire and prepare repos.
