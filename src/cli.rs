@@ -796,6 +796,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
                 command: WorkspaceCommands::Validate { .. }
                     | WorkspaceCommands::Tasks { .. }
                     | WorkspaceCommands::List { .. }
+                    | WorkspaceCommands::Up { .. }
                     | WorkspaceCommands::Doctor { stream: false, .. }
                     | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::Detect { .. }
