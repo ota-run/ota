@@ -51,5 +51,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Keep dependency installation and test execution separate.
-    Use `ota run test` to verify code changes.
+    Use `ota validate` before changes and `ota run test` after edits.
+    Keep dependency installation in `setup` and use `ota run test` to verify Python changes.

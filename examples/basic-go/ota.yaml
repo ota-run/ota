@@ -51,5 +51,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Keep the contract minimal, but always validate before running tests.
-    Use `ota run test` after code changes.
+    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota run test` as the main verification step for Go changes.

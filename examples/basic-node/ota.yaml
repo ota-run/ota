@@ -60,4 +60,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota doctor` after edits.
-    Prefer `ota run test` as the verification step for agent work.
+    Use `ota run test` as the main verification step for Node and TypeScript changes.

@@ -54,5 +54,5 @@ agent:
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before execution and `ota run test` after changes.
-    Build and test are the primary safe paths for this example.
+    Use `ota validate` before changes and `ota run test` after edits.
+    Use `ota run build` to confirm the Maven wiring and `ota run test` to verify Java changes.

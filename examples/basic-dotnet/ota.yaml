@@ -63,4 +63,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota run test` after edits.
-    Build, test, and restore are the primary safe paths for this example.
+    Use `ota run build` when you want to confirm the .NET toolchain still matches the contract.

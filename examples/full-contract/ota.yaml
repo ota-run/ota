@@ -77,7 +77,7 @@ agent:
     - LICENSE
   notes: |
     Use `ota validate` before execution and `ota doctor` after contract changes.
-    Keep the contract and the implementation aligned through the `test` task.
+    Use `ota run test` to keep the contract and the implementation aligned.
 metadata:
   owner: ota
   team: platform
