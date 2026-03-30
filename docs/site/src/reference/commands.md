@@ -64,11 +64,11 @@ Hosted validation:
 Execution modes:
 
 - `native` runs tasks on the host machine and is useful when you want to debug against the real local environment
-- `container` runs tasks in Docker using the image declared in `ota.yaml` and is useful when you want a fixed toolchain and CI-like behavior
+- `container` runs tasks in an OCI-compatible container using the image declared in `ota.yaml` and is useful when you want a fixed toolchain and CI-like behavior
 - `remote` runs tasks on a separate machine or workspace through a provider and is useful when work must happen off-host
 - use `ota run <task> --backend native|container|remote` and `ota up --backend native|container|remote` to override the contract for one invocation
 - use `ota run <task> --lifecycle persistent|ephemeral` and `ota up --lifecycle persistent|ephemeral` to override container reuse for one invocation
-- container execution requires Docker plus a valid `execution.backends.container.image`
+- container execution requires a valid `execution.backends.container.image` and at least one supported container engine CLI such as Docker or Podman
 - Ota provisions declared repo services through `ota up`, but it does not replace the OS package manager or language installer on the host
 
 ## Start with this flow

@@ -1841,12 +1841,12 @@ fn append_contractless_repo_findings(
         } else {
             findings.push(Finding {
                 severity: FindingSeverity::Error,
-                summary: String::from("Missing execution backend CLI: docker"),
+                summary: String::from("Missing container execution backend CLI: docker, podman"),
                 why: String::from(
-                    "Docker Compose signals were detected, so container execution will need Docker once you adopt a contract",
+                    "Docker Compose signals were detected, so container execution will need a supported container engine once you adopt a contract",
                 ),
                 next: String::from(
-                    "install Docker, or keep the eventual contract on `native` if you do not want container execution",
+                    "install a supported container engine, or keep the eventual contract on `native` if you do not want container execution",
                 ),
             });
         }

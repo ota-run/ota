@@ -141,6 +141,8 @@ impl std::fmt::Display for ExtensionKind {
 #[serde(deny_unknown_fields)]
 pub struct ContainerBackend {
     pub image: String,
+    #[serde(default)]
+    pub engines: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

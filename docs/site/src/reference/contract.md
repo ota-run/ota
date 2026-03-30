@@ -202,13 +202,14 @@ Supported backend values today:
 - `remote`
 
 Use `native` when you want the task to run on the host machine with the tools already installed there.
-Use `container` when you want a fixed toolchain in Docker.
+Use `container` when you want a fixed toolchain in an OCI-compatible container.
 Use `remote` when execution should happen on another machine or workspace through a provider.
 
 Container execution requires:
 
 - `execution.backends.container.image`
-- Docker installed and running
+- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, Ota falls back to `docker`
+- at least one supported container engine CLI installed and running
 
 Remote execution requires:
 

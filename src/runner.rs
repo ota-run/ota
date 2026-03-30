@@ -26,6 +26,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::execution::{container_engine_candidates, selected_container_engine};
 use crate::schema::{Backend, Contract, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +59,10 @@ pub enum RunError {
     MissingContainerImage { task: String },
     #[error("task `{task}` requires an explicit `execution.lifecycle` for container execution")]
     MissingContainerLifecycle { task: String },
+    #[error(
+        "task `{task}` requires one of the supported container execution backend CLIs to be available on PATH: {engines}"
+    )]
+    MissingContainerBackendCli { task: String, engines: String },
     #[error("task `{task}` requires `execution.backends.remote.provider` for remote execution")]
     MissingRemoteProvider { task: String },
     #[error(
@@ -411,15 +416,25 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
                 .ok_or(RunError::MissingContainerImage {
                     task: String::from("clean"),
                 })?;
+            let engine = selected_container_engine(contract).ok_or_else(|| {
+                RunError::MissingContainerBackendCli {
+                    task: String::from("clean"),
+                    engines: container_engine_candidates(contract).join(", "),
+                }
+            })?;
             let working_dir = contract_working_dir(contract_path);
-            let container_name = persistent_container_name(working_dir, &image);
+            let container_name = persistent_container_name(working_dir, &image, &engine);
             let inspect_exit_code =
-                docker_command_exit_code(&["inspect", &container_name], None, "clean")?;
+                container_command_exit_code(&engine, &["inspect", &container_name], None, "clean")?;
             if inspect_exit_code != 0 {
                 return Ok(false);
             }
-            let remove_exit_code =
-                docker_command_exit_code(&["rm", "-f", &container_name], None, "clean")?;
+            let remove_exit_code = container_command_exit_code(
+                &engine,
+                &["rm", "-f", &container_name],
+                None,
+                "clean",
+            )?;
             Ok(remove_exit_code == 0)
         }
         _ => Ok(false),
@@ -445,6 +460,7 @@ enum ResolvedExecutionBackend {
     Native,
     Container {
         image: String,
+        engine: String,
         lifecycle: Lifecycle,
     },
     Remote {
@@ -587,12 +603,17 @@ fn execute_task_command(
                 })
             }
         },
-        ResolvedExecutionBackend::Container { image, lifecycle } => execute_container_task_command(
+        ResolvedExecutionBackend::Container {
+            image,
+            engine,
+            lifecycle,
+        } => execute_container_task_command(
             task_name,
             command,
             working_dir,
             env_overrides,
             image,
+            engine,
             *lifecycle,
             mode,
         ),
@@ -755,26 +776,35 @@ fn resolve_execution_backend(
 
     match preferred {
         Backend::Native => Ok(ResolvedExecutionBackend::Native),
-        Backend::Container => contract
-            .execution
-            .as_ref()
-            .and_then(|execution| {
-                execution
-                    .backends
-                    .as_ref()
-                    .and_then(|backends| backends.container.as_ref())
-                    .map(|container| (container.image.clone(), lifecycle))
-            })
-            .ok_or_else(|| RunError::MissingContainerImage {
+        Backend::Container => {
+            let Some(container) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+            else {
+                return Err(RunError::MissingContainerImage {
+                    task: task_name.to_string(),
+                });
+            };
+
+            let engine = selected_container_engine(contract).ok_or_else(|| {
+                RunError::MissingContainerBackendCli {
+                    task: task_name.to_string(),
+                    engines: container_engine_candidates(contract).join(", "),
+                }
+            })?;
+
+            let lifecycle = lifecycle.ok_or_else(|| RunError::MissingContainerLifecycle {
                 task: task_name.to_string(),
+            })?;
+
+            Ok(ResolvedExecutionBackend::Container {
+                image: container.image.clone(),
+                engine,
+                lifecycle,
             })
-            .and_then(|(image, lifecycle)| {
-                lifecycle
-                    .map(|lifecycle| ResolvedExecutionBackend::Container { image, lifecycle })
-                    .ok_or_else(|| RunError::MissingContainerLifecycle {
-                        task: task_name.to_string(),
-                    })
-            }),
+        }
         Backend::Remote => contract
             .execution
             .as_ref()
@@ -992,6 +1022,7 @@ fn execute_container_task_command(
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
+    engine: &str,
     lifecycle: Lifecycle,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
@@ -1002,6 +1033,7 @@ fn execute_container_task_command(
             working_dir,
             env_overrides,
             image,
+            engine,
             mode,
         ),
         Lifecycle::Persistent => execute_persistent_container_task_command(
@@ -1010,6 +1042,7 @@ fn execute_container_task_command(
             working_dir,
             env_overrides,
             image,
+            engine,
             mode,
         ),
     }
@@ -1021,10 +1054,11 @@ fn execute_ephemeral_container_task_command(
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
+    engine: &str,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let mut docker = Command::new("docker");
-    docker
+    let mut container = Command::new(engine);
+    container
         .arg("run")
         .arg("--rm")
         .arg("-i")
@@ -1033,13 +1067,13 @@ fn execute_ephemeral_container_task_command(
         .arg("-w")
         .arg("/workspace");
     for (name, value) in env_overrides {
-        docker.arg("--env").arg(format!("{name}={value}"));
+        container.arg("--env").arg(format!("{name}={value}"));
     }
-    docker.arg(image).arg("sh").arg("-lc").arg(command);
+    container.arg(image).arg("sh").arg("-lc").arg(command);
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let status = docker
+            let status = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
@@ -1057,7 +1091,7 @@ fn execute_ephemeral_container_task_command(
             })
         }
         TaskExecutionMode::Capture => {
-            let output = docker
+            let output = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1084,14 +1118,16 @@ fn execute_persistent_container_task_command(
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
     image: &str,
+    engine: &str,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let container_name = persistent_container_name(working_dir, image);
+    let container_name = persistent_container_name(working_dir, image, engine);
 
     let inspect_exit_code =
-        docker_command_exit_code(&["inspect", &container_name], None, task_name)?;
+        container_command_exit_code(engine, &["inspect", &container_name], None, task_name)?;
     if inspect_exit_code != 0 {
-        let status = docker_command_exit_code(
+        let status = container_command_exit_code(
+            engine,
             &[
                 "run",
                 "-d",
@@ -1118,7 +1154,8 @@ fn execute_persistent_container_task_command(
             });
         }
     } else {
-        let status = docker_command_exit_code(&["start", &container_name], None, task_name)?;
+        let status =
+            container_command_exit_code(engine, &["start", &container_name], None, task_name)?;
         if status != 0 {
             return Ok(TaskCommandOutput {
                 exit_code: status,
@@ -1129,12 +1166,12 @@ fn execute_persistent_container_task_command(
         }
     }
 
-    let mut docker = Command::new("docker");
-    docker.arg("exec").arg("-i");
+    let mut container = Command::new(engine);
+    container.arg("exec").arg("-i");
     for (name, value) in env_overrides {
-        docker.arg("--env").arg(format!("{name}={value}"));
+        container.arg("--env").arg(format!("{name}={value}"));
     }
-    docker
+    container
         .arg(&container_name)
         .arg("sh")
         .arg("-lc")
@@ -1142,7 +1179,7 @@ fn execute_persistent_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let status = docker
+            let status = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
@@ -1160,7 +1197,7 @@ fn execute_persistent_container_task_command(
             })
         }
         TaskExecutionMode::Capture => {
-            let output = docker
+            let output = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1181,28 +1218,30 @@ fn execute_persistent_container_task_command(
     }
 }
 
-fn docker_command_exit_code(
+fn container_command_exit_code(
+    engine: &str,
     args: &[&str],
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<i32, RunError> {
-    let mut docker = Command::new("docker");
-    docker.args(args);
-    docker.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut container = Command::new(engine);
+    container.args(args);
+    container.stdout(Stdio::null()).stderr(Stdio::null());
     if let Some(working_dir) = working_dir {
-        docker.current_dir(working_dir);
+        container.current_dir(working_dir);
     }
-    let status = docker.status().map_err(|source| RunError::SpawnFailed {
+    let status = container.status().map_err(|source| RunError::SpawnFailed {
         task: task_name.to_string(),
         source,
     })?;
     Ok(status.code().unwrap_or(1))
 }
 
-pub(crate) fn persistent_container_name(working_dir: &Path, image: &str) -> String {
+pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
     let mut hasher = DefaultHasher::new();
     working_dir.display().to_string().hash(&mut hasher);
     image.hash(&mut hasher);
+    engine.hash(&mut hasher);
     format!("ota-{:x}", hasher.finish())
 }
 
@@ -1678,6 +1717,85 @@ tasks:
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.executed_tasks, vec!["setup"]);
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("docker-image.txt")).unwrap(),
+            "ghcr.io/ota/test:latest"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("env.txt")).unwrap(),
+            "from-container"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("run-ephemeral")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_tasks_in_configured_container_backend_with_podman_when_docker_is_missing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+      engines:
+        - podman
+env:
+  OTA_CONTAINER_FLAG:
+    default: from-container
+tasks:
+  setup:
+    script: |
+      printf "$OTA_CONTAINER_FLAG" > env.txt
+      printf ready > prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -2267,7 +2385,7 @@ tasks:
     }
 
     #[cfg(unix)]
-    fn install_fake_docker(path: &Path) {
+    fn install_fake_container_engine(path: &Path) {
         fs::write(
             path,
             r#"#!/bin/sh
@@ -2374,6 +2492,11 @@ exit 1
 "#,
         )
         .unwrap();
+    }
+
+    #[cfg(unix)]
+    fn install_fake_docker(path: &Path) {
+        install_fake_container_engine(path);
     }
 
     fn install_fake_daytona(path: &Path) {

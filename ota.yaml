@@ -38,6 +38,9 @@ execution:
   backends:
     container:
       image: rust:1.85
+      engines:
+        - docker
+        - podman
 tools:
   cargo: "*"
 checks:
