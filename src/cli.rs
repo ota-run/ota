@@ -2276,6 +2276,7 @@ project:
         assert!(stdout.contains("EXPLAIN"));
         assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("Code:"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(stdout.contains("Why:"));
         assert!(stdout.contains("Next:"));
@@ -2364,6 +2365,7 @@ project:
         assert!(stdout.contains("WORKSPACE EXPLAIN"));
         assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("Code:"));
         assert!(stdout.contains("api"));
         assert!(stdout.contains("web"));
         assert!(stdout.contains("No tasks defined in contract"));
