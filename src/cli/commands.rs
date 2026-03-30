@@ -10193,7 +10193,11 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     .clone()
                     .or(task.script.clone())
                     .unwrap_or_else(|| String::from("-")),
-                format!("`ota workspace run {} --repo {}`", task.name, repo.name),
+                format!(
+                    "`ota run {} {}`",
+                    task.name,
+                    compact_repo_path(Path::new(&repo.path))
+                ),
             ]
         })
     });
