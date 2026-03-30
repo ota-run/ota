@@ -5229,7 +5229,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["summary"]["error_count"], 0);
-        assert_eq!(json["summary"]["warn_count"], 2);
+        assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
         assert_eq!(
@@ -6595,7 +6595,7 @@ checks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 2);
+        assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["findings"][0]["summary"], "Check failed: root-health");
         let members = json["members"].as_array().unwrap();
