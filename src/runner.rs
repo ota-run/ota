@@ -26,6 +26,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::cli::plain_mode;
 use crate::schema::{Backend, Contract, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
@@ -802,28 +803,74 @@ pub(crate) fn task_execution_banner(
     task_name: &str,
 ) -> Option<String> {
     let backend = resolve_execution_backend(contract, task_name, overrides).ok()?;
+    let (_, lifecycle) = effective_execution(contract, overrides);
     match backend {
-        ResolvedExecutionBackend::Native => Some(format!(
-            "MODE: native\nTASK: {task_name}\nNOTE: running on the host environment"
-        )),
+        ResolvedExecutionBackend::Native => {
+            let note = match lifecycle {
+                Some(Lifecycle::Ephemeral) => {
+                    "running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1"
+                }
+                _ => "running on the host environment",
+            };
+            Some(render_execution_summary_text(
+                task_name,
+                "native",
+                None,
+                None,
+                note,
+            ))
+        }
         ResolvedExecutionBackend::Container { image, lifecycle } => {
             let working_dir = contract_working_dir(contract_path);
             match lifecycle {
                 Lifecycle::Persistent => {
                     let container_name = persistent_container_name(working_dir, &image);
-                    Some(format!(
-                        "MODE: container\nTASK: {task_name}\nTARGET: `{container_name}`\nLIFECYCLE: persistent\nNOTE: reusing persistent container backend"
+                    Some(render_execution_summary_text(
+                        task_name,
+                        "container",
+                        Some(&format!("`{container_name}`")),
+                        Some("persistent"),
+                        "reusing persistent container backend",
                     ))
                 }
-                Lifecycle::Ephemeral => Some(format!(
-                    "MODE: container\nTASK: {task_name}\nTARGET: `{image}`\nLIFECYCLE: ephemeral\nNOTE: using a fresh container image for this run"
+                Lifecycle::Ephemeral => Some(render_execution_summary_text(
+                    task_name,
+                    "container",
+                    Some(&format!("`{image}`")),
+                    Some("ephemeral"),
+                    "using a fresh container image for this run",
                 )),
             }
         }
-        ResolvedExecutionBackend::Remote { provider, target, .. } => Some(format!(
-            "MODE: remote ({provider})\nTASK: {task_name}\nTARGET: `{target}`\nNOTE: executing through the `{provider}` remote backend"
+        ResolvedExecutionBackend::Remote { provider, target, .. } => Some(render_execution_summary_text(
+            task_name,
+            &format!("remote ({provider})"),
+            Some(&format!("`{target}`")),
+            None,
+            &format!("executing through the `{provider}` remote backend"),
         )),
     }
+}
+
+fn render_execution_summary_text(
+    task_name: &str,
+    mode: &str,
+    target: Option<&str>,
+    lifecycle: Option<&str>,
+    note: &str,
+) -> String {
+    let mut lines = vec![String::new(), paint("🦦 RUN SUMMARY", "1;36")];
+    lines.push(String::new());
+    lines.push(format!("Mode:       {mode}"));
+    if let Some(target) = target {
+        lines.push(format!("Target:     {target}"));
+    }
+    lines.push(format!("Task:         {task_name}"));
+    if let Some(lifecycle) = lifecycle {
+        lines.push(format!("Lifecycle:  {lifecycle}"));
+    }
+    lines.push(format!("Note:       {note}"));
+    lines.join("\n")
 }
 
 fn remote_target_example(provider: &str) -> &'static str {
