@@ -30,17 +30,10 @@ metadata:
   owner: ota
   repo_class: open-core
 execution:
-  preferred: container
+  preferred: native
   lifecycle: persistent
   supported:
     - native
-    - container
-  backends:
-    container:
-      image: rust:1.85
-      engines:
-        - docker
-        - podman
 tools:
   cargo: "*"
 checks:

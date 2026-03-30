@@ -7512,16 +7512,21 @@ fn render_report_section(
         }
     }
     if let Some(summary) = summary {
+        stdout.push_str("\n\n");
+        stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
         stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Repo Verdict:"),
+            " {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Repo:"),
             render_doctor_verdict(summary.verdict)
         ));
         stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Agent Verdict:"),
+            "\n {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Agent:"),
             render_doctor_verdict(summary.agent_verdict)
         ));
+        stdout.push_str("\n\n");
     }
 
     if let Some(execution) = execution {
@@ -7729,49 +7734,73 @@ fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
 }
 
 fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
-    let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("Execution")));
+    let mut stdout = String::new();
+    stdout.push_str(&format!("{}\n", paint_section_title("Execution")));
     if let Some(preferred) = execution.preferred {
-        stdout.push_str(&format!("\n{} {}", paint_key("Preferred:"), preferred));
+        stdout.push_str(&format!(
+            " {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Preferred:"),
+            preferred
+        ));
     }
     if !execution.supported.is_empty() {
         stdout.push_str(&format!(
-            "\n{} {}",
+            "\n {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
             paint_key("Supported:"),
             execution.supported.join(", ")
         ));
     }
     if let Some(lifecycle) = execution.lifecycle {
-        stdout.push_str(&format!("\n{} {}", paint_key("Lifecycle:"), lifecycle));
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Lifecycle:"),
+            lifecycle
+        ));
     }
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
             stdout.push_str(&format!(
-                "\n{} {}",
+                "\n {}  {} {}",
+                paint("→", "1;38;2;255;214;95"),
                 paint_key("Container:"),
                 container.image
             ));
         }
         if let Some(remote) = backends.remote.as_ref() {
             stdout.push_str(&format!(
-                "\n{} {}",
+                "\n {}  {} {}",
+                paint("→", "1;38;2;255;214;95"),
                 paint_key("Remote Provider:"),
                 remote.provider
             ));
             if let Some(target) = remote.target {
-                stdout.push_str(&format!("\n{} {}", paint_key("Remote Target:"), target));
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    paint("→", "1;38;2;255;214;95"),
+                    paint_key("Remote Target:"),
+                    target
+                ));
             }
             if let Some(cwd) = remote.cwd {
-                stdout.push_str(&format!("\n{} {}", paint_key("Remote Cwd:"), cwd));
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    paint("→", "1;38;2;255;214;95"),
+                    paint_key("Remote Cwd:"),
+                    cwd
+                ));
             }
         }
     }
     if !execution.env.is_empty() {
         stdout.push_str(&format!(
-            "\n{} process env > contract default > required missing",
+            "\n {}  {} process env > contract default > required missing",
+            paint("→", "1;38;2;255;214;95"),
             paint_key("Env precedence:")
         ));
-        stdout.push_str("\nEnv:");
+        stdout.push_str(&format!("\n {}  Env:", paint("→", "1;38;2;255;214;95")));
         for item in &execution.env {
             let mut details = Vec::new();
             if item.required {
@@ -7784,7 +7813,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
                 details.push(format!("allowed={}", item.allowed.join(", ")));
             }
             stdout.push_str(&format!(
-                "\n  {} {}",
+                "\n    {} {}",
                 paint_key(item.name),
                 details.join(", ")
             ));
@@ -9667,40 +9696,63 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
 
 fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> String {
     let mut stdout = String::from("\n");
-    stdout.push_str(&format!("\n{}", paint_key("Execution:")));
+    stdout.push_str(&format!("\n{}\n", paint_section_title("Execution")));
 
     if let Some(preferred) = execution.preferred.as_deref() {
-        stdout.push_str(&format!("\n  {} {}", paint_key("Preferred:"), preferred));
+        stdout.push_str(&format!(
+            " {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Preferred:"),
+            preferred
+        ));
     }
     if !execution.supported.is_empty() {
         stdout.push_str(&format!(
-            "\n  {} {}",
+            "\n {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
             paint_key("Supported:"),
             execution.supported.join(", ")
         ));
     }
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
-        stdout.push_str(&format!("\n  {} {}", paint_key("Lifecycle:"), lifecycle));
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Lifecycle:"),
+            lifecycle
+        ));
     }
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
             stdout.push_str(&format!(
-                "\n  {} {}",
+                "\n {}  {} {}",
+                paint("→", "1;38;2;255;214;95"),
                 paint_key("Container:"),
                 container.image
             ));
         }
         if let Some(remote) = backends.remote.as_ref() {
             stdout.push_str(&format!(
-                "\n  {} {}",
+                "\n {}  {} {}",
+                paint("→", "1;38;2;255;214;95"),
                 paint_key("Remote Provider:"),
                 remote.provider
             ));
             if let Some(target) = remote.target.as_deref() {
-                stdout.push_str(&format!("\n  {} {}", paint_key("Remote Target:"), target));
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    paint("→", "1;38;2;255;214;95"),
+                    paint_key("Remote Target:"),
+                    target
+                ));
             }
             if let Some(cwd) = remote.cwd.as_deref() {
-                stdout.push_str(&format!("\n  {} {}", paint_key("Remote Cwd:"), cwd));
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    paint("→", "1;38;2;255;214;95"),
+                    paint_key("Remote Cwd:"),
+                    cwd
+                ));
             }
         }
     }
