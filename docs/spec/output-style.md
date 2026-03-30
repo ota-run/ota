@@ -38,6 +38,7 @@ This document defines the text rendering contract for Ota command output.
 - list bullets use `▸` in rich text mode
 - field labels use one consistent key color in TTY mode
 - command examples use Ota command accent color in TTY mode
+- banner and update surfaces use one consistent light brown/gold accent in TTY mode (`214,161,95`)
 - key commands include one consistent signature line: `doctor first, contract second`
 - sections are separated with explicit spacing (`---` where used today)
 - per-item output (tasks/repos/findings) keeps one blank line between items
