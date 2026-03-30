@@ -1405,7 +1405,7 @@ pub fn doctor(
                         stdout: to_json(&DoctorSuccess {
                             ok: false,
                             path: &start,
-                            summary: doctor_summary(&report),
+                            summary: doctor_summary(&report, DoctorVerdict::NotReady),
                             agent: None,
                             execution: None,
                             extensions: &empty_extensions,
@@ -1469,7 +1469,10 @@ pub fn doctor(
                         &report,
                     )];
                     let mut member_results = Vec::new();
-                    let mut check_summary = doctor_summary(&report);
+                    let mut check_summary = doctor_summary(
+                        &report,
+                        crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                    );
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
                         for member in &workspace.members {
@@ -1533,7 +1536,13 @@ pub fn doctor(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
-                            add_doctor_summary(&mut check_summary, &member_report);
+                            add_doctor_summary(
+                                &mut check_summary,
+                                &member_report,
+                                crate::workspace::agent_verdict_from_agent(
+                                    member_target.contract.agent.as_ref(),
+                                ),
+                            );
                             let member_agent = member_target
                                 .contract
                                 .agent
@@ -1594,7 +1603,12 @@ pub fn doctor(
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
                                     path: &path_display,
-                                    summary: doctor_summary(&report),
+                                    summary: doctor_summary(
+                                        &report,
+                                        crate::workspace::agent_verdict_from_agent(
+                                            target.contract.agent.as_ref(),
+                                        ),
+                                    ),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
                                     extensions: &target.contract.extensions,
@@ -2047,7 +2061,10 @@ pub fn check(
                         None,
                     )];
                     let mut member_results = Vec::new();
-                    let mut check_summary = doctor_summary(&report);
+                    let mut check_summary = doctor_summary(
+                        &report,
+                        crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                    );
 
                     if let Some(workspace) = target.contract.workspace.as_ref() {
                         for member in &workspace.members {
@@ -2106,7 +2123,13 @@ pub fn check(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
-                            add_doctor_summary(&mut check_summary, &member_report);
+                            add_doctor_summary(
+                                &mut check_summary,
+                                &member_report,
+                                crate::workspace::agent_verdict_from_agent(
+                                    member_target.contract.agent.as_ref(),
+                                ),
+                            );
                             let member_execution =
                                 ExecutionSummary::from_contract(&member_target.contract);
                             text_sections.push(render_report_section(
@@ -2166,7 +2189,12 @@ pub fn check(
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
                                     path: &path_display,
-                                    summary: doctor_summary(&report),
+                                    summary: doctor_summary(
+                                        &report,
+                                        crate::workspace::agent_verdict_from_agent(
+                                            target.contract.agent.as_ref(),
+                                        ),
+                                    ),
                                     agent: None,
                                     execution: ExecutionSummary::from_contract(&target.contract),
                                     extensions: &target.contract.extensions,
@@ -6949,7 +6977,7 @@ fn render_doctor_text(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
-    let summary = doctor_summary(&report);
+    let summary = doctor_summary(&report, agent_verdict_from_summary(agent));
     let first_why = report.findings.first().map(|finding| finding.why.clone());
     let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
     if output.stderr.is_none()
@@ -6968,9 +6996,10 @@ fn render_doctor_text(
     output
 }
 
-fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
+fn doctor_summary(report: &DoctorReport, agent_verdict: DoctorVerdict) -> DoctorSummary {
     let mut summary = DoctorSummary::default();
-    summary.verdict = doctor_verdict_from_findings(&report.findings);
+    summary.verdict = repo_verdict_from_findings(&report.findings);
+    summary.agent_verdict = agent_verdict;
     for finding in &report.findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
@@ -6982,7 +7011,11 @@ fn doctor_summary(report: &DoctorReport) -> DoctorSummary {
     summary
 }
 
-fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
+fn add_doctor_summary(
+    summary: &mut DoctorSummary,
+    report: &DoctorReport,
+    agent_verdict: DoctorVerdict,
+) {
     for finding in &report.findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
@@ -6990,6 +7023,11 @@ fn add_doctor_summary(summary: &mut DoctorSummary, report: &DoctorReport) {
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
+    summary.verdict = worse_verdict(
+        summary.verdict,
+        repo_verdict_from_findings(&report.findings),
+    );
+    summary.agent_verdict = worse_verdict(summary.agent_verdict, agent_verdict);
     if let Some(candidate) = primary_blocker_from_findings(&report.findings) {
         summary.primary_blocker = match summary.primary_blocker.take() {
             Some(existing)
@@ -7033,6 +7071,8 @@ fn workspace_doctor_summary(
             summary.not_ready_count += 1;
         }
 
+        summary.agent_verdict = worse_verdict(summary.agent_verdict, repo.agent_verdict);
+
         for finding in &repo.findings {
             match finding.severity {
                 FindingSeverity::Error => summary.error_count += 1,
@@ -7042,7 +7082,7 @@ fn workspace_doctor_summary(
         }
     }
 
-    summary.verdict = doctor_verdict_from_findings(
+    summary.verdict = repo_verdict_from_findings(
         &report
             .repos
             .iter()
@@ -7054,7 +7094,7 @@ fn workspace_doctor_summary(
     summary
 }
 
-fn doctor_verdict_from_findings(findings: &[Finding]) -> DoctorVerdict {
+fn repo_verdict_from_findings(findings: &[Finding]) -> DoctorVerdict {
     if findings.iter().any(|finding| {
         finding.code() == "OTA_POLICY_PACK_VIOLATION" || finding.code() == "OTA_POLICY_PACK_INVALID"
     }) {
@@ -7083,6 +7123,40 @@ fn doctor_verdict_from_findings(findings: &[Finding]) -> DoctorVerdict {
     }
 
     DoctorVerdict::Ready
+}
+
+fn agent_verdict_from_summary(agent: Option<&AgentSummary<'_>>) -> DoctorVerdict {
+    let Some(agent) = agent else {
+        return DoctorVerdict::NotReady;
+    };
+
+    if agent.entrypoint.is_none() && agent.default_task.is_none() {
+        return DoctorVerdict::NotReady;
+    }
+
+    if agent.safe_tasks.is_empty() || agent.writable_paths.is_empty() {
+        return DoctorVerdict::Risky;
+    }
+
+    DoctorVerdict::Ready
+}
+
+fn worse_verdict(existing: DoctorVerdict, candidate: DoctorVerdict) -> DoctorVerdict {
+    if verdict_rank(candidate) >= verdict_rank(existing) {
+        candidate
+    } else {
+        existing
+    }
+}
+
+fn verdict_rank(verdict: DoctorVerdict) -> usize {
+    match verdict {
+        DoctorVerdict::Ready => 0,
+        DoctorVerdict::Risky => 1,
+        DoctorVerdict::NotReady => 2,
+        DoctorVerdict::PolicyBlocked => 3,
+        DoctorVerdict::AgentBlocked => 4,
+    }
 }
 
 fn workspace_explain_summary(
@@ -7201,7 +7275,7 @@ fn render_doctor_section(
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
-    let summary = doctor_summary(report);
+    let summary = doctor_summary(report, agent_verdict_from_summary(agent));
     let mut output =
         render_report_section("DOCTOR", path, agent, execution, report, Some(&summary));
     if !extensions.is_empty() {
@@ -11836,6 +11910,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             contract_path: contract_path_display,
             required: repo.required,
             ok: !repo.required,
+            agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
@@ -11875,6 +11950,9 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     contract_path: contract_path_display.clone(),
                     required: repo.required,
                     ok: !repo.required,
+                    agent_verdict: crate::workspace::agent_verdict_from_agent(
+                        contract.agent.as_ref(),
+                    ),
                     execution: WorkspaceExecutionSummary::from_contract(&contract),
                     extensions: contract.extensions.clone(),
                     findings: error
@@ -11911,6 +11989,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                 ok: !findings
                     .iter()
                     .any(|finding| finding.severity == FindingSeverity::Error),
+                agent_verdict: crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 execution: WorkspaceExecutionSummary::from_contract(&contract),
                 extensions: contract.extensions.clone(),
                 findings,
@@ -11922,6 +12001,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             contract_path: contract_path_display.clone(),
             required: repo.required,
             ok: !repo.required,
+            agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {

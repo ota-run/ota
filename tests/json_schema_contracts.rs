@@ -58,6 +58,11 @@ fn doctor_schema_includes_agent_summary() {
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
     assert!(properties["summary"]["properties"].get("verdict").is_some());
+    assert!(
+        properties["summary"]["properties"]
+            .get("agent_verdict")
+            .is_some()
+    );
 }
 
 #[test]
@@ -135,7 +140,9 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
+    assert!(repo.get("agent_verdict").is_some());
     assert!(summary.get("verdict").is_some());
+    assert!(summary.get("agent_verdict").is_some());
 }
 
 #[test]

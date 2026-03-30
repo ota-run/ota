@@ -16,6 +16,7 @@
         "ready_count",
         "not_ready_count",
         "verdict",
+        "agent_verdict",
         "error_count",
         "warn_count",
         "info_count"
@@ -25,6 +26,9 @@
         "ready_count": { "type": "integer", "minimum": 0 },
         "not_ready_count": { "type": "integer", "minimum": 0 },
         "verdict": {
+          "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+        },
+        "agent_verdict": {
           "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
         },
         "error_count": { "type": "integer", "minimum": 0 },
@@ -44,6 +48,9 @@
             "contract_path": { "type": "string" },
             "required": { "type": "boolean" },
             "ok": { "type": "boolean" },
+            "agent_verdict": {
+              "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+            },
             "execution": {
               "type": "object",
               "additionalProperties": false,

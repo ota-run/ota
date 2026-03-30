@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
 use crate::execution::{format_backend, format_lifecycle};
+use crate::output::DoctorVerdict;
 use crate::parser::{LoadContractError, load_contract};
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
@@ -178,6 +179,7 @@ pub struct WorkspaceRepoDoctorReport {
     pub contract_path: String,
     pub required: bool,
     pub ok: bool,
+    pub agent_verdict: DoctorVerdict,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<WorkspaceExecutionSummary>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -606,6 +608,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             contract_path: repo.contract_path.display().to_string(),
             required: repo.required,
             ok: !repo.required,
+            agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             extensions: BTreeMap::new(),
             findings,
@@ -614,11 +617,13 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
 
     let mut execution = None;
     let mut extensions = BTreeMap::new();
+    let mut agent_verdict = DoctorVerdict::NotReady;
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
                 execution = WorkspaceExecutionSummary::from_contract(&contract);
                 extensions = contract.extensions.clone();
+                agent_verdict = agent_verdict_from_agent(contract.agent.as_ref());
                 adjust_repo_findings(
                     diagnose_contract(&contract, &repo.contract_path),
                     repo.required,
@@ -685,6 +690,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
         contract_path: repo.contract_path.display().to_string(),
         required: repo.required,
         ok,
+        agent_verdict,
         execution,
         extensions,
         findings,
@@ -811,6 +817,24 @@ fn repo_finding(required: bool, summary: String, why: String, next: String) -> F
         why,
         next,
     }
+}
+
+pub(crate) fn agent_verdict_from_agent(
+    agent: Option<&crate::schema::AgentConfig>,
+) -> DoctorVerdict {
+    let Some(agent) = agent else {
+        return DoctorVerdict::NotReady;
+    };
+
+    if agent.entrypoint.is_none() && agent.default_task.is_none() {
+        return DoctorVerdict::NotReady;
+    }
+
+    if agent.safe_tasks.is_empty() || agent.writable_paths.is_empty() {
+        return DoctorVerdict::Risky;
+    }
+
+    DoctorVerdict::Ready
 }
 
 fn detect_workspace_repo_cycles(

@@ -5211,6 +5211,8 @@ policies:
         assert_eq!(finding["evidence"]["source"], "org_policy");
         assert!(finding["evidence"]["observed"].is_string());
         assert!(finding["evidence"]["expected"].is_string());
+        assert_eq!(json["summary"]["verdict"], "policy_blocked");
+        assert_eq!(json["summary"]["agent_verdict"], "not_ready");
     }
 
     #[test]
@@ -6612,6 +6614,8 @@ checks:
         assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
+        assert_eq!(json["summary"]["verdict"], "not_ready");
+        assert_eq!(json["summary"]["agent_verdict"], "not_ready");
         assert_eq!(json["findings"][0]["summary"], "Check failed: root-health");
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
@@ -10391,6 +10395,8 @@ env:
         assert_eq!(json["summary"]["repo_count"], 1);
         assert_eq!(json["summary"]["ready_count"], 0);
         assert_eq!(json["summary"]["not_ready_count"], 1);
+        assert_eq!(json["summary"]["verdict"], "not_ready");
+        assert_eq!(json["summary"]["agent_verdict"], "not_ready");
         assert_eq!(json["summary"]["error_count"], 2);
         assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);

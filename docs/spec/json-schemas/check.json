@@ -4,10 +4,37 @@
   "title": "ota check --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "findings"],
+  "required": ["ok", "path", "summary", "findings"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "agent_verdict", "error_count", "warn_count", "info_count"],
+      "properties": {
+        "verdict": {
+          "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+        },
+        "agent_verdict": {
+          "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+        },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 },
+        "primary_blocker": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["severity", "summary", "why", "next"],
+          "properties": {
+            "severity": { "enum": ["error", "warn", "info"] },
+            "summary": { "type": "string" },
+            "why": { "type": "string" },
+            "next": { "type": "string" }
+          }
+        }
+      }
+    },
     "findings": {
       "type": "array",
       "items": { "$ref": "./shared.json#/$defs/finding" }
