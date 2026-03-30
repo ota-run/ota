@@ -760,28 +760,6 @@ fn spawn_update_notice() -> mpsc::Receiver<Option<String>> {
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
-    let spinner_eligible = matches!(
-        &cli.command,
-        Commands::Validate { .. }
-            | Commands::Tasks { .. }
-            | Commands::Services { .. }
-            | Commands::Doctor { .. }
-            | Commands::Check { .. }
-            | Commands::Diff { .. }
-            | Commands::Extensions { .. }
-            | Commands::Init { .. }
-            | Commands::Detect { .. }
-            | Commands::SelfUpdate { .. }
-            | Commands::Workspace {
-                command: WorkspaceCommands::Validate { .. }
-                    | WorkspaceCommands::Tasks { .. }
-                    | WorkspaceCommands::List { .. }
-                    | WorkspaceCommands::Doctor { stream: false, .. }
-                    | WorkspaceCommands::Explain { .. }
-                    | WorkspaceCommands::Detect { .. }
-                    | WorkspaceCommands::Init { .. },
-            }
-    );
     let json_spinner_exception = matches!(
         &cli.command,
         Commands::Doctor { .. }
@@ -798,8 +776,32 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
     io::stderr().is_terminal()
         && !cli.plain
         && !cli.debug
-        && spinner_eligible
+        && command_supports_spinner(&cli.command)
         && (!command_requests_json(&cli.command) || json_spinner_exception)
+}
+
+fn command_supports_spinner(command: &Commands) -> bool {
+    matches!(
+        command,
+        Commands::Validate { .. }
+            | Commands::Tasks { .. }
+            | Commands::Services { .. }
+            | Commands::Doctor { .. }
+            | Commands::Check { .. }
+            | Commands::Diff { .. }
+            | Commands::Extensions { .. }
+            | Commands::Init { .. }
+            | Commands::Detect { .. }
+            | Commands::Workspace {
+                command: WorkspaceCommands::Validate { .. }
+                    | WorkspaceCommands::Tasks { .. }
+                    | WorkspaceCommands::List { .. }
+                    | WorkspaceCommands::Doctor { stream: false, .. }
+                    | WorkspaceCommands::Explain { .. }
+                    | WorkspaceCommands::Detect { .. }
+                    | WorkspaceCommands::Init { .. },
+            }
+    )
 }
 
 fn should_show_update_notice(cli: &Cli) -> bool {
@@ -4428,6 +4430,16 @@ tasks:
                 "\n\x1b[1mA newer `\x1b[38;5;130mota\x1b[39m` release is available: \x1b[92mv9.9.9\x1b[39m\nRun `\x1b[38;5;130mota self-update\x1b[39m` or `\x1b[38;5;130mota upgrade\x1b[39m` to update.\x1b[0m"
             ))
         );
+    }
+
+    #[test]
+    fn self_update_does_not_use_command_spinner() {
+        assert!(!super::command_supports_spinner(
+            &super::Commands::SelfUpdate {
+                version: None,
+                channel: None,
+            }
+        ));
     }
 
     #[test]

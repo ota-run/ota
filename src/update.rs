@@ -22,9 +22,14 @@
 
 use std::env;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value as JsonValue;
@@ -125,6 +130,40 @@ fn run_command_streaming(mut command: Command) -> CommandOutput {
         },
         Err(error) => CommandOutput::failure(error.to_string()),
     }
+}
+
+fn run_with_spinner<F>(work: F) -> CommandOutput
+where
+    F: FnOnce() -> CommandOutput,
+{
+    if !std::io::stderr().is_terminal() {
+        return work();
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let mut index = 0usize;
+        let mut stderr = std::io::stderr();
+        while !thread_stop.load(Ordering::Relaxed) {
+            let frame = frames[index % frames.len()];
+            let _ = write!(stderr, "\r🦦 {frame}");
+            let _ = stderr.flush();
+            index += 1;
+            thread::sleep(std::time::Duration::from_millis(160));
+        }
+    });
+
+    let output = work();
+    stop.store(true, Ordering::Relaxed);
+    let _ = handle.join();
+
+    let mut stderr = std::io::stderr();
+    let _ = write!(stderr, "\r\x1b[2K\r\n");
+    let _ = stderr.flush();
+
+    output
 }
 
 fn download_installer(url: &str, path: &Path) -> CommandOutput {
@@ -279,7 +318,7 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
     let release_base = env::var("OTA_RELEASE_BASE").ok();
     let script_path = temp_script_path();
 
-    let download = download_installer(&installer, &script_path);
+    let download = run_with_spinner(|| download_installer(&installer, &script_path));
     if download.exit_code != 0 {
         return download;
     }
