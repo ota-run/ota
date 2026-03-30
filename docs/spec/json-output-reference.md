@@ -21,8 +21,10 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
 - [json-schemas/workspace-check.json](json-schemas/workspace-check.json)
 - [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
+- [json-schemas/workspace-explain.json](json-schemas/workspace-explain.json)
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 - [json-schemas/diff.json](json-schemas/diff.json)
+- [json-schemas/explain.json](json-schemas/explain.json)
 
 ## General notes
 

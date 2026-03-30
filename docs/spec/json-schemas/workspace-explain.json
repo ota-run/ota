@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-explain.json",
+  "title": "ota workspace explain --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "summary", "repos"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_count",
+        "ready_count",
+        "not_ready_count",
+        "error_count",
+        "warn_count",
+        "info_count",
+        "step_count"
+      ],
+      "properties": {
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "ready_count": { "type": "integer", "minimum": 0 },
+        "not_ready_count": { "type": "integer", "minimum": 0 },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 },
+        "step_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "path", "contract_path", "required", "ok", "summary", "steps"],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "ok": { "type": "boolean" },
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["error_count", "warn_count", "info_count", "step_count"],
+            "properties": {
+              "error_count": { "type": "integer", "minimum": 0 },
+              "warn_count": { "type": "integer", "minimum": 0 },
+              "info_count": { "type": "integer", "minimum": 0 },
+              "step_count": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["order", "severity", "summary", "why", "next"],
+              "properties": {
+                "order": { "type": "integer", "minimum": 1 },
+                "severity": { "enum": ["error", "warn", "info"] },
+                "summary": { "type": "string" },
+                "why": { "type": "string" },
+                "next": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

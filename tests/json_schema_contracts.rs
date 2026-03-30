@@ -259,3 +259,39 @@ fn diff_schema_includes_readiness_impact_summary() {
     assert!(summary.get("weakened_count").is_some());
     assert!(summary.get("strengthened_count").is_some());
 }
+
+#[test]
+fn explain_schema_includes_steps_and_summary_counts() {
+    let schema = load_schema("docs/spec/json-schemas/explain.json");
+    let summary = &schema["properties"]["summary"]["properties"];
+    let step = &schema["properties"]["steps"]["items"]["properties"];
+
+    assert!(summary.get("error_count").is_some());
+    assert!(summary.get("warn_count").is_some());
+    assert!(summary.get("info_count").is_some());
+    assert!(summary.get("step_count").is_some());
+    assert!(step.get("order").is_some());
+    assert!(step.get("severity").is_some());
+    assert!(step.get("summary").is_some());
+    assert!(step.get("why").is_some());
+    assert!(step.get("next").is_some());
+}
+
+#[test]
+fn workspace_explain_schema_includes_repo_steps() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-explain.json");
+    let summary = &schema["properties"]["summary"]["properties"];
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let step = &repo["steps"]["items"]["properties"];
+
+    assert!(summary.get("repo_count").is_some());
+    assert!(summary.get("ready_count").is_some());
+    assert!(summary.get("not_ready_count").is_some());
+    assert!(summary.get("step_count").is_some());
+    assert!(repo.get("contract_path").is_some());
+    assert!(repo.get("summary").is_some());
+    assert!(repo.get("steps").is_some());
+    assert!(step.get("order").is_some());
+    assert!(step.get("severity").is_some());
+    assert!(step.get("summary").is_some());
+}
