@@ -880,7 +880,7 @@ impl CommandSpinner {
         Self {
             stop,
             handle: Some(handle),
-            clear_on_stop: false,
+            clear_on_stop: true,
         }
     }
 
