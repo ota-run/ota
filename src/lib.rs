@@ -21,8 +21,10 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 pub mod cli;
+pub(crate) mod contract_drift;
 pub mod detector;
 pub mod doctor;
+pub(crate) mod execution;
 pub mod output;
 pub mod parser;
 pub mod policy_pack;

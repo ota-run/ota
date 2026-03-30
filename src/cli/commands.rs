@@ -36,37 +36,41 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use super::{AnnotationFormat, AnnotationMode};
+use crate::contract_drift::{
+    append_contract_drift_findings, collect_detect_changes, collect_detect_removals,
+};
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorReport, Finding, FindingSeverity, command_available, command_version,
     diagnose_checks_only, diagnose_contract, diagnose_preconditions, diagnose_service,
     diagnose_services_only,
 };
+use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
-    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
-    DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
-    DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
-    MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
+    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorPrimaryBlocker,
+    DoctorSuccess, DoctorSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
+    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
+    WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
     parse_contract_str,
 };
 use crate::runner::{
-    ExecutionOverrides, RunError, clean_execution, effective_execution, persistent_container_name,
-    resolve_task_env_details, run_task_captured_with_args_with_overrides,
-    run_task_captured_with_overrides, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides, run_task_with_progress_and_overrides,
+    ExecutionOverrides, RunError, clean_execution, effective_execution, resolve_task_env_details,
+    run_task_captured_with_args_with_overrides, run_task_captured_with_overrides,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides,
+    run_task_with_progress_and_overrides,
 };
-use crate::schema::{Contract, ExtensionSpec, Lifecycle};
+use crate::schema::{Contract, ExtensionSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -74,6 +78,9 @@ use crate::workspace::{
     diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
     parse_workspace_contract_str, validate_workspace_contract,
 };
+
+mod workspace_output;
+use self::workspace_output::{render_workspace_run, render_workspace_up};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 thread_local! {
@@ -1856,65 +1863,6 @@ fn append_contractless_repo_findings(
             next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
         });
     }
-}
-
-fn append_contract_drift_findings(
-    contract: &Contract,
-    contract_path: &Path,
-    findings: &mut Vec<Finding>,
-) {
-    let root = contract_path.parent().unwrap_or(contract_path);
-    let Ok(detect_report) = detect_repo(root) else {
-        return;
-    };
-
-    let mut drift_findings = Vec::new();
-
-    for change in collect_detect_changes(contract, &detect_report.contract)
-        .into_iter()
-        .filter(|change| change.status == "update")
-    {
-        let existing = change.existing.unwrap_or_default();
-        drift_findings.push(Finding {
-            severity: FindingSeverity::Warn,
-            summary: format!("Contract drift: `{}` differs from repo signals", change.field),
-            why: format!(
-                "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` now detects `{}`",
-                change.field,
-                existing,
-                root.display(),
-                change.detected
-            ),
-            next: format!(
-                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                compact_repo_path(root),
-                compact_repo_path(root)
-            ),
-        });
-    }
-
-    for removal in collect_detect_removals(contract, &detect_report.contract) {
-        if removal.field.starts_with("tasks.") {
-            continue;
-        }
-        drift_findings.push(Finding {
-            severity: FindingSeverity::Warn,
-            summary: format!("Contract drift: `{}` is no longer detected", removal.field),
-            why: format!(
-                "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` no longer detects it",
-                removal.field,
-                removal.existing,
-                root.display()
-            ),
-            next: format!(
-                "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                compact_repo_path(root),
-                compact_repo_path(root)
-            ),
-        });
-    }
-
-    findings.extend(drift_findings);
 }
 
 pub fn explain(
@@ -6131,244 +6079,6 @@ fn compare_detected_contract(
     }
 }
 
-fn collect_detect_changes(
-    existing: &Contract,
-    detected: &crate::detector::DetectContract,
-) -> Vec<DetectComparisonChange> {
-    let mut changes = Vec::new();
-
-    if let Some(project) = detected.project.as_ref() {
-        push_detect_change(
-            &mut changes,
-            "project.name",
-            Some(existing.project.name.as_str()),
-            Some(project.name.as_str()),
-        );
-    }
-
-    for (name, value) in &detected.runtimes {
-        push_detect_change(
-            &mut changes,
-            &format!("runtimes.{name}"),
-            existing
-                .runtimes
-                .get(name)
-                .map(|requirement| requirement.version()),
-            Some(value.as_str()),
-        );
-    }
-
-    for (name, value) in &detected.tools {
-        push_detect_change(
-            &mut changes,
-            &format!("tools.{name}"),
-            existing
-                .tools
-                .get(name)
-                .map(|requirement| requirement.version()),
-            Some(value.as_str()),
-        );
-    }
-
-    for (name, service) in &detected.services {
-        push_detect_change(
-            &mut changes,
-            &format!("services.{name}.provider"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.provider.as_deref()),
-            service.provider.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            &format!("services.{name}.start"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.start.as_deref()),
-            service.start.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            &format!("services.{name}.stop"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.stop.as_deref()),
-            service.stop.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            &format!("services.{name}.healthcheck"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.healthcheck.as_deref()),
-            service.healthcheck.as_deref(),
-        );
-    }
-
-    for (name, task) in &detected.tasks {
-        let existing_value =
-            existing
-                .tasks
-                .get(name)
-                .and_then(|task| match task.default_execution_kind() {
-                    Some("run") => task.default_execution_body(),
-                    _ => None,
-                });
-        push_detect_change(
-            &mut changes,
-            &format!("tasks.{name}.run"),
-            existing_value,
-            Some(task.run.as_str()),
-        );
-        if task.safe_for_agent {
-            let existing_safe = existing.tasks.get(name).map(|task| task.safe_for_agent);
-            push_detect_change(
-                &mut changes,
-                &format!("tasks.{name}.safe_for_agent"),
-                existing_safe.map(|value| if value { "true" } else { "false" }),
-                Some("true"),
-            );
-        }
-    }
-
-    changes
-}
-
-fn collect_detect_removals(
-    existing: &Contract,
-    detected: &crate::detector::DetectContract,
-) -> Vec<DetectComparisonRemoval> {
-    let mut removals = Vec::new();
-
-    if detected.project.is_none() {
-        removals.push(DetectComparisonRemoval {
-            field: String::from("project.name"),
-            existing: existing.project.name.clone(),
-        });
-    }
-
-    for (name, requirement) in &existing.runtimes {
-        if !detected.runtimes.contains_key(name) {
-            removals.push(DetectComparisonRemoval {
-                field: format!("runtimes.{name}"),
-                existing: requirement.version().to_string(),
-            });
-        }
-    }
-
-    for (name, requirement) in &existing.tools {
-        if !detected.tools.contains_key(name) {
-            removals.push(DetectComparisonRemoval {
-                field: format!("tools.{name}"),
-                existing: requirement.version().to_string(),
-            });
-        }
-    }
-
-    for (name, service) in &existing.services {
-        let detected_service = detected.services.get(name);
-        if service.provider.is_some()
-            && detected_service
-                .and_then(|value| value.provider.as_ref())
-                .is_none()
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.provider"),
-                existing: service.provider.as_deref().unwrap_or_default().to_string(),
-            });
-        }
-        if service.start.is_some()
-            && detected_service
-                .and_then(|value| value.start.as_ref())
-                .is_none()
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.start"),
-                existing: service.start.as_deref().unwrap_or_default().to_string(),
-            });
-        }
-        if service.stop.is_some()
-            && detected_service
-                .and_then(|value| value.stop.as_ref())
-                .is_none()
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.stop"),
-                existing: service.stop.as_deref().unwrap_or_default().to_string(),
-            });
-        }
-        if service.healthcheck.is_some()
-            && detected_service
-                .and_then(|value| value.healthcheck.as_ref())
-                .is_none()
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.healthcheck"),
-                existing: service
-                    .healthcheck
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_string(),
-            });
-        }
-    }
-
-    for (name, task) in &existing.tasks {
-        let detected_task = detected.tasks.get(name);
-        let existing_run = task.default_execution_body().map(str::to_string);
-        if let Some(existing_run) = existing_run {
-            if detected_task.is_none() {
-                removals.push(DetectComparisonRemoval {
-                    field: format!("tasks.{name}.run"),
-                    existing: existing_run,
-                });
-            }
-        }
-
-        if task.safe_for_agent
-            && detected_task.is_none_or(|detected_task| !detected_task.safe_for_agent)
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("tasks.{name}.safe_for_agent"),
-                existing: String::from("true"),
-            });
-        }
-    }
-
-    removals
-}
-
-fn push_detect_change(
-    changes: &mut Vec<DetectComparisonChange>,
-    field: &str,
-    existing: Option<&str>,
-    detected: Option<&str>,
-) {
-    let Some(detected) = detected else {
-        return;
-    };
-
-    match existing {
-        None => changes.push(DetectComparisonChange {
-            field: field.to_string(),
-            status: "add",
-            existing: None,
-            detected: detected.to_string(),
-        }),
-        Some(existing) if existing != detected => changes.push(DetectComparisonChange {
-            field: field.to_string(),
-            status: "update",
-            existing: Some(existing.to_string()),
-            detected: detected.to_string(),
-        }),
-        Some(_) => {}
-    }
-}
-
 fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&DetectComparison>) {
     let Some(comparison) = comparison else {
         return;
@@ -9540,37 +9250,6 @@ fn run_execution_receipt(
     }
 }
 
-fn execution_target(
-    contract: &Contract,
-    contract_path: &Path,
-    backend: crate::schema::Backend,
-    lifecycle: Option<Lifecycle>,
-) -> Option<String> {
-    match backend {
-        crate::schema::Backend::Remote => effective_remote_target(contract, backend),
-        crate::schema::Backend::Container => {
-            if lifecycle == Some(Lifecycle::Persistent) {
-                let image = contract
-                    .execution
-                    .as_ref()?
-                    .backends
-                    .as_ref()?
-                    .container
-                    .as_ref()?
-                    .image
-                    .clone();
-                Some(persistent_container_name(
-                    contract_path.parent().unwrap_or(contract_path),
-                    &image,
-                ))
-            } else {
-                None
-            }
-        }
-        crate::schema::Backend::Native => None,
-    }
-}
-
 struct RunCommandFailure {
     message: String,
     exit_code: i32,
@@ -9919,190 +9598,6 @@ fn render_up_json(
         }),
         stderr: None,
         exit_code: exit_code.unwrap_or(if ready { 0 } else { 1 }),
-    }
-}
-
-fn render_workspace_up(
-    path: &str,
-    report: &WorkspaceUpReport,
-    format: OutputFormat,
-    show_receipt: bool,
-) -> CommandOutput {
-    match format {
-        OutputFormat::Text => {
-            let mut stdout = format!(
-                "\n{}\n\n{}",
-                format_command_header("WORKSPACE UP", path),
-                render_readiness_status(report.ok)
-            );
-
-            for repo in &report.repos {
-                stdout.push_str(&format!(
-                    "\n\n{} {} [{}] ({})",
-                    list_bullet(),
-                    paint(&repo.name, "1"),
-                    if repo.required {
-                        "required"
-                    } else {
-                        "optional"
-                    },
-                    render_status_word(&repo.status)
-                ));
-                stdout.push_str(&format!(
-                    "\n{} {}",
-                    paint_key("Path:"),
-                    compact_repo_path(Path::new(&repo.path))
-                ));
-                stdout.push_str(&format!(
-                    "\n{} {}",
-                    paint_key("Contract:"),
-                    compact_contract_path(Path::new(&repo.contract_path))
-                ));
-                stdout.push_str(&format!("\n{} {}", paint_key("Phase:"), repo.phase));
-                if let Some(service) = &repo.service {
-                    stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
-                }
-                if let Some(task) = &repo.task {
-                    stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
-                }
-                if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
-                }
-                for finding in &repo.findings {
-                    let why = compact_backticked_paths(&finding.why);
-                    let next = compact_backticked_paths(&finding.next);
-                    stdout.push_str(&format!(
-                        "\n\n{}  {}\n{} {}\n{} {}",
-                        render_severity(finding.severity),
-                        render_finding_summary(finding.severity, &finding.summary),
-                        finding_detail_key(finding.severity, "Why:"),
-                        why,
-                        finding_detail_key(finding.severity, "Next:"),
-                        next
-                    ));
-                }
-                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
-                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
-            }
-            if show_receipt {
-                stdout.push_str(&render_execution_receipt_text(&report.receipt));
-            }
-            stdout.push('\n');
-            stdout.push_str(&render_execution_receipt_summary_block(
-                &report.receipt,
-                report
-                    .repos
-                    .first()
-                    .and_then(|repo| repo.task.as_deref())
-                    .or(report.receipt.steps.first().map(|step| step.label.as_str())),
-                "WORKSPACE RUN SUMMARY",
-            ));
-
-            CommandOutput {
-                stdout,
-                stderr: None,
-                exit_code: if report.ok { 0 } else { 1 },
-            }
-        }
-        OutputFormat::Json => CommandOutput {
-            stdout: to_json(&WorkspaceUpSuccess {
-                ok: report.ok,
-                path,
-                summary: report.receipt.summary,
-                receipt: report.receipt.clone(),
-                repos: &report.repos,
-            }),
-            stderr: None,
-            exit_code: if report.ok { 0 } else { 1 },
-        },
-    }
-}
-
-fn render_workspace_run(
-    task: &str,
-    path: &str,
-    report: &WorkspaceRunReport,
-    format: OutputFormat,
-    show_receipt: bool,
-) -> CommandOutput {
-    match format {
-        OutputFormat::Text => {
-            let mut stdout = format!(
-                "{}\n\n{}",
-                format_command_header("WORKSPACE RUN", &format!("{task} {path}")),
-                render_readiness_status(report.ok)
-            );
-
-            for repo in &report.repos {
-                stdout.push_str(&format!(
-                    "\n\n{} {} [{}] ({})",
-                    list_bullet(),
-                    paint(&repo.name, "1"),
-                    if repo.required {
-                        "required"
-                    } else {
-                        "optional"
-                    },
-                    render_status_word(&repo.status)
-                ));
-                stdout.push_str(&format!(
-                    "\n{} {}",
-                    paint_key("Path:"),
-                    compact_repo_path(Path::new(&repo.path))
-                ));
-                stdout.push_str(&format!(
-                    "\n{} {}",
-                    paint_key("Contract:"),
-                    compact_contract_path(Path::new(&repo.contract_path))
-                ));
-                stdout.push_str(&format!("\n{} {}", paint_key("Task:"), repo.task));
-                if let Some(exit_code) = repo.exit_code {
-                    stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
-                }
-                for finding in &repo.findings {
-                    let why = compact_backticked_paths(&finding.why);
-                    let next = compact_backticked_paths(&finding.next);
-                    stdout.push_str(&format!(
-                        "\n\n{}  {}\n{} {}\n{} {}",
-                        render_severity(finding.severity),
-                        render_finding_summary(finding.severity, &finding.summary),
-                        finding_detail_key(finding.severity, "Why:"),
-                        why,
-                        finding_detail_key(finding.severity, "Next:"),
-                        next
-                    ));
-                }
-                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
-                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
-            }
-            if show_receipt {
-                stdout.push_str(&render_execution_receipt_text(&report.receipt));
-            }
-            stdout.push('\n');
-            stdout.push_str(&render_execution_receipt_summary_block(
-                &report.receipt,
-                Some(task),
-                "RUN SUMMARY",
-            ));
-
-            CommandOutput {
-                stdout,
-                stderr: None,
-                exit_code: if report.ok { 0 } else { 1 },
-            }
-        }
-        OutputFormat::Json => CommandOutput {
-            stdout: to_json(&WorkspaceRunSuccess {
-                ok: report.ok,
-                path,
-                task,
-                summary: report.receipt.summary,
-                receipt: report.receipt.clone(),
-                repos: &report.repos,
-            }),
-            stderr: None,
-            exit_code: if report.ok { 0 } else { 1 },
-        },
     }
 }
 
@@ -13033,37 +12528,6 @@ fn render_confidence(confidence: Confidence) -> String {
         Confidence::Medium => paint("medium", "1;38;2;255;235;59"),
         Confidence::Low => paint("low", "1;31"),
     }
-}
-
-fn format_backend(backend: crate::schema::Backend) -> &'static str {
-    match backend {
-        crate::schema::Backend::Native => "native",
-        crate::schema::Backend::Container => "container",
-        crate::schema::Backend::Remote => "remote",
-    }
-}
-
-fn format_lifecycle(lifecycle: Lifecycle) -> &'static str {
-    match lifecycle {
-        Lifecycle::Persistent => "persistent",
-        Lifecycle::Ephemeral => "ephemeral",
-    }
-}
-
-fn effective_remote_target(contract: &Contract, backend: crate::schema::Backend) -> Option<String> {
-    if backend != crate::schema::Backend::Remote {
-        return None;
-    }
-
-    contract
-        .execution
-        .as_ref()?
-        .backends
-        .as_ref()?
-        .remote
-        .as_ref()?
-        .target
-        .clone()
 }
 
 fn init_mode(report: &DetectReport) -> &'static str {
