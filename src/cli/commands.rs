@@ -7516,13 +7516,13 @@ fn render_report_section(
         stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
         stdout.push_str(&format!(
             " {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            paint("●", "1;38;2;255;214;95"),
             paint_key("Repo:"),
             render_doctor_verdict(summary.verdict)
         ));
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            paint("●", "1;38;2;255;214;95"),
             paint_key("Agent:"),
             render_doctor_verdict(summary.agent_verdict)
         ));
