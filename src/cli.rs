@@ -891,7 +891,7 @@ impl CommandSpinner {
         }
         if self.clear_on_stop && io::stderr().is_terminal() {
             let mut stderr = io::stderr();
-            let _ = write!(stderr, "\r\x1b[2K\r");
+            let _ = write!(stderr, "\r\x1b[2K\r\n");
             let _ = stderr.flush();
         }
     }
