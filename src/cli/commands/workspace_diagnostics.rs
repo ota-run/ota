@@ -361,11 +361,27 @@ pub(crate) fn render_workspace_check_text(
             stdout.push_str(&render_extensions_text(&repo.extensions));
         }
         for finding in &repo.findings {
-            stdout.push_str(&format!(
-                "\n\n{}  {}",
-                render_severity(finding.severity),
-                render_finding_summary(finding.severity, &finding.summary)
-            ));
+            let next = compact_backticked_paths(&finding.next);
+            if concise_mode() {
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}",
+                    render_severity(finding.severity),
+                    render_finding_summary(finding.severity, &finding.summary),
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            } else {
+                let why = compact_backticked_paths(&finding.why);
+                stdout.push_str(&format!(
+                    "\n\n{}  {}\n{} {}\n{} {}",
+                    render_severity(finding.severity),
+                    render_finding_summary(finding.severity, &finding.summary),
+                    finding_detail_key(finding.severity, "Why:"),
+                    why,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            }
         }
     }
     stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
