@@ -2395,6 +2395,67 @@ policies:
     }
 
     #[test]
+    fn workspace_explain_reports_policy_provenance_for_policy_findings() {
+        let fixture = TempDir::new().unwrap();
+        let api_dir = fixture.path().join("api");
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "explain",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Provenance:"));
+        assert!(stdout.contains("org policy"));
+
+        let json = run_with([
+            "ota",
+            "workspace",
+            "explain",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+        let parsed: Value = serde_json::from_str(&json.stdout).unwrap();
+        assert_eq!(parsed["repos"][0]["steps"][0]["provenance"], "org policy");
+    }
+
+    #[test]
     fn workspace_explain_reports_remediation_steps_and_summary_counts() {
         let fixture = TempDir::new().unwrap();
         let api_dir = fixture.path().join("api");
