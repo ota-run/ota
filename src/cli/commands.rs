@@ -66,7 +66,7 @@ use crate::parser::{
 };
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
-    effective_execution, resolve_task_env_details,
+    effective_execution, resolve_task_env_details, resolve_task_env_details_with_policy,
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -4666,9 +4666,12 @@ pub fn workspace_list(
                             required: repo.required,
                             acquired: repo.present,
                             depends_on: repo.depends_on,
-                            execution: contract
-                                .as_ref()
-                                .and_then(WorkspaceExecutionSummary::from_contract),
+                            execution: contract.as_ref().and_then(|contract| {
+                                WorkspaceExecutionSummary::from_contract_with_policy(
+                                    contract,
+                                    Some(&repo.policy_env),
+                                )
+                            }),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -9818,6 +9821,36 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
             }
         }
     }
+    if !execution.env.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {}",
+            paint("→", "1;38;2;255;214;95"),
+            paint_key("Env sources:")
+        ));
+        for item in &execution.env {
+            let mut details = Vec::new();
+            if item.required {
+                details.push("required".to_string());
+            }
+            if let Some(default) = item.default.as_deref() {
+                details.push(format!("default={default}"));
+            }
+            if !item.allowed.is_empty() {
+                details.push(format!("allowed={}", item.allowed.join(", ")));
+            }
+            stdout.push_str(&format!(
+                "\n    {} {}",
+                paint_key(&item.name),
+                details.join(", ")
+            ));
+            if let Some(policy) = item.policy.as_deref() {
+                stdout.push_str(&format!("\n      {} {policy}", paint_key("Policy:")));
+            }
+            if let Some(source) = item.source.as_deref() {
+                stdout.push_str(&format!("\n      {} {source}", paint_key("Source:")));
+            }
+        }
+    }
 
     stdout
 }
@@ -10449,6 +10482,41 @@ fn repo_execution_receipt(
     }
 }
 
+fn workspace_env_sources(
+    contract: &Contract,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Vec<ExecutionReceiptEnvSource> {
+    let repo_policy_env = crate::runner::policy_env_values(contract);
+    let workspace_policy_env = policy_env.cloned().unwrap_or_default();
+
+    resolve_task_env_details_with_policy(contract, task_env, policy_env)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, value)| {
+            let source = match value.source {
+                EnvResolutionSource::Process => "process",
+                EnvResolutionSource::Default => "default",
+                EnvResolutionSource::Task => "task",
+                EnvResolutionSource::Policy => {
+                    if workspace_policy_env.contains_key(&name) {
+                        "workspace policy"
+                    } else if repo_policy_env.contains_key(&name) {
+                        "repo policy"
+                    } else {
+                        "policy"
+                    }
+                }
+            };
+            ExecutionReceiptEnvSource {
+                name,
+                value: receipt_env_value(&value),
+                source: source.to_string(),
+            }
+        })
+        .collect()
+}
+
 fn workspace_up_receipt(
     workspace_path: &Path,
     workspace_name: &str,
@@ -10457,6 +10525,7 @@ fn workspace_up_receipt(
     let mut findings = Vec::new();
     let mut steps = Vec::new();
     let mut blocked = Vec::new();
+    let mut env_sources = Vec::new();
     let mut ready_count = 0usize;
     let mut not_ready_count = 0usize;
 
@@ -10470,6 +10539,7 @@ fn workspace_up_receipt(
             blocked.push(repo.name.clone());
         }
         findings.extend(repo.findings.clone());
+        env_sources.extend(repo.env_sources.clone());
         steps.push(execution_receipt_step(
             index + 1,
             repo.name.clone(),
@@ -10507,8 +10577,11 @@ fn workspace_up_receipt(
         lifecycle: None,
         target: None,
         acquired: Vec::new(),
-        env: BTreeMap::new(),
-        env_sources: Vec::new(),
+        env: env_sources
+            .iter()
+            .map(|source| (source.name.clone(), source.value.clone()))
+            .collect(),
+        env_sources,
         policy: Vec::new(),
         steps,
         blocked,
@@ -10532,6 +10605,7 @@ fn workspace_run_receipt(
     let mut findings = Vec::new();
     let mut steps = Vec::new();
     let mut blocked = Vec::new();
+    let mut env_sources = Vec::new();
     let mut ready_count = 0usize;
     let mut not_ready_count = 0usize;
 
@@ -10545,6 +10619,7 @@ fn workspace_run_receipt(
             blocked.push(repo.name.clone());
         }
         findings.extend(repo.findings.clone());
+        env_sources.extend(repo.env_sources.clone());
         steps.push(execution_receipt_step(
             index + 1,
             repo.name.clone(),
@@ -10570,8 +10645,11 @@ fn workspace_run_receipt(
         lifecycle: None,
         target: None,
         acquired: Vec::new(),
-        env: BTreeMap::new(),
-        env_sources: Vec::new(),
+        env: env_sources
+            .iter()
+            .map(|source| (source.name.clone(), source.value.clone()))
+            .collect(),
+        env_sources,
         policy: Vec::new(),
         steps,
         blocked,
@@ -11468,6 +11546,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                     }
                     RepoExecutionMode::Stream => None,
                 },
+                env_sources: Vec::new(),
             };
         }
         Ok(_) => {}
@@ -11502,75 +11581,89 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 exit_code: None,
                 stdout: None,
                 stderr: None,
+                env_sources: Vec::new(),
             };
         }
     }
 
     match load_and_validate_target(&repo.contract_path, None) {
-        Ok(target) => match execute_repo_up(
-            &target.contract,
-            &target.contract_path,
-            ExecutionOverrides::default(),
-            Some(&repo.policy_env),
-            mode,
-        ) {
-            Ok(result) => WorkspaceRepoUpReport {
-                name: repo.name,
-                path: path_display,
-                contract_path: contract_path_display,
-                required: repo.required,
-                ok: if repo.required { result.ok } else { true },
-                status: if repo.required || result.ok {
-                    result.status.to_string()
-                } else {
-                    String::from("WARN")
-                },
-                phase: result.phase.to_string(),
-                findings: adjust_workspace_up_findings(result.report.findings, repo.required),
-                service: result.service,
-                task: result.task,
-                exit_code: result.exit_code,
-                stdout: match mode {
-                    RepoExecutionMode::Capture => {
-                        (!result.stdout.is_empty()).then_some(result.stdout)
-                    }
-                    RepoExecutionMode::Stream => None,
-                },
-                stderr: match mode {
-                    RepoExecutionMode::Capture => {
-                        (!result.stderr.is_empty()).then_some(result.stderr)
-                    }
-                    RepoExecutionMode::Stream => None,
-                },
-            },
-            Err(error) => WorkspaceRepoUpReport {
-                name: repo.name,
-                path: path_display,
-                contract_path: contract_path_display,
-                required: repo.required,
-                ok: !repo.required,
-                status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
-                phase: "setup".to_string(),
-                findings: vec![Finding {
-                    severity: if repo.required {
-                        FindingSeverity::Error
+        Ok(target) => {
+            let env_sources = target
+                .contract
+                .tasks
+                .get("setup")
+                .map(|task| {
+                    workspace_env_sources(&target.contract, Some(&task.env), Some(&repo.policy_env))
+                })
+                .unwrap_or_default();
+
+            match execute_repo_up(
+                &target.contract,
+                &target.contract_path,
+                ExecutionOverrides::default(),
+                Some(&repo.policy_env),
+                mode,
+            ) {
+                Ok(result) => WorkspaceRepoUpReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: if repo.required { result.ok } else { true },
+                    status: if repo.required || result.ok {
+                        result.status.to_string()
                     } else {
-                        FindingSeverity::Warn
+                        String::from("WARN")
                     },
-                    summary: format!("Repo up failed: {}", repo_name),
-                    why: error,
-                    next: format!(
-                        "repair `{}` and re-run `ota workspace up`",
-                        compact_contract_path(&repo.contract_path)
-                    ),
-                }],
-                service: None,
-                task: None,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-            },
-        },
+                    phase: result.phase.to_string(),
+                    findings: adjust_workspace_up_findings(result.report.findings, repo.required),
+                    service: result.service,
+                    task: result.task,
+                    exit_code: result.exit_code,
+                    stdout: match mode {
+                        RepoExecutionMode::Capture => {
+                            (!result.stdout.is_empty()).then_some(result.stdout)
+                        }
+                        RepoExecutionMode::Stream => None,
+                    },
+                    stderr: match mode {
+                        RepoExecutionMode::Capture => {
+                            (!result.stderr.is_empty()).then_some(result.stderr)
+                        }
+                        RepoExecutionMode::Stream => None,
+                    },
+                    env_sources: env_sources.clone(),
+                },
+                Err(error) => WorkspaceRepoUpReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    ok: !repo.required,
+                    status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
+                    phase: "setup".to_string(),
+                    findings: vec![Finding {
+                        severity: if repo.required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("Repo up failed: {}", repo_name),
+                        why: error,
+                        next: format!(
+                            "repair `{}` and re-run `ota workspace up`",
+                            compact_contract_path(&repo.contract_path)
+                        ),
+                    }],
+                    service: None,
+                    task: None,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    env_sources,
+                },
+            }
+        }
         Err(error) => WorkspaceRepoUpReport {
             name: repo.name,
             path: path_display,
@@ -11597,6 +11690,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
             exit_code: None,
             stdout: None,
             stderr: None,
+            env_sources: Vec::new(),
         },
     }
 }
@@ -11625,6 +11719,7 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         exit_code: None,
         stdout: None,
         stderr: None,
+        env_sources: Vec::new(),
     }
 }
 
@@ -11658,6 +11753,7 @@ fn blocked_workspace_repo_run(
         exit_code: None,
         stdout: None,
         stderr: None,
+        env_sources: Vec::new(),
     }
 }
 
@@ -11713,6 +11809,7 @@ fn run_workspace_repo_task(
                     RepoExecutionMode::Capture => Some(acquisition.stderr),
                     RepoExecutionMode::Stream => None,
                 },
+                env_sources: Vec::new(),
             };
         }
         Ok(_) => {}
@@ -11748,6 +11845,7 @@ fn run_workspace_repo_task(
                 exit_code: Some(1),
                 stdout: None,
                 stderr: None,
+                env_sources: Vec::new(),
             };
         }
     }
@@ -11791,9 +11889,17 @@ fn run_workspace_repo_task(
                     exit_code: Some(1),
                     stdout: None,
                     stderr: None,
+                    env_sources: Vec::new(),
                 };
             }
 
+            let env_sources = contract
+                .tasks
+                .get(task)
+                .map(|task_spec| {
+                    workspace_env_sources(&contract, Some(&task_spec.env), Some(&repo.policy_env))
+                })
+                .unwrap_or_default();
             let run_result = match mode {
                 RepoExecutionMode::Capture => {
                     run_task_captured_with_args_with_overrides_with_policy(
@@ -11847,6 +11953,7 @@ fn run_workspace_repo_task(
                         RepoExecutionMode::Capture => Some(result.stderr),
                         RepoExecutionMode::Stream => None,
                     },
+                    env_sources: env_sources.clone(),
                 },
                 Ok(result) => WorkspaceRepoRunReport {
                     name: repo.name,
@@ -11881,6 +11988,7 @@ fn run_workspace_repo_task(
                         RepoExecutionMode::Capture => Some(result.stderr),
                         RepoExecutionMode::Stream => None,
                     },
+                    env_sources: env_sources.clone(),
                 },
                 Err(error) => WorkspaceRepoRunReport {
                     name: repo.name,
@@ -11911,6 +12019,7 @@ fn run_workspace_repo_task(
                     exit_code: Some(1),
                     stdout: None,
                     stderr: None,
+                    env_sources,
                 },
             }
         }
@@ -11946,6 +12055,7 @@ fn run_workspace_repo_task(
             exit_code: Some(1),
             stdout: None,
             stderr: None,
+            env_sources: Vec::new(),
         },
     }
 }
@@ -12090,7 +12200,10 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     agent_verdict: crate::workspace::agent_verdict_from_agent(
                         contract.agent.as_ref(),
                     ),
-                    execution: WorkspaceExecutionSummary::from_contract(&contract),
+                    execution: WorkspaceExecutionSummary::from_contract_with_policy(
+                        &contract,
+                        Some(&repo.policy_env),
+                    ),
                     extensions: contract.extensions.clone(),
                     findings: error
                         .errors()
@@ -12127,7 +12240,10 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     .iter()
                     .any(|finding| finding.severity == FindingSeverity::Error),
                 agent_verdict: crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
-                execution: WorkspaceExecutionSummary::from_contract(&contract),
+                execution: WorkspaceExecutionSummary::from_contract_with_policy(
+                    &contract,
+                    Some(&repo.policy_env),
+                ),
                 extensions: contract.extensions.clone(),
                 findings,
             }

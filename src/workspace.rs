@@ -33,6 +33,7 @@ use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
 use crate::parser::{LoadContractError, load_contract};
+use crate::runner::policy_env_values;
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
 
@@ -129,6 +130,20 @@ pub struct WorkspaceExecutionBackendsSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceExecutionEnvSummary {
+    pub name: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceExecutionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred: Option<String>,
@@ -138,11 +153,23 @@ pub struct WorkspaceExecutionSummary {
     pub lifecycle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backends: Option<WorkspaceExecutionBackendsSummary>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<WorkspaceExecutionEnvSummary>,
 }
 
 impl WorkspaceExecutionSummary {
+    #[allow(dead_code)]
     pub(crate) fn from_contract(contract: &Contract) -> Option<Self> {
+        Self::from_contract_with_policy(contract, None)
+    }
+
+    pub(crate) fn from_contract_with_policy(
+        contract: &Contract,
+        policy_env: Option<&BTreeMap<String, String>>,
+    ) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
+        let repo_policy_env = policy_env_values(contract);
+        let workspace_policy_env = policy_env.cloned().unwrap_or_default();
 
         Some(Self {
             preferred: execution.preferred.map(format_backend).map(str::to_string),
@@ -171,6 +198,32 @@ impl WorkspaceExecutionSummary {
                     }),
                 }
             }),
+            env: contract
+                .env
+                .iter()
+                .map(|(name, requirement)| {
+                    let policy = workspace_policy_env
+                        .get(name)
+                        .cloned()
+                        .or_else(|| repo_policy_env.get(name).cloned());
+                    let source = if workspace_policy_env.contains_key(name) {
+                        Some(String::from("workspace policy"))
+                    } else if repo_policy_env.contains_key(name) {
+                        Some(String::from("repo policy"))
+                    } else {
+                        None
+                    };
+
+                    WorkspaceExecutionEnvSummary {
+                        name: name.clone(),
+                        required: requirement.required,
+                        default: requirement.default.clone(),
+                        policy,
+                        source,
+                        allowed: requirement.allowed.clone(),
+                    }
+                })
+                .collect(),
         })
     }
 }
@@ -640,7 +693,10 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
-                execution = WorkspaceExecutionSummary::from_contract(&contract);
+                execution = WorkspaceExecutionSummary::from_contract_with_policy(
+                    &contract,
+                    Some(&repo.policy_env),
+                );
                 extensions = contract.extensions.clone();
                 agent_verdict = agent_verdict_from_agent(contract.agent.as_ref());
                 adjust_repo_findings(

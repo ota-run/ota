@@ -447,6 +447,8 @@ pub struct WorkspaceRepoUpReport {
     pub stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_sources: Vec<ExecutionReceiptEnvSource>,
 }
 
 #[derive(Debug, Serialize)]
@@ -474,6 +476,8 @@ pub struct WorkspaceRepoRunReport {
     pub stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_sources: Vec<ExecutionReceiptEnvSource>,
 }
 
 #[derive(Debug, Serialize)]

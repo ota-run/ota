@@ -149,6 +149,7 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     assert!(repo.get("agent_verdict").is_some());
     assert!(execution.get("env").is_some());
     assert!(execution_env.get("policy").is_some());
+    assert!(execution_env.get("source").is_some());
     assert!(summary.get("verdict").is_some());
     assert!(summary.get("agent_verdict").is_some());
 }
@@ -200,6 +201,7 @@ fn workspace_run_schema_exists_and_covers_repo_run_reports() {
     assert!(repo.get("exit_code").is_some());
     assert!(repo.get("stdout").is_some());
     assert!(repo.get("stderr").is_some());
+    assert!(repo.get("env_sources").is_some());
 }
 
 #[test]
@@ -226,6 +228,7 @@ fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     assert!(repo.get("exit_code").is_some());
     assert!(repo.get("stdout").is_some());
     assert!(repo.get("stderr").is_some());
+    assert!(repo.get("env_sources").is_some());
 }
 
 #[test]

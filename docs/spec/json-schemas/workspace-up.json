@@ -34,10 +34,10 @@
           "phase",
           "findings"
         ],
-        "properties": {
-          "name": { "type": "string" },
-          "path": { "type": "string" },
-          "contract_path": { "type": "string" },
+          "properties": {
+            "name": { "type": "string" },
+            "path": { "type": "string" },
+            "contract_path": { "type": "string" },
           "required": { "type": "boolean" },
           "ok": { "type": "boolean" },
           "status": { "type": "string" },
@@ -50,7 +50,20 @@
           "task": { "type": "string" },
           "exit_code": { "type": "integer" },
           "stdout": { "type": "string" },
-          "stderr": { "type": "string" }
+          "stderr": { "type": "string" },
+          "env_sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "value", "source"],
+              "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "source": { "type": "string" }
+              }
+            }
+          }
         }
       }
     }
