@@ -53,14 +53,14 @@ human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
-- `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps`
+- `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
 - `ota workspace check --json`: use the top-level `summary` and per-repo findings
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and changes
-- `ota explain --json`: use the remediation steps
+- `ota explain --json`: use the remediation steps and stable step codes
 
 Hosted CI can use the same fields as annotations or check-run summaries:
 
@@ -233,7 +233,8 @@ These keys are optional and backward-compatible.
 additive policy keys may appear there as well.
 
 `ota doctor --json` may also include an `execution` object when the contract declares execution
-metadata that editors and remote-runner tooling can consume.
+metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also
+include an additive `policy` field when an approved policy value is available for that env key.
 
 `ota doctor --json` also includes a top-level `summary` object with finding counts and
 machine-readable `verdict` / `agent_verdict` values so hosted validation and editor tooling do

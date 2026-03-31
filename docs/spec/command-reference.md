@@ -459,10 +459,10 @@ ota run version:bump --version 0.2.0
 - `kubectl`: `pod/ota-dev`
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
-- applies configured environment values and task input env variables
+- applies configured environment values, approved policy env values, and task input env variables
 - prints task progress and advisory notes on stderr
 - prints a summary in text output, and emits an execution receipt on stderr after task output
-- execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data
+- execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

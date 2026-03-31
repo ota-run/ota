@@ -7823,13 +7823,22 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     }
     if !execution.env.is_empty() {
         stdout.push_str(&format!(
-            "\n {}  {} process env > contract default > required missing",
+            "\n {}  {} policy env > process env > contract default > required missing",
             paint("→", "1;38;2;255;214;95"),
             paint_key("Env precedence:")
         ));
         stdout.push_str(&format!("\n {}  Env:", paint("→", "1;38;2;255;214;95")));
         for item in &execution.env {
             let mut details = Vec::new();
+            let source = if item.policy.is_some() {
+                "policy"
+            } else if std::env::var_os(item.name).is_some() {
+                "process"
+            } else if item.default.is_some() {
+                "default"
+            } else {
+                "missing"
+            };
             if item.required {
                 details.push("required".to_string());
             }
@@ -7844,6 +7853,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
                 paint_key(item.name),
                 details.join(", ")
             ));
+            stdout.push_str(&format!("\n      {} {source}", paint_key("Source:")));
         }
     }
     stdout
@@ -8041,7 +8051,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        compact_contract_file_path_relative_to, compact_path_relative_to, run_execution_receipt,
+        compact_contract_file_path_relative_to, compact_path_relative_to,
+        render_execution_receipt_text, run_execution_receipt,
     };
     use crate::parser::parse_contract_str;
     use crate::runner::ExecutionOverrides;
@@ -8125,6 +8136,10 @@ tasks:
 
         assert_eq!(receipt.env["OTA_TEST_SECRET"], "<redacted>");
         assert_eq!(receipt.env_sources[0].value, "<redacted>");
+        let rendered = render_execution_receipt_text(&receipt);
+        assert!(rendered.contains("Env sources:"));
+        assert!(rendered.contains("OTA_TEST_SECRET"));
+        assert!(rendered.contains("(task)"));
     }
 }
 
@@ -9056,6 +9071,7 @@ fn receipt_env_source(resolved: &ResolvedEnvValue) -> String {
     match resolved.source {
         EnvResolutionSource::Process => String::from("process"),
         EnvResolutionSource::Default => String::from("default"),
+        EnvResolutionSource::Policy => String::from("policy"),
         EnvResolutionSource::Task => String::from("task"),
     }
 }
@@ -9368,6 +9384,18 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             "1;38;2;255;255;255"
         )
     ));
+
+    if !receipt.env_sources.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Env sources:")));
+        for source in &receipt.env_sources {
+            stdout.push_str(&format!(
+                "\n{} {} ({})",
+                paint_key(&source.name),
+                source.value,
+                source.source
+            ));
+        }
+    }
 
     if !receipt.blocked.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Blocked:")));

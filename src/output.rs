@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::{Finding, FindingSeverity};
+use crate::runner::policy_env_values;
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
     TaskVariantView,
@@ -277,6 +278,8 @@ pub struct ExecutionEnvSummary<'a> {
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<&'a str>,
 }
@@ -298,6 +301,7 @@ pub struct ExecutionSummary<'a> {
 impl<'a> ExecutionSummary<'a> {
     pub fn from_contract(contract: &'a Contract) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
+        let policy_env = policy_env_values(contract);
 
         Some(Self {
             preferred: execution.preferred.map(format_backend),
@@ -332,6 +336,7 @@ impl<'a> ExecutionSummary<'a> {
                     name,
                     required: requirement.required,
                     default: requirement.default.as_deref(),
+                    policy: policy_env.get(name).cloned(),
                     allowed: requirement.allowed.iter().map(String::as_str).collect(),
                 })
                 .collect(),

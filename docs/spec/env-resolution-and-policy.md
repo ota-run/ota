@@ -42,6 +42,9 @@ The shipped contract already supports:
 
 The policy layer described here should extend, not replace, that baseline.
 
+Current implementation recognizes `policies.env` as the approved env source hook for additive
+policy-controlled values.
+
 ## Goal
 
 Ota should help determine:

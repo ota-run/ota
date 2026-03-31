@@ -114,6 +114,7 @@ pub enum RunError {
 pub enum EnvResolutionSource {
     Process,
     Default,
+    Policy,
     Task,
 }
 
@@ -175,6 +176,8 @@ pub fn resolve_task_env(
     for (name, resolved) in resolved {
         if matches!(resolved.source, EnvResolutionSource::Default) {
             overrides.insert(name, resolved.value);
+        } else if matches!(resolved.source, EnvResolutionSource::Policy) {
+            overrides.insert(name, resolved.value);
         } else if matches!(resolved.source, EnvResolutionSource::Task) {
             overrides.insert(name, resolved.value);
         }
@@ -188,14 +191,17 @@ pub fn resolve_task_env_details(
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
+    let policy_env = policy_env_values(contract);
 
     for (name, requirement) in &contract.env {
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
+        let policy_value = policy_env.get(name).cloned();
         let process_value = std::env::var(name).ok();
-        let resolved = process_value
-            .map(|value| (value, EnvResolutionSource::Process))
+        let resolved = policy_value
+            .map(|value| (value, EnvResolutionSource::Policy))
+            .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
             .or_else(|| {
                 requirement
                     .default
@@ -254,6 +260,20 @@ pub fn resolve_task_env_details(
     }
 
     Ok(resolved_values)
+}
+
+pub fn policy_env_values(contract: &Contract) -> BTreeMap<String, String> {
+    let Some(policy_env) = contract.policies.get("env") else {
+        return BTreeMap::new();
+    };
+    let Some(mapping) = policy_env.as_mapping() else {
+        return BTreeMap::new();
+    };
+
+    mapping
+        .iter()
+        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
+        .collect()
 }
 
 pub fn run_task(
@@ -1545,6 +1565,49 @@ tasks:
         match original {
             Some(value) => unsafe { env::set_var("OTA_TEST_ENV", value) },
             None => unsafe { env::remove_var("OTA_TEST_ENV") },
+        }
+    }
+
+    #[test]
+    fn policy_env_overrides_process_env_before_defaults() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_POLICY:
+    default: repo-default
+policies:
+  env:
+    OTA_TEST_POLICY: policy-value
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("OTA_TEST_POLICY");
+        unsafe {
+            env::set_var("OTA_TEST_POLICY", "process-value");
+        }
+
+        let resolved = resolve_task_env_details(&contract, None).unwrap();
+        let overrides = resolve_task_env(&contract, None).unwrap();
+
+        assert_eq!(
+            resolved["OTA_TEST_POLICY"].source,
+            EnvResolutionSource::Policy
+        );
+        assert_eq!(resolved["OTA_TEST_POLICY"].value, "policy-value");
+        assert_eq!(overrides["OTA_TEST_POLICY"], "policy-value");
+
+        match original {
+            Some(value) => unsafe { env::set_var("OTA_TEST_POLICY", value) },
+            None => unsafe { env::remove_var("OTA_TEST_POLICY") },
         }
     }
 
