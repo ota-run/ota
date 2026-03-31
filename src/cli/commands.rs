@@ -8173,9 +8173,15 @@ fn render_agents_markdown(
             output.push_str("- `entrypoint`: `");
             output.push_str(entrypoint);
             output.push_str("`\n");
+            output.push_str("- `entrypoint command`: `ota run ");
+            output.push_str(entrypoint);
+            output.push_str("`\n");
         }
         if let Some(default_task) = agent.default_task {
             output.push_str("- `default_task`: `");
+            output.push_str(default_task);
+            output.push_str("`\n");
+            output.push_str("- `default_task command`: `ota run ");
             output.push_str(default_task);
             output.push_str("`\n");
         }
@@ -8185,7 +8191,7 @@ fn render_agents_markdown(
                 &agent
                     .safe_tasks
                     .iter()
-                    .map(|value| format!("`{value}`"))
+                    .map(|value| format!("`{value}` (`ota run {value}`)"))
                     .collect::<Vec<_>>()
                     .join(", "),
             );
@@ -8197,7 +8203,7 @@ fn render_agents_markdown(
                 &agent
                     .verify_after_changes
                     .iter()
-                    .map(|value| format!("`{value}`"))
+                    .map(|value| format!("`{value}` (`ota run {value}`)"))
                     .collect::<Vec<_>>()
                     .join(", "),
             );
