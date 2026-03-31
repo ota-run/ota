@@ -170,7 +170,7 @@ pub fn resolve_task_env(
     contract: &Contract,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, String>, RunError> {
-    let resolved = resolve_task_env_details(contract, task_env)?;
+    let resolved = resolve_task_env_details_with_policy(contract, task_env, None)?;
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
@@ -190,14 +190,25 @@ pub fn resolve_task_env_details(
     contract: &Contract,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
+    resolve_task_env_details_with_policy(contract, task_env, None)
+}
+
+pub fn resolve_task_env_details_with_policy(
+    contract: &Contract,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
-    let policy_env = policy_env_values(contract);
+    let repo_policy_env = policy_env_values(contract);
 
     for (name, requirement) in &contract.env {
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
-        let policy_value = policy_env.get(name).cloned();
+        let policy_value = policy_env
+            .and_then(|values| values.get(name))
+            .cloned()
+            .or_else(|| repo_policy_env.get(name).cloned());
         let process_value = std::env::var(name).ok();
         let resolved = policy_value
             .map(|value| (value, EnvResolutionSource::Policy))
@@ -274,6 +285,26 @@ pub fn policy_env_values(contract: &Contract) -> BTreeMap<String, String> {
         .iter()
         .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
         .collect()
+}
+
+pub fn resolve_task_env_with_policy(
+    contract: &Contract,
+    task_env: Option<&BTreeMap<String, String>>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<BTreeMap<String, String>, RunError> {
+    let resolved = resolve_task_env_details_with_policy(contract, task_env, policy_env)?;
+    let mut overrides = BTreeMap::new();
+
+    for (name, resolved) in resolved {
+        if matches!(resolved.source, EnvResolutionSource::Default)
+            || matches!(resolved.source, EnvResolutionSource::Policy)
+            || matches!(resolved.source, EnvResolutionSource::Task)
+        {
+            overrides.insert(name, resolved.value);
+        }
+    }
+
+    Ok(overrides)
 }
 
 pub fn run_task(
@@ -379,12 +410,33 @@ pub fn run_task_with_progress_and_args_and_overrides(
     args: &[String],
     overrides: ExecutionOverrides,
 ) -> Result<RunOutcome, RunError> {
+    run_task_with_progress_and_args_and_overrides_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        emit_progress,
+        args,
+        overrides,
+        None,
+    )
+}
+
+pub fn run_task_with_progress_and_args_and_overrides_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    emit_progress: bool,
+    args: &[String],
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<RunOutcome, RunError> {
     let outcome = run_task_internal(
         contract,
         contract_path,
         task_name,
         args,
         overrides,
+        policy_env,
         TaskExecutionMode::Stream { emit_progress },
     )?;
 
@@ -440,12 +492,31 @@ pub fn run_task_captured_with_args_with_overrides(
     args: &[String],
     overrides: ExecutionOverrides,
 ) -> Result<CapturedRunOutcome, RunError> {
+    run_task_captured_with_args_with_overrides_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        args,
+        overrides,
+        None,
+    )
+}
+
+pub fn run_task_captured_with_args_with_overrides_with_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    args: &[String],
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<CapturedRunOutcome, RunError> {
     run_task_internal(
         contract,
         contract_path,
         task_name,
         args,
         overrides,
+        policy_env,
         TaskExecutionMode::Capture,
     )
 }
@@ -523,6 +594,7 @@ fn run_task_internal(
     task_name: &str,
     input_args: &[String],
     overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
     let plan = plan_task_execution(contract, task_name)?;
@@ -552,7 +624,8 @@ fn run_task_internal(
                 os: current_os.to_string(),
             });
         };
-        let env_details = resolve_task_env_details(contract, Some(&task.env))?;
+        let env_details =
+            resolve_task_env_details_with_policy(contract, Some(&task.env), policy_env)?;
         let secret_env_names: BTreeSet<String> = env_details
             .iter()
             .filter(|(_, value)| value.secret)
@@ -566,7 +639,7 @@ fn run_task_internal(
                 names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
             });
         }
-        let env_overrides = resolve_task_env(contract, Some(&task.env))?;
+        let env_overrides = resolve_task_env_with_policy(contract, Some(&task.env), policy_env)?;
         let input_overrides = if task_name == &requested_task_name {
             resolve_task_inputs(task_name, task, input_args)?
         } else {

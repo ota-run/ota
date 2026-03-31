@@ -54,6 +54,8 @@ pub struct WorkspaceContract {
     pub version: u32,
     pub workspace: WorkspaceInfo,
     pub repos: BTreeMap<String, WorkspaceRepoSpec>,
+    #[serde(default)]
+    pub policies: BTreeMap<String, serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -101,6 +103,7 @@ pub struct WorkspaceRepoRef {
     pub present: bool,
     pub source_url: Option<String>,
     pub source_ref: Option<String>,
+    pub policy_env: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -367,6 +370,20 @@ pub fn ordered_workspace_repo_refs(
         .collect())
 }
 
+pub fn workspace_policy_env_values(contract: &WorkspaceContract) -> BTreeMap<String, String> {
+    let Some(policy_env) = contract.policies.get("env") else {
+        return BTreeMap::new();
+    };
+    let Some(mapping) = policy_env.as_mapping() else {
+        return BTreeMap::new();
+    };
+
+    mapping
+        .iter()
+        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
+        .collect()
+}
+
 pub fn validate_workspace_shape(
     workspace_path: &Path,
     contract: &WorkspaceContract,
@@ -398,6 +415,7 @@ pub fn validate_workspace_shape(
         .unwrap_or_else(|| Path::new("."));
     let mut seen_repo_paths = BTreeSet::new();
     let mut repo_refs = Vec::new();
+    let policy_env = workspace_policy_env_values(contract);
 
     for (name, repo) in &contract.repos {
         if name.trim().is_empty() {
@@ -479,6 +497,7 @@ pub fn validate_workspace_shape(
                 .as_ref()
                 .and_then(|source| source.git_ref.as_ref())
                 .map(|git_ref| git_ref.trim().to_string()),
+            policy_env: policy_env.clone(),
         });
 
         for dependency in &repo.depends_on {

@@ -11320,6 +11320,58 @@ tasks:
         );
     }
 
+    #[test]
+    fn workspace_run_uses_workspace_policy_env_values() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.workspace_file(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+policies:
+  env:
+    OTA_TEST_SHARED: workspace-policy
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+env:
+  OTA_TEST_SHARED:
+    required: true
+tasks:
+  setup:
+    script: |
+      printf '%s' "$OTA_TEST_SHARED" > shared.txt
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(
+                fixture
+                    .dir
+                    .path()
+                    .join("apps")
+                    .join("web")
+                    .join("shared.txt")
+            )
+            .unwrap(),
+            "workspace-policy"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn workspace_run_respects_repo_dependency_order() {
