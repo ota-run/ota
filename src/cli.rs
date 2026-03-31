@@ -6257,6 +6257,16 @@ agent:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml`."));
         assert!(agents_md.contains("`entrypoint`: `setup`"));
+        assert!(agents_md.contains("`entrypoint command`: `ota run setup`"));
+        assert!(
+            agents_md
+                .contains("`safe_tasks`: `setup` (`ota run setup`), `build` (`ota run build`)")
+        );
+        assert!(
+            agents_md.contains(
+                "`verify_after_changes`: `fmt` (`ota run fmt`), `check` (`ota run check`)"
+            )
+        );
         assert!(agents_md.contains("Use ota doctor first."));
 
         let json_output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
@@ -6309,6 +6319,7 @@ agent:
         assert!(agents_md.contains("ota-generated-agent-guidance:start"));
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml`."));
+        assert!(agents_md.contains("`entrypoint command`: `ota run setup`"));
     }
 
     #[test]

@@ -565,9 +565,10 @@ Why:
 - exports or syncs agent guidance from the contract instead of hand-maintaining a second file
 - stays deterministic and reviewable
 - falls back to a lightweight scaffold when the contract does not declare an `agent` block yet
+- includes a fallback hint to run `ota tasks` when you want to inspect runnable task commands before generating or editing agent guidance
 - preserves any existing `AGENTS.md` content and appends or refreshes an Ota-managed block instead of overwriting it
 - skips the write when the existing file already contains the generated content
-- shows a `Managed block:` label in text output so the Ota-owned section is explicit
+- shows a `Managed block:` label in text output so the Ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 
 Use-case:
 
