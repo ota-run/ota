@@ -6253,6 +6253,60 @@ agent:
     }
 
     #[test]
+    fn agents_write_preserves_existing_content_and_appends_generated_block() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  entrypoint: setup
+"#,
+        );
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        fs::write(&agents_path, "Custom guidance\n").unwrap();
+
+        let output = run_with(["ota", "agents", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS"));
+        let agents_md = fs::read_to_string(&agents_path).unwrap();
+        assert!(agents_md.starts_with("Custom guidance"));
+        assert!(agents_md.contains("ota-generated-agent-guidance:start"));
+        assert!(agents_md.contains("# AGENTS.md"));
+        assert!(agents_md.contains("Generated from `./ota.yaml`."));
+    }
+
+    #[test]
+    fn agents_write_skips_duplicate_generated_content() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  entrypoint: setup
+  default_task: ci
+"#,
+        );
+
+        let preview = run_with(["ota", "agents", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&preview.stdout).unwrap();
+        let generated = json["content"].as_str().unwrap();
+        let agents_path = fixture.dir.path().join("AGENTS.md");
+        let original = format!("Custom guidance\n\n{generated}");
+        fs::write(&agents_path, &original).unwrap();
+
+        let output = run_with(["ota", "agents", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("already in sync"));
+        assert_eq!(fs::read_to_string(&agents_path).unwrap(), original);
+    }
+
+    #[test]
     fn init_writes_by_default_creates_full_starter_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
