@@ -8172,18 +8172,16 @@ fn render_agents_markdown(
         if let Some(entrypoint) = agent.entrypoint {
             output.push_str("- `entrypoint`: `");
             output.push_str(entrypoint);
-            output.push_str("`\n");
-            output.push_str("- `entrypoint command`: `ota run ");
+            output.push_str("` (`ota run ");
             output.push_str(entrypoint);
-            output.push_str("`\n");
+            output.push_str("`)\n");
         }
         if let Some(default_task) = agent.default_task {
             output.push_str("- `default_task`: `");
             output.push_str(default_task);
-            output.push_str("`\n");
-            output.push_str("- `default_task command`: `ota run ");
+            output.push_str("` (`ota run ");
             output.push_str(default_task);
-            output.push_str("`\n");
+            output.push_str("`)\n");
         }
         if !agent.safe_tasks.is_empty() {
             output.push_str("- `safe_tasks`: ");
@@ -8245,6 +8243,7 @@ fn render_agents_markdown(
     } else {
         output.push_str("No explicit `agent` block is declared in `ota.yaml` yet.\n\n");
         output.push_str("Suggested next commands:\n\n");
+        output.push_str("- `ota tasks`\n");
         output.push_str("- `ota doctor`\n");
         output.push_str("- `ota detect --dry-run`\n");
         output.push_str("- `ota init --bootstrap`\n");
