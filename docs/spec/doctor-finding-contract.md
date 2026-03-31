@@ -168,6 +168,8 @@ The following are intentionally out of scope for this slice:
 - fleet reporting
 - hosted control plane APIs
 - policy distribution and rollout
+- approval workflow orchestration
+- org RBAC / SSO / retention policy
 
 Those can build on this contract later, but they are not required to make the finding model stable.
 

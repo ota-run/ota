@@ -143,6 +143,9 @@ For env resolution, `doctor`, `detect`, and execution receipts should explain:
 - owning all app settings or secrets management
 - silently mutating env values
 - resolving from unapproved sources
+- hosted control plane policy workflows
+- waiver or approval orchestration
+- fleet reporting or retention policy
 
 ## Relationship to other surfaces
 

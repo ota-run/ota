@@ -152,3 +152,5 @@ They are not for:
 - arbitrary org RBAC design
 - ticketing or approval orchestration
 - hidden mutation behavior
+- waiver lifecycle management
+- fleet-wide reporting or retention

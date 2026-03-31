@@ -826,12 +826,12 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
         summary: String::from("Repo does not satisfy org policy pack"),
         why: format!(
             "`{}` requires {}",
-            policy_path.display(),
+            compact_display_path(&policy_path),
             why_parts.join(" and ")
         ),
         next: format!(
             "add the missing items or update `{}`",
-            policy_path.display()
+            compact_display_path(&policy_path)
         ),
     });
 }
@@ -841,7 +841,10 @@ fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
         severity: FindingSeverity::Error,
         summary: String::from("Invalid org policy pack"),
         why: err.to_string(),
-        next: format!("repair `{}` and re-run `ota doctor`", err.path()),
+        next: format!(
+            "repair `{}` and re-run `ota doctor`",
+            compact_display_path(Path::new(err.path()))
+        ),
     }
 }
 
@@ -883,6 +886,22 @@ fn diagnose_command_version(
         ),
         next: format!("install a compatible {display_name} version that satisfies `{requirement}`"),
     });
+}
+
+fn compact_display_path(path: &Path) -> String {
+    let Ok(current_dir) = std::env::current_dir() else {
+        return path.display().to_string();
+    };
+
+    path.strip_prefix(&current_dir)
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                String::from(".")
+            } else {
+                relative.display().to_string()
+            }
+        })
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) {

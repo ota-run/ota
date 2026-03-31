@@ -1754,7 +1754,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
         summary: String::from("No `ota.yaml` found"),
         why: format!(
             "no `ota.yaml` was found from `{}` upward, so Ota cannot validate repo readiness yet",
-            root.display()
+            compact_repo_path(root)
         ),
         next: String::from(
             "run `ota detect --dry-run` to review inferred fields, or run `ota init --bootstrap` to create a starter contract",
@@ -1877,7 +1877,7 @@ fn append_contractless_repo_findings(
             summary: String::from("No repo signals detected"),
             why: format!(
                 "`{}` did not expose obvious repo markers yet",
-                root.display()
+                compact_repo_path(root)
             ),
             next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
         });
@@ -3206,9 +3206,9 @@ pub fn detect(
             )
         };
         let next = if dry_run {
-            format!("ota detect --dry-run {}", root.display())
+            format!("ota detect --dry-run {}", compact_repo_path(&root))
         } else {
-            format!("ota detect --write {}", root.display())
+            format!("ota detect --write {}", compact_repo_path(&root))
         };
         return finalize_debug(
             match format {
@@ -3243,9 +3243,9 @@ pub fn detect(
             )
         };
         let next = if dry_run {
-            format!("ota detect --dry-run {}", root.display())
+            format!("ota detect --dry-run {}", compact_repo_path(&root))
         } else {
-            format!("ota detect --write {}", root.display())
+            format!("ota detect --write {}", compact_repo_path(&root))
         };
         return finalize_debug(
             match format {
@@ -3667,9 +3667,12 @@ pub fn workspace_init(
             )
         };
         let next = if write {
-            format!("{command_name} {}", workspace_root.display())
+            format!("{command_name} {}", compact_workspace_path(&workspace_root))
         } else {
-            format!("{command_name} --dry-run {}", workspace_root.display())
+            format!(
+                "{command_name} --dry-run {}",
+                compact_workspace_path(&workspace_root)
+            )
         };
         return finalize_debug(
             match format {
@@ -3705,9 +3708,12 @@ pub fn workspace_init(
             )
         };
         let next = if write {
-            format!("{command_name} {}", workspace_root.display())
+            format!("{command_name} {}", compact_workspace_path(&workspace_root))
         } else {
-            format!("{command_name} --dry-run {}", workspace_root.display())
+            format!(
+                "{command_name} --dry-run {}",
+                compact_workspace_path(&workspace_root)
+            )
         };
         return finalize_debug(
             match format {

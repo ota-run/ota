@@ -95,4 +95,5 @@ It is not for:
 - a general audit database
 - approval workflow orchestration
 - replacing the contract with runtime state
-
+- hosted control plane operations
+- fleet-wide reporting or retention policy
