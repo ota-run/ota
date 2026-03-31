@@ -5659,6 +5659,9 @@ env:
   OTA_TEST_BASE_URL:
     required: true
     default: http://localhost:8080
+policies:
+  env:
+    OTA_TEST_BASE_URL: http://policy.example.com
 tasks:
   setup:
     run: cargo build
@@ -5680,10 +5683,44 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Env precedence:"));
-        assert!(stdout.contains("process env > contract default > required missing"));
+        assert!(stdout.contains("policy env > process env > contract default > required missing"));
         assert!(stdout.contains("Env:"));
         assert!(stdout.contains("OTA_TEST_BASE_URL"));
         assert!(stdout.contains("required, default=http://localhost:8080"));
+        assert!(stdout.contains("Source: policy"));
+    }
+
+    #[test]
+    fn doctor_json_reports_policy_env_provenance() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+env:
+  OTA_TEST_BASE_URL:
+    required: true
+    default: http://localhost:8080
+policies:
+  env:
+    OTA_TEST_BASE_URL: http://policy.example.com
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(json["execution"]["env"][0]["name"], "OTA_TEST_BASE_URL");
+        assert_eq!(
+            json["execution"]["env"][0]["policy"],
+            "http://policy.example.com"
+        );
     }
 
     #[test]

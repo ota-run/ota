@@ -51,12 +51,16 @@ fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
     let properties = &schema["properties"];
     let member_properties = &properties["members"]["items"]["properties"];
+    let execution_properties = &properties["execution"]["properties"];
+    let execution_env_properties = &execution_properties["env"]["items"]["properties"];
 
     assert!(properties.get("agent").is_some());
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
+    assert!(execution_properties.get("env").is_some());
+    assert!(execution_env_properties.get("policy").is_some());
     assert!(properties["summary"]["properties"].get("verdict").is_some());
     assert!(
         properties["summary"]["properties"]
@@ -136,11 +140,15 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-doctor.json");
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let summary = &schema["properties"]["summary"]["properties"];
+    let execution = &repo["execution"]["properties"];
+    let execution_env = &execution["env"]["items"]["properties"];
 
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
     assert!(repo.get("agent_verdict").is_some());
+    assert!(execution.get("env").is_some());
+    assert!(execution_env.get("policy").is_some());
     assert!(summary.get("verdict").is_some());
     assert!(summary.get("agent_verdict").is_some());
 }

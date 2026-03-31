@@ -420,7 +420,7 @@ Policy-aware source selection and workspace inheritance are described in
 
 Current behavior:
 
-- `run` uses `default` only when the process environment is missing the variable
+- `run` prefers approved policy env values, then process environment, then `default`
 - `run` rejects disallowed values
 - `doctor` reports missing required vars and invalid values
 - `secret: true` may not be combined with a default value
