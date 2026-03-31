@@ -326,6 +326,8 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
 
 ## `ota explain --json`
 
+Explain steps may also include `provenance` when the underlying finding carries policy or drift context.
+
 ```json
 {
   "ok": false,
@@ -343,13 +345,16 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
       "severity": "error",
       "summary": "No tasks defined in contract",
       "why": "...",
-      "next": "..."
+      "next": "...",
+      "provenance": "org policy"
     }
   ]
 }
 ```
 
 ## `ota workspace explain --json`
+
+Workspace explain steps may also include `provenance` when the underlying finding carries policy or drift context.
 
 ```json
 {
@@ -384,7 +389,8 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
           "severity": "error",
           "summary": "No tasks defined in contract",
           "why": "...",
-          "next": "..."
+          "next": "...",
+          "provenance": "org policy"
         }
       ]
     }

@@ -347,6 +347,15 @@ impl Finding {
             None
         }
     }
+
+    pub(crate) fn provenance(&self) -> Option<String> {
+        if self.policy_context().is_some() {
+            return Some(String::from("org policy"));
+        }
+
+        self.drift_context()
+            .map(|context| context.provenance.to_string())
+    }
 }
 
 impl Serialize for Finding {

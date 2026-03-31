@@ -53,24 +53,25 @@
               "step_count": { "type": "integer", "minimum": 0 }
             }
           },
-          "steps": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["order", "code", "severity", "summary", "why", "next"],
-              "properties": {
-                "order": { "type": "integer", "minimum": 1 },
-                "code": { "type": "string" },
-                "severity": { "enum": ["error", "warn", "info"] },
-                "summary": { "type": "string" },
-                "why": { "type": "string" },
-                "next": { "type": "string" }
-              }
-            }
-          }
+        "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["order", "code", "severity", "summary", "why", "next"],
+        "properties": {
+          "order": { "type": "integer", "minimum": 1 },
+          "code": { "type": "string" },
+          "severity": { "enum": ["error", "warn", "info"] },
+          "summary": { "type": "string" },
+          "why": { "type": "string" },
+          "next": { "type": "string" },
+          "provenance": { "type": "string" }
         }
       }
+    }
+  }
+}
     }
   }
 }

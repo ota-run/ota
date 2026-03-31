@@ -6297,6 +6297,17 @@ where
             }
             _ => {}
         }
+        if let Some(provenance) = change.provenance.as_deref() {
+            stdout.push_str(&format!("\n  {} {}", paint_key("Provenance:"), provenance));
+        }
+    }
+}
+
+fn diff_change_provenance(path: &str) -> Option<String> {
+    if path == "policies" || path.starts_with("policies.") {
+        Some(String::from("policy"))
+    } else {
+        None
     }
 }
 
@@ -6404,6 +6415,7 @@ fn collect_diff_changes_at(
             status: String::from("change"),
             base: Some(render_yaml_inline(base)),
             target: Some(render_yaml_inline(target)),
+            provenance: diff_change_provenance(path),
         }),
     }
 }
@@ -6427,6 +6439,7 @@ fn emit_diff_additions(value: &YamlValue, path: &str, changes: &mut Vec<DiffChan
             status: String::from("add"),
             base: None,
             target: Some(render_yaml_inline(value)),
+            provenance: diff_change_provenance(path),
         }),
     }
 }
@@ -6450,6 +6463,7 @@ fn emit_diff_removals(value: &YamlValue, path: &str, changes: &mut Vec<DiffChang
             status: String::from("remove"),
             base: Some(render_yaml_inline(value)),
             target: None,
+            provenance: diff_change_provenance(path),
         }),
     }
 }
@@ -7696,6 +7710,9 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
             paint_key("Next:"),
             compact_backticked_paths(&step.next)
         ));
+        if let Some(provenance) = step.provenance.as_deref() {
+            stdout.push_str(&format!("\n  {} {}", paint_key("Provenance:"), provenance));
+        }
     }
 
     stdout
@@ -7763,6 +7780,7 @@ fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
             summary: finding.summary.clone(),
             why: finding.why.clone(),
             next: finding.next.clone(),
+            provenance: finding.provenance(),
         })
         .collect()
 }

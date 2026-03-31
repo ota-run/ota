@@ -180,6 +180,8 @@ pub struct ExplainStep {
     pub summary: String,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -660,6 +662,8 @@ pub struct DiffChange {
     pub base: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
