@@ -565,6 +565,8 @@ Why:
 - exports or syncs agent guidance from the contract instead of hand-maintaining a second file
 - stays deterministic and reviewable
 - falls back to a lightweight scaffold when the contract does not declare an `agent` block yet
+- preserves any existing `AGENTS.md` content and appends or refreshes an Ota-managed block instead of overwriting it
+- skips the write when the existing file already contains the generated content
 
 Use-case:
 

@@ -596,6 +596,8 @@ Current behavior:
 
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
 - falls back to a lightweight scaffold that makes the missing `agent` block explicit when one is not present
+- preserves existing `AGENTS.md` content and appends or refreshes an Ota-managed block instead of overwriting user-authored guidance
+- skips the write if the existing file already contains the generated AGENTS content
 - writes to `AGENTS.md` by default when `--write` is set
 - accepts `--output` to write elsewhere
 - keeps output deterministic and reviewable

@@ -2778,19 +2778,72 @@ pub fn agents(
     };
 
     if write {
-        if let Ok(existing) = fs::read_to_string(&output_path)
-            && existing == content
-        {
+        if let Ok(existing) = fs::read_to_string(&output_path) {
+            if existing == content {
+                return finalize_debug(
+                    match format {
+                        OutputFormat::Text => {
+                            CommandOutput::success(render_text("already in sync"))
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                            ok: true,
+                            path: &path_display,
+                            output: &output_path_display,
+                            written: false,
+                            content: &content,
+                        })),
+                    },
+                    debug,
+                    debug_lines,
+                );
+            }
+
+            if agents_markdown_already_present(&existing, &content) {
+                return finalize_debug(
+                    match format {
+                        OutputFormat::Text => {
+                            CommandOutput::success(render_text("already in sync"))
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                            ok: true,
+                            path: &path_display,
+                            output: &output_path_display,
+                            written: false,
+                            content: &content,
+                        })),
+                    },
+                    debug,
+                    debug_lines,
+                );
+            }
+
+            let merged = merge_agents_markdown(&existing, &content);
             return finalize_debug(
-                match format {
-                    OutputFormat::Text => CommandOutput::success(render_text("already in sync")),
-                    OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
-                        ok: true,
-                        path: &path_display,
-                        output: &output_path_display,
-                        written: false,
-                        content: &content,
-                    })),
+                match fs::write(&output_path, merged.as_bytes()) {
+                    Ok(()) => match format {
+                        OutputFormat::Text => CommandOutput::success(render_text("appended")),
+                        OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                            ok: true,
+                            path: &path_display,
+                            output: &output_path_display,
+                            written: true,
+                            content: &content,
+                        })),
+                    },
+                    Err(error) => {
+                        let error =
+                            format!("failed to write `{}`: {error}", compact_output_display);
+                        match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                                ok: false,
+                                path: &path_display,
+                                written: false,
+                                error: &error,
+                                next: None,
+                            })),
+                        }
+                    }
                 },
                 debug,
                 debug_lines,
@@ -8177,6 +8230,51 @@ fn render_agents_markdown(
     }
 
     output
+}
+
+const AGENTS_GENERATED_START: &str = "<!-- ota-generated-agent-guidance:start -->";
+const AGENTS_GENERATED_END: &str = "<!-- ota-generated-agent-guidance:end -->";
+
+fn merge_agents_markdown(existing: &str, generated: &str) -> String {
+    if let Some(start_index) = existing.find(AGENTS_GENERATED_START)
+        && let Some(end_index) = existing[start_index..].find(AGENTS_GENERATED_END)
+    {
+        let end_index = start_index + end_index + AGENTS_GENERATED_END.len();
+        let mut merged = String::new();
+        merged.push_str(existing[..start_index].trim_end());
+        if !merged.is_empty() {
+            merged.push_str("\n\n");
+        }
+        merged.push_str(AGENTS_GENERATED_START);
+        merged.push('\n');
+        merged.push_str(generated);
+        if !generated.ends_with('\n') {
+            merged.push('\n');
+        }
+        merged.push_str(AGENTS_GENERATED_END);
+        merged.push_str(&existing[end_index..]);
+        return merged;
+    }
+
+    let mut merged = existing.trim_end().to_string();
+    if !merged.is_empty() {
+        merged.push_str("\n\n");
+    }
+    merged.push_str(AGENTS_GENERATED_START);
+    merged.push('\n');
+    merged.push_str(generated);
+    if !generated.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(AGENTS_GENERATED_END);
+    merged.push('\n');
+    merged
+}
+
+fn agents_markdown_already_present(existing: &str, generated: &str) -> bool {
+    let existing = existing.replace("\r\n", "\n");
+    let generated = generated.replace("\r\n", "\n");
+    existing.contains(&generated)
 }
 
 fn render_agent_summary_block(agent: &AgentSummary<'_>) -> Option<String> {

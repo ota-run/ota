@@ -196,7 +196,7 @@ Current behavior:
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, and leads with the highest-priority blocker first
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
-- `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance
+- `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an Ota-managed block, and skips the write when the generated content is already present
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
