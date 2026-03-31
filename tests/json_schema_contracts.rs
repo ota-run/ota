@@ -91,6 +91,7 @@ fn agents_schema_includes_generated_content() {
 
     assert!(success.get("output").is_some());
     assert!(success.get("content").is_some());
+    assert!(success.get("mode").is_some());
     assert!(failure.get("next").is_some());
 }
 

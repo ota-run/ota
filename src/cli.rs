@@ -6207,10 +6207,16 @@ project:
         let output = run_with(["ota", "agents", "--json", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains(r#""written": false"#));
-        assert!(stdout.contains(r#""output":"#));
-        assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], false);
+        assert_eq!(json["mode"], "preview");
+        assert!(json["output"].is_string());
+        assert!(
+            json["content"]
+                .as_str()
+                .unwrap()
+                .contains("No explicit `agent` block is declared in `ota.yaml` yet.")
+        );
     }
 
     #[test]
@@ -6250,6 +6256,31 @@ agent:
         assert!(agents_md.contains("Generated from `./ota.yaml`."));
         assert!(agents_md.contains("`entrypoint`: `setup`"));
         assert!(agents_md.contains("Use ota doctor first."));
+
+        let json_output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(json["mode"], "already_in_sync");
+        assert_eq!(json["written"], false);
+    }
+
+    #[test]
+    fn agents_json_reports_wrote_mode_when_creating_file() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  entrypoint: setup
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "wrote");
+        assert_eq!(json["written"], true);
     }
 
     #[test]
@@ -6304,6 +6335,11 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("already in sync"));
         assert_eq!(fs::read_to_string(&agents_path).unwrap(), original);
+
+        let json_output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(json["mode"], "already_in_sync");
+        assert_eq!(json["written"], false);
     }
 
     #[test]

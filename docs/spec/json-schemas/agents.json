@@ -6,12 +6,16 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "output", "written", "content"],
+      "required": ["ok", "path", "output", "written", "mode", "content"],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
         "output": { "type": "string" },
         "written": { "type": "boolean" },
+        "mode": {
+          "type": "string",
+          "enum": ["preview", "already_in_sync", "appended", "wrote"]
+        },
         "content": { "type": "string" }
       }
     },
