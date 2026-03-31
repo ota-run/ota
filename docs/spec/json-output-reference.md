@@ -54,7 +54,7 @@ Editor and IDE consumers should prefer the smallest stable fields for the job in
 human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
-- `ota agents --json`: use `ok`, `path`, `output`, `written`, and `content`
+- `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order

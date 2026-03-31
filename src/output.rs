@@ -518,6 +518,7 @@ pub struct AgentsSuccess<'a> {
     pub path: &'a str,
     pub output: &'a str,
     pub written: bool,
+    pub mode: &'a str,
     pub content: &'a str,
 }
 
