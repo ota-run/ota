@@ -24,7 +24,7 @@
 
 # V9 Plan
 
-Status: planned.
+Status: complete.
 
 Source direction:
 
@@ -35,6 +35,8 @@ V9 theme:
 - policy-controlled env resolution
 - execution provenance
 - repository operability with explicit env boundaries
+
+This slice is complete; the next active slice should be v10.
 
 ## Included capabilities
 
