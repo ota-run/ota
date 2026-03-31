@@ -102,6 +102,14 @@ fn validate_schema_includes_summary_counts() {
 }
 
 #[test]
+fn diff_schema_includes_policy_provenance_on_changes() {
+    let schema = load_schema("docs/spec/json-schemas/diff.json");
+    let change = &schema["properties"]["changes"]["items"]["properties"];
+
+    assert!(change.get("provenance").is_some());
+}
+
+#[test]
 fn shared_finding_schema_includes_optional_policy_context() {
     let schema = load_schema("docs/spec/json-schemas/shared.json");
     let finding = &schema["$defs"]["finding"]["properties"];
@@ -214,6 +222,23 @@ fn workspace_check_schema_exists_and_covers_repo_check_reports() {
     assert!(repo.get("contract_path").is_some());
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
+}
+
+#[test]
+fn explain_schema_includes_step_provenance() {
+    let schema = load_schema("docs/spec/json-schemas/explain.json");
+    let step = &schema["properties"]["steps"]["items"]["properties"];
+
+    assert!(step.get("provenance").is_some());
+}
+
+#[test]
+fn workspace_explain_schema_includes_step_provenance() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-explain.json");
+    let step =
+        &schema["properties"]["repos"]["items"]["properties"]["steps"]["items"]["properties"];
+
+    assert!(step.get("provenance").is_some());
 }
 
 #[test]

@@ -55,6 +55,7 @@ Useful cases:
 Text output:
 
 - grouped field-level changes
+- policy-section changes may include provenance labels
 - summary counts at the end
 - readiness impact notes
 
@@ -65,7 +66,7 @@ JSON output:
 - `base`
 - `target`
 - `summary`
-- `changes`
+- `changes`, with optional `provenance` on policy-section changes
 
 ## `ota explain`
 
@@ -90,13 +91,14 @@ Text output:
 - stable finding code for each step
 - confidence or priority where relevant
 - explicit commands when safe
+- provenance lines when the source is policy or drift derived
 
 JSON output:
 
 - `ok`
 - `path`
 - `summary`
-- `steps` with `order`, `code`, `severity`, `summary`, `why`, and `next`
+- `steps` with `order`, `code`, `severity`, `summary`, `why`, `next`, and optional `provenance`
 
 ## Non-goals
 

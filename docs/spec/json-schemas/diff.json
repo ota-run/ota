@@ -31,7 +31,7 @@
         "strengthened_count": { "type": "integer", "minimum": 0 }
       }
     },
-    "changes": {
+        "changes": {
       "type": "array",
       "items": {
         "type": "object",
@@ -41,7 +41,8 @@
           "path": { "type": "string" },
           "status": { "enum": ["add", "remove", "change", "weaken", "strengthen"] },
           "base": { "type": "string" },
-          "target": { "type": "string" }
+          "target": { "type": "string" },
+          "provenance": { "type": "string" }
         }
       }
     }

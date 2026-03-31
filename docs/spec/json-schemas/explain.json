@@ -19,7 +19,7 @@
         "step_count": { "type": "integer", "minimum": 0 }
       }
     },
-    "steps": {
+        "steps": {
       "type": "array",
       "items": {
         "type": "object",
@@ -31,7 +31,8 @@
           "severity": { "enum": ["error", "warn", "info"] },
           "summary": { "type": "string" },
           "why": { "type": "string" },
-          "next": { "type": "string" }
+          "next": { "type": "string" },
+          "provenance": { "type": "string" }
         }
       }
     }

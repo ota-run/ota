@@ -2259,6 +2259,51 @@ tasks:
     }
 
     #[test]
+    fn diff_json_reports_policy_provenance_on_policy_changes() {
+        let base = ContractFixture::new(
+            r#"
+version: 1
+policies:
+  env:
+    OTA_ENV:
+      required: false
+      default: local
+      allowed:
+        - local
+        - ci
+"#,
+        );
+        let target = ContractFixture::new(
+            r#"
+version: 1
+policies:
+  env:
+    OTA_ENV:
+      required: false
+      default: ci
+      allowed:
+        - local
+        - ci
+"#,
+        );
+
+        let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stderr.is_none());
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let changes = json["changes"].as_array().unwrap();
+        assert_eq!(changes[0]["path"], "policies.env.OTA_ENV.default");
+        assert_eq!(changes[0]["provenance"], "policy");
+
+        let text = run_with(["ota", "diff", base.path(), target.path()]);
+        let stdout = strip_ansi(&text.stdout);
+        assert!(stdout.contains("Provenance:"));
+        assert!(stdout.contains("policy"));
+    }
+
+    #[test]
     fn explain_reports_remediation_steps_and_summary_counts() {
         let contract = ContractFixture::new(
             r#"
@@ -2309,6 +2354,44 @@ project:
         assert_eq!(steps[0]["order"], 1);
         assert_eq!(steps[0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
+    }
+
+    #[test]
+    fn explain_json_reports_policy_provenance_for_policy_findings() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "explain", "--json", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.is_none());
+
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let steps = json["steps"].as_array().unwrap();
+        assert_eq!(steps[0]["provenance"], "org policy");
+
+        let text = run_with(["ota", "explain", fixture.path().to_str().unwrap()]);
+        let stdout = strip_ansi(&text.stdout);
+        assert!(stdout.contains("Provenance:"));
+        assert!(stdout.contains("org policy"));
     }
 
     #[test]

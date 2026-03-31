@@ -282,11 +282,13 @@ Text output:
 - `MATCH` or `DIFFERENT`
 - readiness impact summary
 - grouped added, missing-in-target, and changed paths
+- policy-section changes may include provenance labels
 - summary counts at the end
 
 JSON output:
 
 - success: `ok`, `base`, `target`, `summary`, `changes`
+- policy-section changes may include `provenance`
 - failure: `ok`, `base`, `target`, and `error`
 
 Use this when you want to compare contract states before writing changes or to review the impact of a proposed edit in CI.
@@ -313,12 +315,14 @@ Text output:
 - ordered remediation steps
 - stable finding code for each step
 - `Why` and `Next` lines for each step
+- provenance lines when the finding carries policy or drift provenance
 - summary counts at the end
 
 JSON output:
 
 - success: `ok`, `path`, `summary`, `steps`
 - each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
+- steps may also include `provenance`
 - failure: `ok`, `path`, and `error`
 
 ## `ota annotations`
