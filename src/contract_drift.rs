@@ -49,13 +49,13 @@ pub(crate) fn append_contract_drift_findings(
                 "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` now detects `{}`",
                 change.field,
                 existing,
-                root.display(),
+                compact_display_path(root),
                 change.detected
             ),
             next: format!(
                 "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                root.display(),
-                root.display()
+                compact_display_path(root),
+                compact_display_path(root)
             ),
         });
     }
@@ -71,15 +71,31 @@ pub(crate) fn append_contract_drift_findings(
                 "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` no longer detects it",
                 removal.field,
                 removal.existing,
-                root.display()
+                compact_display_path(root)
             ),
             next: format!(
                 "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
-                root.display(),
-                root.display()
+                compact_display_path(root),
+                compact_display_path(root)
             ),
         });
     }
+}
+
+fn compact_display_path(path: &Path) -> String {
+    let Ok(current_dir) = std::env::current_dir() else {
+        return path.display().to_string();
+    };
+
+    path.strip_prefix(&current_dir)
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                String::from(".")
+            } else {
+                relative.display().to_string()
+            }
+        })
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 pub(crate) fn collect_detect_changes(

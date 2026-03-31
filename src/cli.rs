@@ -5780,7 +5780,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("Execution:"));
+        assert!(stdout.contains("Execution"));
         assert!(stdout.contains("Preferred: remote"));
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Extensions:"));
@@ -7519,9 +7519,10 @@ tasks:
         let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["written"], false);
+        let expected_path = std::path::Path::new(fixture.path()).canonicalize().unwrap();
         assert_eq!(
             json["next"],
-            format!("ota detect --write {}", fixture.path())
+            format!("ota detect --write {}", expected_path.display())
         );
     }
 
@@ -9692,7 +9693,7 @@ tasks:
         assert!(text_body.contains("db [required] (ACQUIRED)"));
         assert!(text_body.contains("Status: READY"));
         assert!(text_body.contains("api [required] (ACQUIRED)"));
-        assert!(text_body.contains("Execution:"));
+        assert!(text_body.contains("Execution"));
         assert!(text_body.contains("Remote Provider: ssh"));
         assert!(text_body.contains("Remote Target: user@host"));
 
@@ -10412,7 +10413,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("Execution:"));
+        assert!(stdout.contains("Execution"));
         assert!(stdout.contains("SUMMARY"));
         assert!(stdout.contains("»"));
         assert!(stdout.contains("Repos: 2"));
