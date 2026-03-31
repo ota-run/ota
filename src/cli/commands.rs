@@ -2770,6 +2770,11 @@ pub fn agents(
             paint_code(&compact_output_display)
         ));
         stdout.push_str(&format!(
+            "\n{}\n{}",
+            paint_key("Managed block:"),
+            paint_code("Ota-generated content")
+        ));
+        stdout.push_str(&format!(
             "\n{} {}",
             format_result_line(status),
             paint_code(&compact_output_display)
@@ -2894,6 +2899,11 @@ pub fn agents(
                     "\n{}\n{}\n",
                     paint_key("Target:"),
                     paint_code(&compact_output_display)
+                ));
+                stdout.push_str(&format!(
+                    "\n{}\n{}",
+                    paint_key("Managed block:"),
+                    paint_code("Ota-generated content")
                 ));
                 stdout.push('\n');
                 stdout.push_str(&content);

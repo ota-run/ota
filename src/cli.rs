@@ -6189,6 +6189,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("AGENTS"));
         assert!(stdout.contains("Target:"));
+        assert!(stdout.contains("Managed block:"));
         assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
         assert!(stdout.contains("- `ota doctor`"));
         assert!(stdout.contains("- `ota detect --dry-run`"));
@@ -6250,6 +6251,7 @@ agent:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("AGENTS"));
+        assert!(stdout.contains("Managed block:"));
         assert!(stdout.contains("already in sync") || stdout.contains("wrote"));
         let agents_md = fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap();
         assert!(agents_md.contains("# AGENTS.md"));
