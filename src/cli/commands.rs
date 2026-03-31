@@ -66,9 +66,9 @@ use crate::parser::{
 };
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
-    effective_execution, resolve_task_env_details, run_task_captured_with_args_with_overrides,
-    run_task_captured_with_overrides, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides, run_task_with_progress_and_overrides,
+    effective_execution, resolve_task_env_details,
+    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
+    run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{Contract, ExtensionSpec};
 use crate::update;
@@ -2751,6 +2751,7 @@ pub fn up(
                         &target.contract,
                         &target.contract_path,
                         overrides,
+                        None,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -2810,6 +2811,7 @@ pub fn up(
                                 &member_target.contract,
                                 &member_target.contract_path,
                                 overrides,
+                                None,
                                 RepoExecutionMode::Stream,
                             ) {
                                 Ok(result) => result,
@@ -2867,6 +2869,7 @@ pub fn up(
                         &target.contract,
                         &target.contract_path,
                         overrides,
+                        None,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => render_up_result(
@@ -2927,6 +2930,7 @@ pub fn up(
                         &target.contract,
                         &target.contract_path,
                         overrides,
+                        None,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -10693,6 +10697,7 @@ fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
     overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
     mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
     let preflight = diagnose_preconditions(contract, resolved_path);
@@ -10836,29 +10841,37 @@ fn execute_repo_up(
     }
 
     if contract.tasks.contains_key("setup") {
-        match match mode {
-            RepoExecutionMode::Stream => run_task_with_progress_and_overrides(
+        let run_result = match mode {
+            RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
                 contract,
                 resolved_path,
                 "setup",
                 true,
+                &[],
                 overrides,
+                policy_env,
             )
             .map(|outcome| CommandRunResult {
                 exit_code: outcome.exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
             }),
-            RepoExecutionMode::Capture => {
-                run_task_captured_with_overrides(contract, resolved_path, "setup", overrides).map(
-                    |outcome| CommandRunResult {
-                        exit_code: outcome.exit_code,
-                        stdout: outcome.stdout,
-                        stderr: outcome.stderr,
-                    },
-                )
-            }
-        } {
+            RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
+                contract,
+                resolved_path,
+                "setup",
+                &[],
+                overrides,
+                policy_env,
+            )
+            .map(|outcome| CommandRunResult {
+                exit_code: outcome.exit_code,
+                stdout: outcome.stdout,
+                stderr: outcome.stderr,
+            }),
+        };
+
+        match run_result {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -11498,6 +11511,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
             &target.contract,
             &target.contract_path,
             ExecutionOverrides::default(),
+            Some(&repo.policy_env),
             mode,
         ) {
             Ok(result) => WorkspaceRepoUpReport {
@@ -11781,31 +11795,37 @@ fn run_workspace_repo_task(
             }
 
             let run_result = match mode {
-                RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides(
-                    &contract,
-                    &repo.contract_path,
-                    task,
-                    task_args,
-                    ExecutionOverrides::default(),
-                )
-                .map(|result| CommandRunResult {
-                    exit_code: result.exit_code,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                }),
-                RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides(
-                    &contract,
-                    &repo.contract_path,
-                    task,
-                    false,
-                    task_args,
-                    ExecutionOverrides::default(),
-                )
-                .map(|result| CommandRunResult {
-                    exit_code: result.exit_code,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                }),
+                RepoExecutionMode::Capture => {
+                    run_task_captured_with_args_with_overrides_with_policy(
+                        &contract,
+                        &repo.contract_path,
+                        task,
+                        task_args,
+                        ExecutionOverrides::default(),
+                        Some(&repo.policy_env),
+                    )
+                    .map(|result| CommandRunResult {
+                        exit_code: result.exit_code,
+                        stdout: result.stdout,
+                        stderr: result.stderr,
+                    })
+                }
+                RepoExecutionMode::Stream => {
+                    run_task_with_progress_and_args_and_overrides_with_policy(
+                        &contract,
+                        &repo.contract_path,
+                        task,
+                        false,
+                        task_args,
+                        ExecutionOverrides::default(),
+                        Some(&repo.policy_env),
+                    )
+                    .map(|result| CommandRunResult {
+                        exit_code: result.exit_code,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    })
+                }
             };
 
             match run_result {
