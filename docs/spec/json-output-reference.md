@@ -11,6 +11,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 
 - [json-schemas/validate.json](json-schemas/validate.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
+- [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
 - [json-schemas/init.json](json-schemas/init.json)
@@ -37,6 +38,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 ## Which JSON surface to use
 
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
+- use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
@@ -52,6 +54,7 @@ Editor and IDE consumers should prefer the smallest stable fields for the job in
 human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
+- `ota agents --json`: use `ok`, `path`, `output`, `written`, and `content`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order

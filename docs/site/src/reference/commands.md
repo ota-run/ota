@@ -554,6 +554,40 @@ ota init --bootstrap
 ota validate
 ```
 
+### `ota agents`
+
+When to use:
+
+- you want a repo-local `AGENTS.md` generated from `ota.yaml`
+
+Why:
+
+- exports or syncs agent guidance from the contract instead of hand-maintaining a second file
+- stays deterministic and reviewable
+- falls back to a lightweight scaffold when the contract does not declare an `agent` block yet
+
+Use-case:
+
+- generate a repo-local `AGENTS.md` before onboarding humans or agents
+
+```bash
+ota agents
+ota agents --write
+ota agents --json
+ota agents --write --output AGENTS.md
+```
+
+Script example:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+ota agents --write
+ota validate
+ota doctor
+```
+
 ### `ota detect`
 
 When to use:

@@ -513,6 +513,25 @@ pub struct InitFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct AgentsSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub output: &'a str,
+    pub written: bool,
+    pub content: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentsFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DetectSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,

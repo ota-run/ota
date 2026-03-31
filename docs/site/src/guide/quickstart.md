@@ -37,9 +37,9 @@ ota --version
 1. In a repository with `ota.yaml`:
 
 ```bash
+ota doctor
 ota validate
 ota tasks
-ota doctor
 ota up
 ```
 
@@ -52,19 +52,19 @@ ota run test
 1. If you do not have a contract yet:
 
 ```bash
-ota init
-ota detect --dry-run /path/to/repo
+ota doctor
+ota detect --dry-run .
 ```
 
 1. Write only after review:
 
 ```bash
-ota detect --merge --dry-run /path/to/repo
-ota detect --merge /path/to/repo
-ota detect --write /path/to/repo
+ota detect --merge --dry-run .
+ota detect --merge .
+ota detect --write .
 ```
 
-Use `ota init` for the first starter contract and `ota detect --merge` to update an existing one. Keep `ota detect --write` for conservative first writes from inferred repo signals.
+Use `ota doctor` first, then use `ota init` for the first starter contract and `ota detect --merge` to update an existing one. Keep `ota detect --write` for conservative first writes from inferred repo signals.
 
 For full command semantics, see the Reference section.
 

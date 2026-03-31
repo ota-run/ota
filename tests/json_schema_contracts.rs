@@ -84,6 +84,17 @@ fn detect_schema_includes_comparison_preview() {
 }
 
 #[test]
+fn agents_schema_includes_generated_content() {
+    let schema = load_schema("docs/spec/json-schemas/agents.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert!(success.get("output").is_some());
+    assert!(success.get("content").is_some());
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn validate_schema_includes_summary_counts() {
     let schema = load_schema("docs/spec/json-schemas/validate.json");
     let success = &schema["oneOf"][0]["properties"];
