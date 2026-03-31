@@ -93,14 +93,15 @@
                     "required": ["name", "required"],
                     "properties": {
                       "name": { "type": "string" },
-                      "required": { "type": "boolean" },
-                      "default": { "type": "string" },
-                      "policy": { "type": "string" },
-                      "allowed": {
-                        "type": "array",
-                        "items": { "type": "string" }
-                      }
+                    "required": { "type": "boolean" },
+                    "default": { "type": "string" },
+                    "policy": { "type": "string" },
+                    "source": { "type": "string" },
+                    "allowed": {
+                      "type": "array",
+                      "items": { "type": "string" }
                     }
+                  }
                   }
                 }
               }

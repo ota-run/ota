@@ -230,7 +230,9 @@ Finding objects may also include additive policy context keys when policy-aware 
 These keys are optional and backward-compatible.
 
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
-additive policy keys may appear there as well.
+additive policy keys may appear there as well. When a repo declares execution metadata, the shared
+`execution.env` array may include policy provenance with `source` values such as `repo policy`
+or `workspace policy`.
 
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also
@@ -256,7 +258,8 @@ can execute one explicitly named `checker` descriptor with `api_version: 1`; `ot
 --publish <name>` can execute one explicitly named `publisher` descriptor with `api_version: 1`.
 
 `ota workspace doctor --json` may include the same `execution` object on each repo item when the
-underlying repo contract declares execution metadata.
+underlying repo contract declares execution metadata, including env provenance for inherited
+workspace policy values.
 
 `ota workspace doctor --json` may also include the same `extensions` object on each repo item when
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
@@ -285,6 +288,19 @@ include `primary_blocker` with the highest-priority blocker details and the repo
       "contract_path": "/abs/path/to/apps/web/ota.yaml",
       "required": true,
       "ok": false,
+      "execution": {
+        "preferred": "native",
+        "supported": ["native"],
+        "lifecycle": "persistent",
+        "env": [
+          {
+            "name": "OTA_TEST_SHARED",
+            "required": true,
+            "policy": "workspace-policy",
+            "source": "workspace policy"
+          }
+        ]
+      },
       "findings": [
         {
           "severity": "error",
@@ -299,7 +315,9 @@ include `primary_blocker` with the highest-priority blocker details and the repo
 ```
 
 `ota workspace list --json` also includes a top-level `summary` object with repo inventory counts
-for editor, CI, and hosted preflight tooling.
+for editor, CI, and hosted preflight tooling. Its per-repo `execution` object mirrors workspace
+doctor execution metadata, including env provenance when the repo contract declares execution env
+requirements.
 
 Root monorepo summary output can also include grouped member findings under `members`.
 
@@ -550,6 +568,14 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
         "preferred": "remote",
         "supported": ["remote"],
         "lifecycle": "ephemeral",
+        "env": [
+          {
+            "name": "AWS_PROFILE",
+            "required": true,
+            "policy": "workspace-policy",
+            "source": "workspace policy"
+          }
+        ],
         "backends": {
           "remote": {
             "provider": "ssh",
@@ -580,16 +606,23 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
     "ready_count": 1,
     "not_ready_count": 0
   },
-  "receipt": {
-    "ok": true,
-    "path": "/abs/path/to/ota.workspace.yaml",
-    "scope": "workspace",
-    "contract": "/abs/path/to/ota.workspace.yaml",
-    "workspace": "ota-dev",
-    "steps": [
-      {
-        "order": 1,
-        "label": "web",
+    "receipt": {
+      "ok": true,
+      "path": "/abs/path/to/ota.workspace.yaml",
+      "scope": "workspace",
+      "contract": "/abs/path/to/ota.workspace.yaml",
+      "workspace": "ota-dev",
+      "env_sources": [
+        {
+          "name": "OTA_TEST_SHARED",
+          "value": "workspace-policy",
+          "source": "workspace policy"
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "label": "web",
         "status": "READY",
         "detail": "task `setup`"
       }
@@ -627,6 +660,7 @@ Optional per-repo fields:
 - `exit_code`
 - `stdout`
 - `stderr`
+- `env_sources`
 
 ## `ota workspace check --json`
 
@@ -852,6 +886,34 @@ Failure example:
     "info_count": 0,
     "step_count": 4
   },
+  "receipt": {
+    "ok": true,
+    "path": "/abs/path/to/ota.workspace.yaml",
+    "scope": "workspace",
+    "contract": "/abs/path/to/ota.workspace.yaml",
+    "workspace": "ota-dev",
+    "env_sources": [
+      {
+        "name": "OTA_TEST_SHARED",
+        "value": "workspace-policy",
+        "source": "workspace policy"
+      }
+    ],
+    "steps": [
+      {
+        "order": 1,
+        "label": "web",
+        "status": "READY",
+        "detail": "service `db`"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 4
+    }
+  },
   "repos": [
     {
       "name": "web",
@@ -877,6 +939,7 @@ Optional per-repo fields:
 - `exit_code`
 - `stdout`
 - `stderr`
+- `env_sources`
 
 Example acquisition/setup failure:
 

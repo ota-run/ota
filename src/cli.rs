@@ -11370,6 +11370,79 @@ tasks:
             .unwrap(),
             "workspace-policy"
         );
+
+        let run_json = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
+        assert_eq!(run_json.exit_code, 0);
+        let run_body: Value = serde_json::from_str(&run_json.stdout).unwrap();
+        assert_eq!(
+            run_body["receipt"]["env_sources"][0]["source"],
+            "workspace policy"
+        );
+
+        let up_json = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
+        assert_eq!(up_json.exit_code, 0);
+        let up_body: Value = serde_json::from_str(&up_json.stdout).unwrap();
+        assert_eq!(
+            up_body["receipt"]["env_sources"][0]["source"],
+            "workspace policy"
+        );
+    }
+
+    #[test]
+    fn workspace_list_reports_workspace_policy_env_sources() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.workspace_file(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+policies:
+  env:
+    OTA_TEST_SHARED: workspace-policy
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+env:
+  OTA_TEST_SHARED:
+    required: true
+execution:
+  preferred: native
+  supported:
+    - native
+  lifecycle: persistent
+tasks:
+  setup:
+    run: printf ok
+"#,
+        )
+        .unwrap();
+
+        let text = run_with(["ota", "workspace", "list", fixture.path()]);
+        assert_eq!(text.exit_code, 0);
+        assert!(text.stdout.contains("Env sources:"));
+        assert!(text.stdout.contains("Source: workspace policy"));
+
+        let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
+        assert_eq!(json.exit_code, 0);
+        let body: Value = serde_json::from_str(&json.stdout).unwrap();
+        assert_eq!(
+            body["repos"][0]["execution"]["env"][0]["policy"],
+            "workspace-policy"
+        );
+        assert_eq!(
+            body["repos"][0]["execution"]["env"][0]["source"],
+            "workspace policy"
+        );
     }
 
     #[cfg(unix)]
