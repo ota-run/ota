@@ -31,10 +31,10 @@ Install Ota first: [installation.md](installation.md)
 From a repo with `ota.yaml`:
 
 ```bash
+cargo run -- doctor
 cargo run -- validate
 cargo run -- tasks
 cargo run -- tasks --json
-cargo run -- doctor
 cargo run -- up
 ```
 
@@ -86,8 +86,8 @@ cargo run -- workspace up --stream
 Review first:
 
 ```bash
-cargo run -- init
-cargo run -- detect --dry-run /path/to/repo
+cargo run -- doctor
+cargo run -- detect --dry-run .
 ```
 
 `ota init` is the repo-local starter path. It now writes by default and still tells you what to do next in text mode:
@@ -103,14 +103,14 @@ Preview first (no write) or write directly:
 ```bash
 cargo run -- init --dry-run
 cargo run -- init
-cargo run -- detect /path/to/repo
+cargo run -- detect .
 ```
 
 If `ota.yaml` already exists, review or conservatively merge instead of overwriting:
 
 ```bash
-cargo run -- detect --merge --dry-run /path/to/repo
-cargo run -- detect --merge /path/to/repo
+cargo run -- detect --merge --dry-run .
+cargo run -- detect --merge .
 ```
 
 Current merge behavior:

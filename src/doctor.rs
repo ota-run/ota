@@ -667,7 +667,7 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
                 next: match service.start.as_deref() {
                     Some(start) => format!("run `{start}` and re-run `ota doctor`"),
                     None => format!(
-                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}"
+                        "start or repair `{name}` and re-run its healthcheck: {healthcheck}, then rerun `ota doctor`"
                     ),
                 },
             }),
@@ -680,7 +680,7 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
                 summary: format!("Service healthcheck timed out: {name}"),
                 why: format!("service `{name}` did not become ready within {}ms", timeout),
                 next: format!(
-                    "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`"
+                    "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`, then rerun `ota doctor`"
                 ),
             }),
         };
@@ -865,7 +865,9 @@ fn diagnose_command_version(
             },
             summary: format!("Missing {kind}: {display_name}"),
             why: format!("{display_name} is declared in the contract but is not available on PATH"),
-            next: format!("install {display_name} and make it available on PATH"),
+            next: format!(
+                "install {display_name} and make it available on PATH, then rerun `ota doctor`"
+            ),
         });
         return;
     };
@@ -884,7 +886,9 @@ fn diagnose_command_version(
         why: format!(
             "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
         ),
-        next: format!("install a compatible {display_name} version that satisfies `{requirement}`"),
+        next: format!(
+            "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
+        ),
     });
 }
 
@@ -913,7 +917,7 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
         severity: FindingSeverity::Error,
         summary: format!("Missing execution backend CLI: {name}"),
         why: format!("{backend} requires `{name}` to be available on PATH"),
-        next: format!("install {name} and make it available on PATH"),
+        next: format!("install {name} and make it available on PATH, then rerun `ota doctor`"),
     });
 }
 
@@ -931,7 +935,7 @@ fn diagnose_container_backend_cli(contract: &Contract, findings: &mut Vec<Findin
             "container execution requires one of these CLIs to be available on PATH: {supported}"
         ),
         next: String::from(
-            "install one of the supported container engines or run `ota run --backend native` if the contract allows it",
+            "install one of the supported container engines or run `ota run --backend native` if the contract allows it, then rerun `ota doctor`",
         ),
     });
 }
@@ -962,7 +966,10 @@ fn diagnose_checks(
                 severity: map_check_severity(check.severity),
                 summary: format!("Check failed: {}", check.name),
                 why: format!("the configured `{}` check did not succeed", check.name),
-                next: format!("run `{}` and fix the reported issue", check.run),
+                next: format!(
+                    "run `{}` and fix the reported issue, then rerun `ota doctor`",
+                    check.run
+                ),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
                 severity: map_check_severity(check.severity),
@@ -972,8 +979,9 @@ fn diagnose_checks(
                     check.name, timeout
                 ),
                 next: format!(
-                    "make `{}` complete faster or raise `checks.timeout` for `{}`",
-                    check.run, check.name
+                    "make `{}` complete faster or raise `checks.timeout` for `{}`, then rerun `ota doctor`",
+                    check.run,
+                    check.name
                 ),
             }),
         }

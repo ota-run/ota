@@ -66,6 +66,7 @@ Ota currently ships these commands:
 - `ota doctor`
 - `ota explain`
 - `ota init`
+- `ota agents`
 - `ota check`
 - `ota up`
 - `ota self-update` / `ota upgrade`
@@ -94,8 +95,8 @@ For commands that read an existing contract, Ota now resolves in this order:
 - `--file <path>`
 - `OTA_FILE`
 - explicit file `PATH`
-- upward discovery from the provided directory `PATH`
-- upward discovery from the current directory
+- an explicitly supplied directory `PATH` is treated as the contract boundary
+- upward discovery from the current directory when no `PATH` is supplied
 
 When the discovered `ota.yaml` is a declared monorepo member contract, Ota now loads the merged
 member contract automatically from that member path.
@@ -161,7 +162,7 @@ ota validate --member api [PATH]
 
 Current behavior:
 
-- resolves `ota.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- resolves `ota.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - when `--member` is set, loads the root contract, merges the declared member override, and validates the merged contract
 - when a root contract declares `workspace.type: monorepo`, `ota validate` also validates each declared merged member contract
 - parses the contract
@@ -580,6 +581,40 @@ JSON output:
 - `inferred`
 - failure responses can include `next` when Ota can point to one safe follow-up command
 
+## `ota agents`
+
+Generate or sync a repo-local `AGENTS.md` from the current contract.
+
+```bash
+ota agents [PATH]
+ota agents --write [PATH]
+ota agents --json [PATH]
+ota agents --write --output AGENTS.md [PATH]
+```
+
+Current behavior:
+
+- derives `AGENTS.md` from the repo contract’s `agent` block when one is present
+- falls back to a lightweight scaffold that makes the missing `agent` block explicit when one is not present
+- writes to `AGENTS.md` by default when `--write` is set
+- accepts `--output` to write elsewhere
+- keeps output deterministic and reviewable
+
+Text output:
+
+- header: `AGENTS <path>`
+- preview mode shows the generated markdown content
+- write mode reports whether the target was written or already in sync
+
+JSON output:
+
+- `ok`
+- `path`
+- `output`
+- `written`
+- `content`
+- failure responses can include `next` when Ota can point to one safe follow-up command
+
 ## `ota check`
 
 Run configured checks from a validated contract.
@@ -940,7 +975,7 @@ ota workspace validate --json [PATH]
 
 Current behavior:
 
-- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - parses the workspace contract
 - validates the workspace shape
 - validates each present referenced repo contract through the workspace contract
@@ -967,7 +1002,7 @@ ota workspace tasks --json [PATH]
 
 Current behavior:
 
-- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
 - lists task declarations for each acquired repo contract

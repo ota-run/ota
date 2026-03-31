@@ -47,18 +47,18 @@ use crate::doctor::{
 };
 use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
-    AgentSummary, CommandOutput, DetectComparison, DetectComparisonChange, DetectFailure,
-    DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, DoctorVerdict, ExecutionReceipt, ExecutionReceiptEnvSource,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceTaskSummary, WorkspaceTasksSuccess,
-    WorkspaceTasksSummary, WorkspaceUpSuccess,
+    AgentSummary, AgentsFailure, AgentsSuccess, CommandOutput, DetectComparison,
+    DetectComparisonChange, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
+    DiffSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict,
+    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
+    InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
+    ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1387,7 +1387,8 @@ pub fn doctor(
 
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
-        Err(ResolveContractError::NotFound { start }) => {
+        Err(ResolveContractError::NotFound { start })
+        | Err(ResolveContractError::MissingExplicitDirectory { path: start }) => {
             let root = Path::new(&start);
             let report = diagnose_contractless_repo(root);
             let empty_extensions = BTreeMap::new();
@@ -2690,6 +2691,164 @@ pub fn init(
                     })),
                 }
             }
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn agents(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    write: bool,
+    output: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let contract_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=agents")],
+            );
+        }
+    };
+    let path_display = contract_path.display().to_string();
+    let contract = match load_contract(&contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            let error = error.to_string();
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                        next: None,
+                    })),
+                },
+                debug,
+                vec![String::from("DEBUG command=agents")],
+            );
+        }
+    };
+    let agent = contract.agent.as_ref().and_then(AgentSummary::from_config);
+    let contract_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+    let compact_path_display = compact_contract_file_path_relative_to(
+        &contract_path,
+        DEFAULT_CONTRACT_FILE,
+        Some(contract_root),
+    );
+    let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
+        contract_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("AGENTS.md")
+    });
+    let output_path_display = output_path.display().to_string();
+    let compact_output_display =
+        compact_path_relative_to(&output_path, "AGENTS.md", Some(contract_root));
+    let debug_lines = vec![
+        String::from("DEBUG command=agents"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG output_path={output_path_display}"),
+        format!("DEBUG write={write}"),
+    ];
+
+    let content = render_agents_markdown(&contract, agent.as_ref(), &compact_path_display);
+
+    let render_text = |status: &str| {
+        let mut stdout = format_command_header("AGENTS", &compact_path_display);
+        stdout.push('\n');
+        stdout.push_str(&format!(
+            "\n{}\n{}\n",
+            paint_key("Target:"),
+            paint_code(&compact_output_display)
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            format_result_line(status),
+            paint_code(&compact_output_display)
+        ));
+        stdout
+    };
+
+    if write {
+        if let Ok(existing) = fs::read_to_string(&output_path)
+            && existing == content
+        {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::success(render_text("already in sync")),
+                    OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                        ok: true,
+                        path: &path_display,
+                        output: &output_path_display,
+                        written: false,
+                        content: &content,
+                    })),
+                },
+                debug,
+                debug_lines,
+            );
+        }
+
+        return finalize_debug(
+            match fs::write(&output_path, &content) {
+                Ok(()) => match format {
+                    OutputFormat::Text => CommandOutput::success(render_text("wrote")),
+                    OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                        ok: true,
+                        path: &path_display,
+                        output: &output_path_display,
+                        written: true,
+                        content: &content,
+                    })),
+                },
+                Err(error) => {
+                    let error = format!("failed to write `{}`: {error}", compact_output_display);
+                    match format {
+                        OutputFormat::Text => CommandOutput::failure(error),
+                        OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                            ok: false,
+                            path: &path_display,
+                            written: false,
+                            error: &error,
+                            next: None,
+                        })),
+                    }
+                }
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match format {
+            OutputFormat::Text => {
+                let mut stdout = format_command_header("AGENTS", &compact_path_display);
+                stdout.push('\n');
+                stdout.push_str(&format!(
+                    "\n{}\n{}\n",
+                    paint_key("Target:"),
+                    paint_code(&compact_output_display)
+                ));
+                stdout.push('\n');
+                stdout.push_str(&content);
+                CommandOutput::success(stdout)
+            }
+            OutputFormat::Json => CommandOutput::success(to_json(&AgentsSuccess {
+                ok: true,
+                path: &path_display,
+                output: &output_path_display,
+                written: false,
+                content: &content,
+            })),
         },
         debug,
         debug_lines,
@@ -7894,6 +8053,132 @@ fn render_agent_summary_line(agent: &AgentSummary<'_>) -> Option<String> {
     render_agent_summary_block(agent)
 }
 
+fn render_agents_markdown(
+    contract: &Contract,
+    agent: Option<&AgentSummary<'_>>,
+    source_display: &str,
+) -> String {
+    let mut output = String::new();
+    output.push_str("<!--\n");
+    output.push_str("                █████\n");
+    output.push_str("               ░░███\n");
+    output.push_str("       ██████  ███████    ██████\n");
+    output.push_str("      ███░░███░░░███░    ░░░░░███\n");
+    output.push_str("     ░███ ░███  ░███      ███████\n");
+    output.push_str("     ░███ ░███  ░███ ███ ███░░███\n");
+    output.push_str("     ░░██████   ░░█████ ░░████████\n");
+    output.push_str("      ░░░░░░     ░░░░░   ░░░░░░░░\n");
+    output.push_str("\n");
+    output.push_str("   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.\n");
+    output.push_str("\n");
+    output.push_str("   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.\n");
+    output.push_str("\n");
+    output.push_str("   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.\n");
+    output.push_str("   You may not use this file except in compliance with that License.\n");
+    output.push_str("   Unless required by applicable law or agreed to in writing, software distributed under the\n");
+    output.push_str("   License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,\n");
+    output.push_str("   either express or implied. See the License for the specific language governing permissions\n");
+    output.push_str("   and limitations under the License.\n");
+    output.push_str("\n");
+    output.push_str(
+        "   If you need additional information or have any questions, please email: os@ota.run\n",
+    );
+    output.push_str("-->\n\n");
+    output.push_str("# AGENTS.md\n\n");
+    output.push_str("Generated from `");
+    output.push_str(source_display);
+    output.push_str("`.\n\n");
+    output.push_str("## Repo\n\n");
+    output.push_str("- `project`: `");
+    output.push_str(&contract.project.name);
+    output.push_str("`\n");
+    if let Some(description) = contract.project.description.as_deref() {
+        output.push_str("- `description`: `");
+        output.push_str(description);
+        output.push_str("`\n");
+    }
+    output.push('\n');
+    output.push_str("## Agent Contract\n\n");
+
+    if let Some(agent) = agent {
+        if let Some(entrypoint) = agent.entrypoint {
+            output.push_str("- `entrypoint`: `");
+            output.push_str(entrypoint);
+            output.push_str("`\n");
+        }
+        if let Some(default_task) = agent.default_task {
+            output.push_str("- `default_task`: `");
+            output.push_str(default_task);
+            output.push_str("`\n");
+        }
+        if !agent.safe_tasks.is_empty() {
+            output.push_str("- `safe_tasks`: ");
+            output.push_str(
+                &agent
+                    .safe_tasks
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !agent.verify_after_changes.is_empty() {
+            output.push_str("- `verify_after_changes`: ");
+            output.push_str(
+                &agent
+                    .verify_after_changes
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !agent.writable_paths.is_empty() {
+            output.push_str("- `writable_paths`: ");
+            output.push_str(
+                &agent
+                    .writable_paths
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if !agent.protected_paths.is_empty() {
+            output.push_str("- `protected_paths`: ");
+            output.push_str(
+                &agent
+                    .protected_paths
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            output.push('\n');
+        }
+        if let Some(notes) = agent.notes {
+            if !notes.trim().is_empty() {
+                output.push_str("\n## Notes\n\n");
+                for line in notes.lines() {
+                    output.push_str(line);
+                    output.push('\n');
+                }
+            }
+        }
+    } else {
+        output.push_str("No explicit `agent` block is declared in `ota.yaml` yet.\n\n");
+        output.push_str("Suggested next commands:\n\n");
+        output.push_str("- `ota doctor`\n");
+        output.push_str("- `ota detect --dry-run`\n");
+        output.push_str("- `ota init --bootstrap`\n");
+    }
+
+    output
+}
+
 fn render_agent_summary_block(agent: &AgentSummary<'_>) -> Option<String> {
     let mut lines = Vec::new();
     lines.push(String::from("AGENT:"));
@@ -10218,7 +10503,7 @@ fn resolve_contract_path(
 
     match path {
         Some(path) if path.is_file() => Ok(path.to_path_buf()),
-        Some(path) if path.is_dir() => discover_contract_path(path),
+        Some(path) if path.is_dir() => resolve_explicit_contract_dir(path),
         Some(path) => Err(ResolveContractError::MissingExplicitPath {
             path: path.display().to_string(),
         }),
@@ -10247,7 +10532,7 @@ fn resolve_workspace_path(
 
     match path {
         Some(path) if path.is_file() => Ok(path.to_path_buf()),
-        Some(path) if path.is_dir() => discover_workspace_path(path),
+        Some(path) if path.is_dir() => resolve_explicit_workspace_dir(path),
         Some(path) => Err(ResolveWorkspaceError::MissingExplicitPath {
             path: path.display().to_string(),
         }),
@@ -10315,6 +10600,17 @@ fn discover_contract_path(start: &Path) -> Result<PathBuf, ResolveContractError>
     }
 }
 
+fn resolve_explicit_contract_dir(path: &Path) -> Result<PathBuf, ResolveContractError> {
+    let candidate = path.join(DEFAULT_CONTRACT_FILE);
+    if candidate.is_file() {
+        Ok(candidate)
+    } else {
+        Err(ResolveContractError::MissingExplicitDirectory {
+            path: path.display().to_string(),
+        })
+    }
+}
+
 fn resolve_explicit_workspace_path(
     path: &Path,
     source: &'static str,
@@ -10351,6 +10647,17 @@ fn discover_workspace_path(start: &Path) -> Result<PathBuf, ResolveWorkspaceErro
         }
 
         current = parent;
+    }
+}
+
+fn resolve_explicit_workspace_dir(path: &Path) -> Result<PathBuf, ResolveWorkspaceError> {
+    let candidate = path.join(DEFAULT_WORKSPACE_FILE);
+    if candidate.is_file() {
+        Ok(candidate)
+    } else {
+        Err(ResolveWorkspaceError::MissingExplicitDirectory {
+            path: path.display().to_string(),
+        })
     }
 }
 
@@ -12690,6 +12997,8 @@ enum ResolveContractError {
     NotFound { start: String },
     #[error("explicit contract path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
+    #[error("explicit repo path does not contain `ota.yaml`: `{path}`")]
+    MissingExplicitDirectory { path: String },
     #[error(
         "contract path does not exist: `{path}`\n\nNext:\n▸ run `ota init` to create a starter contract\n▸ run `ota detect --dry-run` to preview inferred fields\n▸ run `ota detect --write` to write a detected contract"
     )]
@@ -12704,6 +13013,8 @@ enum ResolveWorkspaceError {
     NotFound { start: String },
     #[error("explicit workspace path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
+    #[error("explicit workspace path does not contain `ota.workspace.yaml`: `{path}`")]
+    MissingExplicitDirectory { path: String },
     #[error(
         "workspace path does not exist: `{path}`\n\nNext:\n▸ run `ota workspace init` to create a starter workspace"
     )]

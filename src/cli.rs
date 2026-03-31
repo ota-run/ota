@@ -189,6 +189,20 @@ enum Commands {
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
+    /// Generate or sync AGENTS.md from an Ota contract.
+    Agents {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Write the generated AGENTS.md to disk.
+        #[arg(long, action = ArgAction::SetTrue)]
+        write: bool,
+        /// Optional output path for the generated AGENTS.md.
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Run configured checks from an Ota contract.
     Check {
         /// Print machine-readable JSON output.
@@ -791,6 +805,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
             | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Init { .. }
+            | Commands::Agents { .. }
             | Commands::Detect { .. }
             | Commands::Workspace {
                 command: WorkspaceCommands::Validate { .. }
@@ -946,6 +961,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Diff { json: true, .. }
             | Commands::Extensions { json: true, .. }
             | Commands::Init { json: true, .. }
+            | Commands::Agents { json: true, .. }
             | Commands::Detect { json: true, .. }
     ));
     let debug = cli.debug;
@@ -1098,6 +1114,19 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
             )
         }
+        Commands::Agents {
+            json,
+            write,
+            output,
+            path,
+        } => commands::agents(
+            path.as_deref(),
+            file.as_deref(),
+            write,
+            output.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Detect {
             json,
             write,
@@ -1381,6 +1410,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         "preview the current workspace draft with `ota workspace detect --dry-run`";
     const WORKSPACE_INIT_HELP_SUGGESTION: &str =
         "preview the workspace starter contract with `ota workspace init --dry-run`";
+    const AGENTS_SUGGESTION: &str = "run `ota agents --write` to generate AGENTS.md";
 
     if stderr.contains("Try: ") || stderr.contains("Next:") {
         return stderr;
@@ -1405,6 +1435,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             }
         }
         Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
+        Commands::Agents { .. } => AGENTS_SUGGESTION,
         Commands::Check { .. } => "run `ota check` to review readiness",
         Commands::Up { .. } => "run `ota doctor` to review readiness before `ota up`",
         Commands::Clean { .. } => "ota clean --help",
@@ -1492,6 +1523,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Diff { json, .. }
         | Commands::Extensions { json, .. }
         | Commands::Init { json, .. }
+        | Commands::Agents { json, .. }
         | Commands::Check { json, .. }
         | Commands::Up { json, .. }
         | Commands::Detect { json, .. } => *json,
@@ -1525,6 +1557,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Explain { .. } => "ota explain",
         Commands::Extensions { .. } => "ota extensions",
         Commands::Init { .. } => "ota init",
+        Commands::Agents { .. } => "ota agents",
         Commands::Check { .. } => "ota check",
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
@@ -4709,13 +4742,14 @@ project:
         let nested = fixture.dir.path().join("apps").join("web");
         fs::create_dir_all(&nested).unwrap();
 
-        let output = run_with(["ota", "validate", nested.to_str().unwrap()]);
+        let _cwd = CurrentDirGuard::enter(&nested);
+        let output = run_with(["ota", "validate"]);
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("VALIDATE"));
         assert!(stdout.contains("VALID"));
-        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
+        assert!(stdout.contains("VALIDATE ./ota.yaml"));
     }
 
     #[test]
@@ -6140,6 +6174,85 @@ tasks:
     }
 
     #[test]
+    fn agents_preview_renders_scaffold_when_agent_block_is_missing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "agents", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS"));
+        assert!(stdout.contains("Target:"));
+        assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
+        assert!(stdout.contains("- `ota doctor`"));
+        assert!(stdout.contains("- `ota detect --dry-run`"));
+    }
+
+    #[test]
+    fn agents_json_reports_output_and_scaffold_content() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(r#""written": false"#));
+        assert!(stdout.contains(r#""output":"#));
+        assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
+    }
+
+    #[test]
+    fn agents_write_creates_agents_md_from_agent_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  entrypoint: setup
+  default_task: ci
+  safe_tasks:
+    - setup
+    - build
+  verify_after_changes:
+    - fmt
+    - check
+  writable_paths:
+    - src
+    - docs
+  protected_paths:
+    - Cargo.lock
+  notes: |
+    Use ota doctor first.
+"#,
+        );
+
+        let output = run_with(["ota", "agents", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("AGENTS"));
+        assert!(stdout.contains("already in sync") || stdout.contains("wrote"));
+        let agents_md = fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap();
+        assert!(agents_md.contains("# AGENTS.md"));
+        assert!(agents_md.contains("Generated from `./ota.yaml`."));
+        assert!(agents_md.contains("`entrypoint`: `setup`"));
+        assert!(agents_md.contains("Use ota doctor first."));
+    }
+
+    #[test]
     fn init_writes_by_default_creates_full_starter_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -6636,11 +6749,12 @@ project:
             install_fake_cargo(&bin_dir.path().join("cargo"));
         }
         let original_path = std::env::var_os("PATH");
+        let _cwd = CurrentDirGuard::enter(fixture.path());
         unsafe {
             std::env::set_var("PATH", bin_dir.path());
         }
 
-        let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+        let output = run_with(["ota", "doctor"]);
 
         unsafe {
             match original_path {
@@ -7524,6 +7638,30 @@ tasks:
             json["next"],
             format!("ota detect --write {}", expected_path.display())
         );
+    }
+
+    #[test]
+    fn doctor_explicit_directory_does_not_walk_up_to_parent_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready
+"#,
+        );
+        let nested = fixture.dir.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with(["ota", "doctor", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("No `ota.yaml` found"));
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(!stderr.contains("explicit repo path does not contain `ota.yaml`"));
     }
 
     #[test]
@@ -8961,7 +9099,7 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
     }
@@ -9869,8 +10007,7 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Where: ota workspace list"));
-        assert!(stderr.contains("no `ota.workspace.yaml` found"));
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert!(stderr.contains("Next: run `ota workspace init` to create a starter workspace"));
     }
 
@@ -9883,13 +10020,10 @@ repos:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        eprintln!("doctor_not_found stderr={stderr:?}");
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Why: no `ota.yaml` found from"));
+        assert!(stderr.contains("explicit repo path does not contain `ota.yaml`"));
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("run `ota init` to create a starter contract"));
-        assert!(stderr.contains("`ota detect --dry-run`"));
-        assert!(stderr.contains("`ota detect --write`"));
     }
 
     #[test]
@@ -9923,7 +10057,7 @@ repos:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Why: no `ota.workspace.yaml` found from"));
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
         assert_eq!(stderr.matches("Next:").count(), 1);
         assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
         assert!(!stderr.contains("Next: `ota workspace doctor`"));
@@ -10126,13 +10260,11 @@ project:
         let nested = fixture.dir.path().join("apps").join("web").join("src");
         fs::create_dir_all(&nested).unwrap();
 
-        let output = run_with(["ota", "workspace", "tasks", nested.to_str().unwrap()]);
+        let _cwd = CurrentDirGuard::enter(&nested);
+        let output = run_with(["ota", "workspace", "tasks"]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains(&format!(
-            "WORKSPACE TASKS {}",
-            compact_workspace(&fixture.workspace_file())
-        )));
+        assert!(strip_ansi(&output.stdout).contains("WORKSPACE TASKS ./ota.workspace.yaml"));
     }
 
     #[test]
@@ -10181,13 +10313,14 @@ tasks:
         let nested = fixture.dir.path().join("apps").join("web").join("src");
         fs::create_dir_all(&nested).unwrap();
 
-        let output = run_with(["ota", "workspace", "validate", nested.to_str().unwrap()]);
+        let _cwd = CurrentDirGuard::enter(&nested);
+        let output = run_with(["ota", "workspace", "validate"]);
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("WORKSPACE VALIDATE"));
         assert!(stdout.contains("VALID"));
-        assert!(stdout.contains(&compact_workspace(&fixture.workspace_file())));
+        assert!(stdout.contains("WORKSPACE VALIDATE ./ota.workspace.yaml"));
     }
 
     #[test]
@@ -10422,6 +10555,32 @@ tasks:
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Remote Target: user@host"));
         assert!(stdout.rfind("SUMMARY") > stdout.rfind("Preferred: remote"));
+    }
+
+    #[test]
+    fn workspace_doctor_explicit_directory_does_not_walk_up_to_parent_contract() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+        let nested = fixture.dir.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", nested.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
+        assert!(!stderr.contains("upward"));
     }
 
     #[test]
