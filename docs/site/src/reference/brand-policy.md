@@ -28,8 +28,8 @@ Ota’s brand is separate from the Apache 2.0 code license.
 
 ## Reserved marks
 
-- `Ota`
-- the Ota logo and visual identity
+- `ota`
+- the ota logo and visual identity
 
 ## Usage
 

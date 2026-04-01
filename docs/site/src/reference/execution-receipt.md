@@ -28,7 +28,7 @@ The execution receipt is the machine-readable record for Ota execution commands.
 
 Use it to answer:
 
-- what Ota believed was required
+- what `ota` believed was required
 - what it chose to run against
 - what it reused or acquired
 - what succeeded, failed, or was blocked
