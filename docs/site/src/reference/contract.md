@@ -1,5 +1,3 @@
-span
-
 # Contract (`ota.yaml`)
 
 `ota.yaml` is the one file ota uses to explain a repo to humans, CI, and agents.
@@ -110,13 +108,31 @@ workspace:
 Use `project` for the repo’s stable identity. Keep churn-heavy metadata out of it unless the contract
 explicitly needs it.
 
+Why users need it:
+
+- gives ota a stable repo name for diagnosis and reporting
+- keeps the repo from being guessed from surrounding paths or README text
+- makes CI, agents, and workspace reports easier to read
+
 ### `runtimes`
 
 Use `runtimes` for the language/runtime versions the repo needs before it is runnable.
 
+Why users need it:
+
+- tells ota doctor what runtime is missing or too old
+- avoids hidden setup assumptions in README prose
+- keeps local, CI, and agent environments aligned
+
 ### `tools`
 
 Use `tools` for command-line dependencies that must be present on PATH.
+
+Why users need it:
+
+- surfaces hidden CLI prerequisites before a task fails
+- lets ota doctor explain missing commands directly
+- keeps install steps separate from repo tasks
 
 ### `env`
 
@@ -124,13 +140,31 @@ Use `env` for required environment values, defaults, and allowed values. If `sec
 set, ota redacts the value in execution receipts and refuses to inline it through remote shell
 wrappers.
 
+Why users need it:
+
+- makes required runtime env explicit
+- gives receipts and doctor a single source for missing or inherited values
+- keeps secrets out of logs and remote command strings
+
 ### `services`
 
 Use `services` for supporting infrastructure the repo expects to start, stop, or health-check.
 
+Why users need it:
+
+- makes local service dependencies visible instead of hiding them in shell docs
+- lets ota up start and verify the right supporting services in order
+- lets ota doctor explain why the repo is not yet ready
+
 ### `checks`
 
 Use `checks` for explicit preconditions and health checks that should be run and reported.
+
+Why users need it:
+
+- captures “must be true” conditions that are not task execution
+- lets ota doctor and ota check report readiness without mutating state
+- gives CI a deterministic gate before merge
 
 ### `tasks`
 
@@ -145,6 +179,12 @@ Defaults are optional; `required: true` makes an input mandatory unless a defaul
 limits accepted values.
 If every declared input has a default, the task can be run with no input flags.
 Use `safe_for_agent` when a task is safe for agents to run without extra guardrails.
+
+Why users need it:
+
+- gives one canonical task list instead of scattered README shell snippets
+- lets ota run tasks in dependency order
+- tells agents which tasks are safe to run automatically
 
 Example:
 
@@ -186,6 +226,7 @@ Use cases:
 - use `variants` when Windows needs a different shell command from macOS or Linux
 - use `variants` when the same task name should stay stable but the command differs by platform
 - use `variants` when a single repo must support developer machines across multiple operating systems
+- use `safe_for_agent` when the task is a normal repo action like setup, lint, or test and should be runnable without manual review
 
 Example flow:
 
@@ -327,6 +368,12 @@ That lets ota understand the repo boundary and the member layout without guessin
 
 Use `execution` to describe where ota should run those tasks when native execution is not enough.
 
+Why users need it:
+
+- tells ota whether tasks should run on the host, in a container, or through a remote provider
+- makes the execution choice explicit instead of hiding it in scripts or CI glue
+- helps receipts explain why a task ran the way it did
+
 Supported backend values today:
 
 - `native`
@@ -336,6 +383,12 @@ Supported backend values today:
 Use `native` when you want the task to run on the host machine with the tools already installed there.
 Use `container` when you want a fixed toolchain in an OCI-compatible container.
 Use `remote` when execution should happen on another machine or workspace through a provider.
+
+Use cases:
+
+- use `native` when the repo depends on tools already installed on the developer machine
+- use `container` when you want the same toolchain in local development and CI
+- use `remote` when the work needs a separate machine or workspace
 
 Container execution requires:
 
@@ -393,9 +446,21 @@ Use `ota extensions` to inspect the contract data. Use `ota extensions --run <na
 Use `agent` to tell ota which tasks are safe for agents, which paths are writable, which paths are
 protected, and what repo-specific guidance applies. Protected paths are enforced by `ota detect --merge` and `ota detect --rewrite`.
 
+Why users need it:
+
+- makes repo-edit boundaries explicit for humans and agents
+- tells ota which tasks are safe to run automatically
+- keeps dangerous files protected from accidental rewrite flows
+
 ### `workspace`
 
 Use `workspace` only for monorepo root/member orchestration across multiple repos.
+
+Why users need it:
+
+- lets ota understand which repos belong together
+- makes cross-repo bootstrapping and dependency ordering explicit
+- keeps root and member responsibility separate
 
 ## Good starting point
 

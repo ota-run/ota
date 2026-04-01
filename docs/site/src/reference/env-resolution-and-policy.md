@@ -84,6 +84,12 @@ Runtime and tool resolution follow the same inheritance principle:
 Repo contract:
 
 ```yaml
+tasks:
+  test:
+    env:
+      DATABASE_URL: postgres://localhost/app
+      JAVA_HOME: /opt/jdk-22
+    run: pnpm test
 env:
   DATABASE_URL:
     required: true
@@ -108,7 +114,7 @@ In this shape:
 
 - `DATABASE_URL` still needs to come from the repo, task, or shell
 - `JAVA_HOME` can be injected from policy if the repo allows it
-- `AWS_PROFILE` can be supplied from an approved org source
+- policy can explain where `JAVA_HOME` and `AWS_PROFILE` came from in the execution receipt
 
 ## Use cases
 
@@ -153,6 +159,9 @@ ota doctor
 ota run test
 ota up
 ```
+
+If the task needs a repo-local override, the task-scoped value wins for that task while the
+receipt still shows the source of the final value.
 
 If the repo needs a policy-provided value, the output should tell you:
 

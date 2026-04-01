@@ -28,6 +28,12 @@ The key design rule is simple:
 - acquisition source for missing repos
 - deterministic execution order for workspace commands
 
+Why users need it:
+
+- lets ota know which repos belong in one workspace
+- makes missing repos explicit instead of leaving them as broken local paths
+- keeps workspace orchestration deterministic when one repo depends on another
+
 ## Minimal example
 
 ```yaml
@@ -57,6 +63,12 @@ This says:
 - the `web` repo depends on `api`
 - workspace commands should respect that order
 
+Why that matters:
+
+- a missing repo can be cloned from the declared source instead of blocking on a manual setup step
+- dependent repos will not run ahead of their prerequisites
+- users can read the workspace contract and understand the boot order immediately
+
 ## How it works
 
 - `ota workspace validate` checks workspace contract correctness
@@ -66,6 +78,13 @@ This says:
 - workspace orchestration reuses repo-level `ota up` and `ota run` behavior
 - dependency order is deterministic
 
+What users should expect:
+
+- `required: true` means the repo is part of the workspace’s ready state and should not be ignored
+- optional repos can be reported without blocking the whole workspace
+- acquired repos are brought in before workspace prepare continues
+- independent repos may run in parallel, but only after their dependencies are already satisfied
+
 ## Use cases
 
 - bootstrapping a fullstack system spread across `api`, `web`, and `infra` repos
@@ -73,6 +92,7 @@ This says:
 - diagnosing cross-repo readiness failures from one command
 - acquiring a missing repo before workspace bootstrap starts
 - keeping workspace setup explicit without collapsing repo contracts into one file
+- distinguishing required repos from optional ones so the workspace can stay useful while incomplete
 
 ## Practical workflow
 
@@ -96,6 +116,12 @@ Fields:
 - `name`: required, non-empty string
 - `description`: optional string
 - `git_base`: optional clone base used by `repos.<name>.source.repo`
+
+Why users need it:
+
+- `name` gives the workspace a stable identity for reports and receipts
+- `description` tells humans what this workspace is for at a glance
+- `git_base` lets shorthand repo slugs resolve without repeating full clone URLs
 
 ## `repos`
 
@@ -124,6 +150,14 @@ Fields:
 - `depends_on`: optional list of workspace repo names
 - `source`: optional acquisition source for repos that are not present yet
 
+Why users need them:
+
+- `path` tells ota where the repo should live on disk
+- `contract` lets users point at a repo contract that is not at the default path
+- `required` tells ota whether a missing repo should block the workspace
+- `depends_on` keeps boot order explicit
+- `source` tells ota how to acquire a missing repo
+
 ## `source`
 
 `source` fields:
@@ -131,6 +165,12 @@ Fields:
 - `git`: explicit clone URL or git-accepted clone source
 - `repo`: repo path or slug resolved against `workspace.git_base`
 - `ref`: optional branch, tag, or ref to checkout after clone
+
+Why users need it:
+
+- `git` is the explicit full clone path when you already know the repository URL
+- `repo` is the shorthand form when many repos share one base host
+- `ref` makes the acquired workspace reproducible without guessing which branch to use
 
 Design intent:
 
@@ -166,6 +206,12 @@ Current workspace diagnosis behavior:
 - downgrades optional repo errors to warnings at the workspace layer
 - rejects required repos that depend on optional repos
 
+Use cases:
+
+- show which repo is blocking the workspace before you start fixing files
+- see optional repos without letting them fail the whole workspace
+- understand whether the workspace needs acquisition or just diagnosis
+
 This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
 
 ## `ota workspace up`
@@ -183,6 +229,12 @@ Current workspace prepare behavior:
 - emits live repo progress on stderr in text mode so users can see execution moving without losing ordered final output
 - optional repo failures do not fail the overall workspace status
 - `--stream` opts into raw live child process output instead of buffered per-repo output
+
+Use cases:
+
+- acquire a missing repo before the rest of the workspace prepares
+- keep the boot order deterministic even when multiple repos are involved
+- run independent repos in parallel without losing ordered final output
 
 Current execution policy:
 
