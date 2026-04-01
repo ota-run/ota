@@ -12,9 +12,9 @@ Use it when one repo is not enough and you need a single contract to describe:
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for workspace behavior. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 The key design rule is simple:
 
@@ -145,7 +145,7 @@ Design intent:
 - repo `path` must be non-empty
 - repo `path` must exist and point to a directory unless `source` is declared
 - `contract` must be non-empty when present
-- if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
+- if `contract` is omitted, ota expects `<repo path>/ota.yaml`
 - `source` must declare exactly one of `git` or `repo`
 - `source.repo` requires `workspace.git_base`
 - `depends_on` references must resolve to known workspace repos
@@ -187,7 +187,7 @@ Current workspace prepare behavior:
 Current execution policy:
 
 - workspace repo execution defaults to sequential because `--jobs` defaults to `1`
-- Ota only parallelizes repos whose dependencies are already satisfied
+- ota only parallelizes repos whose dependencies are already satisfied
 - final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 - `--stream` is currently text-only and requires `--jobs 1` so raw child logs do not interleave

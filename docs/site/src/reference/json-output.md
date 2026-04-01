@@ -1,14 +1,14 @@
 # JSON Output
 
-Ota supports machine-readable JSON for core commands and workspace commands.
+ota supports machine-readable JSON for core commands and workspace commands.
 
 Use it when you need stable parsing in CI, editors, agents, or scripts.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for JSON output. It adds examples,
+use cases, and operator guidance so the page stands on its own while staying
+aligned with shipped behavior.
 
 ## Why it matters
 
@@ -59,7 +59,7 @@ Editor and CI consumers should prefer the smallest stable fields for the job:
 
 ## Canonical schema URLs
 
-The current shipped JSON schemas are published under the Ota spec distribution URL:
+The current shipped JSON schemas are published under the ota spec distribution URL:
 
 - [`agents.json`](https://dist.ota.run/spec/json-schemas/latest/agents.json)
 - [`tasks.json`](https://dist.ota.run/spec/json-schemas/latest/tasks.json)
@@ -116,7 +116,7 @@ ota workspace explain --json | tee .ota-workspace-explain.json
 
 - a CI job runs `ota doctor --json`, fails on errors, and posts warnings as annotations
 - an editor shows the primary blocker without parsing text output
-- an agent reads the receipt to see what Ota actually did
+- an agent reads the receipt to see what ota actually did
 - a workspace gate surfaces per-repo readiness instead of flattening everything into one string
 - a release pipeline compares contract changes through `ota diff --json` before writing updates
 - a repo author previews a new `AGENTS.md` with `ota agents --json` before writing it
@@ -125,139 +125,49 @@ ota workspace explain --json | tee .ota-workspace-explain.json
 
 ### `ota agents --json`
 
-Use for repo-local `AGENTS.md` export preview or sync reports.
-
-Read:
-
-- `ok`
-- `path`
-- `output`
-- `written`
-- `mode`
-- `content`
-
-Short meanings:
-
-- `ok`: whether Ota successfully generated or synced the file
-- `path`: the resolved repo contract path used to generate the file
-- `output`: the target file path for the rendered `AGENTS.md`
-- `written`: whether Ota wrote a file to disk
-- `mode`: how Ota handled the request, such as preview, wrote, appended, or already_in_sync
-- `content`: the generated AGENTS.md text when present
+Use for repo-local `AGENTS.md` export preview or sync reports. The payload
+includes `ok` for success, `path` for the repo contract path, `output` for the
+rendered file path, `written` for whether a file was changed, `mode` for how
+the request was handled, and `content` for the generated text when present.
 
 ### `ota tasks --json`
 
-Use for repo task inventory and agent-safe task hints.
-
-Read:
-
-- `ok`
-- `path`
-- `agent`
-- `tasks`
-
-Short meanings:
-
-- `ok`: whether Ota successfully read and rendered the task inventory
-- `path`: the resolved contract path for the repo
-- `agent`: agent-specific task hints such as safe tasks and writable paths
-- `tasks`: the repo task list with descriptions, notes, dependencies, and inputs when present
+Use for repo task inventory and agent-safe task hints. The payload includes
+`ok` for success, `path` for the repo contract path, `agent` for agent-specific
+task hints, and `tasks` for the repo task list with descriptions, notes,
+dependencies, and inputs when present.
 
 ### `ota init --json`
 
-Use for starter-contract scaffolding and inference.
-
-Read:
-
-- `ok`
-- `path`
-- `written`
-- `mode`
-- `config`
-- `inferred`
-
-Short meanings:
-
-- `ok`: whether Ota completed init successfully
-- `path`: the resolved contract path Ota targeted
-- `written`: whether a contract was written to disk
-- `mode`: the init mode, such as detected, scaffold, or preview
-- `config`: the generated or previewed contract document
-- `inferred`: the fields Ota inferred and their provenance
+Use for starter-contract scaffolding and inference. The payload includes `ok`
+for success, `path` for the contract path, `written` for whether ota wrote a
+file, `mode` for the init mode, `config` for the generated or previewed
+contract, and `inferred` for the fields ota inferred and their provenance.
 
 ### `ota detect --json`
 
-Use for contract comparison, merge, and write decisions.
-
-Read:
-
-- `ok`
-- `path`
-- `written`
-- `config`
-- `comparison`
-- `inferred`
-
-Short meanings:
-
-- `ok`: whether Ota completed detection successfully
-- `path`: the resolved contract path Ota targeted
-- `written`: whether Ota wrote the detected contract changes
-- `config`: the detected or merged contract document
-- `comparison`: the comparison between detected repo signals and the existing contract
-- `inferred`: the fields Ota inferred and their provenance
+Use for contract comparison, merge, and write decisions. The payload includes
+`ok` for success, `path` for the contract path, `written` for whether ota wrote
+changes, `config` for the detected or merged contract, `comparison` for the
+contract comparison, and `inferred` for the inferred fields and provenance.
 
 ### `ota workspace init --json`
 
-Use for workspace scaffolding.
-
-Read:
-
-- `ok`
-- `path`
-- `written`
-- `mode`
-- `config`
-- `included`
-- `missing_contract`
-- `comparison`
-
-Short meanings:
-
-- `ok`: whether Ota completed workspace scaffolding successfully
-- `path`: the resolved workspace contract path Ota targeted
-- `written`: whether a workspace contract was written to disk
-- `mode`: the workspace init mode, such as scaffold or preview
-- `config`: the generated or previewed workspace contract
-- `included`: the repos included in the scaffold
-- `missing_contract`: repo entries that still need a contract
-- `comparison`: the comparison between detected workspace state and the existing contract
+Use for workspace scaffolding. The payload includes `ok` for success, `path`
+for the workspace contract path, `written` for whether ota wrote a workspace
+contract, `mode` for the workspace init mode, `config` for the generated or
+previewed workspace contract, `included` for the repos in the scaffold,
+`missing_contract` for repo entries that still need a contract, and
+`comparison` for the comparison against the existing workspace contract.
 
 ### `ota workspace detect --json`
 
-Use for workspace contract detection and comparison.
-
-Read:
-
-- `ok`
-- `path`
-- `written`
-- `mode`
-- `config`
-- `included`
-- `missing_contract`
-- `comparison`
-
-Short meanings:
-
-- `ok`: whether Ota completed workspace detection successfully
-- `path`: the resolved workspace contract path Ota targeted
-- `written`: whether Ota wrote the workspace contract changes
-- `mode`: the workspace detect mode, such as preview or write
-- `config`: the detected or merged workspace contract
-- `included`: the repos detected for the workspace
-- `missing_contract`: repo entries that still need a contract
-- `comparison`: the comparison between detected workspace state and the existing contract
+Use for workspace contract detection and comparison. The payload includes `ok`
+for success, `path` for the workspace contract path, `written` for whether ota
+wrote changes, `mode` for the detect mode, `config` for the detected or merged
+workspace contract, `included` for the repos detected, `missing_contract` for
+repo entries that still need a contract, and `comparison` for the workspace
+comparison.
 
 ## JSON surface guide
 
@@ -282,29 +192,18 @@ What the payload gives you:
 - env provenance when execution metadata is declared
 - policy context when policy-aware diagnosis is surfaced
 
-Finding objects always include stable identity fields:
-
-- `code`
-- `category`
-- `owner`
-- `evidence`
+Finding objects always include stable identity fields: `code` is the stable
+machine-readable finding identifier, `category` is the broad type of finding
+such as contract or readiness, `owner` is which surface owns the finding such
+as the repo contract, and `evidence` is the structured proof behind the
+finding.
 
 Finding objects may also include additive policy context keys when policy-aware diagnosis is
-surfaced:
-
-- `policy_outcome`
-- `policy_reason`
-- `policy_source`
-- `install_scope`
-- `mutation_allowed`
-
-Short meanings:
-
-- `policy_outcome`: the decision made by the policy layer
-- `policy_reason`: why that policy decision was made
-- `policy_source`: which policy source supplied the value or decision
-- `install_scope`: where the policy applies, such as repo or workspace scope
-- `mutation_allowed`: whether the policy allows mutation for the affected surface
+surfaced: `policy_outcome` is the decision made by the policy layer,
+`policy_reason` is why that policy decision was made, `policy_source` is which
+policy source supplied the value or decision, `install_scope` is where the
+policy applies such as repo or workspace scope, and `mutation_allowed` says
+whether the policy allows mutation for the affected surface.
 
 Doctor JSON can also surface contract-drift warning findings when repo signals no longer match the
 declared contract. Those findings include `ownership` and `provenance` so hosted consumers can
@@ -511,25 +410,11 @@ Use for remediation plans. Read the ordered `steps`, stable `code`, and optional
 `ota explain --json` turns readiness findings into ordered remediation steps and keeps the plan
 read-only and deterministic.
 
-Each step includes:
-
-- `order`
-- `code`
-- `severity`
-- `summary`
-- `why`
-- `next`
-- optional `provenance`
-
-Short meanings:
-
-- `order`: the fix order, starting at 1
-- `code`: the stable finding identifier
-- `severity`: whether the step is an error, warning, or info-level item
-- `summary`: the short human-readable title for the step
-- `why`: the reason the step exists
-- `next`: the safest next action Ota can recommend
-- `provenance`: the source context when the step came from policy or drift
+Each step includes `order` for fix order starting at 1, `code` for the stable
+finding identifier, `severity` for the error/warn/info level, `summary` for
+the short human-readable title, `why` for the reason the step exists, `next`
+for the safest next action ota can recommend, and optional `provenance` when
+the step came from policy or drift.
 
 Example:
 
@@ -560,18 +445,9 @@ Example:
 ### `ota workspace tasks --json`
 
 Use for workspace inventory and task availability.
-
-Read:
-
-- top-level summary counts
-- per-repo `tasks`
-- dependency order
-
-Short meanings:
-
-- `summary`: workspace-level repo and readiness counts
-- `tasks`: task inventories for each repo
-- `dependency order`: the deterministic order Ota will respect when enumerating workspace tasks
+Read `summary`, per-repo `tasks`, and dependency order. `summary` is the workspace-level repo and
+readiness count, `tasks` is the task inventory for each repo, and `dependency order` is the
+deterministic order ota respects when enumerating workspace tasks.
 
 This is the surface you want when you need to know which tasks are available across a workspace
 without reading every repo’s contract manually.
@@ -579,34 +455,17 @@ without reading every repo’s contract manually.
 ### `ota workspace list --json`
 
 Use for lightweight workspace inventory and readiness.
-
-Read:
-
-- top-level summary counts
-- per-repo readiness
-- contract presence
-
-Short meanings:
-
-- `summary`: workspace-level inventory counts
-- `per-repo readiness`: whether each repo is ready, ready-but-acquired, or not ready
-- `contract presence`: whether each repo has a present contract file
+Read `summary`, per-repo readiness, and contract presence. `summary` is the workspace inventory
+count, `per-repo readiness` tells you whether each repo is ready, ready-but-acquired, or not ready,
+and `contract presence` tells you whether the repo has a contract file.
 
 This is the surface for a quick inventory view or workspace status dashboard.
 
 ### `ota workspace check --json`
 
 Use for checks-only workspace readiness with a roll-up summary.
-
-Read:
-
-- top-level summary
-- per-repo findings
-
-Short meanings:
-
-- `summary`: workspace-level check counts
-- `per-repo findings`: the check findings for each repo
+Read `summary` and per-repo findings. `summary` is the workspace-level check count and `per-repo
+findings` are the check findings for each repo.
 
 This keeps checks separate from task execution and gives CI one stable roll-up.
 

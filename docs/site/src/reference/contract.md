@@ -24,7 +24,7 @@
 
 # Contract (`ota.yaml`)
 
-`ota.yaml` is the one file Ota uses to explain a repo to humans, CI, and agents.
+`ota.yaml` is the one file ota uses to explain a repo to humans, CI, and agents.
 
 Use it when you want:
 
@@ -34,9 +34,9 @@ Use it when you want:
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for the repo contract. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 ## Primary sections
 
@@ -50,7 +50,7 @@ page stands on its own while staying aligned with shipped behavior.
 - `tasks`: named commands that humans and agents can run.
 - `execution`: where tasks run, such as native, container, or remote.
 - `agent`: safe-task and writable-path hints for agents.
-- `extensions`: staged extension-contract data that Ota parses but does not execute yet.
+- `extensions`: staged extension-contract data that ota parses but does not execute yet.
 - `workspace`: monorepo root/member mapping.
 
 ## Quick read
@@ -60,7 +60,7 @@ Think about the file in this order:
 1. `version` and `project` identify the repo.
 2. `runtimes`, `tools`, `env`, and `services` describe what the repo needs.
 3. `checks` and `tasks` describe what the repo can verify and run.
-4. `execution`, `agent`, and `extensions` describe how Ota should run, expose those actions, and stage future extension behavior.
+4. `execution`, `agent`, and `extensions` describe how ota should run, expose those actions, and stage future extension behavior.
 5. `workspace` is only for monorepo root/member orchestration.
 
 ## Example
@@ -127,7 +127,7 @@ Use `tools` for command-line dependencies that must be present on PATH.
 ### `env`
 
 Use `env` for required environment values, defaults, and allowed values. If `secret: true` is
-set, Ota redacts the value in execution receipts and refuses to inline it through remote shell
+set, ota redacts the value in execution receipts and refuses to inline it through remote shell
 wrappers.
 
 ### `services`
@@ -145,7 +145,7 @@ Use task `description` for the short summary and task `notes` for the task purpo
 guidance like when to run it or what it is for.
 Use task `env` when a task needs fixed environment values that should override repo-level env for that task.
 Use task `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`.
-Input names use lowercase snake_case. Ota maps them to `--kebab-case` flags and injects them as `OTA_INPUT_<NAME>`.
+Input names use lowercase snake_case. ota maps them to `--kebab-case` flags and injects them as `OTA_INPUT_<NAME>`.
 Defaults are optional; `required: true` makes an input mandatory unless a default exists; `allowed`
 limits accepted values.
 If every declared input has a default, the task can be run with no input flags.
@@ -203,9 +203,9 @@ tasks:
 
 - start with `ota doctor` to see what the repo is missing before you write a contract
 - use `ota init` when you need a starter `ota.yaml` for a new or partially described repo
-- use `ota detect --dry-run` when you want Ota to compare the repo against the declared contract
+- use `ota detect --dry-run` when you want ota to compare the repo against the declared contract
 - use `ota run` when you want a task to execute under the contract
-- use `ota up` when you want Ota to prepare the repo and report ready/not-ready state
+- use `ota up` when you want ota to prepare the repo and report ready/not-ready state
 
 The contract is the source of truth. The command output should reflect it, not replace it.
 
@@ -301,11 +301,11 @@ workspace:
     - packages/sdk
 ```
 
-That lets Ota understand the repo boundary and the member layout without guessing.
+That lets ota understand the repo boundary and the member layout without guessing.
 
 ### `execution`
 
-Use `execution` to describe where Ota should run those tasks when native execution is not enough.
+Use `execution` to describe where ota should run those tasks when native execution is not enough.
 
 Supported backend values today:
 
@@ -320,7 +320,7 @@ Use `remote` when execution should happen on another machine or workspace throug
 Container execution requires:
 
 - `execution.backends.container.image`
-- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, Ota falls back to `docker`
+- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, ota falls back to `docker`
 - at least one supported container engine CLI installed and running
 
 Remote execution requires:
@@ -370,7 +370,7 @@ Use `ota extensions` to inspect the contract data. Use `ota extensions --run <na
 
 ### `agent`
 
-Use `agent` to tell Ota which tasks are safe for agents, which paths are writable, which paths are
+Use `agent` to tell ota which tasks are safe for agents, which paths are writable, which paths are
 protected, and what repo-specific guidance applies. Protected paths are enforced by `ota detect
 --merge` and `ota detect --rewrite`.
 
@@ -391,5 +391,6 @@ Start minimal, then expand:
 
 ## Canonical reference
 
-- [Spec contract reference](docs/spec/contract-reference.md)
-- [GitHub source](https://github.com/ota-run/ota/blob/main/docs/spec/contract-reference.md)
+This page is the public contract reference on the site. It explains the shipped
+contract shape, practical examples, and how to use it without sending readers
+back to the spec for basic understanding.
