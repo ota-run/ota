@@ -1,26 +1,4 @@
-<!--
-                █████
-               ░░███
-       ██████  ███████    ██████
-      ███░░███░░░███░    ░░░░░███
-     ░███ ░███  ░███      ███████
-     ░███ ░███  ░███ ███ ███░░███
-     ░░██████   ░░█████ ░░████████
-      ░░░░░░     ░░░░░   ░░░░░░░░
-
-   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
-
-   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
-
-   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
-   You may not use this file except in compliance with that License.
-   Unless required by applicable law or agreed to in writing, software distributed under the
-   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-   either express or implied. See the License for the specific language governing permissions
-   and limitations under the License.
-
-   If you need additional information or have any questions, please email: os@ota.run
--->
+span
 
 # Commands
 
@@ -37,6 +15,15 @@ with shipped behavior.
 
 For the exact shell model, see [shell-semantics.md](shell-semantics.md).
 For the platform support boundary, see [support-policy.md](support-policy.md).
+For how to read findings, see [doctor-finding-contract.md](doctor-finding-contract.md).
+For text output styling, see [output-style.md](output-style.md).
+For declared service behavior, see [service-behavior.md](service-behavior.md).
+For policy packs, see [policy-packs.md](policy-packs.md).
+For audit and provenance, see [audit-and-provenance.md](audit-and-provenance.md).
+For compatibility rules, see [compatibility-policy.md](compatibility-policy.md) and
+[compatibility-surface.md](compatibility-surface.md).
+For extension execution boundaries, see [extension-execution-boundary.md](extension-execution-boundary.md).
+For mutation and caching rules, see [mutation-controls-and-caching.md](mutation-controls-and-caching.md).
 
 Global output modifiers:
 
@@ -83,12 +70,12 @@ Execution modes:
 ## Start with this flow
 
 1. `ota doctor` to understand readiness blockers.
-1. `ota up` to make the repo runnable.
-1. `ota run <task>` for day-to-day task execution.
-1. `ota diff <base> <target>` to compare contract impact before writing changes.
-1. `ota explain` to turn findings into an ordered remediation plan.
-1. `ota detect --dry-run` before writing any new contract.
-1. `ota workspace explain` when you want workspace-level remediation ordering.
+2. `ota up` to make the repo runnable.
+3. `ota run <task>` for day-to-day task execution.
+4. `ota diff <base> <target>` to compare contract impact before writing changes.
+5. `ota explain` to turn findings into an ordered remediation plan.
+6. `ota detect --dry-run` before writing any new contract.
+7. `ota workspace explain` when you want workspace-level remediation ordering.
 
 ## Repo commands
 

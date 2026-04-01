@@ -14,6 +14,14 @@ This page is the canonical public reference for the repo contract. It adds
 examples, use cases, and operator guidance so the page stands on its own while
 staying aligned with shipped behavior.
 
+For service behavior, see [service-behavior.md](service-behavior.md).
+For policy packs, see [policy-packs.md](policy-packs.md).
+For audit and provenance, see [audit-and-provenance.md](audit-and-provenance.md).
+For compatibility rules, see [compatibility-policy.md](compatibility-policy.md) and
+[compatibility-surface.md](compatibility-surface.md).
+For extension execution boundaries, see [extension-execution-boundary.md](extension-execution-boundary.md).
+For mutation and caching rules, see [mutation-controls-and-caching.md](mutation-controls-and-caching.md).
+
 ## Primary sections
 
 - `version`: contract schema version. Today this is `1`.

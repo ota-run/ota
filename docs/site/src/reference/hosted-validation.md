@@ -215,3 +215,9 @@ Example adapter:
 ota doctor --json | ota annotations --mode doctor --format github --input -
 ota workspace doctor --json | ota annotations --mode workspace-doctor --format github --input -
 ```
+
+## Related docs
+
+- [Doctor findings](doctor-finding-contract.md)
+- [Execution receipt](execution-receipt.md)
+- [JSON output](json-output.md)
