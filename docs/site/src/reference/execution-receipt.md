@@ -61,11 +61,23 @@ For a repo task run, the receipt can look like this in JSON:
 ```json
 {
   "ok": true,
-  "path": "/Users/bobai/Workspace/acme/app/ota.yaml",
+  "path": "/workspace/acme/app/ota.yaml",
   "scope": "repo",
-  "contract": "/Users/bobai/Workspace/acme/app/ota.yaml",
-  "backend": "native",
-  "lifecycle": "persistent",
+  "contract": "/workspace/acme/app/ota.yaml",
+  "backend": "container",
+  "lifecycle": "ephemeral",
+  "env_sources": [
+    {
+      "name": "DATABASE_URL",
+      "value": "postgres://localhost/app",
+      "source": "task env"
+    },
+    {
+      "name": "JAVA_HOME",
+      "value": "/opt/jdk-22",
+      "source": "org policy"
+    }
+  ],
   "steps": [
     {
       "order": 1,
@@ -91,6 +103,38 @@ For a repo task run, the receipt can look like this in JSON:
 For a workspace run, the same receipt tells you which repos were ready,
 which were not, and where the blocker came from. That is the value: one
 structured record you can compare across runs.
+
+Workspace example:
+
+```json
+{
+  "ok": false,
+  "path": "/workspace/acme/ota.workspace.yaml",
+  "scope": "workspace",
+  "contract": "/workspace/acme/ota.workspace.yaml",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "steps": [
+    {
+      "order": 1,
+      "label": "api",
+      "status": "ok"
+    },
+    {
+      "order": 2,
+      "label": "web",
+      "status": "blocked"
+    }
+  ]
+}
+```
+
+That shape is useful when the first repo succeeded, the second repo was blocked, and you need to
+see the exact handoff point without reading terminal logs.
 
 ## Use cases
 
