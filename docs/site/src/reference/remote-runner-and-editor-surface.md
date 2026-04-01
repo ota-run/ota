@@ -52,18 +52,13 @@ Remote runner metadata describes the execution environment without asking tools 
 
 Typical fields:
 
-- `provider`
-- `target`
-- `cwd`
-- `preferred`
-- `supported`
+- `provider`: the execution backend ota should use
+- `target`: the provider-specific remote target string
+- `cwd`: the working directory used on the remote side
+- `preferred`: the execution mode ota should favor
+- `supported`: the execution modes the repo allows
 
-Current shipped providers include:
-
-- `daytona`
-- `ssh`
-- `tsh`
-- `kubectl`
+Current shipped providers include `daytona`, `ssh`, `tsh`, and `kubectl`.
 
 Example:
 

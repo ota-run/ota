@@ -67,12 +67,12 @@ diff.
 
 `ota diff --json` returns:
 
-- `ok`
-- `path`
-- `base`
-- `target`
-- `summary`
-- `changes`
+- `ok`: whether the diff completed successfully
+- `path`: the resolved contract path used as the comparison target
+- `base`: the left-hand contract or source revision
+- `target`: the right-hand contract or destination revision
+- `summary`: the top-level diff roll-up, including readiness-impact counts
+- `changes`: the ordered field-level diff entries
 
 The summary includes readiness-impact data and field counts.
 The `changes` array preserves deterministic ordering and may include optional `provenance`
@@ -116,20 +116,20 @@ without re-reading the raw findings.
 
 `ota explain --json` returns:
 
-- `ok`
-- `path`
-- `summary`
-- `steps`
+- `ok`: whether the explain pass completed successfully
+- `path`: the resolved contract path used for the explanation
+- `summary`: the top-level remediation roll-up, including finding and step counts
+- `steps`: the ordered remediation steps
 
 Each step includes:
 
-- `order`
-- `code`
-- `severity`
-- `summary`
-- `why`
-- `next`
-- optional `provenance`
+- `order`: the deterministic fix order, starting at `1`
+- `code`: the stable finding identifier for the step
+- `severity`: the step severity, such as `error`, `warn`, or `info`
+- `summary`: the short human-readable title for the step
+- `why`: the reason the step exists
+- `next`: the safest next action ota can recommend
+- optional `provenance`: the source context when the step came from policy or drift
 
 ### Useful cases
 
