@@ -71,6 +71,22 @@ tasks:
   setup:
     run: pnpm install
     safe_for_agent: true
+  test:
+    variants:
+      - when:
+          os: linux
+        run: pnpm test -- --runInBand
+      - when:
+          os: macos
+        run: pnpm test -- --runInBand
+      - when:
+          os: windows
+        script: |
+          pnpm test -- --runInBand
+  lint:
+    description: Run lint checks
+    run: pnpm lint
+    safe_for_agent: true
 execution:
   preferred: native
 extensions:
@@ -123,10 +139,12 @@ Use task `description` for the short summary and task `notes` for the task purpo
 guidance like when to run it or what it is for.
 Use task `env` when a task needs fixed environment values that should override repo-level env for that task.
 Use task `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`.
+Use task `variants` when one task name needs different commands on different operating systems.
 Input names use lowercase snake_case. ota maps them to `--kebab-case` flags and injects them as `OTA_INPUT_<NAME>`.
 Defaults are optional; `required: true` makes an input mandatory unless a default exists; `allowed`
 limits accepted values.
 If every declared input has a default, the task can be run with no input flags.
+Use `safe_for_agent` when a task is safe for agents to run without extra guardrails.
 
 Example:
 
@@ -157,6 +175,18 @@ ota run api-automation-tests --base-url http://localhost:8080 --mode contract-dr
 ota run version:bump --version 0.2.0
 ```
 
+Variants:
+
+- `when.os` selects the task body for `linux`, `macos`, or `windows`
+- each variant must define exactly one of `run` or `script`
+- ota picks the matching OS variant first, then falls back to the default task body
+
+Use cases:
+
+- use `variants` when Windows needs a different shell command from macOS or Linux
+- use `variants` when the same task name should stay stable but the command differs by platform
+- use `variants` when a single repo must support developer machines across multiple operating systems
+
 Example flow:
 
 ```yaml
@@ -175,6 +205,18 @@ tasks:
     depends_on:
       - package
     run: ./scripts/upload-artifact.sh dist/release.tar.gz
+  test:
+    variants:
+      - when:
+          os: linux
+        run: pnpm test
+      - when:
+          os: macos
+        run: pnpm test
+      - when:
+          os: windows
+        script: |
+          pnpm test
 ```
 
 ## How to use it
