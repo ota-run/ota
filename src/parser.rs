@@ -93,7 +93,7 @@ pub fn load_contract_for_member(
     let root_contents = read_contract_contents(path)?;
     let mut root_value = parse_contract_value(path, &root_contents)?;
     let root_contract = parse_contract_str(path, &root_contents)?;
-    let root_display = path.display().to_string();
+    let root_display = compact_display_path(path);
 
     let Some(workspace) = root_contract.workspace.as_ref() else {
         return Err(LoadContractError::MemberModeUnsupported {
@@ -104,7 +104,7 @@ pub fn load_contract_for_member(
 
     if !workspace.members.iter().any(|entry| entry == member) {
         return Err(LoadContractError::UnknownMember {
-            path: path.display().to_string(),
+            path: compact_display_path(path),
             member: member.to_string(),
         });
     }
@@ -119,7 +119,7 @@ pub fn load_contract_for_member(
 
     if member_declares_workspace(&member_value) {
         return Err(LoadContractError::MemberDeclaresWorkspace {
-            path: member_path.display().to_string(),
+            path: compact_display_path(&member_path),
         });
     }
 
@@ -136,14 +136,14 @@ pub fn load_contract_for_member(
 
 pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadContractError> {
     serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
-        path: path.display().to_string(),
+        path: compact_display_path(path),
         source,
     })
 }
 
 fn read_contract_contents(path: &Path) -> Result<String, LoadContractError> {
     fs::read_to_string(path).map_err(|source| LoadContractError::Read {
-        path: path.display().to_string(),
+        path: compact_display_path(path),
         source,
     })
 }
@@ -174,7 +174,7 @@ fn contract_cache_key(path: &Path) -> Result<ContractCacheKey, LoadContractError
 
 fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContractError> {
     serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
-        path: path.display().to_string(),
+        path: compact_display_path(path),
         source,
     })
 }
@@ -208,6 +208,22 @@ fn member_declares_workspace(value: &Value) -> bool {
         .as_mapping()
         .and_then(|mapping| mapping.get(Value::String(String::from("workspace"))))
         .is_some()
+}
+
+fn compact_display_path(path: &Path) -> String {
+    let Ok(current_dir) = std::env::current_dir() else {
+        return path.display().to_string();
+    };
+
+    path.strip_prefix(&current_dir)
+        .map(|relative| {
+            if relative.as_os_str().is_empty() {
+                String::from(".")
+            } else {
+                relative.display().to_string()
+            }
+        })
+        .unwrap_or_else(|_| path.display().to_string())
 }
 
 fn merge_yaml_value(root: &mut Value, override_value: Value) {
