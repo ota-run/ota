@@ -25,12 +25,14 @@ name: docs-quality
 on:
   pull_request:
     paths:
+      - "README.md"
       - "docs/**"
       - ".github/workflows/docs-quality.yml"
   push:
     branches:
       - main
     paths:
+      - "README.md"
       - "docs/**"
       - ".github/workflows/docs-quality.yml"
 
@@ -46,7 +48,8 @@ jobs:
         with:
           config: .markdownlint-cli2.yaml
           globs: |
-            docs/site/src/**/*.md
+            README.md
+            docs/**/*.md
 
   link-check:
     runs-on: ubuntu-latest
@@ -60,6 +63,7 @@ jobs:
           args: >-
             --no-progress
             --verbose
-            docs/site/src/**/*.md
+            README.md
+            docs/**/*.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
