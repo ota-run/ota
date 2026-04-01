@@ -31,9 +31,9 @@ Doctor first, contract second.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for commands. It adds examples, use
+cases, and operator guidance so the page stands on its own while staying aligned
+with shipped behavior.
 
 Global output modifiers:
 
@@ -75,7 +75,7 @@ Execution modes:
 - use `ota run <task> --backend native|container|remote` and `ota up --backend native|container|remote` to override the contract for one invocation
 - use `ota run <task> --lifecycle persistent|ephemeral` and `ota up --lifecycle persistent|ephemeral` to override container reuse for one invocation
 - container execution requires a valid `execution.backends.container.image` and at least one supported container engine CLI such as Docker or Podman
-- Ota provisions declared repo services through `ota up`, but it does not replace the OS package manager or language installer on the host
+- ota provisions declared repo services through `ota up`, but it does not replace the OS package manager or language installer on the host
 
 ## Start with this flow
 
@@ -225,8 +225,8 @@ When to use:
 
 Why:
 
-- keeps Ota’s JSON contract as the source of truth
-- lets GitHub and non-GitHub CI render the same findings differently without changing Ota itself
+- keeps ota’s JSON contract as the source of truth
+- lets GitHub and non-GitHub CI render the same findings differently without changing ota itself
 - keeps repo-local annotation adapters first-class and deterministic
 
 Use-case:
@@ -242,7 +242,7 @@ ota doctor --json | ota annotations --mode doctor --format github --input -
 
 Current behavior:
 
-- reads Ota JSON from a file or from stdin when `--input -` is used
+- reads ota JSON from a file or from stdin when `--input -` is used
 - emits one primary blocker line when `summary.primary_blocker` is present
 - emits one line per finding
 - maps `severity: error` to `::error` or `ERROR` and all other severities to
@@ -336,7 +336,7 @@ ota run test
 
 When to use:
 
-- when Ota is already installed and you want to update it in place
+- when ota is already installed and you want to update it in place
 
 Why:
 
@@ -345,7 +345,7 @@ Why:
 
 Use-case:
 
-- update the current machine after seeing the update notice from another Ota command
+- update the current machine after seeing the update notice from another ota command
 
 ```bash
 ota self-update
@@ -538,7 +538,7 @@ Why:
 
 Use-case:
 
-- bootstrap Ota adoption for an existing project
+- bootstrap ota adoption for an existing project
 
 ```bash
 ota init
@@ -572,9 +572,9 @@ Why:
 - stays deterministic and reviewable
 - falls back to a lightweight scaffold when the contract does not declare an `agent` block yet
 - includes a fallback hint to run `ota tasks` when you want to inspect runnable task commands before generating or editing agent guidance
-- preserves any existing `AGENTS.md` content and appends or refreshes an Ota-managed block instead of overwriting it
+- preserves any existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting it
 - skips the write when the existing file already contains the generated content
-- shows a `Managed block:` label in text output so the Ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
+- shows a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 
 Use-case:
 
@@ -942,7 +942,8 @@ Why:
 Receipt:
 
 - prints a summary in text output and emits an execution receipt when `--receipt` is set
-- the canonical receipt and summary layout lives in [`docs/spec/command-reference.md`](../../../spec/command-reference.md) and [`docs/spec/output-style.md`](../../../spec/output-style.md)
+- the receipt and summary layout is documented in the execution receipt and JSON output pages on
+  this site
 
 `ota workspace run --json` includes a top-level summary and receipt so hosted validation and
 automation can read the roll-up without descending into the receipt object first.
@@ -1008,7 +1009,8 @@ Why:
 Receipt:
 
 - prints a summary in text output and emits an execution receipt when `--receipt` is set
-- the canonical receipt and summary layout lives in [`docs/spec/command-reference.md`](../../../spec/command-reference.md) and [`docs/spec/output-style.md`](../../../spec/output-style.md)
+- the receipt and summary layout is documented in the execution receipt and JSON output pages on
+  this site
 
 ```bash
 ota workspace up
@@ -1031,7 +1033,5 @@ ota workspace run test
 Use `--json` whenever output is consumed by scripts, CI, or agents.
 Use exit codes together with JSON payloads for reliable automation.
 
-Canonical command reference in repository:
-
-- `docs/spec/command-reference.md`
-- <https://github.com/ota-run/ota/blob/main/docs/spec/command-reference.md>
+The command reference on this site is the public operator guide for command behavior,
+text output, JSON output, and machine integration.

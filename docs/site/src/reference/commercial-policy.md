@@ -24,13 +24,13 @@
 
 # Commercial Policy
 
-Ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
+ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for commercial policy. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 ## Open core
 
@@ -42,7 +42,7 @@ page stands on its own while staying aligned with shipped behavior.
 ## Policy
 
 - no external code contributions
-- the `Ota` name and logo stay reserved
+- the `ota` name and logo stay reserved
 - enterprise packaging stays separate from the OSS core
 
 See [brand-policy.md](brand-policy.md) for the brand usage boundary.

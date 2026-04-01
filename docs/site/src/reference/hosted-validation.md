@@ -1,16 +1,14 @@
-span
-
 # Hosted Validation
 
-Hosted validation is the read-only CI path for Ota.
+Hosted validation is the read-only CI path for ota.
 
 Use it when you want to gate a pull request or CI run without mutating the repo.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for hosted validation. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 ## What it is for
 
@@ -19,7 +17,7 @@ Use hosted validation when you need:
 - a deterministic gate before merge
 - machine-readable readiness data in CI
 - repo, workspace, and task findings without local mutation
-- annotations or check summaries derived from Ota JSON
+- annotations or check summaries derived from ota JSON
 
 It is the right surface when the repo should be judged, not changed.
 
@@ -27,8 +25,10 @@ It is the right surface when the repo should be judged, not changed.
 
 - `ota validate --json`
 - `ota doctor --json`
+- `ota check --json`
 - `ota workspace validate --json`
 - `ota workspace doctor --json`
+- `ota workspace check --json`
 - `ota workspace explain --json` for ordered workspace remediation
 - `ota workspace list --json` for inventory and readiness summary
 
@@ -36,7 +36,9 @@ These commands answer different questions:
 
 - `validate` checks contract structure
 - `doctor` diagnoses readiness
+- `check` runs checks-only readiness
 - `workspace doctor` diagnoses the workspace as an orchestration layer
+- `workspace check` runs checks-only workspace readiness
 - `workspace explain` turns workspace findings into remediation steps
 - `workspace list` gives inventory and readiness summary data
 
@@ -51,9 +53,9 @@ These commands answer different questions:
 ## Infrastructure boundary
 
 GitHub Actions or your CI runner still provisions infrastructure such as service containers.
-Ota removes the duplicated repo logic above it by keeping validation, readiness, env intent, and
+ota removes the duplicated repo logic above it by keeping validation, readiness, env intent, and
 task execution in the contract.
-That means Ota can provision declared repo services through `ota up`, but it does not replace the
+That means ota can provision declared repo services through `ota up`, but it does not replace the
 CI runner, OS package manager, or language installer on the host.
 
 ## Example CI flow
@@ -70,7 +72,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ota
+      - name: Install ota
         run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate --json | tee .ota-validate.json
@@ -80,7 +82,7 @@ jobs:
         run: ota doctor --json | ota annotations --mode doctor --format github --input -
 ```
 
-That keeps the CI job thin and lets Ota own the repo-readiness logic.
+That keeps the CI job thin and lets ota own the repo-readiness logic.
 
 ## What to fail on
 
@@ -117,7 +119,7 @@ ota workspace list --json | tee .ota-workspace-list.json
 ota workspace explain --json | tee .ota-workspace-explain.json
 ```
 
-## Example with Ota-managed Postgres
+## Example with ota-managed Postgres
 
 In this shape, the repo contract owns the database service and the CI job stays thin.
 
@@ -162,7 +164,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ota
+      - name: Install ota
         run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
@@ -174,7 +176,7 @@ jobs:
         run: ota run test
 ```
 
-Ota starts and validates the service declared in `ota.yaml`; the runner does not duplicate the
+ota starts and validates the service declared in `ota.yaml`; the runner does not duplicate the
 Postgres setup.
 
 Hosted validation is read-only. It surfaces blockers early and leaves mutation to local,
@@ -199,7 +201,7 @@ the workspace payload.
 
 Portable adapter:
 
-`ota annotations` is the canonical JSON-to-CI adapter. It turns Ota JSON into either plain CI log
+`ota annotations` is the canonical JSON-to-CI adapter. It turns ota JSON into either plain CI log
 lines or GitHub Actions annotations. Use `--format plain` for any provider, or `--format github`
 when the CI platform understands annotation syntax.
 
@@ -211,6 +213,5 @@ Example adapter:
 
 ```bash
 ota doctor --json | ota annotations --mode doctor --format github --input -
-
 ota workspace doctor --json | ota annotations --mode workspace-doctor --format github --input -
 ```

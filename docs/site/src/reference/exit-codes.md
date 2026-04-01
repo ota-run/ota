@@ -24,14 +24,14 @@
 
 # Exit Codes
 
-Ota uses stable exit codes so CI, shell scripts, and agents can react to success and failure
+ota uses stable exit codes so CI, shell scripts, and agents can react to success and failure
 without parsing human text output.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for exit codes. It adds examples,
+use cases, and operator guidance so the page stands on its own while staying
+aligned with shipped behavior.
 
 ## Why it matters
 
@@ -144,7 +144,7 @@ In CI, treat `1` as a contract or readiness failure and `2` as a pipeline misuse
 - `0` when persistent execution state is removed
 - `0` when there is no cleanup action to perform
 - `1` on load or validation failure
-- `1` when persistent cleanup fails before Ota can report success
+- `1` when persistent cleanup fails before ota can report success
 
 ### `ota workspace doctor`
 

@@ -24,7 +24,7 @@
 
 # Remote Runner Metadata
 
-This page defines the current Ota surface for remote-runner metadata and editor/IDE integration.
+This page defines the current ota surface for remote-runner metadata and editor/IDE integration.
 
 Use it when you want the same contract language to drive:
 
@@ -35,9 +35,9 @@ Use it when you want the same contract language to drive:
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for remote runner metadata. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 ## Why it matters
 
@@ -84,7 +84,7 @@ should run in `/workspace` on the target host.
 
 ## Target shape guidance
 
-Ota keeps basic target-shape checks honest so CI and editors can catch obvious mistakes early.
+ota keeps basic target-shape checks honest so CI and editors can catch obvious mistakes early.
 
 Current guidance:
 
@@ -93,7 +93,7 @@ Current guidance:
 - `cwd` is passed through when set
 - remote execution runs in the effective target contract directory
 
-This is guidance, not hidden magic. Ota should show you what it saw and what it chose.
+This is guidance, not hidden magic. ota should show you what it saw and what it chose.
 
 ## Editor and IDE surface
 

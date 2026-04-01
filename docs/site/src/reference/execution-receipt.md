@@ -24,7 +24,7 @@
 
 # Execution Receipt
 
-The execution receipt is the machine-readable record for Ota execution commands.
+The execution receipt is the machine-readable record for ota execution commands.
 
 Use it to answer:
 
@@ -36,9 +36,9 @@ Use it to answer:
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for execution receipts. It adds
+examples, use cases, and operator guidance so the page stands on its own while
+staying aligned with shipped behavior.
 
 This surface applies to execution flows, not diagnosis or inference.
 
@@ -46,7 +46,7 @@ This surface applies to execution flows, not diagnosis or inference.
 
 The receipt is most useful when you want to know:
 
-- what repo or workspace Ota ran against
+- what repo or workspace ota ran against
 - what contract it used
 - what backend and lifecycle were chosen
 - what tasks, steps, or services actually ran
@@ -94,7 +94,7 @@ structured record you can compare across runs.
 
 ## Use cases
 
-- confirm what Ota actually executed after a successful `ota run`
+- confirm what ota actually executed after a successful `ota run`
 - debug a failed `ota up` without guessing which backend or lifecycle was used
 - inspect which steps were blocked before a task could finish
 - compare a native run and a container-backed run

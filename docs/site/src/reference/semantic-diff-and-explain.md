@@ -31,9 +31,9 @@ Use `ota explain` when you want a readiness report turned into a fix plan.
 
 ## Source model
 
-`docs/spec` is the canonical source of truth. This page is the public reference
-layer derived from it. It adds examples, use cases, and operator guidance so the
-page stands on its own while staying aligned with shipped behavior.
+This page is the canonical public reference for semantic diff and explain. It
+adds examples, use cases, and operator guidance so the page stands on its own
+while staying aligned with shipped behavior.
 
 The spec keeps them separate from:
 
@@ -109,7 +109,7 @@ without re-reading the raw findings.
 - the severity of each step
 - the stable finding code for each step
 - why each step exists
-- the next safe action when Ota can name one
+- the next safe action when ota can name one
 - provenance when the finding came from policy or drift context
 
 ### Current JSON shape
