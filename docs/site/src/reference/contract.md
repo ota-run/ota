@@ -35,6 +35,7 @@ For mutation and caching rules, see [mutation-controls-and-caching.md](mutation-
 - `execution`: where tasks run, such as native, container, or remote.
 - `agent`: safe-task and writable-path hints for agents.
 - `extensions`: staged extension-contract data that ota parses but does not execute yet.
+- `metadata`: open map for repo-specific values that do not need a first-class field yet.
 - `workspace`: monorepo root/member mapping.
 
 ## Quick read
@@ -45,7 +46,8 @@ Think about the file in this order:
 2. `runtimes`, `tools`, `env`, and `services` describe what the repo needs.
 3. `checks` and `tasks` describe what the repo can verify and run.
 4. `execution`, `agent`, and `extensions` describe how ota should run, expose those actions, and stage future extension behavior.
-5. `workspace` is only for monorepo root/member orchestration.
+5. `metadata` carries extra repo-specific values for ownership, provenance, or local conventions.
+6. `workspace` is only for monorepo root/member orchestration.
 
 ## Example
 
@@ -102,6 +104,8 @@ extensions:
     api_version: 1
 agent:
   default_task: setup
+metadata:
+  team: platform
 workspace:
   type: monorepo
   members:
@@ -462,6 +466,26 @@ Why users need it:
 - makes repo-edit boundaries explicit for humans and agents
 - tells ota which tasks are safe to run automatically
 - keeps dangerous files protected from accidental rewrite flows
+
+### `metadata`
+
+Use `metadata` for extra repo-specific values that do not need their own first-class field yet.
+Keep it open so teams can carry ownership, provenance, or rollout metadata alongside the contract.
+
+Why users need it:
+
+- lets repos attach custom values without inventing a parallel config file
+- keeps repo-specific context close to the contract it describes
+- gives tools a predictable place to read extra metadata when they need it
+
+Example:
+
+```yaml
+metadata:
+  team: platform
+  owner: ota
+  created_at: 2026-03-23
+```
 
 ### `workspace`
 
