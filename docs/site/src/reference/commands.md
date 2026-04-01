@@ -1,5 +1,3 @@
-span
-
 # Commands
 
 This page is adoption-first: each command explains when to use it, why it exists,

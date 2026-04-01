@@ -23,6 +23,14 @@ The key design rule is simple:
 
 ## What it defines
 
+Top-level fields:
+
+- `version`: required, currently only `1`
+- `workspace`: required workspace metadata
+- `repos`: required map of repo entries
+
+It also defines:
+
 - workspace identity
 - repo paths and dependency graph
 - acquisition source for missing repos
@@ -33,6 +41,7 @@ Why users need it:
 - lets ota know which repos belong in one workspace
 - makes missing repos explicit instead of leaving them as broken local paths
 - keeps workspace orchestration deterministic when one repo depends on another
+- lets ota reject unsupported workspace schema versions before bootstrapping begins
 
 ## Minimal example
 
