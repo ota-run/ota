@@ -28,6 +28,14 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.4.1
+
+- expanded the changelog to cover all shipped releases instead of only the latest one.
+- added a repository rule to keep `CHANGELOG.md` updated for every user-visible change and release bump.
+- updated JSON schema `$id` values to the stable `latest` URL form used by the published R2 path.
+- kept release-gate publishing aligned with tag-based release flow and JSON schema uploads.
+- tightened README ordering and quickstart examples so installation and first-use paths are first-class.
+
 ## 0.4.0
 
 - added `ota agents` to generate or sync `AGENTS.md` from the contract agent block.
