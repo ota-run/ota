@@ -532,7 +532,7 @@ Update documentation when changing:
 - validation semantics
 - exit code semantics
 - adoption workflow (`doctor`, `init`, `detect`, `up`)
-- `CHANGELOG.md` for user-visible changes and every release/version bump
+- `CHANGELOG.md` for every user-visible change and every release/version bump
 
 Documentation quality rule for OSS adoption:
 - command docs must explain **when to use**, **why it exists**, and at least one concrete **use-case**
