@@ -115,7 +115,7 @@
                 "properties": {
                   "kind": {
                     "type": "string",
-                    "enum": ["checker", "publisher"]
+                    "enum": ["check_provider", "export_provider", "backend_provider"]
                   },
                   "command": { "type": "string" },
                   "api_version": { "type": "integer", "minimum": 1 },

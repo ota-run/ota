@@ -48,6 +48,8 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `tasks`: named commands humans and agents can run deterministically.
 - `execution`: where tasks run, such as native, container, or remote backends.
 - `agent`: agent-safe task hints and writable-path guidance.
+- `exports`: downstream generation preferences and export metadata.
+- `policies`: repo-local policy overlays and guardrails.
 - `workspace`: monorepo root/member mapping for multi-repo orchestration.
 
 ## Top-level fields
@@ -64,7 +66,7 @@ execution:
     - native
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 runtimes:
@@ -95,9 +97,15 @@ metadata:
 Top-level `extensions` is now recognized as adapter contract data.
 Each entry is a typed adapter descriptor with `kind`, `command`, and `api_version`, plus optional
 `description` and `config`.
-Supported kinds today are `checker` and `publisher`.
-`checker` is runnable with `ota extensions --run <name>` when `api_version: 1` is declared.
-`publisher` is runnable with `ota extensions --publish <name>` when `api_version: 1` is declared.
+Supported kinds today are `check_provider`, `export_provider`, and `backend_provider`.
+`check_provider` is runnable with `ota extensions --run <name>` when `api_version: 1` is declared.
+`export_provider` is runnable with `ota extensions --publish <name>` when `api_version: 1` is declared.
+`backend_provider` is reserved for task execution backends, is discoverable in the contract, and
+can be named by `execution.backends.remote.provider` when the repo wants a custom execution
+backend. Runtime backend providers receive a structured JSON request on stdin and via
+`OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout. The
+request includes the extension id, kind, api version, command context, repo context path, working
+directory, task name, task command, execution mode, target, cwd, and resolved environment values.
 The validator requires `kind` to be one of the supported kinds, `command` to be non-empty, and
 `api_version` to be greater than zero.
 
@@ -105,14 +113,15 @@ Real-world use cases:
 
 - upload a release artifact bundle to an internal endpoint
 - publish scan or compliance reports through one standard adapter
-- expose a custom checker, codegen helper, or sync tool in a stable contract slot
+- expose a custom check provider, export target generator, or execution backend in a stable
+  contract slot
 
 Example:
 
 ```yaml
 extensions:
   release-upload:
-    kind: publisher
+    kind: export_provider
     command: ota-ext-upload
     api_version: 1
     description: Upload the release bundle to the artifact endpoint
@@ -121,8 +130,20 @@ extensions:
       artifact: dist/release.zip
 ```
 
+```yaml
+extensions:
+  remote-shell:
+    kind: backend_provider
+    command: ota-ext-remote-shell
+    api_version: 1
+    description: Execute tasks through a custom remote backend
+    config:
+      transport: ssh
+      workspace_root: /workspace
+```
+
 Use `ota extensions` to inspect this contract data. Use `ota extensions --run <name>` for
-`checker` descriptors and `ota extensions --publish <name>` for `publisher` descriptors.
+`check_provider` descriptors and `ota extensions --publish <name>` for `export_provider` descriptors.
 For the staged execution boundary and V6 target contract, see
 [extension-execution-boundary.md](extension-execution-boundary.md).
 
@@ -190,6 +211,24 @@ Current behavior:
 - repo commands can target a member with `--member <name>`
 - repo commands run from inside a member directory automatically load the merged member contract
 - current member targeting expects the named member to be declared in `workspace.members`
+
+## `exports` and `policies`
+
+Optional.
+
+These sections are the current shipped overlay surfaces for downstream generation and policy-driven
+guardrails.
+
+Use them when you want the contract to describe derived outputs or repo-local policy intent without
+turning those derived artifacts into a second source of execution truth.
+
+Current guidance:
+
+- `exports` should describe export preferences or downstream artifact intent
+- `policies` should describe repo-local policy overlays and guardrails
+- neither section should replace core readiness fields such as `tasks`, `services`, or `checks`
+- newer spec drafts discuss additional policy and readiness-gate behavior; those are not part of
+  the current shipped parser unless the implementation explicitly accepts them
 
 ## `execution`
 
@@ -305,6 +344,7 @@ Current behavior:
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
 - `timeout` must be greater than zero when set
+- `readiness_gate` is a later-spec draft field and is not accepted by the current shipped parser
 - `ota doctor` runs declared service `healthcheck` commands
 - for `provider: docker-compose`, `ota doctor` runs the healthcheck inside the service container via `docker compose exec -T <service> sh -lc <healthcheck>`
 - failed required service healthchecks are blocking errors
@@ -461,7 +501,7 @@ tasks:
     run: ./scripts/upload-artifact.sh dist/release.tar.gz
 extensions:
   release-upload:
-    kind: publisher
+    kind: export_provider
     command: ota-ext-upload
     api_version: 1
     description: Upload the release bundle to the artifact endpoint

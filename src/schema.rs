@@ -116,17 +116,19 @@ pub struct ExtensionSpec {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ExtensionKind {
-    Checker,
-    Publisher,
+    CheckProvider,
+    ExportProvider,
+    BackendProvider,
 }
 
 impl ExtensionKind {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Checker => "checker",
-            Self::Publisher => "publisher",
+            Self::CheckProvider => "check_provider",
+            Self::ExportProvider => "export_provider",
+            Self::BackendProvider => "backend_provider",
         }
     }
 }

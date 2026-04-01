@@ -30,11 +30,86 @@ This document defines the current implementation boundary for extensions during 
 
 - Ota core commands do not execute extension providers at runtime.
 - Top-level `extensions` in `ota.yaml` is parsed for discovery and inspection.
-- Supported kinds today are `checker` and `publisher`.
-- `ota extensions --run <name>` can execute one explicitly named `checker` descriptor with
+- Supported kinds today are `check_provider`, `export_provider`, and `backend_provider`.
+- `ota extensions --run <name>` can execute one explicitly named `check_provider` descriptor with
   `api_version: 1`.
-- `ota extensions --publish <name>` can execute one explicitly named `publisher` descriptor with
+- `ota extensions --publish <name>` can execute one explicitly named `export_provider` descriptor with
   `api_version: 1`.
+- `backend_provider` is parsed and preserved for discovery, and can be selected by
+  `execution.backends.remote.provider` for custom remote execution.
+- backend providers receive a structured JSON request on stdin and via
+  `OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout.
+- the request includes:
+  - `extension_id`
+  - `extension_kind`
+  - `api_version`
+  - `command_context` (`run` for task execution today)
+  - `repo_context_path`
+  - `working_dir`
+  - `task.name`
+  - `task.command`
+  - `task.mode`
+  - `task.target`
+  - `task.cwd`
+  - `task.environment`
+- the response includes:
+  - `ok`
+  - `result`
+  - `errors`
+- the result object includes:
+  - `exit_code`
+  - `stdout`
+  - `stderr`
+  - `target`
+- shell adapters may also read these env vars:
+  - `OTA_BACKEND_PROVIDER_NAME`
+  - `OTA_BACKEND_PROVIDER_KIND`
+  - `OTA_BACKEND_PROVIDER_API_VERSION`
+  - `OTA_BACKEND_PROVIDER_TARGET`
+  - `OTA_BACKEND_PROVIDER_COMMAND`
+  - `OTA_BACKEND_PROVIDER_WORKDIR`
+  - `OTA_BACKEND_PROVIDER_CWD`
+  - `OTA_BACKEND_PROVIDER_MODE`
+  - `OTA_BACKEND_PROVIDER_REQUEST_JSON`
+
+Example request:
+
+```json
+{
+  "extension_id": "backend-demo",
+  "extension_kind": "backend_provider",
+  "api_version": 1,
+  "command_context": "run",
+  "repo_context_path": "/workspace/repo",
+  "working_dir": "/workspace/repo",
+  "task": {
+    "name": "setup",
+    "command": "echo backend-provider-run",
+    "mode": "capture",
+    "target": "sandbox-dev",
+    "cwd": "/workspace",
+    "environment": {
+      "TASK_TOKEN": "sample-token",
+      "OTA_BACKEND_PROVIDER_NAME": "backend-demo"
+    }
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "exit_code": 0,
+    "stdout": "backend-provider-run",
+    "stderr": "",
+    "target": "sandbox-dev"
+  },
+  "errors": []
+}
+```
 - `ota doctor`, `ota check`, `ota run`, `ota up`, and `ota export` behavior remains core-only.
 
 ## Why this boundary exists
@@ -45,12 +120,13 @@ This document defines the current implementation boundary for extensions during 
 
 ## Contract target
 
-The normative extension contract target is:
-
-- [21a-v6-extension-contract-normative.md](/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md)
+The normative extension contract target is defined in the newer V6 spec corpus, and this repo keeps
+the shipped boundary centered on the current `check_provider`, `export_provider`, and
+`backend_provider` contract seam.
 
 Earlier compatibility and protocol work can prepare the surface, but runtime extension execution is
-still constrained to the explicit `ota extensions --run <name>` seam.
+still constrained to the explicit `ota extensions --run <name>` and `ota extensions --publish
+<name>` seams in the current implementation.
 
 ## Enforcement in this repo
 

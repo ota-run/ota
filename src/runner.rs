@@ -23,11 +23,15 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use serde::{Deserialize, Serialize};
+use serde_json;
+
 use crate::execution::{container_engine_candidates, selected_container_engine};
-use crate::schema::{Backend, Contract, Lifecycle, TaskSpec};
+use crate::schema::{Backend, Contract, ExtensionKind, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -77,6 +81,46 @@ pub enum RunError {
     UnsupportedBackend { task: String, backend: &'static str },
     #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
     UnsupportedRemoteProvider { task: String, provider: String },
+    #[error("task `{task}` cannot use backend provider `{provider}` because it is not declared in ota.yaml")]
+    MissingBackendProvider { task: String, provider: String },
+    #[error("task `{task}` backend provider `{provider}` has unsupported `api_version` `{api_version}`; expected `1`")]
+    UnsupportedBackendProviderVersion {
+        task: String,
+        provider: String,
+        api_version: u32,
+    },
+    #[error(
+        "task `{task}` backend provider `{provider}` request could not be serialized: {source}"
+    )]
+    BackendProviderRequestSerialization {
+        task: String,
+        provider: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error(
+        "task `{task}` backend provider `{provider}` did not return valid JSON response data: {source}"
+    )]
+    BackendProviderResponseParse {
+        task: String,
+        provider: String,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("task `{task}` backend provider `{provider}` reported failure: {errors}")]
+    BackendProviderFailed {
+        task: String,
+        provider: String,
+        errors: String,
+    },
+    #[error("task `{task}` backend provider `{provider}` did not return a `result` object")]
+    BackendProviderMissingResult { task: String, provider: String },
+    #[error("task `{task}` backend provider `{provider}` exited with status {exit_code}")]
+    BackendProviderExitedNonZero {
+        task: String,
+        provider: String,
+        exit_code: i32,
+    },
     #[error(
         "task `{task}` uses secret environment variables that cannot be passed through remote execution: {names}"
     )]
@@ -586,6 +630,12 @@ enum ResolvedExecutionBackend {
         target: String,
         cwd: Option<String>,
     },
+    BackendProvider {
+        provider: String,
+        command: String,
+        target: String,
+        cwd: Option<String>,
+    },
 }
 
 fn run_task_internal(
@@ -763,6 +813,22 @@ fn execute_task_command(
             command,
             env_overrides,
             provider,
+            target,
+            cwd.as_deref(),
+            mode,
+        ),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            command: provider_command,
+            target,
+            cwd,
+        } => execute_backend_provider_task_command(
+            task_name,
+            command,
+            working_dir,
+            env_overrides,
+            provider,
+            provider_command,
             target,
             cwd.as_deref(),
             mode,
@@ -965,13 +1031,52 @@ fn resolve_execution_backend(
                         provider: remote.provider.clone(),
                         example_target: remote_target_example(&remote.provider).to_string(),
                     })?;
-                Ok(ResolvedExecutionBackend::Remote {
-                    provider: remote.provider.clone(),
-                    target,
-                    cwd: remote.cwd.clone(),
-                })
+
+                if is_builtin_remote_provider(&remote.provider) {
+                    Ok(ResolvedExecutionBackend::Remote {
+                        provider: remote.provider.clone(),
+                        target,
+                        cwd: remote.cwd.clone(),
+                    })
+                } else {
+                    let Some(extension) = backend_provider_extension(contract, &remote.provider)
+                    else {
+                        return Err(RunError::MissingBackendProvider {
+                            task: task_name.to_string(),
+                            provider: remote.provider.clone(),
+                        });
+                    };
+
+                    if extension.api_version != 1 {
+                        return Err(RunError::UnsupportedBackendProviderVersion {
+                            task: task_name.to_string(),
+                            provider: remote.provider.clone(),
+                            api_version: extension.api_version,
+                        });
+                    }
+
+                    Ok(ResolvedExecutionBackend::BackendProvider {
+                        provider: remote.provider.clone(),
+                        command: extension.command.clone(),
+                        target,
+                        cwd: remote.cwd.clone(),
+                    })
+                }
             }),
     }
+}
+
+fn backend_provider_extension<'a>(
+    contract: &'a Contract,
+    provider: &str,
+) -> Option<&'a crate::schema::ExtensionSpec> {
+    contract.extensions.get(provider).filter(|extension| {
+        extension.kind == ExtensionKind::BackendProvider && !extension.command.trim().is_empty()
+    })
+}
+
+fn is_builtin_remote_provider(provider: &str) -> bool {
+    matches!(provider, "daytona" | "ssh" | "tsh" | "kubectl")
 }
 
 fn remote_target_example(provider: &str) -> &'static str {
@@ -1050,6 +1155,297 @@ fn execute_remote_task_command(
             })
         }
     }
+}
+
+fn execute_backend_provider_task_command(
+    task_name: &str,
+    task_command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    provider: &str,
+    provider_command: &str,
+    target: &str,
+    cwd: Option<&str>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let mut provider_env = env_overrides.clone();
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_NAME"),
+        provider.to_string(),
+    );
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_KIND"),
+        String::from("backend_provider"),
+    );
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_API_VERSION"),
+        String::from("1"),
+    );
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_TARGET"),
+        target.to_string(),
+    );
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_COMMAND"),
+        task_command.to_string(),
+    );
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_WORKDIR"),
+        working_dir.display().to_string(),
+    );
+    if let Some(cwd) = cwd {
+        provider_env.insert(String::from("OTA_BACKEND_PROVIDER_CWD"), cwd.to_string());
+    }
+
+    let request = backend_provider_request(
+        provider,
+        task_name,
+        task_command,
+        working_dir,
+        target,
+        cwd,
+        mode,
+        &provider_env,
+    );
+    let request_json = serde_json::to_string(&request).map_err(|source| {
+        RunError::BackendProviderRequestSerialization {
+            task: task_name.to_string(),
+            provider: provider.to_string(),
+            source,
+        }
+    })?;
+    provider_env.insert(
+        String::from("OTA_BACKEND_PROVIDER_REQUEST_JSON"),
+        request_json.clone(),
+    );
+
+    let mut provider_command = shell_command(provider_command);
+
+    match mode {
+        TaskExecutionMode::Stream { emit_progress } => {
+            if emit_progress {
+                eprintln!("RUN {task_name}");
+            }
+            provider_env.insert(
+                String::from("OTA_BACKEND_PROVIDER_MODE"),
+                String::from("stream"),
+            );
+
+            let mut child = provider_command
+                .current_dir(working_dir)
+                .envs(provider_env.iter())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(request_json.as_bytes())
+                    .and_then(|_| stdin.flush())
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+            }
+
+            let mut stdout = String::new();
+            if let Some(mut child_stdout) = child.stdout.take() {
+                child_stdout.read_to_string(&mut stdout).map_err(|source| {
+                    RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    }
+                })?;
+            }
+
+            let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            if !status.success() {
+                return Err(RunError::BackendProviderExitedNonZero {
+                    task: task_name.to_string(),
+                    provider: provider.to_string(),
+                    exit_code: status.code().unwrap_or(1),
+                });
+            }
+
+            let response = parse_backend_provider_response(task_name, provider, &stdout)?;
+            backend_provider_output(task_name, provider, target, response)
+        }
+        TaskExecutionMode::Capture => {
+            provider_env.insert(
+                String::from("OTA_BACKEND_PROVIDER_MODE"),
+                String::from("capture"),
+            );
+            let mut child = provider_command
+                .current_dir(working_dir)
+                .envs(provider_env.iter())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(request_json.as_bytes())
+                    .and_then(|_| stdin.flush())
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+            }
+
+            let output = child
+                .wait_with_output()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            if !output.status.success() {
+                return Err(RunError::BackendProviderExitedNonZero {
+                    task: task_name.to_string(),
+                    provider: provider.to_string(),
+                    exit_code: output.status.code().unwrap_or(1),
+                });
+            }
+
+            let response = parse_backend_provider_response(
+                task_name,
+                provider,
+                &String::from_utf8_lossy(&output.stdout),
+            )?;
+            backend_provider_output(task_name, provider, target, response)
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct BackendProviderRequest<'a> {
+    extension_id: &'a str,
+    extension_kind: &'static str,
+    api_version: u32,
+    command_context: &'static str,
+    repo_context_path: String,
+    working_dir: String,
+    task: BackendProviderTaskRequest<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct BackendProviderTaskRequest<'a> {
+    name: &'a str,
+    command: &'a str,
+    mode: &'static str,
+    target: &'a str,
+    cwd: Option<&'a str>,
+    environment: &'a BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BackendProviderResponse {
+    ok: bool,
+    #[serde(default)]
+    result: Option<BackendProviderResult>,
+    #[serde(default)]
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BackendProviderResult {
+    #[serde(default)]
+    exit_code: i32,
+    #[serde(default)]
+    stdout: String,
+    #[serde(default)]
+    stderr: String,
+    #[serde(default)]
+    target: Option<String>,
+}
+
+fn backend_provider_request<'a>(
+    provider: &'a str,
+    task_name: &'a str,
+    task_command: &'a str,
+    working_dir: &Path,
+    target: &'a str,
+    cwd: Option<&'a str>,
+    mode: TaskExecutionMode,
+    environment: &'a BTreeMap<String, String>,
+) -> BackendProviderRequest<'a> {
+    BackendProviderRequest {
+        extension_id: provider,
+        extension_kind: "backend_provider",
+        api_version: 1,
+        command_context: "run",
+        repo_context_path: working_dir.display().to_string(),
+        working_dir: working_dir.display().to_string(),
+        task: BackendProviderTaskRequest {
+            name: task_name,
+            command: task_command,
+            mode: match mode {
+                TaskExecutionMode::Stream { .. } => "stream",
+                TaskExecutionMode::Capture => "capture",
+            },
+            target,
+            cwd,
+            environment,
+        },
+    }
+}
+
+fn parse_backend_provider_response(
+    task_name: &str,
+    provider: &str,
+    stdout: &str,
+) -> Result<BackendProviderResponse, RunError> {
+    serde_json::from_str(stdout).map_err(|source| RunError::BackendProviderResponseParse {
+        task: task_name.to_string(),
+        provider: provider.to_string(),
+        source,
+    })
+}
+
+fn backend_provider_output(
+    task_name: &str,
+    provider: &str,
+    fallback_target: &str,
+    response: BackendProviderResponse,
+) -> Result<TaskCommandOutput, RunError> {
+    if !response.ok {
+        return Err(RunError::BackendProviderFailed {
+            task: task_name.to_string(),
+            provider: provider.to_string(),
+            errors: if response.errors.is_empty() {
+                String::from("backend provider returned `ok: false`")
+            } else {
+                response.errors.join(" | ")
+            },
+        });
+    }
+
+    let result = response
+        .result
+        .ok_or_else(|| RunError::BackendProviderMissingResult {
+            task: task_name.to_string(),
+            provider: provider.to_string(),
+        })?;
+
+    Ok(TaskCommandOutput {
+        exit_code: result.exit_code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        target: Some(result.target.unwrap_or_else(|| fallback_target.to_string())),
+    })
 }
 
 fn daytona_remote_command(
@@ -1459,9 +1855,9 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{
-        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
-        plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
+        clean_execution, plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
         run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
+        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError,
     };
 
     #[test]
@@ -1913,6 +2309,165 @@ tasks:
     }
 
     #[test]
+    fn run_task_captured_uses_backend_provider_remote_execution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      request=$(cat)
+      case "$request" in
+        *'"extension_kind":"backend_provider"'* ) ;;
+        * )
+          printf 'expected backend provider request on stdin\\n' >&2
+          exit 7
+          ;;
+      esac
+      printf '{"ok":true,"result":{"exit_code":0,"stdout":"backend-provider-run","stderr":"","target":"sandbox-dev"},"errors":[]}'
+    api_version: 1
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: backend-demo
+      target: sandbox-dev
+tasks:
+  setup:
+    run: echo backend-provider-run
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        assert_eq!(outcome.executed_tasks, vec![String::from("setup")]);
+        assert_eq!(outcome.exit_code, 0);
+        assert!(outcome.stdout.contains("backend-provider-run"));
+    }
+
+    #[test]
+    fn run_task_captured_sends_structured_backend_provider_request() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      request_file="${PWD}/backend-request.json"
+      provider_name_file="${PWD}/provider-name.txt"
+      provider_request_env_file="${PWD}/provider-request-env.json"
+      printf '%s' "$OTA_BACKEND_PROVIDER_NAME" > "$provider_name_file"
+      printf '%s' "$OTA_BACKEND_PROVIDER_REQUEST_JSON" > "$provider_request_env_file"
+      cat > "$request_file"
+      printf '{"ok":true,"result":{"exit_code":0,"stdout":"request-captured","stderr":"","target":"sandbox-dev"},"errors":[]}'
+    api_version: 1
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: backend-demo
+      target: sandbox-dev
+      cwd: /workspace
+tasks:
+  setup:
+    env:
+      TASK_TOKEN: sample-token
+    run: echo backend-provider-run
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        assert_eq!(outcome.executed_tasks, vec![String::from("setup")]);
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.stdout, "request-captured");
+
+        let provider_name =
+            std::fs::read_to_string(fixture.dir.path().join("provider-name.txt")).unwrap();
+        assert_eq!(provider_name, "backend-demo");
+
+        let provider_request_env =
+            std::fs::read_to_string(fixture.dir.path().join("provider-request-env.json")).unwrap();
+        let provider_request_env_json: serde_json::Value =
+            serde_json::from_str(&provider_request_env).unwrap();
+        assert_eq!(provider_request_env_json["extension_id"], "backend-demo");
+        assert_eq!(provider_request_env_json["task"]["mode"], "capture");
+
+        let request =
+            std::fs::read_to_string(fixture.dir.path().join("backend-request.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&request).unwrap();
+        assert_eq!(json["extension_id"], "backend-demo");
+        assert_eq!(json["extension_kind"], "backend_provider");
+        assert_eq!(json["api_version"], 1);
+        assert_eq!(json["command_context"], "run");
+        assert_eq!(
+            json["repo_context_path"],
+            fixture.dir.path().display().to_string()
+        );
+        assert_eq!(
+            json["working_dir"],
+            fixture.dir.path().display().to_string()
+        );
+        assert_eq!(json["task"]["name"], "setup");
+        assert_eq!(json["task"]["command"], "echo backend-provider-run");
+        assert_eq!(json["task"]["mode"], "capture");
+        assert_eq!(json["task"]["target"], "sandbox-dev");
+        assert_eq!(json["task"]["cwd"], "/workspace");
+        assert_eq!(json["task"]["environment"]["TASK_TOKEN"], "sample-token");
+    }
+
+    #[test]
+    fn run_task_captured_rejects_backend_provider_failure_response() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: |
+      request=$(cat)
+      case "$request" in
+        *'"extension_kind":"backend_provider"'* ) ;;
+        * )
+          printf 'expected backend provider request on stdin\n' >&2
+          exit 7
+          ;;
+      esac
+      printf '{"ok":false,"errors":["backend-provider-refused"]}'
+    api_version: 1
+execution:
+  preferred: remote
+  supported:
+    - remote
+  backends:
+    remote:
+      provider: backend-demo
+      target: sandbox-dev
+tasks:
+  setup:
+    run: echo backend-provider-run
+"#,
+        );
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("backend provider `backend-demo` reported failure"));
+    }
+
+    #[test]
     fn runs_matching_task_variant_for_current_os() {
         let fixture = ContractFixture::new(
             r#"
@@ -2303,11 +2858,9 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(
-            fs::read_to_string(dir.path().join("daytona-log.txt"))
-                .unwrap()
-                .contains("exec sandbox-dev")
-        );
+        assert!(fs::read_to_string(dir.path().join("daytona-log.txt"))
+            .unwrap()
+            .contains("exec sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -2387,11 +2940,9 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec sandbox-dev")
-        );
+        assert!(fs::read_to_string(&log_path)
+            .unwrap()
+            .contains("exec sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -2471,11 +3022,9 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec sandbox-dev")
-        );
+        assert!(fs::read_to_string(&log_path)
+            .unwrap()
+            .contains("exec sandbox-dev"));
     }
 
     #[cfg(unix)]
@@ -2555,11 +3104,9 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec pod/ota-dev")
-        );
+        assert!(fs::read_to_string(&log_path)
+            .unwrap()
+            .contains("exec pod/ota-dev"));
     }
 
     #[test]
