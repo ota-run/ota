@@ -35,6 +35,9 @@ This page is the canonical public reference for commands. It adds examples, use
 cases, and operator guidance so the page stands on its own while staying aligned
 with shipped behavior.
 
+For the exact shell model, see [shell-semantics.md](shell-semantics.md).
+For the platform support boundary, see [support-policy.md](support-policy.md).
+
 Global output modifiers:
 
 - `--concise`: shorter text output for high-noise commands while preserving decisions/actions.

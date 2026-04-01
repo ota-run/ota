@@ -368,6 +368,9 @@ That lets ota understand the repo boundary and the member layout without guessin
 
 Use `execution` to describe where ota should run those tasks when native execution is not enough.
 
+For the exact shell model ota uses to run commands, see [shell-semantics.md](shell-semantics.md).
+For the platform support boundary, see [support-policy.md](support-policy.md).
+
 Why users need it:
 
 - tells ota whether tasks should run on the host, in a container, or through a remote provider
