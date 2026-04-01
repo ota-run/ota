@@ -376,12 +376,17 @@ Current behavior:
 - repeated `--member` values list descriptors for those members in the provided order
 - `ota extensions --run <name>` executes one explicitly named, allowlisted descriptor in the
   current repo or member context
-- `ota extensions --publish <name>` executes one explicitly named, allowlisted `publisher`
+- `ota extensions --publish <name>` executes one explicitly named, allowlisted `export_provider`
   descriptor in the current repo or member context
-- execution currently accepts `kind: checker` descriptors with `api_version: 1`
-- execution currently accepts `kind: publisher` descriptors with `api_version: 1`
-- the seam is useful for external adapter contracts such as publishers, compliance
-  scanners, and codegen helpers that should be discoverable without being hidden in shell scripts
+- execution currently accepts `kind: check_provider` descriptors with `api_version: 1`
+- execution currently accepts `kind: export_provider` descriptors with `api_version: 1`
+- execution also accepts `kind: backend_provider` descriptors for remote execution when named by
+  `execution.backends.remote.provider`
+- backend providers receive a structured JSON request and must return a structured JSON response;
+  the request is delivered on stdin and mirrored in `OTA_BACKEND_PROVIDER_REQUEST_JSON` for shell
+  adapters
+- the seam is useful for external adapter contracts such as check providers, export targets, and
+  execution backends that should be discoverable without being hidden in shell scripts
 
 Text output:
 

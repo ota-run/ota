@@ -4673,7 +4673,7 @@ execution:
       cwd: /workspace
 extensions:
   demo:
-    kind: checker
+    kind: backend_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -4706,7 +4706,7 @@ execution:
       cwd: /workspace
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -5409,7 +5409,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 execution:
@@ -5449,7 +5449,7 @@ tasks:
             "user@host"
         );
         assert_eq!(json["execution"]["backends"]["remote"]["cwd"], "/workspace");
-        assert_eq!(json["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(json["extensions"]["demo"]["kind"], "backend_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
     }
@@ -5801,7 +5801,7 @@ execution:
       cwd: /workspace
 extensions:
   demo:
-    kind: checker
+    kind: backend_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -5819,7 +5819,7 @@ tasks:
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Extensions:"));
         assert!(stdout.contains("demo"));
-        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Kind: backend_provider"));
         assert!(stdout.contains("Command: ota-ext-demo"));
     }
 
@@ -5910,7 +5910,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -5925,7 +5925,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("EXTENSIONS"));
         assert!(stdout.contains("demo"));
-        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Kind: check_provider"));
         assert!(stdout.contains("Command: ota-ext-demo"));
     }
 
@@ -5938,7 +5938,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -5952,7 +5952,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
-        assert_eq!(json["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(json["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
     }
@@ -5966,7 +5966,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: echo extension-run
     api_version: 1
 tasks:
@@ -5981,7 +5981,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("EXTENSION RUN"));
         assert!(stdout.contains("demo"));
-        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Kind: check_provider"));
         assert!(stdout.contains("Command: echo extension-run"));
         assert!(stdout.contains("Exit Code: 0"));
         assert!(stdout.contains("Stdout:"));
@@ -5989,7 +5989,7 @@ tasks:
     }
 
     #[test]
-    fn extensions_run_rejects_publisher_descriptor() {
+    fn extensions_run_rejects_export_provider_descriptor() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5997,7 +5997,7 @@ project:
   name: ota
 extensions:
   release-upload:
-    kind: publisher
+    kind: export_provider
     command: echo release-upload
     api_version: 1
 tasks:
@@ -6016,9 +6016,9 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap());
 
         assert_eq!(output.exit_code, 2);
-        assert!(stderr.contains("extension `release-upload` kind `publisher` is not executable"));
+        assert!(stderr.contains("extension `release-upload` kind `export_provider` is not executable"));
         assert!(stderr.contains("ota extensions --run"));
-        assert!(stderr.contains("expected kind: `checker`"));
+        assert!(stderr.contains("expected kind: `check_provider`"));
     }
 
     #[test]
@@ -6030,7 +6030,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: echo extension-run
     api_version: 1
 tasks:
@@ -6052,7 +6052,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["extension"]["name"], "demo");
-        assert_eq!(json["extension"]["kind"], "checker");
+        assert_eq!(json["extension"]["kind"], "check_provider");
         assert_eq!(json["extension"]["command"], "echo extension-run");
         assert_eq!(json["extension"]["api_version"], 1);
         assert_eq!(json["exit_code"], 0);
@@ -6060,7 +6060,7 @@ tasks:
     }
 
     #[test]
-    fn extensions_text_lists_publisher_descriptor() {
+    fn extensions_text_lists_export_provider_descriptor() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6068,7 +6068,7 @@ project:
   name: ota
 extensions:
   release-upload:
-    kind: publisher
+    kind: export_provider
     command: ota-ext-upload
     api_version: 1
 tasks:
@@ -6082,12 +6082,66 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("release-upload"));
-        assert!(stdout.contains("Kind: publisher"));
+        assert!(stdout.contains("Kind: export_provider"));
         assert!(stdout.contains("Command: ota-ext-upload"));
     }
 
     #[test]
-    fn extensions_publish_executes_publisher_descriptor() {
+    fn extensions_text_lists_backend_provider_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("backend-demo"));
+        assert!(stdout.contains("Kind: backend_provider"));
+        assert!(stdout.contains("Command: ota-ext-backend"));
+    }
+
+    #[test]
+    fn extensions_json_reports_backend_provider_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["extensions"]["backend-demo"]["kind"], "backend_provider");
+        assert_eq!(json["extensions"]["backend-demo"]["command"], "ota-ext-backend");
+        assert_eq!(json["extensions"]["backend-demo"]["api_version"], 1);
+    }
+
+    #[test]
+    fn extensions_publish_executes_export_provider_descriptor() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6095,7 +6149,7 @@ project:
   name: ota
 extensions:
   release-upload:
-    kind: publisher
+    kind: export_provider
     command: echo release-upload
     api_version: 1
 tasks:
@@ -6116,12 +6170,66 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("EXTENSION RUN"));
         assert!(stdout.contains("release-upload"));
-        assert!(stdout.contains("Kind: publisher"));
+        assert!(stdout.contains("Kind: export_provider"));
         assert!(stdout.contains("Command: echo release-upload"));
     }
 
     #[test]
-    fn extensions_publish_rejects_checker_descriptor() {
+    fn extensions_run_rejects_backend_provider_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: echo backend-demo
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--run", "backend-demo", fixture.path()]);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap());
+
+        assert_eq!(output.exit_code, 2);
+        assert!(stderr.contains("extension `backend-demo` kind `backend_provider` is not executable"));
+        assert!(stderr.contains("ota extensions --run"));
+        assert!(stderr.contains("expected kind: `check_provider`"));
+    }
+
+    #[test]
+    fn extensions_publish_rejects_backend_provider_descriptor() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: echo backend-demo
+    api_version: 1
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let output = run_with(["ota", "extensions", "--publish", "backend-demo", fixture.path()]);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap());
+
+        assert_eq!(output.exit_code, 2);
+        assert!(stderr.contains("extension `backend-demo` kind `backend_provider` is not executable"));
+        assert!(stderr.contains("ota extensions --publish"));
+        assert!(stderr.contains("expected kind: `export_provider`"));
+    }
+
+    #[test]
+    fn extensions_publish_rejects_check_provider_descriptor() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6129,7 +6237,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: echo extension-run
     api_version: 1
 tasks:
@@ -6142,9 +6250,9 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap());
 
         assert_eq!(output.exit_code, 2);
-        assert!(stderr.contains("extension `demo` kind `checker` is not executable"));
+        assert!(stderr.contains("extension `demo` kind `check_provider` is not executable"));
         assert!(stderr.contains("ota extensions --publish"));
-        assert!(stderr.contains("expected kind: `publisher`"));
+        assert!(stderr.contains("expected kind: `export_provider`"));
     }
 
     #[test]
@@ -10622,7 +10730,7 @@ project:
   name: web
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -10638,7 +10746,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Extensions:"));
         assert!(stdout.contains("demo"));
-        assert!(stdout.contains("Kind: checker"));
+        assert!(stdout.contains("Kind: check_provider"));
     }
 
     #[test]
@@ -10818,7 +10926,7 @@ project:
   name: web
 extensions:
   demo:
-    kind: checker
+    kind: check_provider
     command: ota-ext-demo
     api_version: 1
 execution:
@@ -10868,7 +10976,7 @@ env:
             json["repos"][0]["execution"]["backends"]["remote"]["cwd"],
             "/workspace"
         );
-        assert_eq!(json["repos"][0]["extensions"]["demo"]["kind"], "checker");
+        assert_eq!(json["repos"][0]["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(
             json["repos"][0]["extensions"]["demo"]["command"],
             "ota-ext-demo"

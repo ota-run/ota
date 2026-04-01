@@ -38,7 +38,7 @@ The current shipped model stays:
 - `policies` as shipped contract metadata for repo-local policy overlays
 - `readiness_gate` as a later-spec draft field that is not accepted by the current shipped parser
 - the newer V6 extension provider taxonomy is now the current shipped taxonomy, with
-  `backend_provider` discoverable but not yet directly executable through `ota extensions`
+  `backend_provider` acting as the custom remote execution backend seam
 
 ## Why
 

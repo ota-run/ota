@@ -2390,7 +2390,7 @@ pub fn extensions(
                             &target.contract_path,
                             &text_path_display,
                             extension_name,
-                            crate::schema::ExtensionKind::Checker,
+                            crate::schema::ExtensionKind::CheckProvider,
                             format,
                         ),
                         debug,
@@ -2404,7 +2404,7 @@ pub fn extensions(
                             &target.contract_path,
                             &text_path_display,
                             extension_name,
-                            crate::schema::ExtensionKind::Publisher,
+                            crate::schema::ExtensionKind::ExportProvider,
                             format,
                         ),
                         debug,
@@ -7645,8 +7645,17 @@ fn run_extension_descriptor(
 
     if extension.kind != expected_kind {
         let mode = match expected_kind {
-            crate::schema::ExtensionKind::Checker => "run",
-            crate::schema::ExtensionKind::Publisher => "publish",
+            crate::schema::ExtensionKind::CheckProvider => "run",
+            crate::schema::ExtensionKind::ExportProvider => "publish",
+            crate::schema::ExtensionKind::BackendProvider => {
+                return CommandOutput::failure_with_code(
+                    format!(
+                        "extension `{extension_name}` kind `{}` is not executable with `ota extensions`; backend providers are reserved for task execution backends",
+                        extension.kind.as_str()
+                    ),
+                    2,
+                );
+            }
         };
         return CommandOutput::failure_with_code(
             format!(

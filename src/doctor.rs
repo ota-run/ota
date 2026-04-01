@@ -35,7 +35,7 @@ use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
 use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
-use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, Lifecycle, ServiceSpec};
+use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -571,33 +571,67 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
 
             let provider = remote.provider.trim();
             let cli = match provider {
-                "daytona" => "daytona",
-                "ssh" => "ssh",
-                "tsh" => "tsh",
-                "kubectl" => "kubectl",
+                "daytona" => Some("daytona"),
+                "ssh" => Some("ssh"),
+                "tsh" => Some("tsh"),
+                "kubectl" => Some("kubectl"),
                 other => {
-                    findings.push(Finding {
-                        severity: FindingSeverity::Error,
-                        summary: format!("Unsupported remote execution backend provider: {other}"),
-                        why: format!(
-                            "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports `daytona`, `ssh`, `tsh`, and `kubectl`"
-                        ),
-                        next: String::from(
-                            "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`",
-                        ),
-                    });
-                    return;
+                    let Some(extension) = contract.extensions.get(other) else {
+                        findings.push(Finding {
+                            severity: FindingSeverity::Error,
+                            summary: format!("Unsupported remote execution backend provider: {other}"),
+                            why: format!(
+                                "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports built-in providers or a matching `backend_provider` extension"
+                            ),
+                            next: String::from(
+                                "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
+                            ),
+                        });
+                        return;
+                    };
+
+                    if extension.kind != ExtensionKind::BackendProvider {
+                        findings.push(Finding {
+                            severity: FindingSeverity::Error,
+                            summary: format!("Unsupported remote execution backend provider: {other}"),
+                            why: format!(
+                                "the contract requests `execution.preferred: remote` with provider `{other}`, but the matching extension is not a `backend_provider`"
+                            ),
+                            next: String::from(
+                                "change the extension kind to `backend_provider` or change the remote provider name",
+                            ),
+                        });
+                        return;
+                    }
+
+                    if extension.api_version != 1 {
+                        findings.push(Finding {
+                            severity: FindingSeverity::Error,
+                            summary: format!("Unsupported backend provider api_version: {other}"),
+                            why: format!(
+                                "the matching backend provider extension declares unsupported `api_version {}`",
+                                extension.api_version
+                            ),
+                            next: String::from(
+                                "bump the backend provider extension to `api_version: 1`",
+                            ),
+                        });
+                        return;
+                    }
+
+                    None
                 }
             };
-            if let Some(target) = remote.target.as_deref() {
-                diagnose_remote_target_shape(provider, target, findings);
+            if let Some(cli) = cli {
+                if let Some(target) = remote.target.as_deref() {
+                    diagnose_remote_target_shape(provider, target, findings);
+                }
+                diagnose_backend_cli(
+                    cli,
+                    &format!("remote execution backend provider `{provider}`"),
+                    findings,
+                );
             }
-
-            diagnose_backend_cli(
-                cli,
-                &format!("remote execution backend provider `{provider}`"),
-                findings,
-            );
         }
         _ => {}
     }
@@ -1670,6 +1704,43 @@ tasks:
         assert_eq!(
             report.findings[0].summary,
             "Unsupported remote execution backend provider: unknown"
+        );
+    }
+
+    #[test]
+    fn accepts_declared_backend_provider_remote_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: backend-demo
+      target: sandbox-dev
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+
+        assert!(report.ok);
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.summary.contains("Unsupported remote execution backend provider"))
         );
     }
 

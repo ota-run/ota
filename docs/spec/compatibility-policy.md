@@ -15,6 +15,8 @@ Current V1 policy is strict:
 - unknown keys fail parsing
 - there is no warning-only unknown-key mode in the current implementation
 - top-level `extensions` is a known contract field and is parsed as inert contract data
+- later-spec fields such as `readiness_gate` are not part of the current shipped parser unless
+  the implementation explicitly adds them
 
 This favors contract clarity over permissive parsing.
 

@@ -22,7 +22,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::schema::{AgentConfig, Contract, RuntimeRequirement, ServiceSpec, TaskSpec};
+use crate::schema::{
+    AgentConfig, Contract, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationError {
@@ -234,6 +236,39 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
         ));
     }
 
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+    {
+        let provider = remote.provider.trim();
+        if provider.is_empty() {
+            return;
+        }
+
+        if !is_builtin_remote_provider(provider) {
+            let Some(extension) = contract.extensions.get(provider) else {
+                errors.push(ValidationError::new(format!(
+                    "`execution.backends.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
+                )));
+                return;
+            };
+
+            if extension.kind != ExtensionKind::BackendProvider {
+                errors.push(ValidationError::new(format!(
+                    "`execution.backends.remote.provider` `{provider}` must refer to a `backend_provider` extension"
+                )));
+                return;
+            }
+
+            if extension.api_version != 1 {
+                errors.push(ValidationError::new(format!(
+                    "`execution.backends.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
+                )));
+            }
+        }
+    }
+
     if execution.preferred == Some(crate::schema::Backend::Remote)
         && execution
             .backends
@@ -290,6 +325,10 @@ fn remote_target_example(provider: &str) -> &'static str {
         "kubectl" => "pod/ota-dev",
         _ => "remote-target",
     }
+}
+
+fn is_builtin_remote_provider(provider: &str) -> bool {
+    matches!(provider, "daytona" | "ssh" | "tsh" | "kubectl")
 }
 
 fn validate_named_versions<T>(
@@ -801,7 +840,7 @@ project:
   name: ota
 extensions:
   demo:
-    kind: checker
+    kind: backend_provider
     command: ota-ext-demo
     api_version: 1
 tasks:
@@ -873,7 +912,7 @@ project:
   name: ota
 extensions:
   demo:
-        kind: checker
+        kind: check_provider
         command: " "
         api_version: 0
 tasks:
@@ -914,6 +953,35 @@ execution:
       provider: daytona
       target: sandbox-dev
       cwd: /workspace
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_backend_provider_remote_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  preferred: remote
+  backends:
+    remote:
+      provider: backend-demo
+      target: sandbox-dev
 tasks:
   test:
     run: cargo test

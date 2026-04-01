@@ -259,10 +259,14 @@ comparison.
 
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
-`api_version`, plus optional `description` and `config`. Supported kinds today are `checker` and
-`publisher`. The field is parsed and preserved for discovery, and `ota extensions --run <name>`
-can execute one explicitly named `checker` descriptor with `api_version: 1`; `ota extensions
---publish <name>` can execute one explicitly named `publisher` descriptor with `api_version: 1`.
+`api_version`, plus optional `description` and `config`. Supported kinds today are
+`check_provider`, `export_provider`, and `backend_provider`. The field is parsed and preserved for
+discovery, and `ota extensions --run <name>` can execute one explicitly named `check_provider`
+descriptor with `api_version: 1`; `ota extensions --publish <name>` can execute one explicitly
+named `export_provider` descriptor with `api_version: 1`. `backend_provider` is discoverable in the
+JSON output and can be selected by `execution.backends.remote.provider` for custom remote
+execution. Backend providers receive a structured request on stdin and in
+`OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout.
 
 `ota workspace doctor --json` may include the same `execution` object on each repo item when the
 underlying repo contract declares execution metadata, including env provenance for inherited
