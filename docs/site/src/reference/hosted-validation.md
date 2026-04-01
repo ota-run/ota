@@ -1,32 +1,29 @@
-<!--
-                █████
-               ░░███
-       ██████  ███████    ██████
-      ███░░███░░░███░    ░░░░░███
-     ░███ ░███  ░███      ███████
-     ░███ ░███  ░███ ███ ███░░███
-     ░░██████   ░░█████ ░░████████
-      ░░░░░░     ░░░░░   ░░░░░░░░
-
-   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
-
-   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
-
-   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
-   You may not use this file except in compliance with that License.
-   Unless required by applicable law or agreed to in writing, software distributed under the
-   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-   either express or implied. See the License for the specific language governing permissions
-   and limitations under the License.
-
-   If you need additional information or have any questions, please email: os@ota.run
--->
+span
 
 # Hosted Validation
 
-Use hosted validation when Ota needs to gate a pull request or CI run without mutating the repo.
+Hosted validation is the read-only CI path for Ota.
 
-## What to run
+Use it when you want to gate a pull request or CI run without mutating the repo.
+
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
+## What it is for
+
+Use hosted validation when you need:
+
+- a deterministic gate before merge
+- machine-readable readiness data in CI
+- repo, workspace, and task findings without local mutation
+- annotations or check summaries derived from Ota JSON
+
+It is the right surface when the repo should be judged, not changed.
+
+## What it checks
 
 - `ota validate --json`
 - `ota doctor --json`
@@ -35,6 +32,22 @@ Use hosted validation when Ota needs to gate a pull request or CI run without mu
 - `ota workspace explain --json` for ordered workspace remediation
 - `ota workspace list --json` for inventory and readiness summary
 
+These commands answer different questions:
+
+- `validate` checks contract structure
+- `doctor` diagnoses readiness
+- `workspace doctor` diagnoses the workspace as an orchestration layer
+- `workspace explain` turns workspace findings into remediation steps
+- `workspace list` gives inventory and readiness summary data
+
+## Use cases
+
+- a pull request needs a blocking readiness check before merge
+- a CI pipeline wants annotations instead of raw JSON
+- a workspace gate needs to show which repo is blocking the roll-up
+- a platform team wants consistent validation results across repos
+- a repo owner wants a machine-readable summary without mutating local state
+
 ## Infrastructure boundary
 
 GitHub Actions or your CI runner still provisions infrastructure such as service containers.
@@ -42,6 +55,32 @@ Ota removes the duplicated repo logic above it by keeping validation, readiness,
 task execution in the contract.
 That means Ota can provision declared repo services through `ota up`, but it does not replace the
 CI runner, OS package manager, or language installer on the host.
+
+## Example CI flow
+
+```yaml
+name: ci
+
+on:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ota
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
+      - name: Validate contract
+        run: ota validate --json | tee .ota-validate.json
+      - name: Diagnose readiness
+        run: ota doctor --json | tee .ota-doctor.json
+      - name: Render annotations
+        run: ota doctor --json | ota annotations --mode doctor --format github --input -
+```
+
+That keeps the CI job thin and lets Ota own the repo-readiness logic.
 
 ## What to fail on
 
@@ -59,6 +98,11 @@ CI runner, OS package manager, or language installer on the host.
 - do not run `ota workspace init --bootstrap`
 - do not infer behavior from human text output
 
+## Practical example with Postgres
+
+If the repo contract declares the database service, hosted validation should only validate and
+diagnose. It should not duplicate service setup in the workflow.
+
 ## Example
 
 ```bash
@@ -71,53 +115,6 @@ ota workspace validate --json | tee .ota-workspace-validate.json
 ota workspace doctor --json | tee .ota-workspace-doctor.json
 ota workspace list --json | tee .ota-workspace-list.json
 ota workspace explain --json | tee .ota-workspace-explain.json
-```
-
-## Example with Postgres
-
-GitHub Actions still provisions the database service container. Ota removes the repo-specific
-setup above it.
-
-```yaml
-name: ci
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  ci:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: app
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Ota
-        run: curl -fsSL https://dist.ota.run/install.sh | sh
-      - name: Validate contract
-        run: ota validate
-      - name: Diagnose readiness
-        run: ota doctor --json
-      - name: Prepare repo
-        run: ota up
-      - name: Run lint
-        run: ota run lint
-      - name: Run tests
-        run: ota run test
 ```
 
 ## Example with Ota-managed Postgres

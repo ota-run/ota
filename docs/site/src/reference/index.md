@@ -24,6 +24,20 @@
 
 # Reference
 
+`docs/spec` is the canonical source of truth.
+`docs/site/src/reference` is the public-facing reference layer derived from it.
+This section turns the spec into operator-facing documentation with examples and use cases.
+
+The migration rule is:
+
+- keep the spec accurate first
+- derive the public page from the spec
+- add examples, use cases, and operational guidance so the page stands on its own
+- avoid asking readers to jump back to the spec for basic understanding
+
+That means the reference pages should be detailed enough for real use, while still staying aligned
+with the canonical contract and shipped behavior.
+
 This section summarizes the stable surfaces of Ota:
 
 - commands

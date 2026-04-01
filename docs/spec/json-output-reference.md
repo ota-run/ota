@@ -2,6 +2,10 @@
 
 This document records the current machine-readable output shapes for Ota commands that support `--json`.
 
+`docs/spec` is the canonical source of truth. This page is part of that spec
+corpus and the public reference pages are derived from it with examples and
+operator guidance added where useful.
+
 The goal is stability for humans, CI, editors, and agents.
 
 Editor and CI integrations should treat the JSON surfaces in this document as the stable contract

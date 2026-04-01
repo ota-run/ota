@@ -34,4 +34,87 @@ Use it to answer:
 - what succeeded, failed, or was blocked
 - what the safe next step is
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
 This surface applies to execution flows, not diagnosis or inference.
+
+## What it records
+
+The receipt is most useful when you want to know:
+
+- what repo or workspace Ota ran against
+- what contract it used
+- what backend and lifecycle were chosen
+- what tasks, steps, or services actually ran
+- what env or policy values shaped execution
+- what was blocked
+- what the safe next step is
+
+## Example
+
+For a repo task run, the receipt can look like this in JSON:
+
+```json
+{
+  "ok": true,
+  "path": "/Users/bobai/Workspace/acme/app/ota.yaml",
+  "scope": "repo",
+  "contract": "/Users/bobai/Workspace/acme/app/ota.yaml",
+  "backend": "native",
+  "lifecycle": "persistent",
+  "steps": [
+    {
+      "order": 1,
+      "label": "setup",
+      "status": "ok"
+    },
+    {
+      "order": 2,
+      "label": "test",
+      "status": "ok"
+    }
+  ],
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 2
+  },
+  "next": "run `ota run test` again after your code changes"
+}
+```
+
+For a workspace run, the same receipt tells you which repos were ready,
+which were not, and where the blocker came from. That is the value: one
+structured record you can compare across runs.
+
+## Use cases
+
+- confirm what Ota actually executed after a successful `ota run`
+- debug a failed `ota up` without guessing which backend or lifecycle was used
+- inspect which steps were blocked before a task could finish
+- compare a native run and a container-backed run
+- feed a machine-readable execution trail into CI or agent workflows
+- review workspace roll-ups after multi-repo bootstrap or execution
+
+## How to use it
+
+- use `ota run --json` when you need the task-level execution record
+- use `ota up --json` when you need the ready/not-ready roll-up and receipt
+- use `ota workspace run --json` or `ota workspace up --json` when you need
+  workspace-wide execution records
+
+The receipt is meant to be read after execution, not before it. If you need to
+know whether a repo is ready to run, use `ota doctor` or `ota detect` first.
+
+## What it is not
+
+- it is not a diagnosis report
+- it is not a contract inference result
+- it is not a replacement for `doctor`
+- it is not a replacement for `detect`
+- it is not live logs
