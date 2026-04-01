@@ -29,6 +29,12 @@ and a practical use-case.
 
 Doctor first, contract second.
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
 Global output modifiers:
 
 - `--concise`: shorter text output for high-noise commands while preserving decisions/actions.

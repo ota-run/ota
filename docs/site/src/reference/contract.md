@@ -32,6 +32,12 @@ Use it when you want:
 - one place for runtime, tool, service, and task expectations
 - the same contract for local development and automation
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
 ## Primary sections
 
 - `version`: contract schema version. Today this is `1`.
@@ -192,6 +198,110 @@ tasks:
       - package
     run: ./scripts/upload-artifact.sh dist/release.tar.gz
 ```
+
+## How to use it
+
+- start with `ota doctor` to see what the repo is missing before you write a contract
+- use `ota init` when you need a starter `ota.yaml` for a new or partially described repo
+- use `ota detect --dry-run` when you want Ota to compare the repo against the declared contract
+- use `ota run` when you want a task to execute under the contract
+- use `ota up` when you want Ota to prepare the repo and report ready/not-ready state
+
+The contract is the source of truth. The command output should reflect it, not replace it.
+
+## Use cases
+
+- onboarding a new repository with explicit setup, test, and release commands
+- making CI and agent behavior deterministic instead of guessing from README text
+- defining service dependencies and health checks in one file
+- capturing allowed runtime and tool versions for a library or SDK repo
+- describing workspace members so monorepos can be bootstrapped consistently
+- keeping execution boundaries explicit when native, container, or remote backends are needed
+
+## Practical examples
+
+### Application repo
+
+Use `ota.yaml` to describe the app’s runtime, tools, checks, and day-to-day tasks:
+
+```yaml
+version: 1
+project:
+  name: acme-web
+  type: application
+runtimes:
+  node: "22"
+tools:
+  pnpm: "10"
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+  build:
+    depends_on:
+      - setup
+    run: pnpm build
+  test:
+    depends_on:
+      - setup
+    run: pnpm test
+  ci:
+    depends_on:
+      - build
+      - test
+    run: pnpm build && pnpm test
+agent:
+  entrypoint: setup
+  default_task: ci
+```
+
+This keeps the repo readable for humans and predictable for automation.
+
+### Service repo
+
+Use the contract to describe what must be running before the service is ready:
+
+```yaml
+version: 1
+project:
+  name: acme-api
+  type: application
+services:
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -U app -d app
+checks:
+  - name: database-ready
+    kind: service
+    severity: error
+    run: pg_isready -U app -d app
+tasks:
+  setup:
+    run: npm ci
+  test:
+    depends_on:
+      - setup
+    run: npm test
+```
+
+This makes readiness visible instead of leaving it inside tribal knowledge or shell scripts.
+
+### Workspace repo
+
+Use the workspace section when a monorepo or workspace needs multiple members bootstrapped together:
+
+```yaml
+workspace:
+  type: monorepo
+  members:
+    - apps/web
+    - services/api
+    - packages/sdk
+```
+
+That lets Ota understand the repo boundary and the member layout without guessing.
 
 ### `execution`
 

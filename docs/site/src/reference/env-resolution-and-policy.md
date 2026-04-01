@@ -30,6 +30,12 @@ This future surface adds policy-controlled resolution and injection so repos and
 workspaces can explain where env values came from without becoming a full app config
 system.
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
 Use it for:
 
 - required runtime env

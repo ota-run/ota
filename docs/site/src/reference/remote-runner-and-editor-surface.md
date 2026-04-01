@@ -22,7 +22,7 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Remote Runner Metadata and Editor Surface
+# Remote Runner Metadata
 
 This page defines the current Ota surface for remote-runner metadata and editor/IDE integration.
 
@@ -33,17 +33,37 @@ Use it when you want the same contract language to drive:
 - hosted validation consumption
 - deterministic machine-facing summaries
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
+## Why it matters
+
+- remote execution should be explicit, not inferred from host quirks
+- editors need one stable contract surface instead of repo-specific glue
+- hosted validation should consume the same JSON that CI uses
+- remote target shape should be readable without learning provider internals
+
 ## Remote runner metadata
 
 Remote runner metadata describes the execution environment without asking tools to infer it from host-specific behavior.
 
 Typical fields:
 
-- provider
-- target
-- working directory
-- supported command shape
-- runtime or tool hints
+- `provider`
+- `target`
+- `cwd`
+- `preferred`
+- `supported`
+
+Current shipped providers include:
+
+- `daytona`
+- `ssh`
+- `tsh`
+- `kubectl`
 
 Example:
 
@@ -58,6 +78,22 @@ execution:
       target: user@host
       cwd: /workspace
 ```
+
+That says the repo is prepared for remote execution, the provider is SSH, and the command
+should run in `/workspace` on the target host.
+
+## Target shape guidance
+
+Ota keeps basic target-shape checks honest so CI and editors can catch obvious mistakes early.
+
+Current guidance:
+
+- `ssh` and `tsh` targets should look like `user@host`
+- `kubectl` targets should start with `pod/`
+- `cwd` is passed through when set
+- remote execution runs in the effective target contract directory
+
+This is guidance, not hidden magic. Ota should show you what it saw and what it chose.
 
 ## Editor and IDE surface
 
@@ -75,6 +111,13 @@ The integration model stays:
 - read-only by default
 - deterministic
 - usable without repo-specific heuristics
+
+Practical editor use cases:
+
+- show whether the current repo is ready before the user hits run
+- surface the contract and execution metadata next to the task list
+- offer remote-runner hints without opening the repo YAML manually
+- point the user to the exact blocker when readiness is not met
 
 ## JSON consumers
 

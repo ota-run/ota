@@ -1,88 +1,202 @@
-<!--
-                █████
-               ░░███
-       ██████  ███████    ██████
-      ███░░███░░░███░    ░░░░░███
-     ░███ ░███  ░███      ███████
-     ░███ ░███  ░███ ███ ███░░███
-     ░░██████   ░░█████ ░░████████
-      ░░░░░░     ░░░░░   ░░░░░░░░
-
-   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
-
-   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
-
-   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
-   You may not use this file except in compliance with that License.
-   Unless required by applicable law or agreed to in writing, software distributed under the
-   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-   either express or implied. See the License for the specific language governing permissions
-   and limitations under the License.
-
-   If you need additional information or have any questions, please email: os@ota.run
--->
-
 # Workspace (`ota.workspace.yaml`)
 
 `ota.workspace.yaml` is the canonical workspace bootstrap contract for multi-repo orchestration.
 
-When to use:
+Use it when one repo is not enough and you need a single contract to describe:
 
-- teams with multiple repos that need a single bootstrap and execution entrypoint
+- which repos belong in the workspace
+- where they live on disk
+- which repos depend on which others
+- where missing repos should be acquired from
+- how workspace-level `doctor`, `up`, and `run` should move in dependency order
 
-Why:
+## Source model
 
-- centralizes acquisition and dependency order while reusing repo-level contracts
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
 
-Typical use-cases:
+The key design rule is simple:
 
-- bootstrapping a fullstack system spread across `api`, `web`, and `infra` repos
-- running one task (like `test`) across repos in deterministic order
-- diagnosing cross-repo readiness failures from one command
+- the workspace contract orchestrates repos
+- repo contracts remain the source of truth for repo readiness
 
-It defines:
+## What it defines
 
 - workspace identity
 - repo paths and dependency graph
 - acquisition source for missing repos
 - deterministic execution order for workspace commands
 
-Minimal example:
+## Minimal example
 
 ```yaml
 version: 1
 workspace:
   name: example-workspace
+  description: Local fullstack workspace
+  git_base: https://github.com/example
 repos:
   api:
     path: repos/api
     required: true
     source:
-      git: https://github.com/example/api.git
+      repo: api
+  web:
+    path: repos/web
+    depends_on:
+      - api
+    source:
+      repo: web
 ```
 
-Execution model:
+This says:
 
-- `ota workspace validate` checks workspace contract correctness.
-- `ota workspace up` can acquire missing repos from `source.git`.
-- workspace orchestration reuses repo-level `ota up` and `ota run` behavior.
-- `ota workspace explain` turns workspace readiness findings into ordered remediation steps.
-- dependency order is deterministic.
+- the workspace is called `example-workspace`
+- the `api` repo must exist and can be acquired from the base git host
+- the `web` repo depends on `api`
+- workspace commands should respect that order
+
+## How it works
+
+- `ota workspace validate` checks workspace contract correctness
+- `ota workspace doctor` diagnoses workspace readiness repo by repo
+- `ota workspace explain` turns workspace findings into ordered remediation steps
+- `ota workspace up` can acquire missing repos from `source`
+- workspace orchestration reuses repo-level `ota up` and `ota run` behavior
+- dependency order is deterministic
+
+## Use cases
+
+- bootstrapping a fullstack system spread across `api`, `web`, and `infra` repos
+- running one task, like `test`, across repos in deterministic order
+- diagnosing cross-repo readiness failures from one command
+- acquiring a missing repo before workspace bootstrap starts
+- keeping workspace setup explicit without collapsing repo contracts into one file
 
 ## Practical workflow
 
 1. `ota workspace validate`
-1. `ota workspace doctor`
-1. `ota workspace explain`
-1. `ota workspace up`
-1. `ota workspace run <task>`
+2. `ota workspace doctor`
+3. `ota workspace explain`
+4. `ota workspace up`
+5. `ota workspace run <task>`
 
-Design rule:
+## `workspace`
 
-- workspace contract orchestrates repos
-- repo contracts remain the source of truth for repo readiness
+```yaml
+workspace:
+  name: ota-dev
+  description: Local multi-repo development workspace
+  git_base: https://github.com/ota
+```
 
-Canonical workspace reference in repository:
+Fields:
 
-- `docs/spec/workspace-reference.md`
-- <https://github.com/ota-run/ota/blob/main/docs/spec/workspace-reference.md>
+- `name`: required, non-empty string
+- `description`: optional string
+- `git_base`: optional clone base used by `repos.<name>.source.repo`
+
+## `repos`
+
+```yaml
+repos:
+  web:
+    path: apps/web
+    source:
+      repo: web
+  api:
+    path: services/api
+    contract: services/api/ota.yaml
+    required: true
+    depends_on:
+      - web
+    source:
+      git: https://github.com/ota/api.git
+      ref: main
+```
+
+Fields:
+
+- `path`: required path to a repo directory, relative to `ota.workspace.yaml`
+- `contract`: optional explicit repo contract path, relative to `ota.workspace.yaml`
+- `required`: optional boolean
+- `depends_on`: optional list of workspace repo names
+- `source`: optional acquisition source for repos that are not present yet
+
+## `source`
+
+`source` fields:
+
+- `git`: explicit clone URL or git-accepted clone source
+- `repo`: repo path or slug resolved against `workspace.git_base`
+- `ref`: optional branch, tag, or ref to checkout after clone
+
+Design intent:
+
+- `source.git` is the canonical acquisition field
+- `source.repo` is shorthand for multiple repos sharing the same `workspace.git_base`
+- both are generic git concepts and work for GitHub, GitLab, Bitbucket, and internal git hosts
+
+## Validation behavior
+
+- repo names must not be empty
+- workspace must declare at least one repo
+- repo `path` must be non-empty
+- repo `path` must exist and point to a directory unless `source` is declared
+- `contract` must be non-empty when present
+- if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
+- `source` must declare exactly one of `git` or `repo`
+- `source.repo` requires `workspace.git_base`
+- `depends_on` references must resolve to known workspace repos
+- workspace repo dependency cycles are rejected
+- each present repo contract must load and pass repo-level validation
+
+## `ota workspace doctor`
+
+Current workspace diagnosis behavior:
+
+- validates workspace structure first
+- evaluates repos in dependency order
+- can diagnose independent repos concurrently when `--jobs` is greater than `1`
+- preserves deterministic repo ordering in the final report
+- diagnoses each referenced repo through its own `ota.yaml`
+- reports missing-but-acquirable repos as not yet acquired instead of treating them as unreadable local paths
+- preserves repo-level diagnosis semantics for required repos
+- downgrades optional repo errors to warnings at the workspace layer
+- rejects required repos that depend on optional repos
+
+This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
+
+## `ota workspace up`
+
+Current workspace prepare behavior:
+
+- validates workspace structure first
+- acquires missing repos declared with `source` before repo-level bootstrap
+- runs repo-level `up` for each referenced repo
+- can prepare independent repos concurrently when `--jobs` is greater than `1`
+- respects declared workspace repo dependency order
+- blocks downstream repos when a dependency does not become ready
+- aggregates repo-level status, phase, findings, and exit details
+- captures repo child stdout and stderr per repo so the final report remains deterministic
+- emits live repo progress on stderr in text mode so users can see execution moving without losing ordered final output
+- optional repo failures do not fail the overall workspace status
+- `--stream` opts into raw live child process output instead of buffered per-repo output
+
+Current execution policy:
+
+- workspace repo execution defaults to sequential because `--jobs` defaults to `1`
+- Ota only parallelizes repos whose dependencies are already satisfied
+- final reporting remains in deterministic repo order even when execution is concurrent
+- required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
+- `--stream` is currently text-only and requires `--jobs 1` so raw child logs do not interleave
+
+Current non-goals:
+
+- cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning
+- a workspace-only bootstrap engine that bypasses repo contracts
+- implicit pull, fetch, or update behavior for repos that already exist locally
+- GitHub API integration or non-git acquisition modes

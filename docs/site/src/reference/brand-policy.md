@@ -26,6 +26,12 @@
 
 Ota’s brand is separate from the Apache 2.0 code license.
 
+## Source model
+
+`docs/spec` is the canonical source of truth. This page is the public reference
+layer derived from it. It adds examples, use cases, and operator guidance so the
+page stands on its own while staying aligned with shipped behavior.
+
 ## Reserved marks
 
 - `ota`
