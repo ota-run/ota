@@ -29,7 +29,7 @@ Purpose: define the documentation rules that make Ota easy to understand on firs
 This spec applies to:
 
 - `docs/spec/*`
-- `docs/site/src/*`
+- site-native public docs
 - command-help copy when it mirrors documentation language
 - README command and adoption summaries when they describe shipped behavior
 
@@ -109,4 +109,3 @@ Docs should not:
 - version syntax examples are present and unambiguous
 - confidence color and meaning are described consistently
 - workspace docs do not duplicate repo-readiness semantics
-
