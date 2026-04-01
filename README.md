@@ -433,19 +433,14 @@ See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.m
 ## Documentation
 
 ### Start here
-- [Docs site (GitHub Pages)](https://ota-run.github.io/ota/) *(goes live after first Pages deploy)*
-- [Installation](docs/installation.md)
-- [Quickstart](docs/quickstart.md)
 - [Command reference](docs/spec/command-reference.md)
 - [Contract reference](docs/spec/contract-reference.md)
-- [Policy packs](docs/spec/policy-packs.md)
-- [Conventions and templates](docs/spec/conventions-and-templates.md)
-- [Audit and provenance](docs/spec/audit-and-provenance.md)
-- [Remote runner metadata and editor surface](docs/spec/remote-runner-and-editor-surface.md)
 - [Workspace reference](docs/spec/workspace-reference.md)
-- [Service behavior](docs/spec/service-behavior.md)
 - [Shell semantics](docs/spec/shell-semantics.md)
+- [Service behavior](docs/spec/service-behavior.md)
 - [JSON output reference](docs/spec/json-output-reference.md)
+- [Audit and provenance](docs/spec/audit-and-provenance.md)
+- [Policy packs](docs/spec/policy-packs.md)
 - [Exit codes](docs/spec/exit-codes.md)
 - [Docs clarity spec](docs/spec/docs-clarity-spec.md)
 

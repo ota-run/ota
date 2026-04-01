@@ -3,4 +3,5 @@ config:
   default: true
   MD013: false
 globs:
-  - docs/site/src/**/*.md
+  - README.md
+  - docs/**/*.md

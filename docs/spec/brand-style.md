@@ -56,15 +56,10 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## Docs style
 
-- use Ota accent tokens in `docs/site/theme/custom.css`
-- primary logo source:
-  - `docs/site/src/assets/brand/ota-logo.svg`
-- approved logo-size variants:
-  - `docs/site/src/assets/brand/ota-logo-64.svg`
-  - `docs/site/src/assets/brand/ota-logo-96.svg`
-  - `docs/site/src/assets/brand/ota-logo-128.svg`
-- favicon source:
-  - `docs/site/src/assets/brand/favicon.svg`
+- use the Ota accent tokens in the site docs theme
+- keep the primary logo source in the site docs asset set
+- keep approved logo-size variants in the site docs asset set
+- keep the favicon in the site docs asset set
 - docs copy should reuse the same core phrase:
   - `doctor first, contract second`
 
