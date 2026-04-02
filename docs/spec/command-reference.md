@@ -459,7 +459,9 @@ tasks:
 ```bash
 ota run api-automation-tests
 ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run version:bump --version minor
 ota run version:bump --version 0.2.0
+ota run version:bump --version major
 ```
 
 - resolves task dependencies before execution

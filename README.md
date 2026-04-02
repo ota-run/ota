@@ -173,7 +173,9 @@ ota workspace refresh
 ota workspace diff
 ota workspace status
 ota workspace receipt
-ota run bump-version --version x.y.z
+ota run version:bump --version minor
+ota run version:bump --version major
+ota run version:bump --version 2.4.0
 ```
 
 Global flag:
