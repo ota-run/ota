@@ -577,6 +577,16 @@ pub struct WorkspaceStatusSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceReceiptSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: ExecutionReceiptSummary,
+    pub receipt: ExecutionReceipt,
+    pub repos: &'a [WorkspaceRepoStatusReport],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoRunReport {
     pub name: String,
     pub path: String,

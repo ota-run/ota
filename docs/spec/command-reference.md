@@ -85,6 +85,7 @@ Ota currently ships these commands:
 - `ota workspace refresh`
 - `ota workspace diff`
 - `ota workspace status`
+- `ota workspace receipt`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -1441,3 +1442,47 @@ Current non-goals:
 - host or workstation provisioning
 - a workspace-only bootstrap engine that bypasses repo contracts
 - GitHub API integration or non-git acquisition modes
+
+## `ota workspace receipt`
+
+Capture the current workspace state as a read-only receipt artifact.
+
+```bash
+ota workspace receipt [PATH]
+ota workspace receipt --json [PATH]
+ota workspace receipt --jobs 4 [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure
+- reads repo readiness and local git drift for each workspace repo without mutating anything
+- captures the combined workspace state as an execution receipt with one step per repo
+- can inspect independent repos concurrently when `--jobs` is greater than `1`
+- never clones, fetches, resets, or writes repo state
+- `--json` returns a workspace receipt roll-up with `mode: "receipt"`
+- the receipt records readiness, drift, and findings so CI or agents can archive the state deterministically
+
+Text output:
+
+- header: `WORKSPACE RECEIPT <path>`
+- each receipt step shows the repo name, readiness status, and drift status
+- the summary block mirrors the execution receipt counts
+
+JSON output:
+
+- `ok`
+- `path`
+- `mode: "receipt"`
+- `summary` mirroring the receipt summary with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, `info_count`, and `step_count`
+- `receipt`
+- `repos`
+
+Current non-goals:
+
+- mutating repo state
+- cloning missing repos automatically
+- cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning

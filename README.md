@@ -172,6 +172,7 @@ ota workspace up
 ota workspace refresh
 ota workspace diff
 ota workspace status
+ota workspace receipt
 ota run bump-version --version x.y.z
 ```
 
@@ -222,6 +223,7 @@ Current behavior:
 - `ota workspace refresh --ref <branch|tag|sha>` overrides the source ref used for refresh
 - `ota workspace diff` compares local workspace repo state against the declared source without mutating anything
 - `ota workspace status` combines readiness and drift into one read-only workspace summary
+- `ota workspace receipt` captures the same workspace state as a read-only receipt artifact for CI and archiving
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
 ## Execution Modes and Provisioning

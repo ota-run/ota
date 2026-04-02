@@ -487,6 +487,42 @@ pub(crate) fn render_workspace_status(
     }
 }
 
+pub(crate) fn render_workspace_receipt(
+    path: &str,
+    report: &WorkspaceReceiptReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "\n{}\n{}",
+                format_command_header("WORKSPACE RECEIPT", path),
+                render_execution_receipt_text(&report.receipt)
+            );
+
+            stdout.push('\n');
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if report.receipt.ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&WorkspaceReceiptSuccess {
+                ok: report.receipt.ok,
+                path,
+                mode: "receipt",
+                summary: report.receipt.summary,
+                receipt: report.receipt.clone(),
+                repos: &report.repos,
+            }),
+            stderr: None,
+            exit_code: if report.receipt.ok { 0 } else { 1 },
+        },
+    }
+}
+
 pub(crate) fn render_workspace_run(
     task: &str,
     path: &str,

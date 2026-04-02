@@ -270,3 +270,27 @@ Current non-goals:
 - host or workstation provisioning
 - a workspace-only bootstrap engine that bypasses repo contracts
 - GitHub API integration or non-git acquisition modes
+
+## `ota workspace receipt`
+
+Read-only workspace receipts capture the current workspace state as an execution artifact.
+
+Current behavior:
+
+- validates workspace structure first
+- reads readiness and local git drift for each workspace repo without mutating anything
+- records the combined workspace state as a receipt with one step per repo
+- can compare independent repos concurrently when `--jobs` is greater than `1`
+- never clones, fetches, resets, or writes repo state
+- `--json` reports the receipt roll-up with `mode: "receipt"`
+- the receipt records readiness, drift, and findings so CI or agents can archive the state deterministically
+
+Current non-goals:
+
+- mutating repo state
+- cloning missing repos automatically
+- cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning
+- a workspace-only bootstrap engine that bypasses repo contracts
+- GitHub API integration or non-git acquisition modes

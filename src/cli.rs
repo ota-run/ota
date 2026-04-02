@@ -619,6 +619,17 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Capture a read-only workspace receipt for audit and automation.
+    Receipt {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Maximum number of independent repos to inspect at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Run a task across workspace repos.
     Run {
         /// Task name to execute.
@@ -842,6 +853,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                     | WorkspaceCommands::Refresh { .. }
                     | WorkspaceCommands::Diff { .. }
                     | WorkspaceCommands::Status { .. }
+                    | WorkspaceCommands::Receipt { .. }
             }
     );
 
@@ -873,6 +885,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
                     | WorkspaceCommands::Refresh { .. }
                     | WorkspaceCommands::Diff { .. }
                     | WorkspaceCommands::Status { .. }
+                    | WorkspaceCommands::Receipt { .. }
                     | WorkspaceCommands::Doctor { stream: false, .. }
                     | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::Detect { .. }
@@ -1437,6 +1450,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
+            WorkspaceCommands::Receipt { json, jobs, path } => commands::workspace_receipt(
+                path.as_deref(),
+                file.as_deref(),
+                jobs,
+                format_from_json(json),
+                debug,
+            ),
             WorkspaceCommands::Run {
                 task,
                 json,
@@ -1587,6 +1607,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Status { .. } => {
                 "run `ota workspace doctor` for readiness, `ota workspace diff` for drift, or `ota workspace status` for a compact combined summary"
             }
+            WorkspaceCommands::Receipt { .. } => {
+                "run `ota workspace status` for a combined readiness-and-drift scan, or `ota workspace receipt` when you want the same state as a receipt artifact"
+            }
             WorkspaceCommands::Run { .. } => {
                 if stderr.contains("failed to parse contract")
                     || stderr.contains("could not be loaded")
@@ -1649,6 +1672,7 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Refresh { json, .. }
             | WorkspaceCommands::Diff { json, .. }
             | WorkspaceCommands::Status { json, .. }
+            | WorkspaceCommands::Receipt { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
         },
         Commands::Run { .. }
@@ -1689,6 +1713,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             WorkspaceCommands::Refresh { .. } => "ota workspace refresh",
             WorkspaceCommands::Diff { .. } => "ota workspace diff",
             WorkspaceCommands::Status { .. } => "ota workspace status",
+            WorkspaceCommands::Receipt { .. } => "ota workspace receipt",
             WorkspaceCommands::Run { .. } => "ota workspace run",
         },
     }

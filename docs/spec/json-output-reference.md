@@ -50,6 +50,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota workspace check --json` when you want checks-only workspace readiness with a roll-up summary
 - use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
+- use `ota workspace receipt --json` when you want a read-only workspace receipt artifact
 - use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
 
 ## Editor and IDE contract rules
@@ -66,6 +67,7 @@ human text output:
 - `ota workspace check --json`: use the top-level `summary` and per-repo findings
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
+- `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and changes
 - `ota explain --json`: use the remediation steps and stable step codes
 
@@ -960,6 +962,10 @@ local git drift together, includes per-repo `ready`, `readiness_status`, `drift_
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
 `"mode": "status"`.
 
+`ota workspace receipt --json` uses the same read-only workspace scan as `status`, but treats
+the result as a receipt artifact. It records the same readiness and drift detail, adds
+`"mode": "receipt"`, and keeps the receipt object available for CI or archive consumers.
+
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
 
@@ -980,7 +986,7 @@ Optional per-repo fields:
 - `ahead`
 - `behind`
 - `dirty`
-- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`, `status` for `ota workspace status --json`)
+- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`, `status` for `ota workspace status --json`, `receipt` for `ota workspace receipt --json`)
 
 Example acquisition/setup failure:
 
