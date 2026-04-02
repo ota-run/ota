@@ -946,6 +946,9 @@ Failure example:
 }
 ```
 
+`ota workspace refresh --json` uses the same workspace roll-up shape, but reports refresh
+status for existing repos instead of bootstrap status for missing ones.
+
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
 

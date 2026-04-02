@@ -82,6 +82,7 @@ Ota currently ships these commands:
 - `ota workspace doctor`
 - `ota workspace explain`
 - `ota workspace up`
+- `ota workspace refresh`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -148,7 +149,8 @@ Current intent:
 - keep normal stdout stable
 - avoid persistent trace output or verbose default output
 - use the trace channel for multi-step commands like `ota up`, `ota run`, `ota workspace up`,
-  `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and `ota explain`
+  `ota workspace refresh`, `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and
+  `ota explain`
 
 ## `ota validate`
 
@@ -1303,6 +1305,57 @@ JSON output:
 
 Current non-goals:
 
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning beyond workspace bootstrap plus repo readiness
+- GitHub API integration or non-git acquisition modes
+
+## `ota workspace refresh`
+
+Refresh existing repos in an Ota workspace contract without cloning missing ones.
+
+```bash
+ota workspace refresh [PATH]
+ota workspace refresh --json [PATH]
+ota workspace refresh --jobs 4 [PATH]
+ota workspace refresh --quiet [PATH]
+ota workspace refresh --stream [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure
+- refreshes repos that already exist locally and have a declared source
+- leaves missing repos alone so `ota workspace up` remains the bootstrap path
+- can refresh independent repos concurrently when `--jobs` is greater than `1`
+- respects declared workspace repo dependency order
+- blocks downstream repos when a dependency does not become ready
+- aggregates per-repo status, phase, findings, and exit details
+- captures repo child stdout and stderr per repo so text and JSON output remain deterministic
+- emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
+- `--quiet` suppresses live progress output and prints only the final workspace report
+- optional repo failures do not fail the overall workspace result
+- defaults to sequential execution because `--jobs` defaults to `1`
+- `--stream` opts into raw live child process output instead of buffered per-repo output
+- `--stream` is text-only and currently requires `--jobs 1`
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
+
+Text output:
+
+- header: `WORKSPACE REFRESH <path>`
+- status line: `READY`, `NOT READY`, or `NOT ACQUIRED`
+- each repo includes required/optional status, phase, findings, exit details, and captured stdout/stderr when present
+
+JSON output:
+
+- `ok`
+- `path`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- `repos`
+
+Current non-goals:
+
+- cloning missing repos
 - passing a repo URL directly on the CLI without a workspace contract
 - host or workstation provisioning beyond workspace bootstrap plus repo readiness
 - GitHub API integration or non-git acquisition modes

@@ -84,6 +84,20 @@ fn write_contract(root: &Path, contents: &str) {
     fs::write(root.join("ota.yaml"), contents).expect("contract should be written");
 }
 
+fn run_git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Ota")
+        .env("GIT_AUTHOR_EMAIL", "ota@example.com")
+        .env("GIT_COMMITTER_NAME", "Ota")
+        .env("GIT_COMMITTER_EMAIL", "ota@example.com")
+        .status()
+        .expect("git command should run");
+
+    assert!(status.success(), "git {args:?} failed in {}", dir.display());
+}
+
 #[cfg(unix)]
 #[test]
 fn workspace_up_stream_includes_live_child_output() {
@@ -216,6 +230,80 @@ repos:
     assert_eq!(json["repos"][0]["ok"], true);
     assert_eq!(json["repos"][0]["status"], "READY");
     assert_eq!(json["repos"][0]["phase"], "post-setup diagnosis");
+}
+
+#[test]
+fn workspace_refresh_pulls_updated_git_sources_on_real_command_path() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let source_repo = temp.path().join("source").join("web");
+    let workspace_repo = temp.path().join("apps").join("web");
+    fs::create_dir_all(&source_repo).unwrap();
+
+    run_git(&source_repo, &["init"]);
+    fs::write(
+        source_repo.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: 'true'
+"#,
+    )
+    .unwrap();
+    fs::write(source_repo.join("payload.txt"), "v1").unwrap();
+    run_git(&source_repo, &["add", "."]);
+    run_git(&source_repo, &["commit", "-m", "initial"]);
+
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        format!(
+            r#"
+version: 1
+workspace:
+  name: ota-refresh
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      git: {}
+"#,
+            source_repo.display()
+        ),
+    )
+    .unwrap();
+
+    let up = run_ota(&["workspace", "up", temp.path().to_str().unwrap()]);
+    assert!(
+        up.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(workspace_repo.join("payload.txt")).unwrap(),
+        "v1"
+    );
+
+    fs::write(source_repo.join("payload.txt"), "v2").unwrap();
+    run_git(&source_repo, &["add", "payload.txt"]);
+    run_git(&source_repo, &["commit", "-m", "refresh"]);
+
+    let refresh = run_ota(&["workspace", "refresh", temp.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&refresh.stdout);
+
+    assert!(
+        refresh.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&refresh.stderr)
+    );
+    assert!(stdout.contains("WORKSPACE REFRESH"));
+    assert!(stdout.contains("WORKSPACE REFRESH SUMMARY"));
+    assert_eq!(
+        fs::read_to_string(workspace_repo.join("payload.txt")).unwrap(),
+        "v2"
+    );
 }
 
 #[cfg(unix)]

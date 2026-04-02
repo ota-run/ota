@@ -47,6 +47,7 @@ Workspace commands:
 - `ota workspace check`
 - `ota workspace run`
 - `ota workspace up`
+- `ota workspace refresh`
 
 ## Compatibility-locked dimensions
 

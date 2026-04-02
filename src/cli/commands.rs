@@ -85,7 +85,7 @@ use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
     render_workspace_doctor_text, render_workspace_explain_text,
 };
-use self::workspace_output::{render_workspace_run, render_workspace_up};
+use self::workspace_output::{render_workspace_refresh, render_workspace_run, render_workspace_up};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 thread_local! {
@@ -5323,6 +5323,110 @@ pub fn workspace_up(
             stream,
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_refresh(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    quiet: bool,
+    stream: bool,
+    format: OutputFormat,
+    debug: bool,
+    show_receipt: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.refresh"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+    if stream && matches!(format, OutputFormat::Json) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for text output"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.refresh"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if stream && jobs != 1 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` currently requires `--jobs 1`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.refresh"),
+                format!("DEBUG jobs={jobs}"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.refresh")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.refresh"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+        format!("DEBUG quiet={quiet}"),
+        format!("DEBUG stream={stream}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_refresh(
+            &resolved_path,
+            jobs,
+            matches!(format, OutputFormat::Text) && !quiet,
+            stream,
+        ) {
+            Ok(report) => {
+                render_workspace_refresh(&compact_path_display, &report, format, show_receipt)
+            }
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -11700,6 +11804,139 @@ fn load_and_run_workspace_up(
     Ok(WorkspaceUpReport { ok, receipt, repos })
 }
 
+fn load_and_run_workspace_refresh(
+    path: &Path,
+    jobs: usize,
+    emit_progress: bool,
+    stream: bool,
+) -> Result<WorkspaceUpReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    if stream {
+        return run_workspace_refresh_streaming(&workspace_name, path, repo_refs, emit_progress);
+    }
+
+    let mut repos = BTreeMap::new();
+    let mut ok = true;
+    let mut repo_results = BTreeMap::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, repo))| {
+                repo.depends_on
+                    .iter()
+                    .all(|dependency| repo_results.contains_key(dependency))
+            })
+            .map(|(pending_index, _)| pending_index)
+            .collect::<Vec<_>>();
+
+        let mut selected = Vec::new();
+        let mut blocked = Vec::new();
+
+        for pending_index in ready {
+            let (_, repo) = &pending[pending_index];
+            let blocked_dependency = repo
+                .depends_on
+                .iter()
+                .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+                .cloned();
+            if let Some(dependency) = blocked_dependency {
+                blocked.push((pending_index, dependency));
+            } else if selected.len() < jobs {
+                selected.push(pending_index);
+            }
+        }
+
+        let mut removals = blocked
+            .iter()
+            .map(|(pending_index, _)| *pending_index)
+            .chain(selected.iter().copied())
+            .collect::<Vec<_>>();
+        removals.sort_unstable();
+        removals.dedup();
+
+        let mut runnable = Vec::new();
+        let mut blocked_reports = Vec::new();
+        for pending_index in removals.into_iter().rev() {
+            let (order, repo) = pending.remove(pending_index);
+            if let Some((_, dependency)) = blocked
+                .iter()
+                .find(|(blocked_index, _)| *blocked_index == pending_index)
+            {
+                let report = blocked_workspace_repo_refresh(repo, dependency.clone());
+                if emit_progress {
+                    emit_workspace_progress_line(
+                        &workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
+                    );
+                }
+                blocked_reports.push((order, report));
+            } else {
+                runnable.push((order, repo));
+            }
+        }
+
+        runnable.reverse();
+        blocked_reports.reverse();
+
+        let (tx, rx) = mpsc::channel();
+        let handles = runnable
+            .into_iter()
+            .map(|(order, repo)| {
+                if emit_progress {
+                    emit_workspace_progress_line(&workspace_name, "REFRESH", &repo.name, None);
+                }
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let report = run_workspace_repo_refresh(repo, RepoExecutionMode::Capture);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for (order, report) in blocked_reports {
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace refresh worker should send a report");
+            if emit_progress {
+                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
+            }
+            if report.required && !report.ok {
+                ok = false;
+            }
+            repo_results.insert(report.name.clone(), report.ok);
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace refresh thread should not panic");
+        }
+    }
+
+    let repos = repos.into_values().collect::<Vec<_>>();
+    let receipt = workspace_up_receipt(path, &workspace_name, &repos);
+    Ok(WorkspaceUpReport { ok, receipt, repos })
+}
+
 fn load_and_run_workspace_task(
     task: &str,
     path: &Path,
@@ -11857,6 +12094,62 @@ fn load_and_run_workspace_task(
     let repos = repos.into_values().collect::<Vec<_>>();
     let receipt = workspace_run_receipt(path, &workspace_name, task, &repos);
     Ok(WorkspaceRunReport { ok, receipt, repos })
+}
+
+fn run_workspace_refresh_streaming(
+    workspace_name: &str,
+    workspace_path: &Path,
+    repo_refs: Vec<WorkspaceRepoRef>,
+    emit_progress: bool,
+) -> Result<WorkspaceUpReport, WorkspaceProblem> {
+    let mut repos = Vec::new();
+    let mut ok = true;
+    let mut repo_results = BTreeMap::new();
+
+    for repo in repo_refs {
+        let blocked_dependency = repo
+            .depends_on
+            .iter()
+            .find(|dependency| repo_results.get((*dependency).as_str()) == Some(&false))
+            .cloned();
+        let report = match blocked_dependency {
+            Some(dependency) => {
+                let report = blocked_workspace_repo_refresh(repo, dependency.clone());
+                if emit_progress {
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        "BLOCKED",
+                        &report.name,
+                        Some(&format!("({dependency})")),
+                    );
+                }
+                report
+            }
+            None => {
+                if emit_progress {
+                    emit_workspace_progress_line(workspace_name, "REFRESH", &repo.name, None);
+                }
+                let report = run_workspace_repo_refresh(repo, RepoExecutionMode::Stream);
+                if emit_progress {
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        &report.status,
+                        &report.name,
+                        None,
+                    );
+                }
+                report
+            }
+        };
+        if report.required && !report.ok {
+            ok = false;
+        }
+        repo_results.insert(report.name.clone(), report.ok);
+        repos.push(report);
+    }
+
+    let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
+    Ok(WorkspaceUpReport { ok, receipt, repos })
 }
 
 fn run_workspace_task_streaming(
@@ -12316,6 +12609,41 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
     }
 }
 
+fn blocked_workspace_repo_refresh(
+    repo: WorkspaceRepoRef,
+    dependency: String,
+) -> WorkspaceRepoUpReport {
+    WorkspaceRepoUpReport {
+        name: repo.name,
+        path: repo.path.display().to_string(),
+        contract_path: repo.contract_path.display().to_string(),
+        required: repo.required,
+        ok: !repo.required,
+        status: String::from("BLOCKED"),
+        phase: String::from("dependencies"),
+        findings: vec![Finding {
+            severity: if repo.required {
+                FindingSeverity::Error
+            } else {
+                FindingSeverity::Warn
+            },
+            summary: format!("Blocked by failed dependency: {dependency}"),
+            why: format!("workspace repo depends on `{dependency}`, which did not become ready"),
+            next: format!("repair `{dependency}` first, then re-run `ota workspace refresh`"),
+        }],
+        service: None,
+        source_url: None,
+        source_ref: None,
+        service_command: None,
+        task: None,
+        task_command: None,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        env_sources: Vec::new(),
+    }
+}
+
 fn blocked_workspace_repo_run(
     repo: WorkspaceRepoRef,
     task: &str,
@@ -12349,6 +12677,220 @@ fn blocked_workspace_repo_run(
         exit_code: None,
         stdout: None,
         stderr: None,
+        env_sources: Vec::new(),
+    }
+}
+
+fn run_workspace_repo_refresh(
+    repo: WorkspaceRepoRef,
+    mode: RepoExecutionMode,
+) -> WorkspaceRepoUpReport {
+    let repo_name = repo.name.clone();
+    let contract_path_display = repo.contract_path.display().to_string();
+    let path_display = repo.path.display().to_string();
+
+    if !repo.present || !repo.path.is_dir() {
+        return WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: !repo.required,
+            status: String::from("NOT ACQUIRED"),
+            phase: String::from("refresh"),
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo not acquired: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` has not been acquired into `{}` yet",
+                    repo_name,
+                    repo.path.display()
+                ),
+                next: match repo.source_url.as_deref() {
+                    Some(source_url) => format!(
+                        "run `ota workspace up` to acquire `{}` from `{}`",
+                        repo_name, source_url
+                    ),
+                    None => format!(
+                        "create `{}` and re-run `ota workspace refresh`",
+                        repo.path.display()
+                    ),
+                },
+            }],
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+        };
+    }
+
+    if repo.source_url.is_none() {
+        return WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: true,
+            status: String::from("SKIPPED"),
+            phase: String::from("refresh"),
+            findings: Vec::new(),
+            source_url: None,
+            source_ref: None,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+        };
+    }
+
+    let refresh_command = match repo.source_ref.as_deref() {
+        Some(source_ref) if !source_ref.trim().is_empty() => {
+            format!("git pull --ff-only origin {source_ref}")
+        }
+        _ => String::from("git pull --ff-only"),
+    };
+
+    let args = match repo.source_ref.as_deref() {
+        Some(source_ref) if !source_ref.trim().is_empty() => {
+            vec!["pull", "--ff-only", "origin", source_ref]
+        }
+        _ => vec!["pull", "--ff-only"],
+    };
+
+    let refresh = match run_git_command(&args, Some(&repo.path), mode) {
+        Ok(result) => result,
+        Err(error) => {
+            return WorkspaceRepoUpReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                ok: !repo.required,
+                status: if repo.required {
+                    String::from("REFRESH FAILED")
+                } else {
+                    String::from("WARN")
+                },
+                phase: String::from("refresh"),
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo refresh failed: {}", repo_name),
+                    why: format!(
+                        "workspace repo `{}` could not start its refresh command: {}",
+                        repo_name, error
+                    ),
+                    next: format!(
+                        "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`"
+                    ),
+                }],
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                service: None,
+                service_command: None,
+                task: None,
+                task_command: Some(refresh_command),
+                exit_code: Some(1),
+                stdout: None,
+                stderr: None,
+                env_sources: Vec::new(),
+            };
+        }
+    };
+
+    if refresh.exit_code != 0 {
+        return WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: !repo.required,
+            status: if repo.required {
+                String::from("REFRESH FAILED")
+            } else {
+                String::from("WARN")
+            },
+            phase: String::from("refresh"),
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo refresh failed: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` could not be refreshed from `{}`",
+                    repo_name,
+                    repo.source_url.as_deref().unwrap_or("unknown source")
+                ),
+                next: String::from(
+                    "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`",
+                ),
+            }],
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: Some(refresh_command),
+            exit_code: Some(refresh.exit_code),
+            stdout: match mode {
+                RepoExecutionMode::Capture => {
+                    (!refresh.stdout.is_empty()).then_some(refresh.stdout)
+                }
+                RepoExecutionMode::Stream => None,
+            },
+            stderr: match mode {
+                RepoExecutionMode::Capture => {
+                    (!refresh.stderr.is_empty()).then_some(refresh.stderr)
+                }
+                RepoExecutionMode::Stream => None,
+            },
+            env_sources: Vec::new(),
+        };
+    }
+
+    WorkspaceRepoUpReport {
+        name: repo.name,
+        path: path_display,
+        contract_path: contract_path_display,
+        required: repo.required,
+        ok: true,
+        status: String::from("READY"),
+        phase: String::from("refresh"),
+        findings: Vec::new(),
+        source_url: repo.source_url.clone(),
+        source_ref: repo.source_ref.clone(),
+        service: None,
+        service_command: None,
+        task: None,
+        task_command: Some(refresh_command),
+        exit_code: None,
+        stdout: match mode {
+            RepoExecutionMode::Capture => (!refresh.stdout.is_empty()).then_some(refresh.stdout),
+            RepoExecutionMode::Stream => None,
+        },
+        stderr: match mode {
+            RepoExecutionMode::Capture => (!refresh.stderr.is_empty()).then_some(refresh.stderr),
+            RepoExecutionMode::Stream => None,
+        },
         env_sources: Vec::new(),
     }
 }

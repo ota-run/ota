@@ -169,6 +169,7 @@ ota workspace explain
 ota workspace check
 ota workspace doctor
 ota workspace up
+ota workspace refresh
 ota run bump-version --version x.y.z
 ```
 
@@ -183,7 +184,8 @@ ota --plain <command>
 `--plain` emits ASCII-first output without emoji, icons, or ANSI color.
 
 Use `--debug` when you want command traces for `ota up`, `ota run <task>`, `ota workspace up`,
-`ota workspace run <task>`, `ota doctor`, `ota detect`, `ota diff`, and `ota explain`.
+`ota workspace refresh`, `ota workspace run <task>`, `ota doctor`, `ota detect`, `ota diff`, and
+`ota explain`.
 Commands like `ota validate`, `ota tasks`, `ota workspace validate`, `ota workspace tasks`, and
 `ota workspace list` should usually stay quiet unless you are actively debugging.
 
@@ -211,6 +213,7 @@ Current behavior:
 - `ota workspace check` runs configured checks across workspace repos with deterministic reporting
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
 - `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
+- `ota workspace refresh` re-syncs repos that already exist locally without cloning missing ones
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
 ## Execution Modes and Provisioning
