@@ -600,13 +600,13 @@ fn workspace_status_word(status: &str) -> String {
         return trimmed.to_string();
     }
     match trimmed {
-        "READY" => paint("READY", "1;38;2;0;255;120"),
-        "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
-        "NOT ACQUIRED" => paint("NOT ACQUIRED", "1;38;2;255;235;59"),
+        "READY" => paint("READY", "1;38;2;102;217;255"),
+        "NOT READY" => paint("NOT READY", "1;38;2;255;214;79"),
+        "NOT ACQUIRED" => paint("NOT ACQUIRED", "1;38;2;0;180;255"),
         "SKIPPED" => paint("SKIPPED", "1;38;2;180;180;180"),
-        "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
+        "BLOCKED" => paint("BLOCKED", "1;38;2;183;134;255"),
         "PREVIEW" => paint("PREVIEW", "1;38;2;0;255;255"),
-        "WARN" => paint("WARN", "1;38;2;255;235;59"),
+        "WARN" => paint("WARN", "1;38;2;0;180;255"),
         value if value.contains("FAILED") => paint(value, "1;31"),
         other => paint(other, "1;37"),
     }
@@ -654,12 +654,12 @@ fn workspace_diff_status_word(status: &str) -> String {
     }
 
     match trimmed {
-        "MATCH" => paint("MATCH", "1;38;2;0;255;120"),
+        "MATCH" => paint("MATCH", "1;38;2;102;217;255"),
         "DIFFERENT" => paint("DIFFERENT", "1;38;2;255;235;59"),
-        "DIRTY" => paint("DIRTY", "1;38;2;255;214;79"),
+        "DIRTY" => paint("DIRTY", "1;38;2;0;255;200"),
         "MISSING" => paint("MISSING", "1;38;2;255;80;80"),
         "MISSING CONTRACT" => paint("MISSING CONTRACT", "1;38;2;255;80;80"),
-        "UNRESOLVED" => paint("UNRESOLVED", "1;38;2;255;235;59"),
+        "UNRESOLVED" => paint("UNRESOLVED", "1;38;2;183;134;255"),
         other => paint(other, "1;37"),
     }
 }
@@ -667,44 +667,42 @@ fn workspace_diff_status_word(status: &str) -> String {
 fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
     let summary = workspace_diff_summary(repos);
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!(
-        "{}:",
-        paint_section_title("WORKSPACE DIFF SUMMARY")
-    ));
+    stdout.push_str(&paint("WORKSPACE DIFF SUMMARY:", "1;37"));
+    stdout.push('\n');
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Match:", "1;38;2;0;255;120"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Match:", "1;38;2;102;217;255"),
         paint(&summary.match_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Different:", "1;38;2;255;235;59"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Different:", "1;38;2;0;180;255"),
         paint(&summary.different_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Dirty:", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Dirty:", "1;38;2;0;255;200"),
         paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Missing:", "1;38;2;255;80;80"),
         paint(&summary.missing_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Unresolved:", "1;38;2;255;235;59"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Unresolved:", "1;38;2;183;134;255"),
         paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout
@@ -740,56 +738,54 @@ fn workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> WorkspaceDiffSum
 
 fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!(
-        "{}:",
-        paint_section_title("WORKSPACE STATUS SUMMARY")
-    ));
+    stdout.push_str(&paint("WORKSPACE STATUS SUMMARY:", "1;37"));
+    stdout.push('\n');
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Ready:", "1;38;2;0;255;120"),
         paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Not ready:", "1;38;2;255;235;59"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Not ready:", "1;38;2;255;214;79"),
         paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Match:", "1;38;2;0;255;120"),
         paint(&summary.match_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Different:", "1;38;2;255;235;59"),
         paint(&summary.different_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Dirty:", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Dirty:", "1;38;2;61;174;255"),
         paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        paint("»", "1;38;2;102;217;255"),
         paint("Missing:", "1;38;2;255;80;80"),
         paint(&summary.missing_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
-        paint("Unresolved:", "1;38;2;255;235;59"),
+        paint("»", "1;38;2;102;217;255"),
+        paint("Unresolved:", "1;38;2;183;134;255"),
         paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout
