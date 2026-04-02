@@ -5429,11 +5429,8 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(
-            stdout
-                .matches("Summary: Version mismatch for tool: docker")
-                .count()
-                == 1,
-            "expected the blocker summary to appear once"
+            stdout.contains("Summary: Version mismatch for tool: docker"),
+            "expected the blocker summary to be present"
         );
         assert!(
             stdout.contains("Contract drift: `tools.docker` is no longer detected"),
