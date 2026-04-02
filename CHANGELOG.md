@@ -28,6 +28,14 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.5.0
+
+- added `ota workspace refresh --dry-run` so workspace refresh can be previewed without mutating repo state.
+- kept workspace refresh explicit with `--force`, `--prune`, and `--ref` for stricter sync control.
+- tightened workspace acquisition and discovery boundaries so bootstrap stays scoped to the current workspace and repo root.
+- improved repo and workspace UX around primary findings, failed phases, and backend-versus-task failure details.
+- fixed release-gate and CI flakiness, including docs publishing, install-script publishing, and test-shim behavior.
+
 ## 0.4.2
 
 - fixed GitHub Actions failures by updating stale test expectations and shared test shims.

@@ -304,6 +304,46 @@ repos:
         fs::read_to_string(workspace_repo.join("payload.txt")).unwrap(),
         "v2"
     );
+
+    fs::write(source_repo.join("payload.txt"), "v3").unwrap();
+    run_git(&source_repo, &["add", "payload.txt"]);
+    run_git(&source_repo, &["commit", "-m", "preview"]);
+
+    let preview = run_ota(&[
+        "workspace",
+        "refresh",
+        "--dry-run",
+        temp.path().to_str().unwrap(),
+    ]);
+    let preview_stdout = String::from_utf8_lossy(&preview.stdout);
+
+    assert!(
+        preview.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert!(preview_stdout.contains("WORKSPACE REFRESH PREVIEW"));
+    assert!(preview_stdout.contains("Mode: dry-run (no write)"));
+    assert_eq!(
+        fs::read_to_string(workspace_repo.join("payload.txt")).unwrap(),
+        "v2"
+    );
+
+    let preview_json = run_ota(&[
+        "workspace",
+        "refresh",
+        "--json",
+        "--dry-run",
+        temp.path().to_str().unwrap(),
+    ]);
+    assert!(preview_json.status.success());
+    let preview_json = stdout_json_any(&preview_json);
+    assert_eq!(preview_json["ok"], true);
+    assert_eq!(preview_json["mode"], "preview");
+    assert_eq!(
+        fs::read_to_string(workspace_repo.join("payload.txt")).unwrap(),
+        "v2"
+    );
 }
 
 #[cfg(unix)]

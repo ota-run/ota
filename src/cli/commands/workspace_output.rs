@@ -136,6 +136,7 @@ pub(crate) fn render_workspace_up(
             stdout: to_json(&WorkspaceUpSuccess {
                 ok: report.ok,
                 path,
+                mode: None,
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
@@ -155,11 +156,19 @@ pub(crate) fn render_workspace_refresh(
     match format {
         OutputFormat::Text => {
             let workspace_root = Path::new(path).parent();
-            let mut stdout = format!(
-                "\n{}\n\n{}",
-                format_command_header("WORKSPACE REFRESH", path),
-                render_readiness_status(report.ok)
-            );
+            let mut stdout = if report.dry_run {
+                format!(
+                    "\n{}\n\n{}",
+                    format_command_header("WORKSPACE REFRESH PREVIEW", path),
+                    format_mode_line("dry-run (no write)")
+                )
+            } else {
+                format!(
+                    "\n{}\n\n{}",
+                    format_command_header("WORKSPACE REFRESH", path),
+                    render_readiness_status(report.ok)
+                )
+            };
 
             for repo in &report.repos {
                 stdout.push_str(&format!(
@@ -235,7 +244,11 @@ pub(crate) fn render_workspace_refresh(
                     .first()
                     .and_then(|repo| repo.task_command.as_deref())
                     .or(report.receipt.steps.first().map(|step| step.label.as_str())),
-                "WORKSPACE REFRESH SUMMARY",
+                if report.dry_run {
+                    "WORKSPACE REFRESH PREVIEW SUMMARY"
+                } else {
+                    "WORKSPACE REFRESH SUMMARY"
+                },
             ));
 
             CommandOutput {
@@ -248,6 +261,7 @@ pub(crate) fn render_workspace_refresh(
             stdout: to_json(&WorkspaceUpSuccess {
                 ok: report.ok,
                 path,
+                mode: Some(if report.dry_run { "preview" } else { "refresh" }),
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
                 repos: &report.repos,
@@ -376,6 +390,7 @@ fn workspace_status_word(status: &str) -> String {
         "NOT ACQUIRED" => paint("NOT ACQUIRED", "1;38;2;255;235;59"),
         "SKIPPED" => paint("SKIPPED", "1;38;2;180;180;180"),
         "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
+        "PREVIEW" => paint("PREVIEW", "1;38;2;0;255;255"),
         "WARN" => paint("WARN", "1;38;2;255;235;59"),
         value if value.contains("FAILED") => paint(value, "1;31"),
         other => paint(other, "1;37"),

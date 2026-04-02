@@ -202,6 +202,7 @@ Current workspace refresh behavior:
 - emits live repo progress on stderr in text mode so users can see execution moving without losing ordered final output
 - optional repo failures do not fail the overall workspace status
 - `--stream` opts into raw live child process output instead of buffered per-repo output
+- `--dry-run` previews the refresh commands without changing repo state
 - `--force` force-fetches and hard-resets refreshed repos to the declared source or `--ref` override
 - `--prune` prunes stale remote-tracking refs during refresh
 - `--ref <branch|tag|sha>` overrides the source ref used for refresh

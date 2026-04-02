@@ -5353,6 +5353,7 @@ pub fn workspace_refresh(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    dry_run: bool,
     force: bool,
     prune: bool,
     git_ref: Option<&str>,
@@ -5416,6 +5417,7 @@ pub fn workspace_refresh(
         String::from("DEBUG command=workspace.refresh"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG dry_run={dry_run}"),
         format!("DEBUG force={force}"),
         format!("DEBUG prune={prune}"),
         format!("DEBUG git_ref={:?}", git_ref),
@@ -5428,6 +5430,7 @@ pub fn workspace_refresh(
             &resolved_path,
             jobs,
             WorkspaceRefreshOptions {
+                dry_run,
                 force,
                 prune,
                 git_ref: git_ref.map(str::to_owned),
@@ -11047,6 +11050,7 @@ struct WorkspaceUpReport {
     ok: bool,
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoUpReport>,
+    dry_run: bool,
 }
 
 struct WorkspaceRunReport {
@@ -11844,11 +11848,17 @@ fn load_and_run_workspace_up(
 
     let repos = repos.into_values().collect::<Vec<_>>();
     let receipt = workspace_up_receipt(path, &workspace_name, &repos);
-    Ok(WorkspaceUpReport { ok, receipt, repos })
+    Ok(WorkspaceUpReport {
+        ok,
+        receipt,
+        repos,
+        dry_run: false,
+    })
 }
 
 #[derive(Clone, Debug, Default)]
 struct WorkspaceRefreshOptions {
+    dry_run: bool,
     force: bool,
     prune: bool,
     git_ref: Option<String>,
@@ -11949,7 +11959,16 @@ fn load_and_run_workspace_refresh(
             .into_iter()
             .map(|(order, repo)| {
                 if emit_progress {
-                    emit_workspace_progress_line(&workspace_name, "REFRESH", &repo.name, None);
+                    emit_workspace_progress_line(
+                        &workspace_name,
+                        if options.dry_run {
+                            "REFRESH PREVIEW"
+                        } else {
+                            "REFRESH"
+                        },
+                        &repo.name,
+                        None,
+                    );
                 }
                 let tx = tx.clone();
                 let options = options.clone();
@@ -11993,7 +12012,12 @@ fn load_and_run_workspace_refresh(
 
     let repos = repos.into_values().collect::<Vec<_>>();
     let receipt = workspace_up_receipt(path, &workspace_name, &repos);
-    Ok(WorkspaceUpReport { ok, receipt, repos })
+    Ok(WorkspaceUpReport {
+        ok: if options.dry_run { true } else { ok },
+        receipt,
+        repos,
+        dry_run: options.dry_run,
+    })
 }
 
 fn load_and_run_workspace_task(
@@ -12187,7 +12211,16 @@ fn run_workspace_refresh_streaming(
             }
             None => {
                 if emit_progress {
-                    emit_workspace_progress_line(workspace_name, "REFRESH", &repo.name, None);
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        if options.dry_run {
+                            "REFRESH PREVIEW"
+                        } else {
+                            "REFRESH"
+                        },
+                        &repo.name,
+                        None,
+                    );
                 }
                 let report = run_workspace_repo_refresh(repo, options, RepoExecutionMode::Stream);
                 if emit_progress {
@@ -12209,7 +12242,12 @@ fn run_workspace_refresh_streaming(
     }
 
     let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
-    Ok(WorkspaceUpReport { ok, receipt, repos })
+    Ok(WorkspaceUpReport {
+        ok: if options.dry_run { true } else { ok },
+        receipt,
+        repos,
+        dry_run: options.dry_run,
+    })
 }
 
 fn run_workspace_task_streaming(
@@ -12327,7 +12365,12 @@ fn run_workspace_up_streaming(
     }
 
     let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
-    Ok(WorkspaceUpReport { ok, receipt, repos })
+    Ok(WorkspaceUpReport {
+        ok,
+        receipt,
+        repos,
+        dry_run: false,
+    })
 }
 
 fn workspace_progress_prefix(workspace_name: &str) -> String {
@@ -12918,6 +12961,29 @@ fn run_workspace_repo_refresh(
     let effective_ref =
         refresh_ref_override(repo.source_ref.as_deref(), options.git_ref.as_deref());
     let refresh_command = workspace_refresh_command(effective_ref, options.force, options.prune);
+
+    if options.dry_run {
+        return WorkspaceRepoUpReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            ok: true,
+            status: String::from("PREVIEW"),
+            phase: String::from("refresh"),
+            findings: Vec::new(),
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: Some(refresh_command),
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+        };
+    }
 
     let refresh = match run_workspace_repo_refresh_command(&repo, effective_ref, options, mode) {
         Ok(result) => result,

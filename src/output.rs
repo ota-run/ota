@@ -465,6 +465,8 @@ pub struct WorkspaceRepoUpReport {
 pub struct WorkspaceUpSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<&'a str>,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     pub repos: &'a [WorkspaceRepoUpReport],
