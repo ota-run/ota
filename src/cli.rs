@@ -5367,6 +5367,19 @@ tasks:
     fn doctor_reports_tool_drift_warning_without_duplicate_blocker_line() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
         fs::write(
             dir.path().join("ota.yaml"),
             r#"
@@ -5384,6 +5397,15 @@ tasks:
 
         let _guard = CurrentDirGuard::enter(dir.path());
         let output = run_with(["ota", "doctor"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
