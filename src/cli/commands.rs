@@ -57,10 +57,11 @@ use crate::output::{
     ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
     WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -88,8 +89,8 @@ use self::workspace_diagnostics::{
     render_workspace_doctor_text, render_workspace_explain_text,
 };
 use self::workspace_output::{
-    render_workspace_diff, render_workspace_refresh, render_workspace_run, render_workspace_status,
-    render_workspace_up,
+    render_workspace_diff, render_workspace_receipt, render_workspace_refresh,
+    render_workspace_run, render_workspace_status, render_workspace_up,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -5576,6 +5577,71 @@ pub fn workspace_status(
     finalize_debug(
         match load_and_run_workspace_status(&resolved_path, jobs) {
             Ok(report) => render_workspace_status(&compact_path_display, &report, format),
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_receipt(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.receipt"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.receipt")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.receipt"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_receipt(&resolved_path, jobs) {
+            Ok(report) => render_workspace_receipt(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -11197,6 +11263,11 @@ struct WorkspaceStatusReport {
     repos: Vec<WorkspaceRepoStatusReport>,
 }
 
+struct WorkspaceReceiptReport {
+    receipt: ExecutionReceipt,
+    repos: Vec<WorkspaceRepoStatusReport>,
+}
+
 struct WorkspaceRunReport {
     ok: bool,
     receipt: ExecutionReceipt,
@@ -11429,6 +11500,65 @@ fn workspace_up_receipt(
             &findings,
             repos.len(),
             Some(repos.len()),
+            Some(ready_count),
+            Some(not_ready_count),
+        ),
+        next,
+    }
+}
+
+fn workspace_status_receipt(
+    workspace_path: &Path,
+    workspace_name: &str,
+    report: &WorkspaceStatusReport,
+) -> ExecutionReceipt {
+    let mut findings = Vec::new();
+    let mut steps = Vec::new();
+    let mut ready_count = 0usize;
+    let mut not_ready_count = 0usize;
+
+    for (index, repo) in report.repos.iter().enumerate() {
+        if repo.ready {
+            ready_count += 1;
+        } else {
+            not_ready_count += 1;
+        }
+        findings.extend(repo.findings.clone());
+        steps.push(execution_receipt_step(
+            index + 1,
+            repo.name.clone(),
+            repo.readiness_status.clone(),
+            Some(format!("{} · {}", repo.readiness_status, repo.drift_status)),
+            None,
+        ));
+    }
+
+    let next = report
+        .repos
+        .iter()
+        .flat_map(|repo| repo.findings.iter())
+        .map(|finding| finding.next.clone())
+        .find(|next| !next.trim().is_empty());
+
+    ExecutionReceipt {
+        ok: report.repos.iter().all(|repo| !repo.required || repo.ready),
+        path: workspace_path.display().to_string(),
+        scope: String::from("workspace"),
+        contract: workspace_path.display().to_string(),
+        workspace: Some(workspace_name.to_string()),
+        backend: None,
+        lifecycle: None,
+        target: None,
+        acquired: Vec::new(),
+        env: BTreeMap::new(),
+        env_sources: Vec::new(),
+        policy: Vec::new(),
+        steps,
+        blocked: Vec::new(),
+        summary: execution_receipt_summary(
+            &findings,
+            report.repos.len(),
+            Some(report.repos.len()),
             Some(ready_count),
             Some(not_ready_count),
         ),
@@ -12053,11 +12183,12 @@ fn load_and_run_workspace_diff(
     })
 }
 
-fn load_and_run_workspace_status(
+fn load_workspace_status_report(
     path: &Path,
     jobs: usize,
-) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
+) -> Result<(String, WorkspaceStatusReport), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
@@ -12101,8 +12232,31 @@ fn load_and_run_workspace_status(
         }
     }
 
-    Ok(WorkspaceStatusReport {
-        repos: repos.into_values().collect(),
+    Ok((
+        workspace_name,
+        WorkspaceStatusReport {
+            repos: repos.into_values().collect(),
+        },
+    ))
+}
+
+fn load_and_run_workspace_status(
+    path: &Path,
+    jobs: usize,
+) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
+    load_workspace_status_report(path, jobs).map(|(_, report)| report)
+}
+
+fn load_and_run_workspace_receipt(
+    path: &Path,
+    jobs: usize,
+) -> Result<WorkspaceReceiptReport, WorkspaceProblem> {
+    let (workspace_name, report) = load_workspace_status_report(path, jobs)?;
+    let receipt = workspace_status_receipt(path, &workspace_name, &report);
+
+    Ok(WorkspaceReceiptReport {
+        receipt,
+        repos: report.repos,
     })
 }
 

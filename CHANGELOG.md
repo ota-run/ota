@@ -27,6 +27,7 @@
 ## Unreleased
 
 - Future changes will be tracked here before the next version bump.
+- added `ota workspace receipt` as a read-only workspace receipt artifact for CI and archiving.
 
 ## 0.5.1
 

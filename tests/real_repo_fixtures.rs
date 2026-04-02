@@ -437,6 +437,91 @@ repos:
     assert_eq!(dirty_status_json["summary"]["dirty_count"], 1);
 }
 
+#[test]
+fn workspace_receipt_reports_workspace_state_on_real_command_path() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let source_repo = temp.path().join("source").join("web");
+    fs::create_dir_all(&source_repo).unwrap();
+
+    run_git(&source_repo, &["init"]);
+    fs::write(
+        source_repo.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: 'true'
+"#,
+    )
+    .unwrap();
+    fs::write(source_repo.join("payload.txt"), "v1").unwrap();
+    run_git(&source_repo, &["add", "."]);
+    run_git(&source_repo, &["commit", "-m", "initial"]);
+
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        format!(
+            r#"
+version: 1
+workspace:
+  name: ota-receipt
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      git: {}
+"#,
+            source_repo.display()
+        ),
+    )
+    .unwrap();
+
+    let up = run_ota(&["workspace", "up", temp.path().to_str().unwrap()]);
+    assert!(
+        up.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    let receipt_text = run_ota(&["workspace", "receipt", temp.path().to_str().unwrap()]);
+    let receipt_text_stdout = String::from_utf8_lossy(&receipt_text.stdout);
+    assert!(
+        receipt_text.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&receipt_text.stderr)
+    );
+    assert!(receipt_text_stdout.contains("WORKSPACE RECEIPT"));
+    assert!(receipt_text_stdout.contains("Summary:"));
+
+    let receipt_json = run_ota(&[
+        "workspace",
+        "receipt",
+        "--json",
+        temp.path().to_str().unwrap(),
+    ]);
+    let receipt_json = stdout_json_any(&receipt_json);
+
+    assert_eq!(receipt_json["ok"], true);
+    assert_eq!(receipt_json["mode"], "receipt");
+    assert_eq!(receipt_json["summary"]["repo_count"], 1);
+    assert_eq!(receipt_json["summary"]["ready_count"], 1);
+    assert_eq!(receipt_json["summary"]["not_ready_count"], 0);
+    assert_eq!(receipt_json["receipt"]["scope"], "workspace");
+    assert_eq!(receipt_json["receipt"]["summary"]["repo_count"], 1);
+    assert_eq!(receipt_json["receipt"]["summary"]["step_count"], 1);
+    assert_eq!(receipt_json["receipt"]["steps"][0]["label"], "web");
+    assert_eq!(receipt_json["receipt"]["steps"][0]["status"], "READY");
+    assert!(
+        receipt_json["receipt"]["steps"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("MATCH")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {
