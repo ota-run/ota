@@ -27,6 +27,7 @@
 ## Unreleased
 
 - Future changes will be tracked here before the next version bump.
+- added `ota workspace diff` as a read-only workspace drift view before refresh.
 
 ## 0.5.0
 

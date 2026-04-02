@@ -346,6 +346,74 @@ repos:
     );
 }
 
+#[test]
+fn workspace_diff_reports_match_and_dirty_state_on_real_command_path() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let source_repo = temp.path().join("source").join("web");
+    let workspace_repo = temp.path().join("apps").join("web");
+    fs::create_dir_all(&source_repo).unwrap();
+
+    run_git(&source_repo, &["init"]);
+    fs::write(
+        source_repo.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: 'true'
+"#,
+    )
+    .unwrap();
+    fs::write(source_repo.join("payload.txt"), "v1").unwrap();
+    run_git(&source_repo, &["add", "."]);
+    run_git(&source_repo, &["commit", "-m", "initial"]);
+
+    fs::write(
+        temp.path().join("ota.workspace.yaml"),
+        format!(
+            r#"
+version: 1
+workspace:
+  name: ota-diff
+repos:
+  web:
+    path: apps/web
+    required: true
+    source:
+      git: {}
+"#,
+            source_repo.display()
+        ),
+    )
+    .unwrap();
+
+    let up = run_ota(&["workspace", "up", temp.path().to_str().unwrap()]);
+    assert!(
+        up.status.success(),
+        "stderr was: {}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    let clean_diff = run_ota(&["workspace", "diff", temp.path().to_str().unwrap()]);
+    let clean_stdout = String::from_utf8_lossy(&clean_diff.stdout);
+    assert!(clean_diff.status.success());
+    assert!(clean_stdout.contains("WORKSPACE DIFF"));
+    assert!(clean_stdout.contains("MATCH"));
+
+    fs::write(workspace_repo.join("payload.txt"), "dirty").unwrap();
+
+    let dirty_diff = run_ota(&["workspace", "diff", "--json", temp.path().to_str().unwrap()]);
+    let dirty_json = stdout_json_any(&dirty_diff);
+
+    assert!(dirty_diff.status.success());
+    assert_eq!(dirty_json["ok"], true);
+    assert_eq!(dirty_json["mode"], "diff");
+    assert_eq!(dirty_json["repos"][0]["status"], "DIRTY");
+    assert_eq!(dirty_json["summary"]["dirty_count"], 1);
+}
+
 #[cfg(unix)]
 #[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {

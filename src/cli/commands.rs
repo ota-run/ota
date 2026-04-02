@@ -54,9 +54,10 @@ use crate::output::{
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
     InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary, ServicesFailure,
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure,
-    ValidateSuccess, ValidateSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
     WorkspaceRepoRunReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess,
     WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
@@ -85,7 +86,9 @@ use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
     render_workspace_doctor_text, render_workspace_explain_text,
 };
-use self::workspace_output::{render_workspace_refresh, render_workspace_run, render_workspace_up};
+use self::workspace_output::{
+    render_workspace_diff, render_workspace_refresh, render_workspace_run, render_workspace_up,
+};
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
 thread_local! {
@@ -5441,6 +5444,71 @@ pub fn workspace_refresh(
             Ok(report) => {
                 render_workspace_refresh(&compact_path_display, &report, format, show_receipt)
             }
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_diff(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.diff"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.diff")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.diff"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_diff(&resolved_path, jobs) {
+            Ok(report) => render_workspace_diff(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -11053,6 +11121,10 @@ struct WorkspaceUpReport {
     dry_run: bool,
 }
 
+struct WorkspaceDiffReport {
+    repos: Vec<WorkspaceRepoDiffReport>,
+}
+
 struct WorkspaceRunReport {
     ok: bool,
     receipt: ExecutionReceipt,
@@ -11853,6 +11925,59 @@ fn load_and_run_workspace_up(
         receipt,
         repos,
         dry_run: false,
+    })
+}
+
+fn load_and_run_workspace_diff(
+    path: &Path,
+    jobs: usize,
+) -> Result<WorkspaceDiffReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    let mut repos = BTreeMap::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let selected = pending
+            .iter()
+            .enumerate()
+            .take(jobs)
+            .map(|(pending_index, _)| pending_index)
+            .collect::<Vec<_>>();
+
+        let (tx, rx) = mpsc::channel();
+        let handles = selected
+            .into_iter()
+            .rev()
+            .map(|pending_index| {
+                let (order, repo) = pending.remove(pending_index);
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let report = run_workspace_repo_diff(repo);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace diff worker should send a report");
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace diff thread should not panic");
+        }
+    }
+
+    Ok(WorkspaceDiffReport {
+        repos: repos.into_values().collect(),
     })
 }
 
@@ -12709,6 +12834,301 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         stdout: None,
         stderr: None,
         env_sources: Vec::new(),
+    }
+}
+
+fn workspace_repo_git_output(args: &[&str], cwd: &Path) -> Result<String, String> {
+    let output = run_git_command(args, Some(cwd), RepoExecutionMode::Capture).map_err(|error| {
+        format!(
+            "failed to start git command for `{}`: {}",
+            cwd.display(),
+            error
+        )
+    })?;
+    if output.exit_code != 0 {
+        return Err(format!(
+            "git command `{}` failed with exit code {}",
+            args.join(" "),
+            output.exit_code
+        ));
+    }
+
+    Ok(output.stdout.trim().to_string())
+}
+
+fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
+    let repo_name = repo.name.clone();
+    let path_display = repo.path.display().to_string();
+    let contract_path_display = repo.contract_path.display().to_string();
+
+    if !repo.present || !repo.path.is_dir() {
+        return WorkspaceRepoDiffReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            acquired: false,
+            status: String::from("MISSING"),
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            branch: None,
+            head: None,
+            target_ref: None,
+            ahead: None,
+            behind: None,
+            dirty: false,
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo missing: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` is not present at `{}` yet",
+                    repo_name,
+                    repo.path.display()
+                ),
+                next: match repo.source_url.as_deref() {
+                    Some(source_url) => format!(
+                        "run `ota workspace up` to acquire `{}` from `{}`",
+                        repo_name, source_url
+                    ),
+                    None => format!(
+                        "create `{}` and re-run `ota workspace diff`",
+                        repo.path.display()
+                    ),
+                },
+            }],
+        };
+    }
+
+    if !repo.contract_path.is_file() {
+        return WorkspaceRepoDiffReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            acquired: true,
+            status: String::from("MISSING CONTRACT"),
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            branch: None,
+            head: None,
+            target_ref: None,
+            ahead: None,
+            behind: None,
+            dirty: false,
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo contract missing: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` does not have a readable ota.yaml at `{}`",
+                    repo_name,
+                    repo.contract_path.display()
+                ),
+                next: format!(
+                    "restore `{}` and re-run `ota workspace diff`",
+                    repo.contract_path.display()
+                ),
+            }],
+        };
+    }
+
+    let branch = workspace_repo_git_output(&["branch", "--show-current"], &repo.path)
+        .ok()
+        .and_then(|value| (!value.is_empty()).then_some(value));
+    let head = match workspace_repo_git_output(&["rev-parse", "HEAD"], &repo.path) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            return WorkspaceRepoDiffReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                acquired: true,
+                status: String::from("UNRESOLVED"),
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                branch,
+                head: None,
+                target_ref: None,
+                ahead: None,
+                behind: None,
+                dirty: false,
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo comparison unavailable: {}", repo_name),
+                    why: format!(
+                        "workspace repo `{}` could not resolve its local HEAD: {}",
+                        repo_name, error
+                    ),
+                    next: String::from(
+                        "fix the local git repository state, then re-run `ota workspace diff`",
+                    ),
+                }],
+            };
+        }
+    };
+
+    let dirty = workspace_repo_git_output(&["status", "--porcelain"], &repo.path)
+        .ok()
+        .map(|value| !value.is_empty())
+        .unwrap_or(true);
+    let target_ref = repo.source_ref.clone().or_else(|| {
+        workspace_repo_git_output(
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            &repo.path,
+        )
+        .ok()
+        .and_then(|value| (!value.is_empty()).then_some(value))
+    });
+
+    if target_ref.is_none() {
+        return WorkspaceRepoDiffReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            acquired: true,
+            status: String::from("UNRESOLVED"),
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            branch,
+            head,
+            target_ref: None,
+            ahead: None,
+            behind: None,
+            dirty,
+            findings: vec![Finding {
+                severity: if repo.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Repo comparison target unavailable: {}", repo_name),
+                why: format!(
+                    "workspace repo `{}` does not have a declared source ref or upstream branch to compare against",
+                    repo_name
+                ),
+                next: String::from(
+                    "declare `source.ref` or configure an upstream branch, then re-run `ota workspace diff`",
+                ),
+            }],
+        };
+    }
+
+    let comparison = match workspace_repo_git_output(
+        &[
+            "rev-list",
+            "--left-right",
+            "--count",
+            &format!("HEAD...{}", target_ref.as_deref().unwrap()),
+        ],
+        &repo.path,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            return WorkspaceRepoDiffReport {
+                name: repo.name,
+                path: path_display,
+                contract_path: contract_path_display,
+                required: repo.required,
+                acquired: true,
+                status: String::from("UNRESOLVED"),
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                branch,
+                head,
+                target_ref,
+                ahead: None,
+                behind: None,
+                dirty,
+                findings: vec![Finding {
+                    severity: if repo.required {
+                        FindingSeverity::Error
+                    } else {
+                        FindingSeverity::Warn
+                    },
+                    summary: format!("Repo comparison unavailable: {}", repo_name),
+                    why: format!(
+                        "workspace repo `{}` could not compare HEAD against its target ref: {}",
+                        repo_name, error
+                    ),
+                    next: String::from(
+                        "fix the local git repository state, then re-run `ota workspace diff`",
+                    ),
+                }],
+            };
+        }
+    };
+    let mut parts = comparison.split_whitespace();
+    let ahead = parts.next().and_then(|value| value.parse::<usize>().ok());
+    let behind = parts.next().and_then(|value| value.parse::<usize>().ok());
+
+    let status = if dirty {
+        "DIRTY"
+    } else if ahead.unwrap_or(0) != 0 || behind.unwrap_or(0) != 0 {
+        "DIFFERENT"
+    } else {
+        "MATCH"
+    };
+
+    let findings = if status == "MATCH" {
+        Vec::new()
+    } else {
+        vec![Finding {
+            severity: if repo.required {
+                FindingSeverity::Warn
+            } else {
+                FindingSeverity::Info
+            },
+            summary: format!("Repo drift detected: {}", repo_name),
+            why: if dirty {
+                format!(
+                    "workspace repo `{}` has uncommitted changes and differs from `{}`",
+                    repo_name,
+                    target_ref.as_deref().unwrap_or("declared target")
+                )
+            } else {
+                format!(
+                    "workspace repo `{}` is {} commit(s) ahead and {} commit(s) behind of `{}`",
+                    repo_name,
+                    ahead.unwrap_or(0),
+                    behind.unwrap_or(0),
+                    target_ref.as_deref().unwrap_or("declared target")
+                )
+            },
+            next: String::from(
+                "run `ota workspace refresh` to reconcile the repo, or `ota workspace refresh --dry-run` to preview the sync",
+            ),
+        }]
+    };
+
+    WorkspaceRepoDiffReport {
+        name: repo.name,
+        path: path_display,
+        contract_path: contract_path_display,
+        required: repo.required,
+        acquired: true,
+        status: status.to_string(),
+        source_url: repo.source_url.clone(),
+        source_ref: repo.source_ref.clone(),
+        branch,
+        head,
+        target_ref,
+        ahead,
+        behind,
+        dirty,
+        findings,
     }
 }
 

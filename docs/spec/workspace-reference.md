@@ -218,6 +218,23 @@ Current execution policy:
 Current non-goals:
 
 - cloning missing repos
+
+## `ota workspace diff`
+
+Current workspace diff behavior:
+
+- validates workspace structure first
+- reads the current local git state for each acquired repo without mutating anything
+- compares each repo against its declared source ref when present, or upstream branch when the source ref is not pinned
+- reports `MATCH` when the repo is clean and aligned, `DIRTY` when the worktree has local changes, `DIFFERENT` when commit counts differ, `MISSING` when the repo is absent, and `UNRESOLVED` when git state cannot be compared safely
+- can compare independent repos concurrently when `--jobs` is greater than `1`
+- never clones, fetches, resets, or writes repo state
+- differences are surfaced in the report but do not fail the command
+
+Current non-goals:
+
+- refreshing or mutating repo state
+- cloning missing repos automatically
 - cross-repo dependency scheduling
 - passing a repo URL directly on the CLI without a workspace contract
 - host or workstation provisioning
