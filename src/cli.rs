@@ -1632,6 +1632,9 @@ command="$1"
 shift
 
 case "$command" in
+  info)
+    exit 0
+    ;;
   inspect)
     name="$1"
     [ -f "$state_dir/$name.path" ]
@@ -3222,6 +3225,7 @@ project:
 
     #[test]
     fn up_json_runs_inherited_setup_in_monorepo_member_directory() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -3258,6 +3262,7 @@ project:
 
     #[test]
     fn up_json_reports_root_monorepo_summary_with_members() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -4386,7 +4391,8 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("unsupported remote provider `unknown`"));
+        assert!(stderr.contains("`execution.backends.remote.provider` `unknown` is not supported"));
+        assert!(stderr.contains("declare a matching `backend_provider` extension or use a built-in provider"));
     }
 
     #[test]
@@ -5262,6 +5268,7 @@ tasks:
 
     #[test]
     fn doctor_reports_tool_drift_warning_without_duplicate_blocker_line() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("ota.yaml"),
@@ -5525,7 +5532,7 @@ tasks:
             "user@host"
         );
         assert_eq!(json["execution"]["backends"]["remote"]["cwd"], "/workspace");
-        assert_eq!(json["extensions"]["demo"]["kind"], "backend_provider");
+        assert_eq!(json["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
     }
@@ -7104,7 +7111,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DOCTOR "));
         assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("ERROR"));
+        assert!(stdout.contains("Primary Blocker"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
     }
@@ -7341,7 +7348,8 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("WARN  Missing tool: ota-tool-that-does-not-exist"));
+        assert!(stdout.contains("Primary Finding"));
+        assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
     }
 
     #[test]
@@ -7390,11 +7398,13 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("WARN  Ephemeral lifecycle is advisory only in V1"));
+        assert!(stdout.contains("Primary Finding"));
+        assert!(stdout.contains("Ephemeral lifecycle is advisory only in V1"));
     }
 
     #[test]
     fn doctor_text_orders_error_warn_and_info_findings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -7423,7 +7433,7 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         let error_index = stdout
-            .find("ERROR  Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
+            .find("Summary: Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
             .unwrap();
         let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
@@ -7633,6 +7643,7 @@ tasks:
 
     #[test]
     fn up_json_reports_ready_status_and_phase() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -7685,6 +7696,7 @@ tasks:
 
     #[test]
     fn up_json_reports_service_start_failure_details() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -8946,7 +8958,8 @@ project:
             compact_contract(&fixture.file_path())
         )));
         assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("ERROR  No tasks defined in contract"));
+        assert!(stdout.contains("Primary Blocker"));
+        assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
     }
 
@@ -10339,13 +10352,13 @@ repos:
         let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("Why:"));
-        assert!(stderr.contains("ota.yaml"));
-        assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("ota init"));
-        assert!(!stderr.contains("create missing repo contracts with `ota init <repo-path>`"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Primary Blocker"));
+        assert!(stdout.contains("Why:"));
+        assert!(stdout.contains("ota.yaml"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota init"));
+        assert!(!stdout.contains("create missing repo contracts with `ota init <repo-path>`"));
     }
 
     #[test]

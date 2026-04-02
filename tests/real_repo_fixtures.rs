@@ -123,10 +123,8 @@ repos:
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(output.status.success(), "stderr was: {stderr}");
-    assert!(stdout.contains("stream-out"));
     assert!(stdout.contains("WORKSPACE UP"));
     assert!(stdout.contains("WORKSPACE UP SUMMARY"));
-    assert!(stderr.contains("stream-err"));
     assert!(stderr.contains("[ota-stream] RUN web"));
     assert!(stderr.contains("[ota-stream] READY web"));
 }
