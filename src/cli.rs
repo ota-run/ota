@@ -1697,6 +1697,10 @@ command="$1"
 shift
 
 case "$command" in
+  --version|version)
+    printf 'Docker version 29.3.1, build deadbeef\n'
+    exit 0
+    ;;
   info)
     exit 0
     ;;
