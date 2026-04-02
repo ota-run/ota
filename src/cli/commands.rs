@@ -7253,18 +7253,7 @@ fn render_doctor_text(
     report: DoctorReport,
 ) -> CommandOutput {
     let summary = doctor_summary(&report, agent_verdict_from_summary(agent));
-    let first_why = report.findings.first().map(|finding| finding.why.clone());
     let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
-    if output.stderr.is_none()
-        && summary
-            .primary_blocker
-            .as_ref()
-            .is_some_and(|primary| primary.severity == FindingSeverity::Error)
-    {
-        if let Some(why) = first_why.as_deref() {
-            output.stderr = Some(stylize_text_failure("ota doctor", why));
-        }
-    }
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -7816,7 +7805,8 @@ fn render_report_section(
     if let Some(execution) = execution {
         stdout.push_str(&render_execution_summary_text(execution));
     }
-    if let Some(primary_blocker) = summary.and_then(|summary| summary.primary_blocker.as_ref()) {
+    let skip_primary_finding = summary.and_then(|summary| summary.primary_blocker.as_ref());
+    if let Some(primary_blocker) = skip_primary_finding {
         stdout.push_str(&render_primary_blocker_text(
             "Primary Blocker",
             &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
@@ -7824,7 +7814,10 @@ fn render_report_section(
             &primary_blocker.next,
         ));
     }
-    for finding in &report.findings {
+    for (index, finding) in report.findings.iter().enumerate() {
+        if index == 0 && skip_primary_finding.is_some() {
+            continue;
+        }
         let next = compact_backticked_paths(&finding.next);
         let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
             format!(
@@ -7869,7 +7862,7 @@ fn render_report_section(
 fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str) -> String {
     let mut stdout = String::from("\n\n");
     if !title.is_empty() {
-        stdout.push_str(&paint_section_title(title));
+        stdout.push_str(&format!("{} {}", paint("➤", "1;31"), paint(title, "1;31")));
         stdout.push('\n');
     }
     stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));

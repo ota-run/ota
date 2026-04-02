@@ -5250,13 +5250,46 @@ tasks:
             "expected the real runtime mismatch finding"
         );
         assert!(
-            !findings.iter().any(|finding| {
+            findings.iter().any(|finding| {
                 finding["summary"]
                     .as_str()
                     .unwrap_or_default()
                     .starts_with("Contract drift: `runtimes.java`")
             }),
-            "expected no redundant runtime drift finding"
+            "expected the runtime drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_tool_drift_warning_without_duplicate_blocker_line() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  docker: "20"
+tasks:
+  ci:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(
+            stdout.matches("Version mismatch for tool: docker").count() == 1,
+            "expected the blocker to appear once"
+        );
+        assert!(
+            stdout.contains("Contract drift: `tools.docker` is no longer detected"),
+            "expected the tool drift warning"
         );
     }
 
