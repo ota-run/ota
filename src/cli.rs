@@ -5390,6 +5390,15 @@ tasks:
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_path = bin_dir.join("docker");
         install_fake_docker(&docker_path);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path)
+                .expect("fake docker metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).expect("make fake docker executable");
+        }
         let original_path = std::env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
