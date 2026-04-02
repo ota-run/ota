@@ -70,7 +70,7 @@ use crate::runner::{
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{Contract, ExtensionSpec};
+use crate::schema::{Contract, ExtensionSpec, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -7807,8 +7807,8 @@ fn render_report_section(
     }
     let skip_primary_finding = summary.and_then(|summary| summary.primary_blocker.as_ref());
     if let Some(primary_blocker) = skip_primary_finding {
-        stdout.push_str(&render_primary_blocker_text(
-            "Primary Blocker",
+        stdout.push_str(&render_primary_finding_text(
+            primary_blocker.severity,
             &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
             &primary_blocker.why,
             &primary_blocker.next,
@@ -7859,12 +7859,20 @@ fn render_report_section(
     stdout
 }
 
-fn render_primary_blocker_text(title: &str, summary: &str, why: &str, next: &str) -> String {
+fn render_primary_finding_text(
+    severity: FindingSeverity,
+    summary: &str,
+    why: &str,
+    next: &str,
+) -> String {
     let mut stdout = String::from("\n\n");
-    if !title.is_empty() {
-        stdout.push_str(&format!("{} {}", paint("➤", "1;31"), paint(title, "1;31")));
-        stdout.push('\n');
-    }
+    let (arrow_color, title_color, title) = match severity {
+        FindingSeverity::Error => ("1;31", "1;31", "Primary Blocker"),
+        FindingSeverity::Warn => ("1;38;2;255;235;59", "1;38;2;255;235;59", "Primary Finding"),
+        FindingSeverity::Info => ("1;38;2;102;217;255", "1;38;2;102;217;255", "Primary Finding"),
+    };
+    stdout.push_str(&format!("{} {}", paint("➤", arrow_color), paint(title, title_color)));
+    stdout.push('\n');
     stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));
     if !concise_mode() {
         stdout.push_str(&format!(
@@ -8353,6 +8361,8 @@ fn render_up(
     ready: bool,
     service: Option<&str>,
     task: Option<&str>,
+    task_command: Option<&str>,
+    stderr: Option<&str>,
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
     show_receipt: bool,
@@ -8365,8 +8375,11 @@ fn render_up(
             phase,
             report,
             ready,
+            receipt.backend.as_deref(),
             service,
             task,
+            task_command,
+            stderr,
             exit_code,
             receipt,
             show_receipt,
@@ -8410,6 +8423,8 @@ fn render_up_result(
             result.ok,
             result.service.as_deref(),
             result.task.as_deref(),
+            result.task_command.as_deref(),
+            Some(result.stderr.as_ref()),
             result.exit_code,
             &result.receipt,
             false,
@@ -9639,14 +9654,27 @@ fn render_up_text(
     phase: &str,
     report: DoctorReport,
     ready: bool,
+    backend: Option<&str>,
     service: Option<&str>,
     task: Option<&str>,
+    task_command: Option<&str>,
+    stderr: Option<&str>,
     exit_code: Option<i32>,
     receipt: &ExecutionReceipt,
     show_receipt: bool,
 ) -> CommandOutput {
-    let mut stdout =
-        render_up_section_from_parts(path, status, phase, &report, service, task, exit_code);
+    let mut stdout = render_up_section_from_parts(
+        path,
+        status,
+        phase,
+        &report,
+        backend,
+        service,
+        task,
+        task_command,
+        stderr,
+        exit_code,
+    );
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
     }
@@ -9670,8 +9698,11 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         result.status,
         result.phase,
         &result.report,
+        result.receipt.backend.as_deref(),
         result.service.as_deref(),
         result.task.as_deref(),
+        result.task_command.as_deref(),
+        Some(result.stderr.as_ref()),
         result.exit_code,
     )
 }
@@ -9695,8 +9726,11 @@ fn render_up_section_from_parts(
     status: &str,
     phase: &str,
     report: &DoctorReport,
+    backend: Option<&str>,
     service: Option<&str>,
     task: Option<&str>,
+    task_command: Option<&str>,
+    stderr: Option<&str>,
     exit_code: Option<i32>,
 ) -> String {
     let mut stdout = format!(
@@ -9705,12 +9739,35 @@ fn render_up_section_from_parts(
         render_status_line(status),
         paint_key("Phase:")
     );
+    if let Some(backend) = backend {
+        stdout.push_str(&format!("\n{} {backend}", paint_key("Backend:")));
+    }
     if let Some(service) = service {
         stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
     }
 
     if let Some(task) = task {
         stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
+    }
+    if let Some(task_command) = task_command {
+        stdout.push_str(&format!("\n{} {task_command}", paint_key("Command:")));
+    }
+    if let Some(stderr) = stderr.and_then(|stderr| {
+        let stderr = stderr.trim_end();
+        if stderr.is_empty() {
+            None
+        } else {
+            Some(stderr)
+        }
+    }) {
+        let output_label = if phase == "setup" {
+            "Backend output:"
+        } else if phase == "services" {
+            "Service output:"
+        } else {
+            "Task output:"
+        };
+        stdout.push_str(&format!("\n{} {}", paint_key(output_label), stderr));
     }
 
     if let Some(exit_code) = exit_code {
@@ -9723,7 +9780,7 @@ fn render_up_section_from_parts(
             ));
         } else if phase == "setup" {
             stdout.push_str(&format!(
-                "\n{} inspect the `setup` task output and fix the reported issue",
+                "\n{} inspect the backend output first; if the backend is healthy, inspect the command and task output next",
                 finding_detail_key(FindingSeverity::Error, "Next:")
             ));
         }
@@ -9919,7 +9976,7 @@ fn render_execution_receipt_status(status: &str) -> String {
     match status.trim() {
         "READY" => paint("READY", "1;38;2;0;255;120"),
         "NOT READY" | "BLOCKED" | "WARN" => paint(status.trim(), "1;38;2;255;235;59"),
-        value if value.contains("FAILED") => paint(value, "1;38;2;255;214;79"),
+        value if value.contains("FAILED") => render_failed_status_label(value),
         other => paint(other, "1;37"),
     }
 }
@@ -10415,6 +10472,7 @@ fn render_status_line(status: &str) -> String {
         "READY" => render_readiness_status(true),
         "NOT READY" => render_readiness_status(false),
         "VALID" => render_valid_status(),
+        value if value.contains("FAILED") => render_failed_status_label(value),
         other => other.to_string(),
     }
 }
@@ -10428,6 +10486,7 @@ fn render_status_word(status: &str) -> String {
         "READY" => paint("READY", "1;38;2;0;255;120"),
         "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
         "VALID" => paint("VALID", "1;38;2;0;255;120"),
+        value if value.contains("FAILED") => render_failed_status_label(value),
         other => other.to_string(),
     }
 }
@@ -10797,6 +10856,7 @@ struct RepoUpResult {
     receipt: ExecutionReceipt,
     service: Option<String>,
     task: Option<String>,
+    task_command: Option<String>,
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
@@ -11253,6 +11313,7 @@ fn execute_repo_up(
             report: preflight,
             service: None,
             task: None,
+            task_command: None,
             exit_code: None,
             stdout: String::new(),
             stderr: String::new(),
@@ -11299,6 +11360,7 @@ fn execute_repo_up(
                         },
                         service: Some(name.clone()),
                         task: None,
+                        task_command: None,
                         exit_code: Some(command.exit_code),
                         stdout,
                         stderr,
@@ -11332,6 +11394,7 @@ fn execute_repo_up(
                 report: service_report,
                 service: Some(name),
                 task: None,
+                task_command: None,
                 exit_code: None,
                 stdout,
                 stderr,
@@ -11363,6 +11426,7 @@ fn execute_repo_up(
             report: service_report,
             service: None,
             task: None,
+            task_command: None,
             exit_code: None,
             stdout,
             stderr,
@@ -11370,20 +11434,23 @@ fn execute_repo_up(
     }
 
     if contract.tasks.contains_key("setup") {
+        let setup_task_command = contract
+            .tasks
+            .get("setup")
+            .and_then(task_command_preview);
         let run_result = match mode {
-            RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
+            RepoExecutionMode::Stream => run_task_captured_with_args_with_overrides_with_policy(
                 contract,
                 resolved_path,
                 "setup",
-                true,
                 &[],
                 overrides,
                 policy_env,
             )
             .map(|outcome| CommandRunResult {
                 exit_code: outcome.exit_code,
-                stdout: String::new(),
-                stderr: String::new(),
+                stdout: outcome.stdout,
+                stderr: outcome.stderr,
             }),
             RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
                 contract,
@@ -11426,6 +11493,7 @@ fn execute_repo_up(
                     },
                     service: None,
                     task: Some(String::from("setup")),
+                    task_command: setup_task_command,
                     exit_code: Some(outcome.exit_code),
                     stdout,
                     stderr,
@@ -11459,6 +11527,7 @@ fn execute_repo_up(
         report,
         service: None,
         task: None,
+        task_command: None,
         exit_code: None,
         stdout,
         stderr,
@@ -11923,9 +11992,21 @@ fn workspace_progress_status(status: &str) -> String {
         "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
         "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
         "ACQUIRE" => paint("ACQUIRE", "1;35"),
-        value if value.contains("FAILED") => paint(value, "1;31"),
+        value if value.contains("FAILED") => render_failed_status_label(value),
         value => paint(value, "1;37"),
     }
+}
+
+fn render_failed_status_label(value: &str) -> String {
+    if plain_mode() {
+        return value.to_string();
+    }
+    format!("{} {}", paint("➤", "1;31"), paint(value, "1;31"))
+}
+
+fn task_command_preview(task: &TaskSpec) -> Option<String> {
+    let execution = task.resolved_execution(current_os())?;
+    Some(execution.body.to_string())
 }
 
 fn emit_workspace_progress_line(

@@ -82,8 +82,8 @@ pub(crate) fn render_workspace_doctor_text(
         render_readiness_status(report.ok)
     );
     if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
-        stdout.push_str(&render_primary_blocker_text(
-            "Primary Blocker",
+        stdout.push_str(&render_primary_finding_text(
+            primary_blocker.severity,
             &format!(
                 "{} [{}]",
                 primary_blocker.repo,
