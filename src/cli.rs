@@ -565,7 +565,7 @@ enum WorkspaceCommands {
         path: Option<PathBuf>,
     },
     /// Refresh existing repos in an ota.workspace.yaml contract without cloning missing ones.
-    /// Use `ota workspace up` for initial acquisition and preparation.
+    /// Use `ota workspace up` for initial acquisition and preparation, or `--dry-run` to preview the refresh commands.
     Refresh {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -573,6 +573,9 @@ enum WorkspaceCommands {
         /// Maximum number of independent repos to refresh at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
+        /// Preview refresh commands without making any changes.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
         /// Force each refresh to fetch and hard-reset to the declared source or `--ref` override.
         #[arg(long, action = ArgAction::SetTrue)]
         force: bool,
@@ -1372,6 +1375,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             WorkspaceCommands::Refresh {
                 json,
                 jobs,
+                dry_run,
                 force,
                 prune,
                 git_ref,
@@ -1383,6 +1387,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                dry_run,
                 force,
                 prune,
                 git_ref.as_deref(),
@@ -1534,7 +1539,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             WorkspaceCommands::Check { .. } => WORKSPACE_CHECK_SUGGESTION,
             WorkspaceCommands::Up { .. } => WORKSPACE_UP_SUGGESTION,
             WorkspaceCommands::Refresh { .. } => {
-                "run `ota workspace refresh` to sync existing repos before `ota workspace up`"
+                "run `ota workspace refresh` to sync existing repos before `ota workspace up`, or `ota workspace refresh --dry-run` to preview the refresh commands"
             }
             WorkspaceCommands::Run { .. } => {
                 if stderr.contains("failed to parse contract")

@@ -1317,6 +1317,7 @@ Refresh existing repos in an Ota workspace contract without cloning missing ones
 ota workspace refresh [PATH]
 ota workspace refresh --json [PATH]
 ota workspace refresh --jobs 4 [PATH]
+ota workspace refresh --dry-run [PATH]
 ota workspace refresh --quiet [PATH]
 ota workspace refresh --stream [PATH]
 ```
@@ -1338,6 +1339,7 @@ Current behavior:
 - defaults to sequential execution because `--jobs` defaults to `1`
 - `--stream` opts into raw live child process output instead of buffered per-repo output
 - `--stream` is text-only and currently requires `--jobs 1`
+- `--dry-run` previews the refresh commands without changing repo state
 - `--force` force-fetches and hard-resets refreshed repos to the declared source or `--ref` override
 - `--prune` prunes stale remote-tracking refs during refresh
 - `--ref <branch|tag|sha>` overrides the source ref used for refresh
@@ -1345,14 +1347,16 @@ Current behavior:
 
 Text output:
 
-- header: `WORKSPACE REFRESH <path>`
-- status line: `READY`, `NOT READY`, or `NOT ACQUIRED`
+- header: `WORKSPACE REFRESH <path>` or `WORKSPACE REFRESH PREVIEW <path>` for `--dry-run`
+- preview mode prints `Mode: dry-run (no write)`
+- status line: `READY`, `NOT READY`, or `NOT ACQUIRED` for normal refresh; preview mode does not claim readiness
 - each repo includes required/optional status, phase, findings, exit details, and captured stdout/stderr when present
 
 JSON output:
 
 - `ok`
 - `path`
+- `mode`: `refresh` for normal refresh, `preview` for `--dry-run`
 - `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
 - `repos`
 

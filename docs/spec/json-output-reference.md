@@ -947,7 +947,8 @@ Failure example:
 ```
 
 `ota workspace refresh --json` uses the same workspace roll-up shape, but reports refresh
-status for existing repos instead of bootstrap status for missing ones.
+status for existing repos instead of bootstrap status for missing ones. In preview mode it
+adds `"mode": "preview"` and does not mutate repo state.
 
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
@@ -960,6 +961,7 @@ Optional per-repo fields:
 - `stdout`
 - `stderr`
 - `env_sources`
+- `mode` (`preview` for `ota workspace refresh --dry-run`)
 
 Example acquisition/setup failure:
 
