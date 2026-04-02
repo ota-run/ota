@@ -209,6 +209,16 @@ jobs:
             done
           done
 
+      - name: Publish install scripts
+        run: |
+          for file in scripts/install.sh scripts/install.ps1; do
+            filename="$(basename "${file}")"
+            npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/${filename}" \
+              --file "${file}" \
+              --remote \
+              --content-type text/plain
+          done
+
   publish-release:
     name: Publish GitHub Release
     needs:

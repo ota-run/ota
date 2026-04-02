@@ -359,4 +359,8 @@ fn release_gate_workflow_publishes_all_schema_artifacts_to_latest_and_versioned_
     assert!(workflow.contains("spec/json-schemas/v${version}"));
     assert!(workflow.contains("--content-type application/json"));
     assert!(workflow.contains("--remote"));
+    assert!(workflow.contains("Publish install scripts"));
+    assert!(workflow.contains("scripts/install.sh"));
+    assert!(workflow.contains("scripts/install.ps1"));
+    assert!(workflow.contains("--content-type text/plain"));
 }
