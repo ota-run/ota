@@ -7869,9 +7869,17 @@ fn render_primary_finding_text(
     let (arrow_color, title_color, title) = match severity {
         FindingSeverity::Error => ("1;31", "1;31", "Primary Blocker"),
         FindingSeverity::Warn => ("1;38;2;255;235;59", "1;38;2;255;235;59", "Primary Finding"),
-        FindingSeverity::Info => ("1;38;2;102;217;255", "1;38;2;102;217;255", "Primary Finding"),
+        FindingSeverity::Info => (
+            "1;38;2;102;217;255",
+            "1;38;2;102;217;255",
+            "Primary Finding",
+        ),
     };
-    stdout.push_str(&format!("{} {}", paint("➤", arrow_color), paint(title, title_color)));
+    stdout.push_str(&format!(
+        "{} {}",
+        paint("➤", arrow_color),
+        paint(title, title_color)
+    ));
     stdout.push('\n');
     stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));
     if !concise_mode() {
@@ -8360,6 +8368,7 @@ fn render_up(
     report: DoctorReport,
     ready: bool,
     service: Option<&str>,
+    service_command: Option<&str>,
     task: Option<&str>,
     task_command: Option<&str>,
     stderr: Option<&str>,
@@ -8377,6 +8386,7 @@ fn render_up(
             ready,
             receipt.backend.as_deref(),
             service,
+            service_command,
             task,
             task_command,
             stderr,
@@ -8422,6 +8432,7 @@ fn render_up_result(
             result.report,
             result.ok,
             result.service.as_deref(),
+            result.service_command.as_deref(),
             result.task.as_deref(),
             result.task_command.as_deref(),
             Some(result.stderr.as_ref()),
@@ -9656,6 +9667,7 @@ fn render_up_text(
     ready: bool,
     backend: Option<&str>,
     service: Option<&str>,
+    service_command: Option<&str>,
     task: Option<&str>,
     task_command: Option<&str>,
     stderr: Option<&str>,
@@ -9670,6 +9682,7 @@ fn render_up_text(
         &report,
         backend,
         service,
+        service_command,
         task,
         task_command,
         stderr,
@@ -9700,6 +9713,7 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         &result.report,
         result.receipt.backend.as_deref(),
         result.service.as_deref(),
+        result.service_command.as_deref(),
         result.task.as_deref(),
         result.task_command.as_deref(),
         Some(result.stderr.as_ref()),
@@ -9728,6 +9742,7 @@ fn render_up_section_from_parts(
     report: &DoctorReport,
     backend: Option<&str>,
     service: Option<&str>,
+    service_command: Option<&str>,
     task: Option<&str>,
     task_command: Option<&str>,
     stderr: Option<&str>,
@@ -9744,6 +9759,12 @@ fn render_up_section_from_parts(
     }
     if let Some(service) = service {
         stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
+    }
+    if let Some(service_command) = service_command {
+        stdout.push_str(&format!(
+            "\n{} {service_command}",
+            paint_key("Service command:")
+        ));
     }
 
     if let Some(task) = task {
@@ -9774,9 +9795,8 @@ fn render_up_section_from_parts(
         stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
         if phase == "services" {
             stdout.push_str(&format!(
-                "\n{} inspect `services.{}.start` output and fix the reported issue",
+                "\n{} inspect the `Service command:` line and `Service output:`, then fix the reported issue",
                 finding_detail_key(FindingSeverity::Error, "Next:"),
-                service.unwrap_or("service")
             ));
         } else if phase == "setup" {
             stdout.push_str(&format!(
@@ -10868,6 +10888,7 @@ struct RepoUpResult {
     report: DoctorReport,
     receipt: ExecutionReceipt,
     service: Option<String>,
+    service_command: Option<String>,
     task: Option<String>,
     task_command: Option<String>,
     exit_code: Option<i32>,
@@ -11325,6 +11346,7 @@ fn execute_repo_up(
             ),
             report: preflight,
             service: None,
+            service_command: None,
             task: None,
             task_command: None,
             exit_code: None,
@@ -11372,6 +11394,7 @@ fn execute_repo_up(
                             findings: Vec::new(),
                         },
                         service: Some(name.clone()),
+                        service_command: Some(start.to_string()),
                         task: None,
                         task_command: None,
                         exit_code: Some(command.exit_code),
@@ -11406,6 +11429,7 @@ fn execute_repo_up(
                 ),
                 report: service_report,
                 service: Some(name),
+                service_command: None,
                 task: None,
                 task_command: None,
                 exit_code: None,
@@ -11438,6 +11462,7 @@ fn execute_repo_up(
             ),
             report: service_report,
             service: None,
+            service_command: None,
             task: None,
             task_command: None,
             exit_code: None,
@@ -11447,10 +11472,7 @@ fn execute_repo_up(
     }
 
     if contract.tasks.contains_key("setup") {
-        let setup_task_command = contract
-            .tasks
-            .get("setup")
-            .and_then(task_command_preview);
+        let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
         let run_result = match mode {
             RepoExecutionMode::Stream => run_task_captured_with_args_with_overrides_with_policy(
                 contract,
@@ -11505,6 +11527,7 @@ fn execute_repo_up(
                         findings: Vec::new(),
                     },
                     service: None,
+                    service_command: None,
                     task: Some(String::from("setup")),
                     task_command: setup_task_command,
                     exit_code: Some(outcome.exit_code),
@@ -11539,6 +11562,7 @@ fn execute_repo_up(
         ),
         report,
         service: None,
+        service_command: None,
         task: None,
         task_command: None,
         exit_code: None,
@@ -12005,7 +12029,7 @@ fn workspace_progress_status(status: &str) -> String {
         "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
         "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
         "ACQUIRE" => paint("ACQUIRE", "1;35"),
-        value if value.contains("FAILED") => render_failed_status_label(value),
+        value if value.contains("FAILED") => paint(value, "1;31"),
         value => paint(value, "1;37"),
     }
 }
@@ -12073,11 +12097,15 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                         None => format!("workspace repo `{}` could not be acquired", repo_name),
                     },
                     next: String::from(
-                        "check repo source access and credentials, then re-run `ota workspace up`",
+                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before re-running `ota workspace up`",
                     ),
                 }],
                 service: None,
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                service_command: None,
                 task: None,
+                task_command: None,
                 exit_code: Some(acquisition.exit_code),
                 stdout: match mode {
                     RepoExecutionMode::Capture => {
@@ -12118,11 +12146,15 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                     summary: format!("Repo acquisition failed: {}", repo_name),
                     why: error,
                     next: String::from(
-                        "check repo source access and credentials, then re-run `ota workspace up`",
+                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before re-running `ota workspace up`",
                     ),
                 }],
                 service: None,
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                service_command: None,
                 task: None,
+                task_command: None,
                 exit_code: None,
                 stdout: None,
                 stderr: None,
@@ -12162,8 +12194,12 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                     },
                     phase: result.phase.to_string(),
                     findings: adjust_workspace_up_findings(result.report.findings, repo.required),
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
                     service: result.service,
+                    service_command: result.service_command,
                     task: result.task,
+                    task_command: result.task_command,
                     exit_code: result.exit_code,
                     stdout: match mode {
                         RepoExecutionMode::Capture => {
@@ -12201,7 +12237,11 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                         ),
                     }],
                     service: None,
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
+                    service_command: None,
                     task: None,
+                    task_command: None,
                     exit_code: None,
                     stdout: None,
                     stderr: None,
@@ -12231,7 +12271,11 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 ),
             }],
             service: None,
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            service_command: None,
             task: None,
+            task_command: None,
             exit_code: None,
             stdout: None,
             stderr: None,
@@ -12260,7 +12304,11 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
             next: format!("repair `{dependency}` first, then re-run `ota workspace up`"),
         }],
         service: None,
+        source_url: None,
+        source_ref: None,
+        service_command: None,
         task: None,
+        task_command: None,
         exit_code: None,
         stdout: None,
         stderr: None,
@@ -12295,6 +12343,9 @@ fn blocked_workspace_repo_run(
             ),
             next: format!("repair `{dependency}` first, then re-run `ota workspace run {task}`"),
         }],
+        source_url: None,
+        source_ref: None,
+        task_command: None,
         exit_code: None,
         stdout: None,
         stderr: None,
@@ -12342,9 +12393,12 @@ fn run_workspace_repo_task(
                         None => format!("workspace repo `{}` could not be acquired", repo_name),
                     },
                     next: format!(
-                        "check repo source access and credentials, then re-run `ota workspace run {task}`"
+                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before re-running `ota workspace run {task}`"
                     ),
                 }],
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                task_command: None,
                 exit_code: Some(acquisition.exit_code),
                 stdout: match mode {
                     RepoExecutionMode::Capture => Some(acquisition.stdout),
@@ -12384,9 +12438,12 @@ fn run_workspace_repo_task(
                         repo_name, error
                     ),
                     next: format!(
-                        "check repo source access and credentials, then re-run `ota workspace run {task}`"
+                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before re-running `ota workspace run {task}`"
                     ),
                 }],
+                source_url: repo.source_url.clone(),
+                source_ref: repo.source_ref.clone(),
+                task_command: None,
                 exit_code: Some(1),
                 stdout: None,
                 stderr: None,
@@ -12397,6 +12454,7 @@ fn run_workspace_repo_task(
 
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
+            let task_command = contract.tasks.get(task).and_then(task_command_preview);
             if let Err(error) = validate_contract(&contract) {
                 return WorkspaceRepoRunReport {
                     name: repo.name,
@@ -12431,6 +12489,9 @@ fn run_workspace_repo_task(
                             ),
                         })
                         .collect(),
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
+                    task_command,
                     exit_code: Some(1),
                     stdout: None,
                     stderr: None,
@@ -12489,6 +12550,9 @@ fn run_workspace_repo_task(
                     status: String::from("READY"),
                     task: task.to_string(),
                     findings: Vec::new(),
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
+                    task_command: task_command.clone(),
                     exit_code: None,
                     stdout: match mode {
                         RepoExecutionMode::Capture => Some(result.stdout),
@@ -12524,6 +12588,9 @@ fn run_workspace_repo_task(
                             repo_name, task
                         ),
                     }],
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
+                    task_command: task_command.clone(),
                     exit_code: Some(result.exit_code),
                     stdout: match mode {
                         RepoExecutionMode::Capture => Some(result.stdout),
@@ -12561,6 +12628,9 @@ fn run_workspace_repo_task(
                             repo_name, task, task
                         ),
                     }],
+                    source_url: repo.source_url.clone(),
+                    source_ref: repo.source_ref.clone(),
+                    task_command,
                     exit_code: Some(1),
                     stdout: None,
                     stderr: None,
@@ -12597,6 +12667,9 @@ fn run_workspace_repo_task(
                     contract_path_display, task
                 ),
             }],
+            source_url: repo.source_url.clone(),
+            source_ref: repo.source_ref.clone(),
+            task_command: None,
             exit_code: Some(1),
             stdout: None,
             stderr: None,

@@ -11840,6 +11840,48 @@ tasks:
     }
 
     #[test]
+    fn workspace_run_text_reports_single_primary_output_block() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    script: |
+      printf 'task-out\n'
+      printf 'task-err\n' >&2
+      exit 7
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("Task output:"));
+        assert!(stdout.contains("task-err"));
+        assert!(!stdout.contains("Stdout:"));
+        assert!(!stdout.contains("Stderr:"));
+    }
+
+    #[test]
     fn workspace_run_ignores_optional_repo_failure_in_aggregate_status() {
         let fixture = WorkspaceFixture::new();
         fs::write(

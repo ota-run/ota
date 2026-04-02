@@ -1597,10 +1597,7 @@ fn execute_container_task_command(
     }
 }
 
-fn probe_container_backend(
-    engine: &str,
-    task_name: &str,
-) -> Result<Option<String>, RunError> {
+fn probe_container_backend(engine: &str, task_name: &str) -> Result<Option<String>, RunError> {
     let probe = container_command_output(engine, &["info"], None, task_name)?;
     if probe.exit_code == 0 {
         return Ok(None);
@@ -1733,7 +1730,8 @@ fn execute_persistent_container_task_command(
             });
         }
     } else {
-        let status = container_command_output(engine, &["start", &container_name], None, task_name)?;
+        let status =
+            container_command_output(engine, &["start", &container_name], None, task_name)?;
         if status.exit_code != 0 {
             return Ok(TaskCommandOutput {
                 exit_code: status.exit_code,
@@ -2779,9 +2777,11 @@ exit 1
         }
 
         assert_eq!(outcome.exit_code, 1);
-        assert!(outcome
-            .stderr
-            .contains("container backend `docker` is unavailable"));
+        assert!(
+            outcome
+                .stderr
+                .contains("container backend `docker` is unavailable")
+        );
         assert!(outcome.stderr.contains("Docker daemon is not running"));
     }
 
