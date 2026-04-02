@@ -81,9 +81,13 @@ pub enum RunError {
     UnsupportedBackend { task: String, backend: &'static str },
     #[error("task `{task}` cannot use unsupported remote provider `{provider}` yet")]
     UnsupportedRemoteProvider { task: String, provider: String },
-    #[error("task `{task}` cannot use backend provider `{provider}` because it is not declared in ota.yaml")]
+    #[error(
+        "task `{task}` cannot use backend provider `{provider}` because it is not declared in ota.yaml"
+    )]
     MissingBackendProvider { task: String, provider: String },
-    #[error("task `{task}` backend provider `{provider}` has unsupported `api_version` `{api_version}`; expected `1`")]
+    #[error(
+        "task `{task}` backend provider `{provider}` has unsupported `api_version` `{api_version}`; expected `1`"
+    )]
     UnsupportedBackendProviderVersion {
         task: String,
         provider: String,
@@ -1855,9 +1859,9 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{
-        clean_execution, plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
+        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
+        plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
         run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
-        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError,
     };
 
     #[test]
@@ -2462,9 +2466,11 @@ tasks:
         );
 
         let error = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("backend provider `backend-demo` reported failure"));
+        assert!(
+            error
+                .to_string()
+                .contains("backend provider `backend-demo` reported failure")
+        );
     }
 
     #[test]
@@ -2858,9 +2864,11 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(fs::read_to_string(dir.path().join("daytona-log.txt"))
-            .unwrap()
-            .contains("exec sandbox-dev"));
+        assert!(
+            fs::read_to_string(dir.path().join("daytona-log.txt"))
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
     }
 
     #[cfg(unix)]
@@ -2940,9 +2948,11 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(fs::read_to_string(&log_path)
-            .unwrap()
-            .contains("exec sandbox-dev"));
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
     }
 
     #[cfg(unix)]
@@ -3022,9 +3032,11 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(fs::read_to_string(&log_path)
-            .unwrap()
-            .contains("exec sandbox-dev"));
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec sandbox-dev")
+        );
     }
 
     #[cfg(unix)]
@@ -3104,9 +3116,11 @@ tasks:
             fs::read_to_string(dir.path().join("prepared.txt")).unwrap(),
             "remote"
         );
-        assert!(fs::read_to_string(&log_path)
-            .unwrap()
-            .contains("exec pod/ota-dev"));
+        assert!(
+            fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("exec pod/ota-dev")
+        );
     }
 
     #[test]

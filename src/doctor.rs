@@ -35,7 +35,9 @@ use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
 use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
-use crate::schema::{Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec};
+use crate::schema::{
+    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -1200,15 +1202,28 @@ fn extract_version_token(output: &str) -> Option<String> {
         .filter(|token| !token.is_empty())
 }
 
-fn version_matches(requirement: &str, actual: &str) -> bool {
+pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
     let requirement = requirement.trim();
     if requirement == "*" {
         return true;
     }
 
+    if let Some(maximum) = requirement.strip_prefix("<=") {
+        return compare_version_tokens(actual, maximum.trim())
+            .is_some_and(|ordering| ordering <= 0);
+    }
+
+    if let Some(maximum) = requirement.strip_prefix('<') {
+        return compare_version_tokens(actual, maximum.trim()).is_some_and(|ordering| ordering < 0);
+    }
+
     if let Some(minimum) = requirement.strip_prefix(">=") {
         return compare_version_tokens(actual, minimum.trim())
             .is_some_and(|ordering| ordering >= 0);
+    }
+
+    if let Some(minimum) = requirement.strip_prefix('>') {
+        return compare_version_tokens(actual, minimum.trim()).is_some_and(|ordering| ordering > 0);
     }
 
     if let Some(compatible) = requirement.strip_prefix('^') {
@@ -1736,12 +1751,11 @@ tasks:
         let report = diagnose_contract(&contract, Path::new("ota.yaml"));
 
         assert!(report.ok);
-        assert!(
-            report
-                .findings
-                .iter()
-                .all(|finding| !finding.summary.contains("Unsupported remote execution backend provider"))
-        );
+        assert!(report.findings.iter().all(|finding| {
+            !finding
+                .summary
+                .contains("Unsupported remote execution backend provider")
+        }));
     }
 
     #[test]
@@ -2223,6 +2237,10 @@ tasks:
         assert!(!version_matches("^3.11", "4.0.0"));
         assert!(version_matches("^0.6.0", "0.6.4"));
         assert!(!version_matches("^0.6.0", "0.7.0"));
+        assert!(version_matches("<=21", "21"));
+        assert!(version_matches("<21", "20.9"));
+        assert!(version_matches(">21", "21.1"));
+        assert!(!version_matches("<=21", "25.0.2"));
         assert!(version_matches(">=go1.2.1", "go1.24.2"));
     }
 
