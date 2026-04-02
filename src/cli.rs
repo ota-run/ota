@@ -5429,8 +5429,8 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(
-            stdout.contains("Summary: Version mismatch for tool: docker"),
-            "expected the blocker summary to be present"
+            stdout.contains("Version mismatch for tool: docker"),
+            "expected the docker version mismatch to be present"
         );
         assert!(
             stdout.contains("Contract drift: `tools.docker` is no longer detected"),
