@@ -83,6 +83,7 @@ Ota currently ships these commands:
 - `ota workspace explain`
 - `ota workspace up`
 - `ota workspace refresh`
+- `ota workspace diff`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -149,7 +150,7 @@ Current intent:
 - keep normal stdout stable
 - avoid persistent trace output or verbose default output
 - use the trace channel for multi-step commands like `ota up`, `ota run`, `ota workspace up`,
-  `ota workspace refresh`, `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and
+  `ota workspace refresh`, `ota workspace diff`, `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and
   `ota explain`
 
 ## `ota validate`
@@ -1366,3 +1367,29 @@ Current non-goals:
 - passing a repo URL directly on the CLI without a workspace contract
 - host or workstation provisioning beyond workspace bootstrap plus repo readiness
 - GitHub API integration or non-git acquisition modes
+
+## `ota workspace diff`
+
+Compare local workspace repos against their declared source state without mutating anything.
+
+```bash
+ota workspace diff [PATH]
+ota workspace diff --json [PATH]
+ota workspace diff --jobs 4 [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure
+- compares each acquired repo’s local git state against the declared source ref or upstream branch
+- reports `MATCH` when a repo is clean and aligned, `DIRTY` when the worktree has local changes, `DIFFERENT` when commit counts differ, `MISSING` when the repo is absent, and `UNRESOLVED` when git state cannot be compared safely
+- can compare independent repos concurrently when `--jobs` is greater than `1`
+- never mutates repo state
+- `--json` returns a workspace diff roll-up with `mode: "diff"`
+- differences do not fail the command; the command succeeds and surfaces drift in the report
+
+Current non-goals:
+
+- refreshing or mutating repo state
+- cloning missing repos automatically

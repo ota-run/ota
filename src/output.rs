@@ -473,6 +473,56 @@ pub struct WorkspaceUpSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceRepoDiffReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub acquired: bool,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ahead: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub behind: Option<usize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirty: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceDiffSummary {
+    pub repo_count: usize,
+    pub match_count: usize,
+    pub different_count: usize,
+    pub dirty_count: usize,
+    pub missing_count: usize,
+    pub unresolved_count: usize,
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceDiffSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: WorkspaceDiffSummary,
+    pub repos: &'a [WorkspaceRepoDiffReport],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoRunReport {
     pub name: String,
     pub path: String,

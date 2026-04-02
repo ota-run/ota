@@ -950,6 +950,11 @@ Failure example:
 status for existing repos instead of bootstrap status for missing ones. In preview mode it
 adds `"mode": "preview"` and does not mutate repo state.
 
+`ota workspace diff --json` uses a read-only workspace diff roll-up. It reports local git
+state against the declared source ref or upstream branch, includes per-repo `status`,
+`branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
+`"mode": "diff"`.
+
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
 
@@ -961,7 +966,7 @@ Optional per-repo fields:
 - `stdout`
 - `stderr`
 - `env_sources`
-- `mode` (`preview` for `ota workspace refresh --dry-run`)
+- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`)
 
 Example acquisition/setup failure:
 
