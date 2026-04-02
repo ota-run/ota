@@ -23,7 +23,7 @@
 use std::path::Path;
 
 use crate::detector::detect_repo;
-use crate::doctor::{Finding, FindingSeverity, version_matches};
+use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
 use crate::schema::Contract;
 
@@ -114,37 +114,25 @@ pub(crate) fn collect_detect_changes(
     }
 
     for (name, value) in &detected.runtimes {
-        let existing_requirement = existing
-            .runtimes
-            .get(name)
-            .map(|requirement| requirement.version());
-        if existing_requirement
-            .is_some_and(|requirement| version_matches(requirement, value.as_str()))
-        {
-            continue;
-        }
         push_detect_change(
             &mut changes,
             &format!("runtimes.{name}"),
-            existing_requirement,
+            existing
+                .runtimes
+                .get(name)
+                .map(|requirement| requirement.version()),
             Some(value.as_str()),
         );
     }
 
     for (name, value) in &detected.tools {
-        let existing_requirement = existing
-            .tools
-            .get(name)
-            .map(|requirement| requirement.version());
-        if existing_requirement
-            .is_some_and(|requirement| version_matches(requirement, value.as_str()))
-        {
-            continue;
-        }
         push_detect_change(
             &mut changes,
             &format!("tools.{name}"),
-            existing_requirement,
+            existing
+                .tools
+                .get(name)
+                .map(|requirement| requirement.version()),
             Some(value.as_str()),
         );
     }
