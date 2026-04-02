@@ -10212,11 +10212,12 @@ fn render_execution_receipt_summary_block(
     task: Option<&str>,
     title: &str,
 ) -> String {
-    let mut lines = vec![
-        String::new(),
-        paint(&format!("🦦  {title}"), "1"),
-        String::new(),
-    ];
+    let title = if title.starts_with("WORKSPACE ") {
+        paint(&format!("🦦  {title}"), "1;37")
+    } else {
+        paint(&format!("🦦  {title}"), "1")
+    };
+    let mut lines = vec![String::new(), title, String::new()];
     let path_display = if receipt.scope == "repo" {
         Path::new(receipt.path.as_str())
             .parent()
