@@ -78,6 +78,6 @@ ota --plain workspace up .
 
 - key text surfaces must have style regression tests
 - `--plain` behavior must be tested for:
-  - no `🦦 `
+  - no `🦦`
   - no `▸`
   - ASCII `-` bullets for list/next blocks

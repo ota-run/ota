@@ -28,7 +28,7 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## Core identity
 
-- mark: `🦦 ` in rich CLI headers
+- mark: `🦦` in rich CLI headers
 - product line: `doctor first, contract second`
 - voice: direct, explicit, deterministic, no hidden magic
 

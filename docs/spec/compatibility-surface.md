@@ -29,6 +29,7 @@ Purpose: define the V4 compatibility baseline that must remain stable unless an 
 ## CLI surfaces
 
 Repo commands:
+
 - `ota validate`
 - `ota tasks`
 - `ota run`
@@ -40,6 +41,7 @@ Repo commands:
 - `ota clean`
 
 Workspace commands:
+
 - `ota workspace validate`
 - `ota workspace tasks`
 - `ota workspace list`
@@ -52,6 +54,7 @@ Workspace commands:
 ## Compatibility-locked dimensions
 
 For each command above, V4 must preserve:
+
 - exit behavior and mapping
 - JSON top-level shape and key semantics
 - deterministic ordering for list outputs
@@ -67,6 +70,7 @@ For each command above, V4 must preserve:
 
 - parser/validator semantic tests
 - command compatibility lock tests in `src/cli.rs`:
+
 - `repo_commands_json_success_contract_is_stable`
 - `repo_commands_json_validation_failure_contract_is_stable`
 - `repo_commands_text_status_contract_is_stable`
@@ -108,6 +112,7 @@ cargo test --test detect_fixtures
 ## V4 change rule
 
 If a change modifies any compatibility-locked dimension:
+
 - update the relevant normative doc in the same change
 - add/adjust regression tests that lock the new behavior
 - call out the change explicitly in planning notes

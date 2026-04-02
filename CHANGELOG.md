@@ -31,6 +31,7 @@
 ## 0.4.2
 
 - fixed GitHub Actions failures by updating stale test expectations and shared test shims.
+- narrowed markdownlint scope so planning docs no longer block release validation.
 - tightened workspace and doctor UX so primary findings, blockers, and failure summaries read clearly.
 - added explicit output for backend-versus-task failures so setup and task issues surface the real root cause.
 - locked JSON schema publication coverage so release artifacts stay aligned with the public spec path.
