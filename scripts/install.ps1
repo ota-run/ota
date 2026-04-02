@@ -276,5 +276,17 @@ if ($versionOutput.StartsWith("ota ")) {
     $versionOutput = $versionOutput.Substring(3)
 }
 
+$duplicatePaths = @()
+if ((Test-Path (Join-Path $HOME ".local/bin/ota.exe")) -and $binaryPath -ne (Join-Path $HOME ".local/bin/ota.exe")) {
+    $duplicatePaths += (Join-Path $HOME ".local/bin/ota.exe")
+}
+if ((Test-Path (Join-Path $HOME ".cargo/bin/ota.exe")) -and $binaryPath -ne (Join-Path $HOME ".cargo/bin/ota.exe")) {
+    $duplicatePaths += (Join-Path $HOME ".cargo/bin/ota.exe")
+}
+if ($duplicatePaths.Count -gt 0) {
+    Write-OtaWarn "warning: multiple ota binaries were found; PATH is using $binaryPath"
+    Write-OtaWarn "warning: remove or de-prioritize the other copy/copies: $($duplicatePaths -join ', ')"
+}
+
 Write-OtaReceipt "🦦 READY"
 Write-OtaReceiptLine $versionOutput
