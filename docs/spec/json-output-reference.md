@@ -957,14 +957,14 @@ state against the declared source ref or upstream branch, includes per-repo `sta
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
 `"mode": "diff"`.
 
-`ota workspace status --json` uses a combined workspace roll-up. It reports readiness and
+`ota workspace status --json` uses the operational workspace roll-up. It reports readiness and
 local git drift together, includes per-repo `ready`, `readiness_status`, `drift_status`,
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
 `"mode": "status"`.
 
-`ota workspace receipt --json` uses the same read-only workspace scan as `status`, but treats
-the result as a receipt artifact. It records the same readiness and drift detail, adds
-`"mode": "receipt"`, and keeps the receipt object available for CI or archive consumers.
+`ota workspace receipt --json` uses the same scan as `status`, but packages the result as a
+receipt artifact. It records the same readiness and drift detail, adds `"mode": "receipt"`, and
+keeps the receipt object available for CI or archive consumers.
 
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.

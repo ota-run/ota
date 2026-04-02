@@ -248,7 +248,7 @@ Current workspace status behavior:
 
 - validates workspace structure first
 - reads readiness and local git drift for each workspace repo without mutating anything
-- reports readiness and drift together in one combined summary
+- reports readiness and drift together in one operational summary
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - readiness findings and drift findings are surfaced in the same report
@@ -283,7 +283,7 @@ Current behavior:
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - `--json` reports the receipt roll-up with `mode: "receipt"`
-- the receipt records readiness, drift, and findings so CI or agents can archive the state deterministically
+- the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically
 
 Current non-goals:
 
