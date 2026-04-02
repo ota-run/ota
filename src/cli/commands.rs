@@ -10950,15 +10950,31 @@ fn discover_workspace_path(start: &Path) -> Result<PathBuf, ResolveWorkspaceErro
             return Ok(candidate);
         }
 
+        if current.join(".git").exists() {
+            return Err(ResolveWorkspaceError::NotFound {
+                message: format!(
+                    "no `ota.workspace.yaml` found from `{}` upward; stopped at git repository boundary `{}`",
+                    compact_repo_path(start),
+                    compact_repo_path(current)
+                ),
+            });
+        }
+
         let Some(parent) = current.parent() else {
             return Err(ResolveWorkspaceError::NotFound {
-                start: compact_repo_path(start),
+                message: format!(
+                    "no `ota.workspace.yaml` found from `{}` upward",
+                    compact_repo_path(start)
+                ),
             });
         };
 
         if parent == current {
             return Err(ResolveWorkspaceError::NotFound {
-                start: compact_repo_path(start),
+                message: format!(
+                    "no `ota.workspace.yaml` found from `{}` upward",
+                    compact_repo_path(start)
+                ),
             });
         }
 
@@ -13838,8 +13854,8 @@ enum ResolveContractError {
 enum ResolveWorkspaceError {
     #[error("failed to read the current directory: {message}")]
     CurrentDirectory { message: String },
-    #[error("no `ota.workspace.yaml` found from `{start}` upward")]
-    NotFound { start: String },
+    #[error("{message}")]
+    NotFound { message: String },
     #[error("explicit workspace path from {origin} does not point to a file: `{path}`")]
     MissingExplicitFile { origin: &'static str, path: String },
     #[error("explicit workspace path does not contain `ota.workspace.yaml`: `{path}`")]
