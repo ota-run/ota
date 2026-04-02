@@ -9761,7 +9761,7 @@ fn render_up_section_from_parts(
         }
     }) {
         let output_label = if phase == "setup" {
-            "Backend output:"
+            setup_failure_output_label(stderr)
         } else if phase == "services" {
             "Service output:"
         } else {
@@ -9802,6 +9802,19 @@ fn render_up_section_from_parts(
     }
 
     stdout
+}
+
+fn setup_failure_output_label(stderr: &str) -> &'static str {
+    let stderr = stderr.trim_start();
+    if stderr.starts_with("container backend `")
+        || stderr.starts_with("backend provider `")
+        || stderr.starts_with("remote provider `")
+        || stderr.starts_with("remote backend `")
+    {
+        "Backend error:"
+    } else {
+        "Task output:"
+    }
 }
 
 fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
