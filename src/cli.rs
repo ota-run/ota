@@ -5218,6 +5218,49 @@ version = "0.1.0"
     }
 
     #[test]
+    fn doctor_does_not_report_semantically_equivalent_runtime_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+runtimes:
+  java: <=21
+tasks:
+  ci:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+        fs::write(dir.path().join(".java-version"), "21\n").expect("write .java-version");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let findings = json["findings"].as_array().expect("findings array");
+        assert!(
+            findings.iter().any(|finding| {
+                finding["summary"].as_str().unwrap_or_default()
+                    == "Version mismatch for runtime: java"
+            }),
+            "expected the real runtime mismatch finding"
+        );
+        assert!(
+            !findings.iter().any(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("Contract drift: `runtimes.java`")
+            }),
+            "expected no redundant runtime drift finding"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"
@@ -6016,7 +6059,9 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap());
 
         assert_eq!(output.exit_code, 2);
-        assert!(stderr.contains("extension `release-upload` kind `export_provider` is not executable"));
+        assert!(
+            stderr.contains("extension `release-upload` kind `export_provider` is not executable")
+        );
         assert!(stderr.contains("ota extensions --run"));
         assert!(stderr.contains("expected kind: `check_provider`"));
     }
@@ -6135,8 +6180,14 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["extensions"]["backend-demo"]["kind"], "backend_provider");
-        assert_eq!(json["extensions"]["backend-demo"]["command"], "ota-ext-backend");
+        assert_eq!(
+            json["extensions"]["backend-demo"]["kind"],
+            "backend_provider"
+        );
+        assert_eq!(
+            json["extensions"]["backend-demo"]["command"],
+            "ota-ext-backend"
+        );
         assert_eq!(json["extensions"]["backend-demo"]["api_version"], 1);
     }
 
@@ -6196,7 +6247,9 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap());
 
         assert_eq!(output.exit_code, 2);
-        assert!(stderr.contains("extension `backend-demo` kind `backend_provider` is not executable"));
+        assert!(
+            stderr.contains("extension `backend-demo` kind `backend_provider` is not executable")
+        );
         assert!(stderr.contains("ota extensions --run"));
         assert!(stderr.contains("expected kind: `check_provider`"));
     }
@@ -6219,11 +6272,19 @@ tasks:
 "#,
         );
 
-        let output = run_with(["ota", "extensions", "--publish", "backend-demo", fixture.path()]);
+        let output = run_with([
+            "ota",
+            "extensions",
+            "--publish",
+            "backend-demo",
+            fixture.path(),
+        ]);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap());
 
         assert_eq!(output.exit_code, 2);
-        assert!(stderr.contains("extension `backend-demo` kind `backend_provider` is not executable"));
+        assert!(
+            stderr.contains("extension `backend-demo` kind `backend_provider` is not executable")
+        );
         assert!(stderr.contains("ota extensions --publish"));
         assert!(stderr.contains("expected kind: `export_provider`"));
     }
@@ -10976,7 +11037,10 @@ env:
             json["repos"][0]["execution"]["backends"]["remote"]["cwd"],
             "/workspace"
         );
-        assert_eq!(json["repos"][0]["extensions"]["demo"]["kind"], "check_provider");
+        assert_eq!(
+            json["repos"][0]["extensions"]["demo"]["kind"],
+            "check_provider"
+        );
         assert_eq!(
             json["repos"][0]["extensions"]["demo"]["command"],
             "ota-ext-demo"
