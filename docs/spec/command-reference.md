@@ -1412,7 +1412,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
 - validates workspace structure
 - reads repo readiness and local git drift for each workspace repo
-- reports readiness and drift together so you can scan one combined summary
+- reports readiness and drift together so you can scan one operational summary
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state
 - `--json` returns a workspace status roll-up with `mode: "status"`
@@ -1445,7 +1445,7 @@ Current non-goals:
 
 ## `ota workspace receipt`
 
-Capture the current workspace state as a read-only receipt artifact.
+Capture the current workspace scan as a read-only receipt artifact for CI or archival use.
 
 ```bash
 ota workspace receipt [PATH]
@@ -1462,7 +1462,7 @@ Current behavior:
 - can inspect independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - `--json` returns a workspace receipt roll-up with `mode: "receipt"`
-- the receipt records readiness, drift, and findings so CI or agents can archive the state deterministically
+- the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically
 
 Text output:
 
