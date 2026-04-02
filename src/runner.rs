@@ -1564,6 +1564,15 @@ fn execute_container_task_command(
     lifecycle: Lifecycle,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    if let Some(issue) = probe_container_backend(engine, task_name)? {
+        return Ok(TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: issue,
+            target: None,
+        });
+    }
+
     match lifecycle {
         Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
             task_name,
@@ -1586,6 +1595,30 @@ fn execute_container_task_command(
             mode,
         ),
     }
+}
+
+fn probe_container_backend(
+    engine: &str,
+    task_name: &str,
+) -> Result<Option<String>, RunError> {
+    let probe = container_command_output(engine, &["info"], None, task_name)?;
+    if probe.exit_code == 0 {
+        return Ok(None);
+    }
+
+    let stderr = probe.stderr.trim();
+    let stdout = probe.stdout.trim();
+    let details = if !stderr.is_empty() {
+        stderr.to_string()
+    } else if !stdout.is_empty() {
+        stdout.to_string()
+    } else {
+        format!("`{engine} info` exited with status {}", probe.exit_code)
+    };
+
+    Ok(Some(format!(
+        "container backend `{engine}` is unavailable: {details}"
+    )))
 }
 
 fn execute_ephemeral_container_task_command(
@@ -1670,10 +1703,9 @@ fn execute_persistent_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let container_name = persistent_container_name(working_dir, image, engine);
 
-    let inspect_exit_code =
-        container_command_exit_code(engine, &["inspect", &container_name], None, task_name)?;
-    if inspect_exit_code != 0 {
-        let status = container_command_exit_code(
+    let inspect = container_command_output(engine, &["inspect", &container_name], None, task_name)?;
+    if inspect.exit_code != 0 {
+        let status = container_command_output(
             engine,
             &[
                 "run",
@@ -1692,22 +1724,21 @@ fn execute_persistent_container_task_command(
             None,
             task_name,
         )?;
-        if status != 0 {
+        if status.exit_code != 0 {
             return Ok(TaskCommandOutput {
-                exit_code: status,
-                stdout: String::new(),
-                stderr: String::new(),
+                exit_code: status.exit_code,
+                stdout: status.stdout,
+                stderr: status.stderr,
                 target: Some(container_name.clone()),
             });
         }
     } else {
-        let status =
-            container_command_exit_code(engine, &["start", &container_name], None, task_name)?;
-        if status != 0 {
+        let status = container_command_output(engine, &["start", &container_name], None, task_name)?;
+        if status.exit_code != 0 {
             return Ok(TaskCommandOutput {
-                exit_code: status,
-                stdout: String::new(),
-                stderr: String::new(),
+                exit_code: status.exit_code,
+                stdout: status.stdout,
+                stderr: status.stderr,
                 target: Some(container_name.clone()),
             });
         }
@@ -1776,17 +1807,37 @@ fn container_command_exit_code(
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<i32, RunError> {
+    Ok(container_command_output(engine, args, working_dir, task_name)?.exit_code)
+}
+
+fn container_command_output(
+    engine: &str,
+    args: &[&str],
+    working_dir: Option<&Path>,
+    task_name: &str,
+) -> Result<ContainerCommandOutput, RunError> {
     let mut container = Command::new(engine);
     container.args(args);
-    container.stdout(Stdio::null()).stderr(Stdio::null());
+    container.stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(working_dir) = working_dir {
         container.current_dir(working_dir);
     }
-    let status = container.status().map_err(|source| RunError::SpawnFailed {
+    let output = container.output().map_err(|source| RunError::SpawnFailed {
         task: task_name.to_string(),
         source,
     })?;
-    Ok(status.code().unwrap_or(1))
+    Ok(ContainerCommandOutput {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+#[derive(Debug)]
+struct ContainerCommandOutput {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
 }
 
 pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
@@ -2665,6 +2716,77 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn reports_container_backend_probe_failure_before_setup_command() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    script: |
+      printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            r#"#!/bin/sh
+command="$1"
+shift
+if [ "$command" = "info" ]; then
+  printf 'Docker daemon is not running\n' >&2
+  exit 1
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 1);
+        assert!(outcome
+            .stderr
+            .contains("container backend `docker` is unavailable"));
+        assert!(outcome.stderr.contains("Docker daemon is not running"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn reuses_persistent_container_backend_across_runs() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -3220,6 +3342,9 @@ command="$1"
 shift
 
 case "$command" in
+  info)
+    exit 0
+    ;;
   inspect)
     name="$1"
     [ -f "$state_dir/$name.path" ]

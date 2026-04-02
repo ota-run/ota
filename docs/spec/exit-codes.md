@@ -7,6 +7,8 @@ This document records the current command exit-code contract for the shipped Ota
 - `0`: success, ready state, or warning-only diagnosis
 - `1`: invalid contract, blocking readiness issue, protected write failure, or general command failure
 - `2`: CLI usage or argument parsing error
+- `126`: command was found but could not be executed
+- `127`: command could not be started, usually because the executable was not found on `PATH`
 
 ## Command-specific rules
 
@@ -25,6 +27,9 @@ This document records the current command exit-code contract for the shipped Ota
 - `0` on successful task execution
 - child task exit code on task failure
 - child task exit code is preserved for native, container, and current remote execution paths
+- `126` when the child command was found but could not be executed
+- `127` when the task command could not be started because the executable was not found
+- `128+n` when the child process terminated from signal `n`
 - `1` when backend configuration is invalid or the requested backend/provider is unsupported
 - `1` on load/validation failure or runner failure before the child exit code is available
 
@@ -53,6 +58,9 @@ This document records the current command exit-code contract for the shipped Ota
 - service-start child exit code when a required service `start` command fails
 - setup task child exit code when `setup` fails
 - setup task child exit code is preserved when `setup` runs through native, container, or current remote backend paths
+- `126` when a service `start` command or setup task was found but could not be executed
+- `127` when a service `start` command or setup task could not be started because the executable was not found
+- `128+n` when a service or setup child process terminated from signal `n`
 - `1` when preconditions fail
 - `1` when required-service readiness fails in the `services` phase
 - `1` when post-setup diagnosis is still not ready
