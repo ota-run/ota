@@ -10761,6 +10761,35 @@ tasks:
     }
 
     #[test]
+    fn workspace_validate_does_not_walk_past_repo_root_to_parent_workspace() {
+        let outer = TempDir::new().unwrap();
+        fs::write(
+            outer.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: outer
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let repo_root = outer.path().join("child-repo");
+        fs::create_dir_all(repo_root.join("nested")).unwrap();
+        fs::create_dir_all(repo_root.join(".git")).unwrap();
+
+        let _cwd = CurrentDirGuard::enter(&repo_root.join("nested"));
+        let output = run_with(["ota", "workspace", "validate"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("no `ota.workspace.yaml` found"));
+        assert!(!stderr.contains("VALID"));
+    }
+
+    #[test]
     fn workspace_validate_reports_invalid_repo_contract() {
         let fixture = WorkspaceFixture::new();
         fs::write(
