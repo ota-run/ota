@@ -214,6 +214,9 @@ Current behavior:
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet
 - `ota workspace up` can acquire missing repos from git sources and then orchestrates repo-level `up` across the workspace contract without inventing a second bootstrap model
 - `ota workspace refresh` re-syncs repos that already exist locally without cloning missing ones
+- `ota workspace refresh --force` hard-resets refreshed repos to the declared source or `--ref` override
+- `ota workspace refresh --prune` drops stale remote-tracking refs during refresh
+- `ota workspace refresh --ref <branch|tag|sha>` overrides the source ref used for refresh
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
 ## Execution Modes and Provisioning

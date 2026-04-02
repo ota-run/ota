@@ -573,6 +573,15 @@ enum WorkspaceCommands {
         /// Maximum number of independent repos to refresh at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
+        /// Force each refresh to fetch and hard-reset to the declared source or `--ref` override.
+        #[arg(long, action = ArgAction::SetTrue)]
+        force: bool,
+        /// Prune stale remote-tracking refs during refresh.
+        #[arg(long, action = ArgAction::SetTrue)]
+        prune: bool,
+        /// Override the source ref used for refresh, such as a branch, tag, or commit.
+        #[arg(long = "ref")]
+        git_ref: Option<String>,
         /// Suppress live progress output and print only the final workspace report.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "stream")]
         quiet: bool,
@@ -1363,6 +1372,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             WorkspaceCommands::Refresh {
                 json,
                 jobs,
+                force,
+                prune,
+                git_ref,
                 quiet,
                 stream,
                 receipt,
@@ -1371,6 +1383,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                force,
+                prune,
+                git_ref.as_deref(),
                 quiet,
                 stream,
                 format_from_json(json),
@@ -5414,8 +5429,11 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(
-            stdout.matches("Version mismatch for tool: docker").count() == 1,
-            "expected the blocker to appear once"
+            stdout
+                .matches("Summary: Version mismatch for tool: docker")
+                .count()
+                == 1,
+            "expected the blocker summary to appear once"
         );
         assert!(
             stdout.contains("Contract drift: `tools.docker` is no longer detected"),

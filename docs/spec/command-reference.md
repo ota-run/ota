@@ -1338,6 +1338,9 @@ Current behavior:
 - defaults to sequential execution because `--jobs` defaults to `1`
 - `--stream` opts into raw live child process output instead of buffered per-repo output
 - `--stream` is text-only and currently requires `--jobs 1`
+- `--force` force-fetches and hard-resets refreshed repos to the declared source or `--ref` override
+- `--prune` prunes stale remote-tracking refs during refresh
+- `--ref <branch|tag|sha>` overrides the source ref used for refresh
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
 
 Text output:

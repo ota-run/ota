@@ -5353,6 +5353,9 @@ pub fn workspace_refresh(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    force: bool,
+    prune: bool,
+    git_ref: Option<&str>,
     quiet: bool,
     stream: bool,
     format: OutputFormat,
@@ -5413,6 +5416,9 @@ pub fn workspace_refresh(
         String::from("DEBUG command=workspace.refresh"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG force={force}"),
+        format!("DEBUG prune={prune}"),
+        format!("DEBUG git_ref={:?}", git_ref),
         format!("DEBUG quiet={quiet}"),
         format!("DEBUG stream={stream}"),
     ];
@@ -5421,6 +5427,11 @@ pub fn workspace_refresh(
         match load_and_run_workspace_refresh(
             &resolved_path,
             jobs,
+            WorkspaceRefreshOptions {
+                force,
+                prune,
+                git_ref: git_ref.map(str::to_owned),
+            },
             matches!(format, OutputFormat::Text) && !quiet,
             stream,
         ) {
@@ -8618,7 +8629,7 @@ mod tests {
 
     use super::{
         compact_contract_file_path_relative_to, compact_path_relative_to,
-        render_execution_receipt_text, run_execution_receipt,
+        render_execution_receipt_text, run_execution_receipt, workspace_refresh_command,
     };
     use crate::parser::parse_contract_str;
     use crate::runner::ExecutionOverrides;
@@ -8706,6 +8717,22 @@ tasks:
         assert!(rendered.contains("Env sources:"));
         assert!(rendered.contains("OTA_TEST_SECRET"));
         assert!(rendered.contains("(task)"));
+    }
+
+    #[test]
+    fn workspace_refresh_builds_expected_git_commands() {
+        assert_eq!(
+            workspace_refresh_command(Some("main"), false, false),
+            "git pull --ff-only origin main"
+        );
+        assert_eq!(
+            workspace_refresh_command(Some("main"), true, true),
+            "git fetch --force --prune origin main && git reset --hard FETCH_HEAD"
+        );
+        assert_eq!(
+            workspace_refresh_command(None, false, true),
+            "git pull --ff-only --prune"
+        );
     }
 }
 
@@ -11820,9 +11847,17 @@ fn load_and_run_workspace_up(
     Ok(WorkspaceUpReport { ok, receipt, repos })
 }
 
+#[derive(Clone, Debug, Default)]
+struct WorkspaceRefreshOptions {
+    force: bool,
+    prune: bool,
+    git_ref: Option<String>,
+}
+
 fn load_and_run_workspace_refresh(
     path: &Path,
     jobs: usize,
+    options: WorkspaceRefreshOptions,
     emit_progress: bool,
     stream: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
@@ -11832,7 +11867,13 @@ fn load_and_run_workspace_refresh(
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_refresh_streaming(&workspace_name, path, repo_refs, emit_progress);
+        return run_workspace_refresh_streaming(
+            &workspace_name,
+            path,
+            repo_refs,
+            &options,
+            emit_progress,
+        );
     }
 
     let mut repos = BTreeMap::new();
@@ -11911,8 +11952,10 @@ fn load_and_run_workspace_refresh(
                     emit_workspace_progress_line(&workspace_name, "REFRESH", &repo.name, None);
                 }
                 let tx = tx.clone();
+                let options = options.clone();
                 thread::spawn(move || {
-                    let report = run_workspace_repo_refresh(repo, RepoExecutionMode::Capture);
+                    let report =
+                        run_workspace_repo_refresh(repo, &options, RepoExecutionMode::Capture);
                     let _ = tx.send((order, report));
                 })
             })
@@ -12116,6 +12159,7 @@ fn run_workspace_refresh_streaming(
     workspace_name: &str,
     workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
+    options: &WorkspaceRefreshOptions,
     emit_progress: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let mut repos = Vec::new();
@@ -12145,7 +12189,7 @@ fn run_workspace_refresh_streaming(
                 if emit_progress {
                     emit_workspace_progress_line(workspace_name, "REFRESH", &repo.name, None);
                 }
-                let report = run_workspace_repo_refresh(repo, RepoExecutionMode::Stream);
+                let report = run_workspace_repo_refresh(repo, options, RepoExecutionMode::Stream);
                 if emit_progress {
                     emit_workspace_progress_line(
                         workspace_name,
@@ -12697,8 +12741,106 @@ fn blocked_workspace_repo_run(
     }
 }
 
+fn refresh_ref_override<'a>(
+    repo_ref: Option<&'a str>,
+    refresh_ref: Option<&'a str>,
+) -> Option<&'a str> {
+    refresh_ref
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| repo_ref.filter(|value| !value.trim().is_empty()))
+}
+
+fn workspace_refresh_command(effective_ref: Option<&str>, force: bool, prune: bool) -> String {
+    if force {
+        let mut command = String::from("git fetch --force");
+        if prune {
+            command.push_str(" --prune");
+        }
+        if let Some(ref_name) = effective_ref {
+            command.push_str(" origin ");
+            command.push_str(ref_name);
+        }
+        command.push_str(" && git reset --hard FETCH_HEAD");
+        return command;
+    }
+
+    let mut command = String::from("git pull --ff-only");
+    if prune {
+        command.push_str(" --prune");
+    }
+    if let Some(ref_name) = effective_ref {
+        command.push_str(" origin ");
+        command.push_str(ref_name);
+    }
+    command
+}
+
+fn run_workspace_repo_refresh_command(
+    repo: &WorkspaceRepoRef,
+    effective_ref: Option<&str>,
+    options: &WorkspaceRefreshOptions,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    if options.force {
+        let fetch_args = {
+            let mut args = vec!["fetch", "--force"];
+            if options.prune {
+                args.push("--prune");
+            }
+            if let Some(ref_name) = effective_ref {
+                args.push("origin");
+                args.push(ref_name);
+            }
+            args
+        };
+        let fetch = run_git_command(&fetch_args, Some(&repo.path), mode).map_err(|error| {
+            format!(
+                "failed to start forced git fetch for `{}`: {}",
+                repo.name, error
+            )
+        })?;
+        let mut stdout = fetch.stdout;
+        let mut stderr = fetch.stderr;
+        if fetch.exit_code != 0 {
+            return Ok(CommandRunResult {
+                exit_code: fetch.exit_code,
+                stdout,
+                stderr,
+            });
+        }
+
+        let reset = run_git_command(&["reset", "--hard", "FETCH_HEAD"], Some(&repo.path), mode)
+            .map_err(|error| {
+                format!("failed to start hard reset for `{}`: {}", repo.name, error)
+            })?;
+        stdout.push_str(&reset.stdout);
+        stderr.push_str(&reset.stderr);
+        return Ok(CommandRunResult {
+            exit_code: reset.exit_code,
+            stdout,
+            stderr,
+        });
+    }
+
+    let pull_args = {
+        let mut args = vec!["pull", "--ff-only"];
+        if options.prune {
+            args.push("--prune");
+        }
+        if let Some(ref_name) = effective_ref {
+            args.push("origin");
+            args.push(ref_name);
+        }
+        args
+    };
+
+    run_git_command(&pull_args, Some(&repo.path), mode)
+        .map_err(|error| format!("failed to start git refresh for `{}`: {}", repo.name, error))
+}
+
 fn run_workspace_repo_refresh(
     repo: WorkspaceRepoRef,
+    options: &WorkspaceRefreshOptions,
     mode: RepoExecutionMode,
 ) -> WorkspaceRepoUpReport {
     let repo_name = repo.name.clone();
@@ -12773,21 +12915,11 @@ fn run_workspace_repo_refresh(
         };
     }
 
-    let refresh_command = match repo.source_ref.as_deref() {
-        Some(source_ref) if !source_ref.trim().is_empty() => {
-            format!("git pull --ff-only origin {source_ref}")
-        }
-        _ => String::from("git pull --ff-only"),
-    };
+    let effective_ref =
+        refresh_ref_override(repo.source_ref.as_deref(), options.git_ref.as_deref());
+    let refresh_command = workspace_refresh_command(effective_ref, options.force, options.prune);
 
-    let args = match repo.source_ref.as_deref() {
-        Some(source_ref) if !source_ref.trim().is_empty() => {
-            vec!["pull", "--ff-only", "origin", source_ref]
-        }
-        _ => vec!["pull", "--ff-only"],
-    };
-
-    let refresh = match run_git_command(&args, Some(&repo.path), mode) {
+    let refresh = match run_workspace_repo_refresh_command(&repo, effective_ref, options, mode) {
         Ok(result) => result,
         Err(error) => {
             return WorkspaceRepoUpReport {
@@ -12813,8 +12945,8 @@ fn run_workspace_repo_refresh(
                         "workspace repo `{}` could not start its refresh command: {}",
                         repo_name, error
                     ),
-                    next: format!(
-                        "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`"
+                    next: String::from(
+                        "inspect the `Refresh command:` line and refresh output, then fix branch tracking or source access before re-running `ota workspace refresh`",
                     ),
                 }],
                 source_url: repo.source_url.clone(),
