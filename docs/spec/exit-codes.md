@@ -121,6 +121,11 @@ This document records the current command exit-code contract for the shipped Ota
 - `1` when any required repo fails acquisition or does not become ready
 - `1` on load or validation failure
 
+## `ota workspace refresh`
+
+- `0` when existing repos refresh successfully or are skipped intentionally
+- `1` when refresh fails or the workspace cannot be loaded or validated
+
 ## Notes
 
 - JSON mode does not change exit-code behavior

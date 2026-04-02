@@ -564,6 +564,27 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    /// Refresh existing repos in an ota.workspace.yaml contract without cloning missing ones.
+    /// Use `ota workspace up` for initial acquisition and preparation.
+    Refresh {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Maximum number of independent repos to refresh at once.
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Suppress live progress output and print only the final workspace report.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "stream")]
+        quiet: bool,
+        /// Stream raw child process output live instead of buffering it into the final report.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
+        /// Include the execution receipt in text output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        receipt: bool,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     /// Run a task across workspace repos.
     Run {
         /// Task name to execute.
@@ -784,6 +805,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
                 command: WorkspaceCommands::Doctor { .. }
                     | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::List { .. }
+                    | WorkspaceCommands::Refresh { .. }
             }
     );
 
@@ -812,6 +834,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
                     | WorkspaceCommands::Tasks { .. }
                     | WorkspaceCommands::List { .. }
                     | WorkspaceCommands::Up { .. }
+                    | WorkspaceCommands::Refresh { .. }
                     | WorkspaceCommands::Doctor { stream: false, .. }
                     | WorkspaceCommands::Explain { .. }
                     | WorkspaceCommands::Detect { .. }
@@ -1337,6 +1360,23 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
                 receipt,
             ),
+            WorkspaceCommands::Refresh {
+                json,
+                jobs,
+                quiet,
+                stream,
+                receipt,
+                path,
+            } => commands::workspace_refresh(
+                path.as_deref(),
+                file.as_deref(),
+                jobs,
+                quiet,
+                stream,
+                format_from_json(json),
+                debug,
+                receipt,
+            ),
             WorkspaceCommands::Run {
                 task,
                 json,
@@ -1478,6 +1518,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             }
             WorkspaceCommands::Check { .. } => WORKSPACE_CHECK_SUGGESTION,
             WorkspaceCommands::Up { .. } => WORKSPACE_UP_SUGGESTION,
+            WorkspaceCommands::Refresh { .. } => {
+                "run `ota workspace refresh` to sync existing repos before `ota workspace up`"
+            }
             WorkspaceCommands::Run { .. } => {
                 if stderr.contains("failed to parse contract")
                     || stderr.contains("could not be loaded")
@@ -1537,6 +1580,7 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Explain { json, .. }
             | WorkspaceCommands::Check { json, .. }
             | WorkspaceCommands::Up { json, .. }
+            | WorkspaceCommands::Refresh { json, .. }
             | WorkspaceCommands::Run { json, .. } => *json,
         },
         Commands::Run { .. }
@@ -1574,6 +1618,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             WorkspaceCommands::Explain { .. } => "ota workspace explain",
             WorkspaceCommands::Check { .. } => "ota workspace check",
             WorkspaceCommands::Up { .. } => "ota workspace up",
+            WorkspaceCommands::Refresh { .. } => "ota workspace refresh",
             WorkspaceCommands::Run { .. } => "ota workspace run",
         },
     }
@@ -4392,7 +4437,9 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("`execution.backends.remote.provider` `unknown` is not supported"));
-        assert!(stderr.contains("declare a matching `backend_provider` extension or use a built-in provider"));
+        assert!(stderr.contains(
+            "declare a matching `backend_provider` extension or use a built-in provider"
+        ));
     }
 
     #[test]

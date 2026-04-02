@@ -2310,13 +2310,8 @@ tasks:
         )
         .unwrap();
 
-        let outcome = run_task_with_progress(
-            &contract,
-            contract_path.as_path(),
-            "setup",
-            false,
-        )
-        .unwrap();
+        let outcome =
+            run_task_with_progress(&contract, contract_path.as_path(), "setup", false).unwrap();
 
         assert_eq!(outcome.exit_code, 0);
         assert!(fixture.path().join("prepared.txt").exists());
