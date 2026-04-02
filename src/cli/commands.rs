@@ -58,7 +58,8 @@ use crate::output::{
     WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
     WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
@@ -76,8 +77,8 @@ use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
-    diagnose_workspace_contract_with_jobs, load_workspace_contract, ordered_workspace_repo_refs,
-    parse_workspace_contract_str, validate_workspace_contract,
+    diagnose_workspace_contract_with_jobs, diagnose_workspace_repo, load_workspace_contract,
+    ordered_workspace_repo_refs, parse_workspace_contract_str, validate_workspace_contract,
 };
 
 mod workspace_diagnostics;
@@ -87,7 +88,8 @@ use self::workspace_diagnostics::{
     render_workspace_doctor_text, render_workspace_explain_text,
 };
 use self::workspace_output::{
-    render_workspace_diff, render_workspace_refresh, render_workspace_run, render_workspace_up,
+    render_workspace_diff, render_workspace_refresh, render_workspace_run, render_workspace_status,
+    render_workspace_up,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -5509,6 +5511,71 @@ pub fn workspace_diff(
     finalize_debug(
         match load_and_run_workspace_diff(&resolved_path, jobs) {
             Ok(report) => render_workspace_diff(&compact_path_display, &report, format),
+            Err(WorkspaceProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(WorkspaceProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_status(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    jobs: usize,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    if jobs == 0 {
+        return finalize_debug(
+            CommandOutput::failure_with_code(String::from("`--jobs` must be greater than zero"), 2),
+            debug,
+            vec![
+                String::from("DEBUG command=workspace.status"),
+                String::from("DEBUG jobs=0"),
+            ],
+        );
+    }
+
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.status")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.status"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG jobs={jobs}"),
+    ];
+
+    finalize_debug(
+        match load_and_run_workspace_status(&resolved_path, jobs) {
+            Ok(report) => render_workspace_status(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -11125,6 +11192,10 @@ struct WorkspaceDiffReport {
     repos: Vec<WorkspaceRepoDiffReport>,
 }
 
+struct WorkspaceStatusReport {
+    repos: Vec<WorkspaceRepoStatusReport>,
+}
+
 struct WorkspaceRunReport {
     ok: bool,
     receipt: ExecutionReceipt,
@@ -11977,6 +12048,59 @@ fn load_and_run_workspace_diff(
     }
 
     Ok(WorkspaceDiffReport {
+        repos: repos.into_values().collect(),
+    })
+}
+
+fn load_and_run_workspace_status(
+    path: &Path,
+    jobs: usize,
+) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let repo_refs =
+        ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
+
+    let mut repos = BTreeMap::new();
+    let mut pending = repo_refs.into_iter().enumerate().collect::<Vec<_>>();
+
+    while !pending.is_empty() {
+        let selected = pending
+            .iter()
+            .enumerate()
+            .take(jobs)
+            .map(|(pending_index, _)| pending_index)
+            .collect::<Vec<_>>();
+
+        let (tx, rx) = mpsc::channel();
+        let handles = selected
+            .into_iter()
+            .rev()
+            .map(|pending_index| {
+                let (order, repo) = pending.remove(pending_index);
+                let tx = tx.clone();
+                thread::spawn(move || {
+                    let report = run_workspace_repo_status(repo);
+                    let _ = tx.send((order, report));
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        for _ in 0..handles.len() {
+            let (order, report) = rx
+                .recv()
+                .expect("workspace status worker should send a report");
+            repos.insert(order, report);
+        }
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("workspace status thread should not panic");
+        }
+    }
+
+    Ok(WorkspaceStatusReport {
         repos: repos.into_values().collect(),
     })
 }
@@ -13128,6 +13252,43 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
         ahead,
         behind,
         dirty,
+        findings,
+    }
+}
+
+fn run_workspace_repo_status(repo: WorkspaceRepoRef) -> WorkspaceRepoStatusReport {
+    let diff = run_workspace_repo_diff(repo.clone());
+    let doctor = diagnose_workspace_repo(repo.clone());
+    let readiness_status = if !repo.present {
+        String::from("NOT ACQUIRED")
+    } else if doctor.ok {
+        String::from("READY")
+    } else {
+        String::from("NOT READY")
+    };
+    let findings = if doctor.findings.is_empty() {
+        diff.findings.clone()
+    } else {
+        doctor.findings.clone()
+    };
+
+    WorkspaceRepoStatusReport {
+        name: repo.name,
+        path: diff.path,
+        contract_path: diff.contract_path,
+        required: diff.required,
+        acquired: repo.present,
+        ready: doctor.ok,
+        readiness_status,
+        drift_status: diff.status,
+        source_url: diff.source_url,
+        source_ref: diff.source_ref,
+        branch: diff.branch,
+        head: diff.head,
+        target_ref: diff.target_ref,
+        ahead: diff.ahead,
+        behind: diff.behind,
+        dirty: diff.dirty,
         findings,
     }
 }

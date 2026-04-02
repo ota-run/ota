@@ -241,3 +241,32 @@ Current non-goals:
 - a workspace-only bootstrap engine that bypasses repo contracts
 - implicit pull, fetch, or update behavior for repos that already exist locally
 - GitHub API integration or non-git acquisition modes
+
+## `ota workspace status`
+
+Current workspace status behavior:
+
+- validates workspace structure first
+- reads readiness and local git drift for each workspace repo without mutating anything
+- reports readiness and drift together in one combined summary
+- can compare independent repos concurrently when `--jobs` is greater than `1`
+- never clones, fetches, resets, or writes repo state
+- readiness findings and drift findings are surfaced in the same report
+- `--json` reports the combined roll-up with `mode: "status"`
+
+Current execution policy:
+
+- workspace repo execution defaults to sequential because `--jobs` defaults to `1`
+- Ota only parallelizes repos whose dependencies are already satisfied
+- final reporting remains in deterministic repo order even when execution is concurrent
+- required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
+
+Current non-goals:
+
+- mutating repo state
+- cloning missing repos automatically
+- cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning
+- a workspace-only bootstrap engine that bypasses repo contracts
+- GitHub API integration or non-git acquisition modes

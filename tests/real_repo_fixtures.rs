@@ -402,6 +402,13 @@ repos:
     assert!(clean_stdout.contains("WORKSPACE DIFF"));
     assert!(clean_stdout.contains("MATCH"));
 
+    let clean_status = run_ota(&["workspace", "status", temp.path().to_str().unwrap()]);
+    let clean_status_stdout = String::from_utf8_lossy(&clean_status.stdout);
+    assert!(clean_status.status.success());
+    assert!(clean_status_stdout.contains("WORKSPACE STATUS"));
+    assert!(clean_status_stdout.contains("READY"));
+    assert!(clean_status_stdout.contains("MATCH"));
+
     fs::write(workspace_repo.join("payload.txt"), "dirty").unwrap();
 
     let dirty_diff = run_ota(&["workspace", "diff", "--json", temp.path().to_str().unwrap()]);
@@ -412,6 +419,22 @@ repos:
     assert_eq!(dirty_json["mode"], "diff");
     assert_eq!(dirty_json["repos"][0]["status"], "DIRTY");
     assert_eq!(dirty_json["summary"]["dirty_count"], 1);
+
+    let dirty_status = run_ota(&[
+        "workspace",
+        "status",
+        "--json",
+        temp.path().to_str().unwrap(),
+    ]);
+    let dirty_status_json = stdout_json_any(&dirty_status);
+
+    assert!(dirty_status.status.success());
+    assert_eq!(dirty_status_json["ok"], true);
+    assert_eq!(dirty_status_json["mode"], "status");
+    assert_eq!(dirty_status_json["repos"][0]["readiness_status"], "READY");
+    assert_eq!(dirty_status_json["repos"][0]["drift_status"], "DIRTY");
+    assert_eq!(dirty_status_json["summary"]["ready_count"], 1);
+    assert_eq!(dirty_status_json["summary"]["dirty_count"], 1);
 }
 
 #[cfg(unix)]
