@@ -28,6 +28,7 @@
 
 - Future changes will be tracked here before the next version bump.
 - added `ota workspace diff` as a read-only workspace drift view before refresh.
+- added `ota workspace status` as a compact combined readiness-and-drift view.
 
 ## 0.5.0
 

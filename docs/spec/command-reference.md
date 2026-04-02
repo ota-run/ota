@@ -84,6 +84,7 @@ Ota currently ships these commands:
 - `ota workspace up`
 - `ota workspace refresh`
 - `ota workspace diff`
+- `ota workspace status`
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 
@@ -118,6 +119,7 @@ Current progress behavior:
 - `ota doctor` and `ota check` keep their own check/progress handling
 - `ota run` and `ota up` keep streaming/progress-focused behavior instead of the shared spinner
 - `ota workspace doctor` uses the shared spinner
+- `ota workspace status` uses the shared spinner
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
@@ -150,7 +152,7 @@ Current intent:
 - keep normal stdout stable
 - avoid persistent trace output or verbose default output
 - use the trace channel for multi-step commands like `ota up`, `ota run`, `ota workspace up`,
-  `ota workspace refresh`, `ota workspace diff`, `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and
+  `ota workspace refresh`, `ota workspace diff`, `ota workspace status`, `ota workspace run`, `ota doctor`, `ota detect`, `ota diff`, and
   `ota explain`
 
 ## `ota validate`
@@ -1393,3 +1395,49 @@ Current non-goals:
 
 - refreshing or mutating repo state
 - cloning missing repos automatically
+
+## `ota workspace status`
+
+Compact workspace status combines readiness and drift without mutating repo state.
+
+```bash
+ota workspace status [PATH]
+ota workspace status --json [PATH]
+ota workspace status --jobs 4 [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure
+- reads repo readiness and local git drift for each workspace repo
+- reports readiness and drift together so you can scan one combined summary
+- can compare independent repos concurrently when `--jobs` is greater than `1`
+- never mutates repo state
+- `--json` returns a workspace status roll-up with `mode: "status"`
+- readiness findings and drift findings are surfaced in the same report
+
+Text output:
+
+- header: `WORKSPACE STATUS <path>`
+- each repo includes required/optional status, combined readiness and drift status, path, contract path, source metadata, and local git comparison details when present
+- a summary block reports readiness and drift roll-ups in one place
+
+JSON output:
+
+- `ok`
+- `path`
+- `mode: "status"`
+- `summary` with readiness counts and drift counts
+- `repos`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `ready`, `readiness_status`, `drift_status`, `branch`, `head`, `target_ref`, `ahead`, `behind`, `dirty`, and `findings`
+
+Current non-goals:
+
+- mutating repo state
+- cloning missing repos automatically
+- cross-repo dependency scheduling
+- passing a repo URL directly on the CLI without a workspace contract
+- host or workstation provisioning
+- a workspace-only bootstrap engine that bypasses repo contracts
+- GitHub API integration or non-git acquisition modes

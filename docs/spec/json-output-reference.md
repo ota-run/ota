@@ -955,6 +955,11 @@ state against the declared source ref or upstream branch, includes per-repo `sta
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
 `"mode": "diff"`.
 
+`ota workspace status --json` uses a combined workspace roll-up. It reports readiness and
+local git drift together, includes per-repo `ready`, `readiness_status`, `drift_status`,
+`branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
+`"mode": "status"`.
+
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
 
@@ -966,7 +971,16 @@ Optional per-repo fields:
 - `stdout`
 - `stderr`
 - `env_sources`
-- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`)
+- `ready`
+- `readiness_status`
+- `drift_status`
+- `branch`
+- `head`
+- `target_ref`
+- `ahead`
+- `behind`
+- `dirty`
+- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`, `status` for `ota workspace status --json`)
 
 Example acquisition/setup failure:
 

@@ -378,6 +378,115 @@ pub(crate) fn render_workspace_diff(
     }
 }
 
+pub(crate) fn render_workspace_status(
+    path: &str,
+    report: &WorkspaceStatusReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    let summary = workspace_status_summary(&report.repos);
+    let ok = report.repos.iter().all(|repo| !repo.required || repo.ready);
+
+    match format {
+        OutputFormat::Text => {
+            let workspace_root = Path::new(path).parent();
+            let mut stdout = format!(
+                "\n{}\n\n{}",
+                format_command_header("WORKSPACE STATUS", path),
+                render_readiness_status(ok)
+            );
+
+            for repo in &report.repos {
+                stdout.push_str(&format!(
+                    "\n\n{} {} [{}] ({} · {})",
+                    list_bullet(),
+                    paint(&repo.name, "1"),
+                    if repo.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    workspace_status_word(&repo.readiness_status),
+                    workspace_diff_status_word(&repo.drift_status)
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Path:"),
+                    compact_repo_path(Path::new(&repo.path))
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Contract:"),
+                    compact_contract_file_path_relative_to(
+                        Path::new(&repo.contract_path),
+                        DEFAULT_CONTRACT_FILE,
+                        workspace_root,
+                    )
+                ));
+                if let Some(source_url) = &repo.source_url {
+                    stdout.push_str(&format!("\n{} {source_url}", paint_key("Source:")));
+                }
+                if let Some(source_ref) = &repo.source_ref {
+                    stdout.push_str(&format!("\n{} {source_ref}", paint_key("Ref:")));
+                }
+                if let Some(branch) = &repo.branch {
+                    stdout.push_str(&format!("\n{} {branch}", paint_key("Branch:")));
+                }
+                if let Some(head) = &repo.head {
+                    stdout.push_str(&format!("\n{} {head}", paint_key("Head:")));
+                }
+                if let Some(target_ref) = &repo.target_ref {
+                    stdout.push_str(&format!("\n{} {target_ref}", paint_key("Target:")));
+                }
+                if let Some(ahead) = repo.ahead {
+                    stdout.push_str(&format!("\n{} {ahead}", paint_key("Ahead:")));
+                }
+                if let Some(behind) = repo.behind {
+                    stdout.push_str(&format!("\n{} {behind}", paint_key("Behind:")));
+                }
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Dirty:"),
+                    if repo.dirty { "yes" } else { "no" }
+                ));
+                for finding in &repo.findings {
+                    let why = compact_backticked_paths(&finding.why);
+                    let next = compact_backticked_paths(&finding.next);
+                    stdout.push_str(&format!(
+                        "\n\n{}  {}\n{} {}\n{} {}",
+                        render_severity(finding.severity),
+                        render_finding_summary(finding.severity, &finding.summary),
+                        finding_detail_key(finding.severity, "Why:"),
+                        why,
+                        finding_detail_key(finding.severity, "Next:"),
+                        next
+                    ));
+                }
+            }
+
+            stdout.push('\n');
+            stdout.push('\n');
+            stdout.push_str(&render_workspace_status_summary(&summary));
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&WorkspaceStatusSuccess {
+                ok,
+                path,
+                mode: "status",
+                summary,
+                repos: &report.repos,
+            }),
+            stderr: None,
+            exit_code: if ok { 0 } else { 1 },
+        },
+    }
+}
+
 pub(crate) fn render_workspace_run(
     task: &str,
     path: &str,
@@ -609,6 +718,96 @@ fn workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> WorkspaceDiffSum
 
     for repo in repos {
         match repo.status.as_str() {
+            "MATCH" => summary.match_count += 1,
+            "DIFFERENT" => summary.different_count += 1,
+            "DIRTY" => summary.dirty_count += 1,
+            "MISSING" => summary.missing_count += 1,
+            "MISSING CONTRACT" => summary.missing_count += 1,
+            "UNRESOLVED" => summary.unresolved_count += 1,
+            _ => {}
+        }
+        for finding in &repo.findings {
+            match finding.severity {
+                FindingSeverity::Error => summary.error_count += 1,
+                FindingSeverity::Warn => summary.warn_count += 1,
+                FindingSeverity::Info => summary.info_count += 1,
+            }
+        }
+    }
+
+    summary
+}
+
+fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!(
+        "{}:",
+        paint_section_title("WORKSPACE STATUS SUMMARY")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Repos:", "1;38;2;102;217;255"),
+        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Ready:", "1;38;2;0;255;120"),
+        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Not ready:", "1;38;2;255;235;59"),
+        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Match:", "1;38;2;0;255;120"),
+        paint(&summary.match_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Different:", "1;38;2;255;235;59"),
+        paint(&summary.different_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Dirty:", "1;38;2;255;214;79"),
+        paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Missing:", "1;38;2;255;80;80"),
+        paint(&summary.missing_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        paint("»", "1;38;2;255;214;79"),
+        paint("Unresolved:", "1;38;2;255;235;59"),
+        paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout
+}
+
+fn workspace_status_summary(repos: &[WorkspaceRepoStatusReport]) -> WorkspaceStatusSummary {
+    let mut summary = WorkspaceStatusSummary {
+        repo_count: repos.len(),
+        ..WorkspaceStatusSummary::default()
+    };
+
+    for repo in repos {
+        if repo.ready {
+            summary.ready_count += 1;
+        } else {
+            summary.not_ready_count += 1;
+        }
+        match repo.drift_status.as_str() {
             "MATCH" => summary.match_count += 1,
             "DIFFERENT" => summary.different_count += 1,
             "DIRTY" => summary.dirty_count += 1,
