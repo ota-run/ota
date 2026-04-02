@@ -316,5 +316,18 @@ fi
 
 version_text="${version_output#🦦 }"
 version_text="${version_text#ota }"
+
+duplicate_paths=""
+if [ -x "$HOME/.local/bin/ota" ] && [ "$binary_path" != "$HOME/.local/bin/ota" ]; then
+  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.local/bin/ota"
+fi
+if [ -x "$HOME/.cargo/bin/ota" ] && [ "$binary_path" != "$HOME/.cargo/bin/ota" ]; then
+  duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/ota"
+fi
+if [ -n "$duplicate_paths" ]; then
+  ota_warn "warning: multiple ota binaries were found; PATH is using $binary_path"
+  ota_warn "warning: remove or de-prioritize the other copy/copies: $duplicate_paths"
+fi
+
 ota_receipt "🦦 READY"
 ota_receipt_line "${version_text}"
