@@ -28,6 +28,14 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.4.2
+
+- fixed GitHub Actions failures by updating stale test expectations and shared test shims.
+- tightened workspace and doctor UX so primary findings, blockers, and failure summaries read clearly.
+- added explicit output for backend-versus-task failures so setup and task issues surface the real root cause.
+- locked JSON schema publication coverage so release artifacts stay aligned with the public spec path.
+- updated release notes discipline so user-visible changes are tracked before each version bump.
+
 ## 0.4.1
 
 - expanded the changelog to cover all shipped releases instead of only the latest one.

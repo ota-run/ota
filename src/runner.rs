@@ -2282,9 +2282,23 @@ tasks:
 
     #[test]
     fn run_task_can_execute_without_progress_output() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        )
+        .unwrap();
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            contract_path.as_path(),
             r#"
 version: 1
 project:
@@ -2298,7 +2312,7 @@ tasks:
 
         let outcome = run_task_with_progress(
             &contract,
-            fixture.path().join("ota.yaml").as_path(),
+            contract_path.as_path(),
             "setup",
             false,
         )

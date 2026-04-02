@@ -345,3 +345,18 @@ fn workspace_explain_schema_includes_repo_steps() {
     assert!(step.get("severity").is_some());
     assert!(step.get("summary").is_some());
 }
+
+#[test]
+fn release_gate_workflow_publishes_all_schema_artifacts_to_latest_and_versioned_prefixes() {
+    let workflow_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-gate.yml");
+    let workflow = fs::read_to_string(&workflow_path).expect("workflow should be readable");
+
+    assert!(workflow.contains("Publish JSON Schemas to R2"));
+    assert!(workflow.contains("find docs/spec/json-schemas -maxdepth 1 -type f"));
+    assert!(workflow.contains("basename \"${file}\""));
+    assert!(workflow.contains("spec/json-schemas/latest"));
+    assert!(workflow.contains("spec/json-schemas/v${version}"));
+    assert!(workflow.contains("--content-type application/json"));
+    assert!(workflow.contains("--remote"));
+}
