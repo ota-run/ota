@@ -1666,6 +1666,26 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = bin_dir.join(name);
+        fs::write(&path, body).expect("write fake command");
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path)
+            .expect("fake command metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("make fake command executable");
+        path
+    }
+
+    #[cfg(windows)]
+    fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = bin_dir.join(name);
+        fs::write(&path, body).expect("write fake command");
+        path
+    }
+
+    #[cfg(unix)]
     fn install_fake_docker(path: &std::path::Path) {
         fs::write(
             path,
@@ -5272,7 +5292,28 @@ version = "0.1.0"
 
     #[test]
     fn doctor_does_not_report_semantically_equivalent_runtime_drift() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let _java_path = write_fake_command(
+            &bin_dir,
+            "java",
+            if cfg!(windows) {
+                "@echo off\r\necho java version \"25.0.2\"\r\n"
+            } else {
+                "#!/bin/sh\nprintf 'java version \"25.0.2\"\\n'\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
         fs::write(
             dir.path().join("ota.yaml"),
             r#"
@@ -5291,6 +5332,15 @@ tasks:
 
         let _guard = CurrentDirGuard::enter(dir.path());
         let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
 
         assert_eq!(output.exit_code, 1);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
