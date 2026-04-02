@@ -259,6 +259,7 @@ ota doctor --json | ota annotations --mode doctor --format github --input -
 
 ota workspace doctor --json | ota annotations --mode workspace-doctor --format github --input -
 ```
+
 ## Editor and hosted validation overlap
 
 Hosted validation systems and editor integrations should consume the same JSON shapes:

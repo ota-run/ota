@@ -3,5 +3,6 @@ config:
   default: true
   MD013: false
 globs:
-  - README.md
   - docs/**/*.md
+  - '!README.md'
+  - '!docs/planning/**/*.md'

@@ -110,6 +110,7 @@ Example response:
   "errors": []
 }
 ```
+
 - `ota doctor`, `ota check`, `ota run`, `ota up`, and `ota export` behavior remains core-only.
 
 ## Why this boundary exists
