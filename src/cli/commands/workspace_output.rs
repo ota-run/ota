@@ -47,7 +47,7 @@ pub(crate) fn render_workspace_up(
                     } else {
                         "optional"
                     },
-                    render_status_word(&repo.status)
+                    workspace_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n{} {}",
@@ -64,11 +64,26 @@ pub(crate) fn render_workspace_up(
                     )
                 ));
                 stdout.push_str(&format!("\n{} {}", paint_key("Phase:"), repo.phase));
+                if let Some(source_url) = &repo.source_url {
+                    stdout.push_str(&format!("\n{} {source_url}", paint_key("Source:")));
+                }
+                if let Some(source_ref) = &repo.source_ref {
+                    stdout.push_str(&format!("\n{} {source_ref}", paint_key("Ref:")));
+                }
                 if let Some(service) = &repo.service {
                     stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
                 }
+                if let Some(service_command) = &repo.service_command {
+                    stdout.push_str(&format!(
+                        "\n{} {service_command}",
+                        paint_key("Service command:")
+                    ));
+                }
                 if let Some(task) = &repo.task {
                     stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
+                }
+                if let Some(task_command) = &repo.task_command {
+                    stdout.push_str(&format!("\n{} {task_command}", paint_key("Command:")));
                 }
                 if let Some(exit_code) = repo.exit_code {
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
@@ -86,8 +101,12 @@ pub(crate) fn render_workspace_up(
                         next
                     ));
                 }
-                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
-                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
+                append_primary_output_block(
+                    &mut stdout,
+                    workspace_phase_output_label(&repo.phase),
+                    repo.stdout.as_deref(),
+                    repo.stderr.as_deref(),
+                );
             }
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
@@ -101,7 +120,7 @@ pub(crate) fn render_workspace_up(
                     .first()
                     .and_then(|repo| repo.task.as_deref())
                     .or(report.receipt.steps.first().map(|step| step.label.as_str())),
-                "WORKSPACE RUN SUMMARY",
+                "WORKSPACE UP SUMMARY",
             ));
 
             CommandOutput {
@@ -150,7 +169,7 @@ pub(crate) fn render_workspace_run(
                     } else {
                         "optional"
                     },
-                    render_status_word(&repo.status)
+                    workspace_status_word(&repo.status)
                 ));
                 stdout.push_str(&format!(
                     "\n{} {}",
@@ -167,6 +186,15 @@ pub(crate) fn render_workspace_run(
                     )
                 ));
                 stdout.push_str(&format!("\n{} {}", paint_key("Task:"), repo.task));
+                if let Some(source_url) = &repo.source_url {
+                    stdout.push_str(&format!("\n{} {source_url}", paint_key("Source:")));
+                }
+                if let Some(source_ref) = &repo.source_ref {
+                    stdout.push_str(&format!("\n{} {source_ref}", paint_key("Ref:")));
+                }
+                if let Some(task_command) = &repo.task_command {
+                    stdout.push_str(&format!("\n{} {task_command}", paint_key("Command:")));
+                }
                 if let Some(exit_code) = repo.exit_code {
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
@@ -183,8 +211,12 @@ pub(crate) fn render_workspace_run(
                         next
                     ));
                 }
-                append_output_block(&mut stdout, "Stdout", repo.stdout.as_deref());
-                append_output_block(&mut stdout, "Stderr", repo.stderr.as_deref());
+                append_primary_output_block(
+                    &mut stdout,
+                    workspace_run_output_label(repo),
+                    repo.stdout.as_deref(),
+                    repo.stderr.as_deref(),
+                );
             }
             if show_receipt {
                 stdout.push_str(&render_execution_receipt_text(&report.receipt));
@@ -215,5 +247,61 @@ pub(crate) fn render_workspace_run(
             stderr: None,
             exit_code: if report.ok { 0 } else { 1 },
         },
+    }
+}
+
+fn workspace_status_word(status: &str) -> String {
+    let trimmed = status.trim();
+    if plain_mode() {
+        return trimmed.to_string();
+    }
+    match trimmed {
+        "READY" => paint("READY", "1;38;2;0;255;120"),
+        "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
+        "BLOCKED" => paint("BLOCKED", "1;38;2;255;235;59"),
+        "WARN" => paint("WARN", "1;38;2;255;235;59"),
+        value if value.contains("FAILED") => paint(value, "1;31"),
+        other => paint(other, "1;37"),
+    }
+}
+
+fn workspace_phase_output_label(phase: &str) -> &'static str {
+    match phase {
+        "acquisition" => "Acquire output:",
+        "services" => "Service output:",
+        "setup" => "Setup output:",
+        _ => "Task output:",
+    }
+}
+
+fn workspace_run_output_label(repo: &WorkspaceRepoRunReport) -> &'static str {
+    if repo.status == "ACQUIRE FAILED" || (repo.source_url.is_some() && repo.task_command.is_none())
+    {
+        "Acquire output:"
+    } else {
+        "Task output:"
+    }
+}
+
+fn append_primary_output_block(
+    buffer: &mut String,
+    label: &str,
+    stdout: Option<&str>,
+    stderr: Option<&str>,
+) {
+    let primary = stderr
+        .and_then(|stderr| {
+            let stderr = stderr.trim_end();
+            (!stderr.is_empty()).then_some(stderr)
+        })
+        .or_else(|| {
+            stdout.and_then(|stdout| {
+                let stdout = stdout.trim_end();
+                (!stdout.is_empty()).then_some(stdout)
+            })
+        });
+
+    if let Some(contents) = primary {
+        append_output_block(buffer, label, Some(contents));
     }
 }
