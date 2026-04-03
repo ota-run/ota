@@ -28,6 +28,12 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.0.0
+
+- shipped the core adoption path as a stable surface: `doctor`, `explain`, `init`, `detect`, `up`, `run`, and workspace bootstrap.
+- shipped advanced examples and adoption guides so the product story is grounded in real repo patterns, not just command lists.
+- fixed Windows installation so release binaries install cleanly on PowerShell and Git Bash/MSYS/MinGW/Cygwin without forcing a cargo fallback.
+
 ## 0.5.6
 
 - published Windows release assets so the installer no longer falls back to cargo on Git Bash or PowerShell when the release binary is available.
