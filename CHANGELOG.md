@@ -28,6 +28,11 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.5.5
+
+- fixed Windows installer detection so Git Bash, MSYS, MinGW, Cygwin, and PowerShell install paths resolve the release binary instead of falling back to cargo.
+- documented the Windows installer paths in the README and installation guide so users do not need Rust to install ota on Windows.
+
 ## 0.5.4
 
 - added tighter task-note spacing so `ota tasks` and `ota tasks --use` read as proper blocks instead of compressed blobs.

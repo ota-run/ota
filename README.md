@@ -46,6 +46,12 @@ Windows PowerShell:
 iwr https://dist.ota.run/install.ps1 | iex
 ```
 
+Windows Git Bash, MSYS, MinGW, or Cygwin:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | sh
+```
+
 Pin a release:
 
 ```bash

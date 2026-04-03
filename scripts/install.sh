@@ -135,6 +135,7 @@ resolve_target() {
   case "${os}" in
     linux) printf "%s-unknown-linux-gnu" "${arch}" ;;
     darwin) printf "%s-apple-darwin" "${arch}" ;;
+    msys*|mingw*|cygwin*) printf "%s-pc-windows-msvc" "${arch}" ;;
     *) return 1 ;;
   esac
 }
