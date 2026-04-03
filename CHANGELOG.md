@@ -28,6 +28,13 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.5.3
+
+- tightened top-level help and onboarding copy so doctor/explain lead the CLI surface.
+- made plain-mode output ASCII-only on the shared help, doctor, explain, and workspace surfaces.
+- removed duplicate failure presentation and narrowed explicit path resolution to the targeted repo boundary.
+- aligned summary titles and workspace receipt spacing so the main summary blocks read consistently.
+
 ## 0.5.2
 
 - added `ota workspace receipt` as a read-only workspace receipt artifact for CI and archiving.

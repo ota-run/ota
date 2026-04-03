@@ -81,28 +81,31 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 ## Quickstart
 
+Doctor first, contract second.
+
 Use an existing contract:
 
 ```bash
 ota doctor
-ota validate
-ota tasks --json
+ota explain
 ota up
 ```
 
-If the contract declares agent guidance, `ota tasks --json` and `ota doctor --json` surface the
+If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the
 same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
-Infer a starting contract from an existing repo:
+Preview a starting contract from an existing repo:
 
 ```bash
 ota doctor
+ota init --dry-run
 ota detect --dry-run .
 ```
 
 Write a conservative first contract:
 
 ```bash
+ota init
 ota detect --write .
 ```
 
@@ -148,31 +151,36 @@ The goal is not hidden automation. The goal is deterministic, inspectable repo r
 Current commands:
 
 ```bash
-ota validate
-ota tasks
-ota run <task>
-ota diff
-ota explain
 ota doctor
-ota init
-ota agents
-ota check
+ota explain
 ota up
+ota run <task>
+ota init
 ota detect --dry-run
 ota detect --write
 ota detect --merge --dry-run
 ota detect --merge
+ota validate
+ota tasks
+ota services
+ota diff
+ota annotations
+ota agents
+ota check
+ota clean
+ota extensions
+ota self-update
 ota workspace validate
 ota workspace tasks
-ota workspace run <task>
-ota workspace explain
-ota workspace check
 ota workspace doctor
+ota workspace explain
 ota workspace up
 ota workspace refresh
 ota workspace diff
 ota workspace status
 ota workspace receipt
+ota workspace run <task>
+ota workspace check
 ota run version:bump --version minor
 ota run version:bump --version major
 ota run version:bump --version 2.4.0
