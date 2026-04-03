@@ -125,6 +125,7 @@ Example contracts:
 - [basic-services](examples/basic-services/ota.yaml) - Service-backed repo starter
 - [full-contract](examples/full-contract/ota.yaml) - Full contract surface
 - [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
+- [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 
 ## Why Ota exists
 
@@ -515,6 +516,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Mixed Node + Python](examples/mixed-node-python/ota.yaml) - Polyglot app example
 - [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml) - Frontend/backend split example
 - [Full contract example](examples/full-contract/ota.yaml) - Exhaustive contract reference
+- [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 
 ### Workspace
 - [Basic Workspace](examples/workspace-basic/ota.workspace.yaml) - Multi-repo starter; use `ota workspace doctor` to review readiness and `ota workspace up` to prepare the stack.

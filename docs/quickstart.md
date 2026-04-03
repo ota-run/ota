@@ -144,4 +144,5 @@ Examples:
 - [../spec/contract-reference.md](../spec/contract-reference.md)
 - [../spec/workspace-reference.md](../spec/workspace-reference.md)
 - [../../examples/workspace-acquire/ota.workspace.yaml](../../examples/workspace-acquire/ota.workspace.yaml)
+- [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 - [philosophy.md](philosophy.md)
