@@ -5203,6 +5203,43 @@ tasks:
     }
 
     #[test]
+    fn tasks_use_separates_blocks_with_blank_line() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    description: Build the site for production
+    run: python3 -c "print('build')"
+  ci:
+    description: Canonical local verification
+    run: python3 -c "print('ci')"
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().collect();
+        let build_idx = lines
+            .iter()
+            .position(|line| line.contains("build `ota run build`"))
+            .expect("build task present");
+        let ci_idx = lines
+            .iter()
+            .position(|line| line.contains("ci `ota run ci`"))
+            .expect("ci task present");
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("build `ota run build`"));
+        assert_eq!(ci_idx, build_idx + 3);
+        assert!(lines[build_idx + 1].starts_with("  Description: Build the site for production"));
+        assert!(lines[build_idx + 2].is_empty());
+        assert!(lines[ci_idx + 1].starts_with("  Description: Canonical local verification"));
+    }
+
+    #[test]
     fn tasks_text_style_snapshot_contains_rich_header_and_bullets() {
         let fixture = ContractFixture::new(
             r#"
