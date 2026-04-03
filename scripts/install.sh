@@ -201,14 +201,22 @@ install_release_binary() {
   fi
 
   tar -xzf "${archive}" -C "${tmpdir}"
-  if [ ! -f "${tmpdir}/ota" ]; then
-    ota_error "error: release artifact did not contain ota binary"
-    return 1
-  fi
-
   mkdir -p "${bin_dir}"
-  install -m 0755 "${tmpdir}/ota" "${bin_dir}/ota"
-  ota_info "installed ota to ${bin_dir}/ota"
+  if printf '%s' "${target}" | grep -q 'windows-msvc$'; then
+    if [ ! -f "${tmpdir}/ota.exe" ]; then
+      ota_error "error: release artifact did not contain ota.exe"
+      return 1
+    fi
+    install -m 0755 "${tmpdir}/ota.exe" "${bin_dir}/ota.exe"
+    ota_info "installed ota to ${bin_dir}/ota.exe"
+  else
+    if [ ! -f "${tmpdir}/ota" ]; then
+      ota_error "error: release artifact did not contain ota binary"
+      return 1
+    fi
+    install -m 0755 "${tmpdir}/ota" "${bin_dir}/ota"
+    ota_info "installed ota to ${bin_dir}/ota"
+  fi
   return 0
 }
 

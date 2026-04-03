@@ -179,6 +179,46 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  release-assets-windows:
+    name: Build Release Asset (Windows)
+    needs: release-tag
+    if: needs.release-tag.outputs.created == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $target = (& rustc -vV | Select-String '^host:' | ForEach-Object { ($_ -split '\s+')[1] })
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          $tarAsset = Join-Path $dist "ota-$target.tar.gz"
+          $zipAsset = Join-Path $dist "ota-$target.zip"
+
+          tar -czf $tarAsset -C target/release ota.exe
+          Compress-Archive -Path target/release/ota.exe -DestinationPath $zipAsset -Force
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-release-windows
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
   publish-schemas:
     name: Publish JSON Schemas to R2
     needs: release-tag
@@ -225,6 +265,7 @@ jobs:
       - release-tag
       - release-assets-linux
       - release-assets-macos
+      - release-assets-windows
       - publish-schemas
     if: needs.release-tag.outputs.created == 'true'
     runs-on: ubuntu-latest
@@ -240,11 +281,13 @@ jobs:
 
       - name: Generate release checksums
         run: |
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum dist/*.tar.gz > dist/ota-checksums.txt
-          else
-            shasum -a 256 dist/*.tar.gz > dist/ota-checksums.txt
-          fi
+          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) | sort | while read -r file; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$file"
+            else
+              shasum -a 256 "$file"
+            fi
+          done > dist/ota-checksums.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -253,5 +296,6 @@ jobs:
           name: ${{ needs.release-tag.outputs.tag }}
           files: |
             dist/**/*.tar.gz
+            dist/**/*.zip
             dist/ota-checksums.txt
           generate_release_notes: true

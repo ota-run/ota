@@ -28,6 +28,11 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.5.6
+
+- published Windows release assets so the installer no longer falls back to cargo on Git Bash or PowerShell when the release binary is available.
+- taught the shell installer to install `ota.exe` on Windows targets so the release archive and installed binary stay aligned.
+
 ## 0.5.5
 
 - fixed Windows installer detection so Git Bash, MSYS, MinGW, Cygwin, and PowerShell install paths resolve the release binary instead of falling back to cargo.
