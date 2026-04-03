@@ -75,6 +75,16 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
 
 The PowerShell installer also supports `OTA_RELEASE_BASE` for a mirror or CDN.
 
+## Windows (Git Bash / MSYS / MinGW / Cygwin)
+
+Install the latest release binary:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | sh
+```
+
+This path now recognizes Windows-style shells and downloads the release binary instead of falling back to cargo.
+
 ## Verify
 
 ```bash

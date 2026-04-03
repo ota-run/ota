@@ -259,6 +259,9 @@ if (Get-Command ota -ErrorAction SilentlyContinue) {
 } elseif ($env:OTA_BIN_DIR -and (Test-Path (Join-Path $env:OTA_BIN_DIR "ota.exe"))) {
     $binaryPath = Join-Path $env:OTA_BIN_DIR "ota.exe"
     $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+} elseif (Test-Path (Join-Path (Get-OtaBinDir) "ota.exe")) {
+    $binaryPath = Join-Path (Get-OtaBinDir) "ota.exe"
+    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
 } elseif (Test-Path (Join-Path $HOME ".local/bin/ota.exe")) {
     $binaryPath = Join-Path $HOME ".local/bin/ota.exe"
     $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
