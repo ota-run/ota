@@ -453,6 +453,8 @@ Use the GitHub issue templates for bug reports, feature requests, and docs feedb
 
 See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md) for the current support and enterprise boundary.
 
+Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
+
 ## Documentation
 
 ### Start here
