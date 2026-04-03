@@ -26,92 +26,67 @@
 
 Install Ota first: [installation.md](installation.md)
 
-## Use an existing contract
+## Start Here
 
-From a repo with `ota.yaml`:
-
-```bash
-cargo run -- doctor
-cargo run -- validate
-cargo run -- tasks
-cargo run -- tasks --json
-cargo run -- up
-```
-
-Run a task explicitly:
+Doctor first, contract second:
 
 ```bash
-cargo run -- run test
+ota doctor
+ota explain
 ```
 
-Tasks can use either a single-command `run` or an inline multiline `script`.
+Preview before you write:
 
-Tasks can also declare OS-specific variants while keeping one stable task name.
+```bash
+ota init --dry-run
+ota detect --dry-run .
+```
 
-If the contract declares an `agent` section, `ota tasks --json` and `ota doctor --json` surface
-the current entrypoint, safe task set, verification tasks, and writable paths without creating a
-separate agent-only config path.
+Write only when the preview looks right:
 
-## Validate a workspace
+```bash
+ota init
+ota detect --write .
+```
+
+Then prepare the repo:
+
+```bash
+ota up
+```
+
+`ota validate`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+
+## Validate A Workspace
 
 From a directory with `ota.workspace.yaml`:
 
 ```bash
-cargo run -- workspace validate
-cargo run -- workspace tasks
-cargo run -- workspace run setup
-cargo run -- workspace check
-cargo run -- workspace doctor
-cargo run -- workspace up
+ota workspace validate
+ota workspace tasks
+ota workspace run setup
+ota workspace check
+ota workspace doctor
+ota workspace up
+ota workspace refresh
+ota workspace diff
+ota workspace status
+ota workspace receipt
 ```
 
 Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.
 
-If a workspace repo is missing locally but declares `repos.<name>.source`, `ota workspace up`
-can acquire it first and then reuse the existing repo-level bootstrap flow.
+If a workspace repo is missing locally but declares `repos.<name>.source`, `ota workspace up` can acquire it first and then reuse the existing repo-level bootstrap flow.
 
-Use `source.git` as the canonical explicit clone URL. Use `source.repo` only as shorthand when
-multiple repos share the same `workspace.git_base`.
+Use `source.git` as the canonical explicit clone URL. Use `source.repo` only as shorthand when multiple repos share the same `workspace.git_base`.
 
 If you want raw live child logs during workspace setup, opt in explicitly:
 
 ```bash
-cargo run -- workspace up --stream
+ota workspace up --stream
 ```
 
 `--stream` is currently text-only and requires sequential execution.
-
-## Detect a starting contract
-
-Review first:
-
-```bash
-cargo run -- doctor
-cargo run -- detect --dry-run .
-```
-
-`ota init` is the repo-local starter path. It now writes by default and still tells you what to do next in text mode:
-
-- write the inferred starter contract to `ota.yaml`
-- validate and diagnose immediately after write
-- run `ota validate` and `ota doctor` after writing
-- treat `Mode: blank` as minimal coverage, not a complete contract
-- in `Mode: detected`, automatic write is conservative and only persists `high` confidence fields when that is enough for a valid contract
-
-Preview first (no write) or write directly:
-
-```bash
-cargo run -- init --dry-run
-cargo run -- init
-cargo run -- detect .
-```
-
-If `ota.yaml` already exists, review or conservatively merge instead of overwriting:
-
-```bash
-cargo run -- detect --merge --dry-run .
-cargo run -- detect --merge .
-```
 
 Current merge behavior:
 

@@ -38,8 +38,9 @@ mod commands;
 #[command(disable_version_flag = true)]
 #[command(name = "ota")]
 #[command(
-    about = "Open repo readiness CLI",
+    about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
+    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -74,6 +75,7 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Subcommand)]
 enum Commands {
+    #[command(display_order = 7)]
     /// Validate an Ota contract.
     Validate {
         /// Print machine-readable JSON output.
@@ -85,6 +87,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 8)]
     /// List validated tasks from an Ota contract.
     Tasks {
         /// Print machine-readable JSON output.
@@ -99,6 +102,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 9)]
     /// List declared services from an Ota contract.
     Services {
         /// Print machine-readable JSON output.
@@ -110,6 +114,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 4)]
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
@@ -135,6 +140,7 @@ enum Commands {
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
     },
+    #[command(display_order = 1)]
     /// Diagnose repo readiness from an Ota contract.
     Doctor {
         /// Print machine-readable JSON output.
@@ -146,6 +152,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 12)]
     /// Render Ota JSON findings as CI annotations or log lines.
     Annotations {
         /// Source JSON mode to render.
@@ -161,6 +168,7 @@ enum Commands {
         #[arg(long, value_name = "FILE")]
         input: PathBuf,
     },
+    #[command(display_order = 2)]
     /// Explain readiness findings as an ordered remediation plan.
     Explain {
         /// Print machine-readable JSON output.
@@ -172,6 +180,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 5)]
     /// Create a starter Ota contract for a repo that does not yet have one.
     Init {
         /// Compatibility flag; writing is now the default.
@@ -189,6 +198,7 @@ enum Commands {
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 13)]
     /// Generate or sync AGENTS.md from an Ota contract.
     Agents {
         /// Print machine-readable JSON output.
@@ -203,6 +213,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 11)]
     /// Run configured checks from an Ota contract.
     Check {
         /// Print machine-readable JSON output.
@@ -214,6 +225,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 15)]
     /// List staged extension descriptors from an Ota contract.
     Extensions {
         /// Print machine-readable JSON output.
@@ -231,6 +243,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 3)]
     /// Prepare the repo for use with minimal prior knowledge.
     Up {
         /// Print machine-readable JSON output.
@@ -251,6 +264,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 14)]
     /// Clean persistent execution state for a repo.
     Clean {
         /// Run the command against one or more monorepo members declared by the root contract.
@@ -259,6 +273,7 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 16)]
     /// Update the installed Ota binary.
     #[command(alias = "upgrade")]
     SelfUpdate {
@@ -269,6 +284,7 @@ enum Commands {
         #[arg(long, value_enum)]
         channel: Option<UpdateChannel>,
     },
+    #[command(display_order = 6)]
     /// Infer a starting contract from repo state.
     Detect {
         /// Print machine-readable JSON output.
@@ -298,6 +314,7 @@ enum Commands {
         /// Path to a repo root.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 10)]
     /// Compare two Ota contracts semantically.
     Diff {
         /// Print machine-readable JSON output.
@@ -308,6 +325,7 @@ enum Commands {
         /// Target contract path to compare.
         target: PathBuf,
     },
+    #[command(display_order = 17)]
     /// Work with Ota workspace contracts.
     Workspace {
         #[command(subcommand)]
@@ -720,6 +738,17 @@ where
     match Cli::try_parse_from(args.clone()) {
         Ok(cli) => run_cli(cli),
         Err(error) => {
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                return CommandOutput {
+                    stdout: String::new(),
+                    stderr: Some(error.render().to_string().trim_end().to_string()),
+                    exit_code: 0,
+                };
+            }
+
             let mut stderr = error.render().to_string().trim_end().to_string();
             if error.kind() == ErrorKind::InvalidSubcommand
                 && args
@@ -4209,7 +4238,7 @@ tasks:
             output.stderr.as_deref().unwrap_or_default()
         ));
         assert!(rendered.contains("Steps:"));
-        assert!(rendered.contains("Summary:"));
+        assert!(rendered.contains("Summary"));
         assert!(rendered.contains("Target:"));
         assert!(rendered.contains("sandbox-dev"));
     }
@@ -4696,20 +4725,34 @@ tasks:
     fn root_help_lists_concise_and_verbose_flags() {
         let output = run_with(["ota", "--help"]);
 
-        assert_eq!(output.exit_code, 2);
+        assert_eq!(output.exit_code, 0);
         let help = output
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
+        assert!(help.contains("Diagnose, prepare, and run repos from one explicit contract."));
+        assert!(help.contains("Doctor first, contract second."));
         assert!(help.contains("--concise"));
         assert!(help.contains("--verbose"));
+        assert!(help.contains("ota doctor"));
+        assert!(help.contains("ota explain"));
+        assert!(help.contains("ota init --dry-run"));
+        assert!(help.contains("ota detect --dry-run ."));
+        assert!(help.contains("ota up"));
+        let doctor = help.find("\n  doctor").unwrap();
+        let explain = help.find("\n  explain").unwrap();
+        let up = help.find("\n  up").unwrap();
+        let run = help.find("\n  run").unwrap();
+        let init = help.find("\n  init").unwrap();
+        let detect = help.find("\n  detect").unwrap();
+        assert!(doctor < explain && explain < up && up < run && run < init && init < detect);
     }
 
     #[test]
     fn detect_help_lists_rewrite_flags() {
         let output = run_with(["ota", "detect", "--help"]);
 
-        assert_eq!(output.exit_code, 2);
+        assert_eq!(output.exit_code, 0);
         let help = output
             .stderr
             .as_deref()
@@ -4722,7 +4765,7 @@ tasks:
     fn workspace_detect_help_lists_rewrite_flags() {
         let output = run_with(["ota", "workspace", "detect", "--help"]);
 
-        assert_eq!(output.exit_code, 2);
+        assert_eq!(output.exit_code, 0);
         let help = output
             .stderr
             .as_deref()
@@ -5588,8 +5631,8 @@ services:
 
     #[test]
     fn plain_mode_disables_icons_and_uses_ascii_bullets() {
-        let fixture = ContractFixture::new_dir();
-        fixture.write(
+        let detect_fixture = ContractFixture::new_dir();
+        detect_fixture.write(
             "package.json",
             r#"{
   "name": "ota-web",
@@ -5597,8 +5640,29 @@ services:
   "scripts": { "dev": "vite" }
 }"#,
         );
+        let doctor_fixture = ContractFixture::new_dir();
+        doctor_fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
 
-        let detect = run_with(["ota", "--plain", "detect", "--dry-run", fixture.path()]);
+        let detect = run_with([
+            "ota",
+            "--plain",
+            "detect",
+            "--dry-run",
+            detect_fixture.path(),
+        ]);
+        let doctor = run_with(["ota", "--plain", "doctor", doctor_fixture.path()]);
+        let explain = run_with(["ota", "--plain", "explain", doctor_fixture.path()]);
+        let up = run_with(["ota", "--plain", "up", doctor_fixture.path()]);
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
@@ -5609,6 +5673,21 @@ services:
         );
         assert!(!detect.stdout.contains("🦦 "));
         assert!(!detect.stdout.contains("▸"));
+        for output in [doctor, explain, up] {
+            assert_eq!(output.exit_code, 0);
+            let body = format!(
+                "{}\n{}",
+                output.stdout,
+                output.stderr.as_deref().unwrap_or_default()
+            );
+            assert!(!body.contains("🦦"));
+            assert!(!body.contains("➤"));
+            assert!(!body.contains("»"));
+            assert!(!body.contains("●"));
+            assert!(!body.contains("→"));
+            assert!(!body.contains("✦"));
+            assert!(!body.contains("▸"));
+        }
     }
 
     #[test]
@@ -7660,7 +7739,7 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         let error_index = stdout
-            .find("Summary: Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
+            .find("Summary Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
             .unwrap();
         let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
@@ -8206,6 +8285,30 @@ tasks:
         assert!(stdout.contains("No `ota.yaml` found"));
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(!stderr.contains("explicit repo path does not contain `ota.yaml`"));
+    }
+
+    #[test]
+    fn diff_explicit_directory_does_not_walk_up_to_parent_contract() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+        let nested = fixture.dir.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+
+        let output = run_with([
+            "ota",
+            "diff",
+            fixture.file_path().to_str().unwrap(),
+            nested.to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("explicit repo path does not contain `ota.yaml`"));
     }
 
     #[test]
@@ -12195,7 +12298,7 @@ tasks:
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Exit code: 7"));
         assert!(stdout.contains("Steps:"));
-        assert!(stdout.contains("Summary:"));
+        assert!(stdout.contains("Summary"));
     }
 
     #[test]

@@ -39,6 +39,16 @@ For compatibility boundaries in the active version, see [compatibility-surface.m
 For extension execution staging, see [extension-execution-boundary.md](extension-execution-boundary.md).
 For hosted validation and PR-gating guidance, see [hosted-validation-workflow.md](hosted-validation-workflow.md).
 
+Doctor first, contract second.
+
+## Recommended onboarding flow
+
+1. `ota doctor`
+2. `ota explain`
+3. `ota init --dry-run` or `ota detect --dry-run .`
+4. `ota init` or `ota detect --write .`
+5. `ota up`
+
 ## Global
 
 ```bash
@@ -59,19 +69,22 @@ ota <command> --member <name> [PATH]
 
 Ota currently ships these commands:
 
+- `ota doctor`
+- `ota explain`
+- `ota up`
+- `ota run <task>`
+- `ota init`
+- `ota detect`
 - `ota validate`
 - `ota tasks`
 - `ota services`
-- `ota run <task>`
-- `ota doctor`
-- `ota explain`
-- `ota init`
-- `ota agents`
-- `ota check`
-- `ota up`
-- `ota self-update` / `ota upgrade`
 - `ota diff`
-- `ota detect`
+- `ota check`
+- `ota annotations`
+- `ota agents`
+- `ota clean`
+- `ota extensions`
+- `ota self-update` / `ota upgrade`
 - `ota workspace init`
 - `ota workspace detect`
 - `ota workspace validate`
@@ -86,6 +99,16 @@ Ota currently ships these commands:
 - `ota workspace diff`
 - `ota workspace status`
 - `ota workspace receipt`
+
+Examples:
+
+```bash
+ota doctor
+ota explain
+ota init --dry-run
+ota detect --dry-run .
+ota up
+```
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
 

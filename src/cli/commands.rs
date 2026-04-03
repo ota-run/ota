@@ -6749,37 +6749,37 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Readiness impact:", "1;38;2;102;217;255"),
         paint(&summary.readiness_impact, "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Added:", "1;38;2;0;255;120"),
         paint(&summary.added_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Missing in target:", "1;38;2;255;235;59"),
         paint(&summary.removed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Changed:", "1;38;2;0;255;255"),
         paint(&summary.changed_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Weakened:", "1;38;2;255;80;80"),
         paint(&summary.weakened_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Strengthened:", "1;38;2;0;255;120"),
         paint(
             &summary.strengthened_count.to_string(),
@@ -6792,22 +6792,22 @@ fn render_diff_summary_text(summary: &DiffSummary) -> String {
 fn render_diff_status_word(match_state: bool) -> String {
     if plain_mode() {
         return if match_state {
-            String::from("➤ MATCH")
+            String::from("MATCH")
         } else {
-            String::from("➤ DIFFERENT")
+            String::from("DIFFERENT")
         };
     }
 
     if match_state {
         format!(
             "{} {}",
-            paint("➤", "1;38;2;0;255;120"),
+            primary_marker(),
             paint("MATCH", "1;38;2;0;255;120")
         )
     } else {
         format!(
             "{} {}",
-            paint("➤", "1;38;2;255;235;59"),
+            primary_marker(),
             paint("DIFFERENT", "1;38;2;255;235;59")
         )
     }
@@ -7065,7 +7065,7 @@ fn resolve_diff_contract_path(path: &Path) -> Result<PathBuf, String> {
         return Ok(path.to_path_buf());
     }
     if path.is_dir() {
-        return discover_contract_path(path).map_err(|error| error.to_string());
+        return resolve_explicit_contract_dir(path).map_err(|error| error.to_string());
     }
     Err(format!(
         "contract path does not exist: `{}`",
@@ -7193,7 +7193,7 @@ fn render_tasks_text(
     let mut output = format_command_header("TASKS", path);
 
     if let Some(agent) = agent {
-        if let Some(summary) = render_agent_summary_block(agent) {
+        if let Some(summary) = render_agent_summary_block(agent, true) {
             output.push('\n');
             output.push_str(&summary);
         }
@@ -8098,7 +8098,7 @@ fn render_report_section(
         render_readiness_status(report.ok)
     );
     if let Some(agent) = agent {
-        if let Some(summary) = render_agent_summary_line(agent) {
+        if let Some(summary) = render_agent_summary_line(agent, !report.ok) {
             stdout.push_str("\n\n");
             stdout.push_str(&summary);
         }
@@ -8108,13 +8108,13 @@ fn render_report_section(
         stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
         stdout.push_str(&format!(
             " {}  {} {}",
-            paint("●", "1;38;2;255;214;95"),
+            verdict_bullet(),
             paint_key("Repo:"),
             render_doctor_verdict(summary.verdict)
         ));
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("●", "1;38;2;255;214;95"),
+            verdict_bullet(),
             paint_key("Agent:"),
             render_doctor_verdict(summary.agent_verdict)
         ));
@@ -8185,7 +8185,7 @@ fn render_primary_finding_text(
     next: &str,
 ) -> String {
     let mut stdout = String::from("\n\n");
-    let (arrow_color, title_color, title) = match severity {
+    let (_arrow_color, title_color, title) = match severity {
         FindingSeverity::Error => ("1;31", "1;31", "Primary Blocker"),
         FindingSeverity::Warn => ("1;38;2;255;235;59", "1;38;2;255;235;59", "Primary Finding"),
         FindingSeverity::Info => (
@@ -8196,11 +8196,11 @@ fn render_primary_finding_text(
     };
     stdout.push_str(&format!(
         "{} {}",
-        paint("➤", arrow_color),
+        primary_marker(),
         paint(title, title_color)
     ));
     stdout.push('\n');
-    stdout.push_str(&format!("{} {}", paint_key("Summary:"), summary));
+    stdout.push_str(&format!("{} {}", paint_section_title("Summary"), summary));
     if !concise_mode() {
         stdout.push_str(&format!(
             "\n{} {}",
@@ -8293,25 +8293,25 @@ fn render_explain_summary_text(summary: &ExplainSummary) -> String {
     stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -8361,7 +8361,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     if let Some(preferred) = execution.preferred {
         stdout.push_str(&format!(
             " {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Preferred:"),
             preferred
         ));
@@ -8369,7 +8369,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     if !execution.supported.is_empty() {
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Supported:"),
             execution.supported.join(", ")
         ));
@@ -8377,7 +8377,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     if let Some(lifecycle) = execution.lifecycle {
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Lifecycle:"),
             lifecycle
         ));
@@ -8386,7 +8386,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
         if let Some(container) = backends.container.as_ref() {
             stdout.push_str(&format!(
                 "\n {}  {} {}",
-                paint("→", "1;38;2;255;214;95"),
+                detail_arrow(),
                 paint_key("Container:"),
                 container.image
             ));
@@ -8394,14 +8394,14 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
         if let Some(remote) = backends.remote.as_ref() {
             stdout.push_str(&format!(
                 "\n {}  {} {}",
-                paint("→", "1;38;2;255;214;95"),
+                detail_arrow(),
                 paint_key("Remote Provider:"),
                 remote.provider
             ));
             if let Some(target) = remote.target {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
-                    paint("→", "1;38;2;255;214;95"),
+                    detail_arrow(),
                     paint_key("Remote Target:"),
                     target
                 ));
@@ -8409,7 +8409,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
             if let Some(cwd) = remote.cwd {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
-                    paint("→", "1;38;2;255;214;95"),
+                    detail_arrow(),
                     paint_key("Remote Cwd:"),
                     cwd
                 ));
@@ -8419,10 +8419,10 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     if !execution.env.is_empty() {
         stdout.push_str(&format!(
             "\n {}  {} policy env > process env > contract default > required missing",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Env precedence:")
         ));
-        stdout.push_str(&format!("\n {}  Env:", paint("→", "1;38;2;255;214;95")));
+        stdout.push_str(&format!("\n {}  Env:", detail_arrow()));
         for item in &execution.env {
             let mut details = Vec::new();
             let source = if item.policy.is_some() {
@@ -8454,8 +8454,8 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     stdout
 }
 
-fn render_agent_summary_line(agent: &AgentSummary<'_>) -> Option<String> {
-    render_agent_summary_block(agent)
+fn render_agent_summary_line(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
+    render_agent_summary_block(agent, include_notes)
 }
 
 fn render_agents_markdown(
@@ -8634,7 +8634,7 @@ fn agents_markdown_already_present(existing: &str, generated: &str) -> bool {
     existing.contains(&generated)
 }
 
-fn render_agent_summary_block(agent: &AgentSummary<'_>) -> Option<String> {
+fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
     let mut lines = Vec::new();
     lines.push(String::from("AGENT:"));
     if let Some(entrypoint) = agent.entrypoint {
@@ -8664,7 +8664,7 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>) -> Option<String> {
             agent.protected_paths.join(", ")
         ));
     }
-    if let Some(notes) = agent.notes {
+    if include_notes && let Some(notes) = agent.notes {
         if !notes.trim().is_empty() {
             lines.push(String::from("  notes:"));
             for line in notes.lines() {
@@ -10208,10 +10208,10 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         stdout.push_str("\n\n");
     }
 
-    stdout.push_str(&format!("{}:", paint_section_title("Summary")));
+    stdout.push_str(&paint_section_title("Summary"));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Errors:", "1;31"),
         paint(
             &receipt.summary.error_count.to_string(),
@@ -10220,7 +10220,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Warnings:", "1;33"),
         paint(
             &receipt.summary.warn_count.to_string(),
@@ -10229,7 +10229,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Info:", "1;36"),
         paint(
             &receipt.summary.info_count.to_string(),
@@ -10238,7 +10238,7 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(
             &receipt.summary.step_count.to_string(),
@@ -10278,7 +10278,9 @@ fn render_execution_receipt_summary_block(
     task: Option<&str>,
     title: &str,
 ) -> String {
-    let title = if title.starts_with("WORKSPACE ") {
+    let title = if plain_mode() {
+        title.to_string()
+    } else if title.starts_with("WORKSPACE ") {
         paint(&format!("🦦  {title}"), "1;37")
     } else {
         paint(&format!("🦦  {title}"), "1")
@@ -10621,7 +10623,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     if let Some(preferred) = execution.preferred.as_deref() {
         stdout.push_str(&format!(
             " {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Preferred:"),
             preferred
         ));
@@ -10629,7 +10631,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     if !execution.supported.is_empty() {
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Supported:"),
             execution.supported.join(", ")
         ));
@@ -10637,7 +10639,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
         stdout.push_str(&format!(
             "\n {}  {} {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Lifecycle:"),
             lifecycle
         ));
@@ -10646,7 +10648,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
         if let Some(container) = backends.container.as_ref() {
             stdout.push_str(&format!(
                 "\n {}  {} {}",
-                paint("→", "1;38;2;255;214;95"),
+                detail_arrow(),
                 paint_key("Container:"),
                 container.image
             ));
@@ -10654,14 +10656,14 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
         if let Some(remote) = backends.remote.as_ref() {
             stdout.push_str(&format!(
                 "\n {}  {} {}",
-                paint("→", "1;38;2;255;214;95"),
+                detail_arrow(),
                 paint_key("Remote Provider:"),
                 remote.provider
             ));
             if let Some(target) = remote.target.as_deref() {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
-                    paint("→", "1;38;2;255;214;95"),
+                    detail_arrow(),
                     paint_key("Remote Target:"),
                     target
                 ));
@@ -10669,7 +10671,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
             if let Some(cwd) = remote.cwd.as_deref() {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
-                    paint("→", "1;38;2;255;214;95"),
+                    detail_arrow(),
                     paint_key("Remote Cwd:"),
                     cwd
                 ));
@@ -10679,7 +10681,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     if !execution.env.is_empty() {
         stdout.push_str(&format!(
             "\n {}  {}",
-            paint("→", "1;38;2;255;214;95"),
+            detail_arrow(),
             paint_key("Env sources:")
         ));
         for item in &execution.env {
@@ -10806,7 +10808,7 @@ fn render_valid_status() -> String {
     } else {
         format!(
             "{} {}",
-            paint("➤", "1;38;2;0;255;120"),
+            primary_marker(),
             paint("VALID", "1;38;2;0;255;120")
         )
     }
@@ -10819,7 +10821,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                paint("➤", "1;38;2;0;255;120"),
+                primary_marker(),
                 paint("READY", "1;38;2;0;255;120")
             )
         }
@@ -10829,7 +10831,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                paint("➤", "1;38;2;255;235;59"),
+                primary_marker(),
                 paint("NOT READY", "1;38;2;255;235;59")
             )
         }
@@ -10978,6 +10980,38 @@ fn next_bullet() -> String {
 
 fn paint_section_title(value: &str) -> String {
     paint(value, "1;34")
+}
+
+fn summary_bullet() -> String {
+    if plain_mode() {
+        String::from("-")
+    } else {
+        paint("»", "1;38;2;255;214;79")
+    }
+}
+
+fn detail_arrow() -> String {
+    if plain_mode() {
+        String::from("-")
+    } else {
+        paint("→", "1;38;2;255;214;95")
+    }
+}
+
+fn verdict_bullet() -> String {
+    if plain_mode() {
+        String::from("-")
+    } else {
+        paint("●", "1;38;2;255;214;95")
+    }
+}
+
+fn primary_marker() -> String {
+    if plain_mode() {
+        String::from("->")
+    } else {
+        paint("➤", "1;38;2;0;255;120")
+    }
 }
 
 fn paint_next_header() -> String {
@@ -12838,7 +12872,7 @@ fn render_failed_status_label(value: &str) -> String {
     if plain_mode() {
         return value.to_string();
     }
-    format!("{} {}", paint("➤", "1;31"), paint(value, "1;31"))
+    format!("{} {}", primary_marker(), paint(value, "1;31"))
 }
 
 fn task_command_preview(task: &TaskSpec) -> Option<String> {

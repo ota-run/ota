@@ -494,7 +494,7 @@ repos:
         String::from_utf8_lossy(&receipt_text.stderr)
     );
     assert!(receipt_text_stdout.contains("WORKSPACE RECEIPT"));
-    assert!(receipt_text_stdout.contains("Summary:"));
+    assert!(receipt_text_stdout.contains("Summary"));
 
     let receipt_json = run_ota(&[
         "workspace",
