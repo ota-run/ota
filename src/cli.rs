@@ -5175,6 +5175,34 @@ tasks:
     }
 
     #[test]
+    fn tasks_text_indents_multiline_notes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  validate:
+    notes: |
+      Example: `ota run validate`
+      Use this before opening a pull request.
+      It validates all example contracts, workspace contracts, and local markdown links.
+    run: python3 -c "print('ok')"
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("Notes: Example: `ota run validate`"));
+        assert!(stdout.contains("\n  Use this before opening a pull request."));
+        assert!(stdout.contains(
+            "\n  It validates all example contracts, workspace contracts, and local markdown links."
+        ));
+    }
+
+    #[test]
     fn tasks_text_style_snapshot_contains_rich_header_and_bullets() {
         let fixture = ContractFixture::new(
             r#"

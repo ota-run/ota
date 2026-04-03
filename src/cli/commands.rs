@@ -7271,7 +7271,11 @@ fn render_tasks_text(
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
         if let Some(notes) = task.notes {
-            output.push_str(&format!("\n  {} {notes}", paint_key("Notes:")));
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Notes:"),
+                render_multiline_field(notes)
+            ));
         }
     }
 
@@ -7298,8 +7302,27 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
         }
         if let Some(notes) = task.notes {
-            output.push_str(&format!("\n  {} {notes}", paint_key("Notes:")));
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Notes:"),
+                render_multiline_field(notes)
+            ));
         }
+    }
+    output
+}
+
+fn render_multiline_field(value: &str) -> String {
+    let mut lines = value.lines();
+    let Some(first_line) = lines.next() else {
+        return String::new();
+    };
+
+    let mut output = String::from(first_line);
+    for line in lines {
+        output.push('\n');
+        output.push_str("  ");
+        output.push_str(line);
     }
     output
 }
