@@ -23,12 +23,12 @@
 -->
 
 <div align="center">
-  <img src="docs/assets/ota-icon.svg" alt="Ota Logo" width="110" height="110" />
+  <img src="docs/assets/ota-icon.svg" alt="ota Logo" width="110" height="110" />
 </div>
 
 # `ota`
 
-Ota is open infrastructure for repo readiness, not another task runner or package manager. It gives every repo one explicit contract for what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents can answer why a repo is or is not runnable without guesswork.
+ota is open infrastructure for repo readiness, not another task runner or package manager. It gives every repo one explicit contract for what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents can answer why a repo is or is not runnable without guesswork.
 
 Doctor first, contract second.
 
@@ -83,18 +83,20 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 Doctor first, contract second.
 
-Use an existing contract:
+Use `ota` the same way a serious repo should be read:
+
+### Existing repo
 
 ```bash
 ota doctor
 ota explain
+ota validate
 ota up
 ```
 
-If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the
-same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+That path tells you what is wrong, what to fix, and how to prepare the repo without guessing.
 
-Preview a starting contract from an existing repo:
+### New repo or missing contract
 
 ```bash
 ota doctor
@@ -102,19 +104,33 @@ ota init --dry-run
 ota detect --dry-run .
 ```
 
-Write a conservative first contract:
+If the contract looks right, write the first version explicitly:
 
 ```bash
 ota init
 ota detect --write .
 ```
 
-Review or conservatively merge into an existing contract:
+If you already have a contract and want to improve it conservatively:
 
 ```bash
 ota detect --merge --dry-run .
 ota detect --merge .
 ```
+
+### Workspace bootstrap
+
+If you are setting up multiple repos together:
+
+```bash
+ota workspace validate .
+ota workspace doctor .
+ota workspace tasks .
+ota workspace up
+```
+
+If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the
+same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
 Example contracts:
 - [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
@@ -127,7 +143,7 @@ Example contracts:
 - [workspace-acquire](examples/workspace-acquire/ota.workspace.yaml) - Workspace acquisition flow
 - [ota-run/examples](https://github.com/ota-run/examples) - advanced, production-adjacent examples and templates
 
-## Why Ota exists
+## Why ota exists
 
 Repo setup truth is usually fragmented across:
 
@@ -139,7 +155,7 @@ Repo setup truth is usually fragmented across:
 - README setup notes
 - tribal knowledge
 
-Ota consolidates that into one canonical contract:
+ota consolidates that into one canonical contract:
 
 ```yaml
 ota.yaml
@@ -147,7 +163,7 @@ ota.yaml
 
 The goal is not hidden automation. The goal is deterministic, inspectable repo readiness.
 
-## What Ota does today
+## What ota does today
 
 Current commands:
 
@@ -212,7 +228,7 @@ Current behavior:
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, and leads with the highest-priority blocker first
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
-- `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an Ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the Ota-owned section is explicit, including the `ota run ...` command form for each listed task
+- `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
@@ -239,7 +255,7 @@ Current behavior:
 
 ## Execution Modes and Provisioning
 
-Ota supports three execution backends for task-oriented commands:
+ota supports three execution backends for task-oriented commands:
 
 - `native` runs tasks on the host machine.
 - `container` runs tasks in an OCI-compatible container using the image defined by the repo contract.
@@ -251,22 +267,22 @@ Ota supports three execution backends for task-oriented commands:
 - `container` is the reproducible path when you want a fixed toolchain, deterministic setup, and CI-like behavior.
 - `remote` is the off-host path when execution needs to happen somewhere else entirely, such as a dev box, cluster, or managed workspace.
 
-### What Ota does today
+### What ota does today
 
 - `ota run` and `ota up` can execute through the configured backend path.
 - `ota up` can run the `setup` task through the same backend selection as `ota run`.
 - `ota doctor` checks the prerequisites for the preferred backend and reports missing tools or suspicious remote target shape early.
 - `ota clean` can remove persistent container state for container-backed repos.
 
-### What Ota does not do today
+### What ota does not do today
 
-- Ota does not automatically install every missing host tool or language runtime.
-- Ota does not turn a laptop into a fully managed workstation.
-- Ota does not invent remote provisioning or remote workspace selection beyond the configured provider path.
+- ota does not automatically install every missing host tool or language runtime.
+- ota does not turn a laptop into a fully managed workstation.
+- ota does not invent remote provisioning or remote workspace selection beyond the configured provider path.
 
 ### Container backend
 
-Container execution is useful when you want Ota to run repo tasks in a known environment instead of relying on whatever happens to be installed locally.
+Container execution is useful when you want ota to run repo tasks in a known environment instead of relying on whatever happens to be installed locally.
 
 Benefits:
 
@@ -357,11 +373,11 @@ ota tasks --use
 
 ## Hosted validation and service provisioning
 
-In CI, the runner still owns the job. Ota owns the repo contract and can provision declared
+In CI, the runner still owns the job. ota owns the repo contract and can provision declared
 services such as Postgres through `ota up`, so the workflow stays thin and the service intent lives
 with the repo instead of being duplicated in pipeline YAML.
 
-That is different from host provisioning. Ota can provision declared services and run tasks in a
+That is different from host provisioning. ota can provision declared services and run tasks in a
 container or remote backend, but it does not replace the OS package manager, language installer,
 or workstation bootstrap process.
 
@@ -378,7 +394,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ota
+      - name: Install ota
         run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
@@ -392,7 +408,7 @@ jobs:
 
 ## Detect trust model
 
-Ota treats detection as trust-sensitive.
+ota treats detection as trust-sensitive.
 
 - `ota detect --dry-run` is the review path
 - `ota detect --merge --dry-run` is the review path for existing contracts
@@ -408,7 +424,7 @@ This is intentional. The project prefers conservative correctness over aggressiv
 
 ## Open standard intent
 
-Ota is being built as open infrastructure, not as a vendor-specific workflow.
+ota is being built as open infrastructure, not as a vendor-specific workflow.
 
 The long-term aim is:
 
@@ -448,7 +464,7 @@ Current planning state:
 
 ## Contribution policy
 
-Ota does not accept external code contributions. See [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md) for the open-core and enterprise boundary.
+ota does not accept external code contributions. See [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md) for the open-core and enterprise boundary.
 
 Use the GitHub issue templates for bug reports, feature requests, and docs feedback.
 
