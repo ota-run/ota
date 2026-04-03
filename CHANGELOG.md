@@ -28,6 +28,10 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 0.5.4
+
+- added tighter task-note spacing so `ota tasks` and `ota tasks --use` read as proper blocks instead of compressed blobs.
+
 ## 0.5.3
 
 - tightened top-level help and onboarding copy so doctor/explain lead the CLI surface.

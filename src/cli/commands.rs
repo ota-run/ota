@@ -7277,6 +7277,9 @@ fn render_tasks_text(
                 render_multiline_field(notes)
             ));
         }
+        if index + 1 < tasks.len() {
+            output.push('\n');
+        }
     }
 
     output
@@ -7290,7 +7293,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         return output;
     }
 
-    for task in tasks {
+    for (index, task) in tasks.iter().enumerate() {
         let usage = render_task_use_command(task);
         output.push_str(&format!(
             "\n{} {} `{}`",
@@ -7307,6 +7310,9 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
+        }
+        if index + 1 < tasks.len() {
+            output.push('\n');
         }
     }
     output
