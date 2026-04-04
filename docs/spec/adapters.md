@@ -39,8 +39,11 @@ The built-in mutating provisioning adapters currently support:
 - `uv` for Python/runtime provisioning
 - `winget` for Windows package installs
 - `choco` for Windows package installs
+- `scoop` for Windows developer tooling
 - `brew` for macOS host tooling
 - `apt` for Debian and Ubuntu package installs
+- `dnf` for Fedora and RHEL-style package installs
+- `pacman` for Arch package installs, with package-name installs in the current backend
 
 Use these when a policy entry should flow through the shipped installer path.
 
@@ -48,9 +51,7 @@ Use these when a policy entry should flow through the shipped installer path.
 
 These adapter families are the next likely additions, not current support:
 
-- `dnf` for Fedora and RHEL-style systems
-- `pacman` for Arch-based systems
-- `scoop` for Windows developer tooling
+- none currently committed
 
 ## Source adapters
 
