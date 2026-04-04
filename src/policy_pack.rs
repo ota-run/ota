@@ -162,6 +162,7 @@ pub struct ProvisioningPlanEntry {
 pub struct ProvisioningPlan {
     pub allowed: Vec<ProvisioningPlanEntry>,
     pub blocked: Vec<ProvisioningPlanEntry>,
+    pub actions: Vec<ProvisioningAction>,
 }
 
 impl OrgPolicyPack {
@@ -263,6 +264,21 @@ impl OrgPolicyPack {
             );
         }
 
+        plan.actions = plan
+            .allowed
+            .iter()
+            .filter_map(|entry| {
+                entry.source.as_ref().map(|source| ProvisioningAction {
+                    kind: ProvisioningActionKind::SelectSource,
+                    target_kind: entry.kind,
+                    name: entry.name.clone(),
+                    requested_version: entry.requested_version.clone(),
+                    source: source.clone(),
+                    approved_version: entry.approved_version.clone(),
+                })
+            })
+            .collect();
+
         plan
     }
 
@@ -270,17 +286,14 @@ impl OrgPolicyPack {
         &self,
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningDecision> {
-        self.provisioning_plan(contract)
-            .allowed
+        self.selected_provisioning_actions(contract)
             .into_iter()
-            .filter_map(|entry| {
-                entry.source.map(|source| ProvisioningDecision {
-                    kind: entry.kind,
-                    name: entry.name,
-                    requested_version: entry.requested_version,
-                    source,
-                    approved_version: entry.approved_version,
-                })
+            .map(|action| ProvisioningDecision {
+                kind: action.target_kind,
+                name: action.name,
+                requested_version: action.requested_version,
+                source: action.source,
+                approved_version: action.approved_version,
             })
             .collect()
     }
@@ -289,17 +302,7 @@ impl OrgPolicyPack {
         &self,
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningAction> {
-        self.selected_provisioning_sources(contract)
-            .into_iter()
-            .map(|decision| ProvisioningAction {
-                kind: ProvisioningActionKind::SelectSource,
-                target_kind: decision.kind,
-                name: decision.name,
-                requested_version: decision.requested_version,
-                source: decision.source,
-                approved_version: decision.approved_version,
-            })
-            .collect()
+        self.provisioning_plan(contract).actions
     }
 
     fn push_plan_entry(

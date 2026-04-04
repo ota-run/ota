@@ -228,7 +228,25 @@ Root monorepo summary output can also include grouped member results:
         "blocked_reason": null
       }
     ],
-    "blocked": []
+    "blocked": [],
+    "actions": [
+      {
+        "kind": "select_source",
+        "target_kind": "runtime",
+        "name": "java",
+        "requested_version": "22",
+        "source": "org-mirror",
+        "approved_version": "22"
+      },
+      {
+        "kind": "select_source",
+        "target_kind": "tool",
+        "name": "maven",
+        "requested_version": "3.9",
+        "source": "approved-manager",
+        "approved_version": "3.9"
+      }
+    ]
   },
   "findings": [
     {
@@ -272,7 +290,7 @@ or `workspace policy`.
 
 When a workspace repo declares runtimes or tools and policy provides approved sources for them,
 `ota workspace doctor --json` may also include the same read-only `provisioning` plan on the
-per-repo item. That plan uses the same `allowed` and `blocked` entries as repo-level
+per-repo item. That plan uses the same `allowed`, `blocked`, and `actions` entries as repo-level
 `ota doctor --json`, so editors and hosted validation can inspect the same future provisioning
 signal without mutating anything.
 
