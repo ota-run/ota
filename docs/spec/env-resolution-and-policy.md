@@ -108,7 +108,8 @@ Examples of requirement fields:
 
 Policy-controlled resolution may add approved source references, injection hints,
 and optional fallback rules, but the shipped contract still uses a flat `policies.env`
-map today.
+map today. For source selection and install provenance, see
+[policy-backed-provisioning.md](policy-backed-provisioning.md).
 
 Workspace-level policy should remain additive. It can describe shared defaults or approved
 sources for member repos, but it should not become a second repo contract.
