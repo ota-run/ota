@@ -884,15 +884,15 @@ fn diagnose_org_policy(
             }
 
             let matched_targets: Vec<String> = policy_pack
-                .selected_provisioning_sources(contract)
+                .selected_provisioning_actions(contract)
                 .into_iter()
                 .map(|entry| {
                     format!(
                         "{} {} {} via {}",
-                        entry.kind,
+                        entry.target_kind,
                         entry.name,
                         entry.requested_version,
-                        entry.source.as_str()
+                        entry.source
                     )
                 })
                 .collect();
