@@ -132,6 +132,22 @@ pub struct ProvisioningDecision {
     pub approved_version: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProvisioningActionKind {
+    SelectSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProvisioningAction {
+    pub kind: ProvisioningActionKind,
+    pub target_kind: ProvisioningTargetKind,
+    pub name: String,
+    pub requested_version: String,
+    pub source: String,
+    pub approved_version: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningPlanEntry {
     pub kind: ProvisioningTargetKind,
@@ -269,6 +285,23 @@ impl OrgPolicyPack {
             .collect()
     }
 
+    pub fn selected_provisioning_actions(
+        &self,
+        contract: &crate::schema::Contract,
+    ) -> Vec<ProvisioningAction> {
+        self.selected_provisioning_sources(contract)
+            .into_iter()
+            .map(|decision| ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: decision.kind,
+                name: decision.name,
+                requested_version: decision.requested_version,
+                source: decision.source,
+                approved_version: decision.approved_version,
+            })
+            .collect()
+    }
+
     fn push_plan_entry(
         plan: &mut ProvisioningPlan,
         kind: ProvisioningTargetKind,
@@ -373,7 +406,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{OrgPolicyPack, ProvisioningTargetKind, load_org_policy_pack_auto};
+    use super::{OrgPolicyPack, ProvisioningActionKind, ProvisioningTargetKind, load_org_policy_pack_auto};
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
@@ -598,5 +631,37 @@ tools:
         assert_eq!(selections.len(), 1);
         assert_eq!(selections[0].name, "java");
         assert_eq!(selections[0].source, "org-mirror");
+    }
+
+    #[test]
+    fn builds_provisioning_actions_for_allowed_targets() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "22"
+"#,
+        )
+        .unwrap();
+
+        let actions = policy.selected_provisioning_actions(&contract);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].kind, ProvisioningActionKind::SelectSource);
+        assert_eq!(actions[0].target_kind, ProvisioningTargetKind::Runtime);
+        assert_eq!(actions[0].name, "java");
+        assert_eq!(actions[0].source, "org-mirror");
     }
 }
