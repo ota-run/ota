@@ -91,6 +91,7 @@ The exact field names may change, but the shape should remain:
 - policy declares where it may come from
 - Ota resolves the approved source
 - the approved `allowed` entries form the source-selection interface, and `selected_provisioning_actions` is the backend-agnostic action shape a future installer backend would consume
+- the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow
