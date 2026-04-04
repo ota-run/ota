@@ -257,6 +257,7 @@ Current behavior:
 - `ota workspace diff` compares local workspace repo state against the declared source without mutating anything
 - `ota workspace status` combines readiness and drift into one read-only workspace summary
 - `ota workspace receipt` captures the same workspace state as a read-only receipt artifact for CI and archiving
+- `ota up --provision` can run repo-declared setup before the normal precondition flow when the contract needs preparation
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
 ## Execution Modes and Provisioning
@@ -515,6 +516,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [V7 plan](docs/planning/v7/plan.md)
 - [V8 plan](docs/planning/v8/plan.md)
 - [V9 plan](docs/planning/v9/plan.md)
+- [V10 plan](docs/planning/v10/plan.md)
 - [V5 UX hardening completion slice](docs/planning/v5-ux-hardening.md)
 - [Hosted validation workflow](docs/spec/hosted-validation-workflow.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)

@@ -249,6 +249,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Allow repo-scoped provisioning before the normal up flow.
+        #[arg(long, action = ArgAction::SetTrue)]
+        provision: bool,
         /// Override the execution backend for this invocation.
         #[arg(long, value_enum)]
         backend: Option<RunBackend>,
@@ -1169,6 +1172,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Up {
             json,
+            provision,
             backend,
             lifecycle,
             receipt,
@@ -1182,6 +1186,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: lifecycle.map(Into::into),
             },
             &member,
+            provision,
             format_from_json(json),
             debug,
             receipt,
@@ -7862,6 +7867,62 @@ tasks:
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: preconditions"));
         assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn up_with_provision_runs_setup_before_preconditions_fail() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let bin_dir = TempDir::new().unwrap();
+        let contract = format!(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  provisioned-tool: "1"
+tasks:
+  setup:
+    run: |
+      mkdir -p "{bin_dir}"
+      printf '%s\n' \
+        '#!/bin/sh' \
+        'if [ "$1" = "--version" ]; then' \
+        '  echo "provisioned-tool 1.0.0"' \
+        '  exit 0' \
+        'fi' \
+        'exit 0' > "{bin_dir}/provisioned-tool"
+      chmod +x "{bin_dir}/provisioned-tool"
+      printf ready > prepared.txt
+            "#,
+            bin_dir = bin_dir.path().display()
+        );
+        let fixture = ContractFixture::new(&contract);
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.path().to_path_buf()];
+        if let Some(path) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(path));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "up", "--provision", fixture.path()]);
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("Phase: post-provision diagnosis"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+        assert!(bin_dir.path().join("provisioned-tool").exists());
     }
 
     #[test]
