@@ -30,7 +30,7 @@
 
 ## 1.0.1
 
-- fixed the Windows test scaffolding so the release gate compiles cleanly on windows-latest.
+- fixed the Windows release-gate stack so the real repository fixture suite completes on windows-latest.
 
 ## 1.0.0
 
