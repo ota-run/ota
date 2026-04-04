@@ -48,8 +48,8 @@ The point is to keep provisioning explicit, reviewable, and policy-controlled wi
 into a general-purpose package manager.
 
 The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `winget`, `choco`,
-`brew`, and `apt` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
-backends in that set; `mise`, `asdf`, `winget`, `choco`, `brew`, and `apt` can flow through
+`scoop`, `brew`, `apt`, `dnf`, and `pacman` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
+backends in that set; `mise`, `asdf`, `winget`, `choco`, `scoop`, `brew`, `apt`, `dnf`, and `pacman` can flow through
 declared runtime and tool entries where the adapter supports them.
 
 ## Supported today
@@ -62,12 +62,15 @@ The built-in mutating adapters currently support:
 - `uv` for Python/runtime provisioning
 - `winget` for Windows package installs
 - `choco` for Windows package installs
+- `scoop` for Windows developer tooling
 - `brew` for macOS host tooling
 - `apt` for Debian and Ubuntu package installs
+- `dnf` for Fedora and RHEL-style package installs
+- `pacman` for Arch package installs, with package-name installs in the current backend
 
 Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
-`source: winget`, `source: choco`, `source: brew`, or `source: apt` when they are meant to flow
-through the shipped backends.
+`source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, or `source: pacman` when they are
+meant to flow through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
 
@@ -121,8 +124,8 @@ The exact field names may change, but the shape should remain:
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
 - the shipped mutating adapters accept `source: mise`, `source: asdf`, `source: sdkman`,
-  `source: uv`, `source: winget`, `source: choco`, `source: brew`, and `source: apt` entries from
-  policy, with `sdkman` and `uv` intended for runtime-oriented entries
+  `source: uv`, `source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, and `source: pacman`
+  entries from policy, with `sdkman` and `uv` intended for runtime-oriented entries
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow

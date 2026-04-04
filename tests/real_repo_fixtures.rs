@@ -27,6 +27,10 @@ use std::process::{Command, Output};
 use serde_json::Value;
 use tempfile::TempDir;
 
+use ota::parser::load_contract;
+use ota::policy_pack::load_org_policy_pack_auto;
+use ota::validator::validate_contract;
+
 fn real_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -520,6 +524,50 @@ repos:
             .unwrap()
             .contains("MATCH")
     );
+}
+
+#[test]
+fn provisioning_fixture_resolves_pacman_request_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("pacman-probe");
+    let contract_path = fixture.path().join("ota.yaml");
+
+    let contract = load_contract(&contract_path).unwrap();
+    validate_contract(&contract).unwrap();
+
+    let (policy, _) = load_org_policy_pack_auto(&contract_path)
+        .unwrap()
+        .expect("policy pack should exist");
+    let request = policy.provisioning_backend_request(&contract);
+
+    assert_eq!(request.actions.len(), 2);
+    assert_eq!(request.actions[0].source, "pacman");
+    assert_eq!(request.actions[0].name, "node");
+    assert_eq!(request.actions[0].requested_version, "22");
+    assert_eq!(request.actions[1].source, "pacman");
+    assert_eq!(request.actions[1].name, "git");
+    assert_eq!(request.actions[1].requested_version, "2.46.0");
+}
+
+#[test]
+fn provisioning_fixture_resolves_brew_request_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("brew-probe");
+    let contract_path = fixture.path().join("ota.yaml");
+
+    let contract = load_contract(&contract_path).unwrap();
+    validate_contract(&contract).unwrap();
+
+    let (policy, _) = load_org_policy_pack_auto(&contract_path)
+        .unwrap()
+        .expect("policy pack should exist");
+    let request = policy.provisioning_backend_request(&contract);
+
+    assert_eq!(request.actions.len(), 2);
+    assert_eq!(request.actions[0].source, "brew");
+    assert_eq!(request.actions[0].name, "python");
+    assert_eq!(request.actions[0].requested_version, "3.12");
+    assert_eq!(request.actions[1].source, "brew");
+    assert_eq!(request.actions[1].name, "jq");
+    assert_eq!(request.actions[1].requested_version, "1.7");
 }
 
 #[cfg(unix)]
