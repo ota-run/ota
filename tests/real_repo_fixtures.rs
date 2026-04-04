@@ -569,6 +569,10 @@ fn tasks_json_reports_resolved_task_variant_on_real_fixture() {
             assert_eq!(setup["run"], "sh ./scripts/setup-macos.sh");
             assert_eq!(setup["selected_variant_os"], "macos");
         }
+        "windows" => {
+            assert_eq!(setup["run"], ".\\scripts\\setup.ps1");
+            assert_eq!(setup["selected_variant_os"], "windows");
+        }
         _ => {
             assert_eq!(setup["run"], "sh ./scripts/setup.sh");
             assert!(setup.get("selected_variant_os").is_none());
