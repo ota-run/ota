@@ -52,6 +52,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+          - windows-latest
 
     steps:
       - name: Checkout
