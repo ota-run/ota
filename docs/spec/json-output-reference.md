@@ -209,7 +209,28 @@ Root monorepo summary output can also include grouped member results:
     "entrypoint": "setup",
     "verify_after_changes": ["test"]
   },
- "findings": [
+  "provisioning": {
+    "allowed": [
+      {
+        "kind": "runtime",
+        "name": "java",
+        "requested_version": "22",
+        "source": "org-mirror",
+        "approved_version": "22",
+        "blocked_reason": null
+      },
+      {
+        "kind": "tool",
+        "name": "maven",
+        "requested_version": "3.9",
+        "source": "approved-manager",
+        "approved_version": "3.9",
+        "blocked_reason": null
+      }
+    ],
+    "blocked": []
+  },
+  "findings": [
     {
       "code": "OTA_TASKS_MISSING",
       "category": "contract",
@@ -238,10 +259,22 @@ Finding objects may also include additive policy context keys when policy-aware 
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
 
+When the repo declares runtimes or tools and policy provides approved sources for them,
+`ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
+plan with `provisionable` entries for targets policy approves and `blocked` entries for declared
+targets that policy does not currently approve. It exists so humans and agents can see what would
+be provisionable later without mutating the machine today.
+
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
 additive policy keys may appear there as well. When a repo declares execution metadata, the shared
 `execution.env` array may include policy provenance with `source` values such as `repo policy`
 or `workspace policy`.
+
+When a workspace repo declares runtimes or tools and policy provides approved sources for them,
+`ota workspace doctor --json` may also include the same read-only `provisioning` plan on the
+per-repo item. That plan uses the same `allowed` and `blocked` entries as repo-level
+`ota doctor --json`, so editors and hosted validation can inspect the same future provisioning
+signal without mutating anything.
 
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also
