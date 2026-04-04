@@ -1415,7 +1415,11 @@ pub fn doctor(
                             summary: doctor_summary(&report, DoctorVerdict::NotReady),
                             agent: None,
                             execution: None,
-                            provisioning: report.provisioning.as_ref(),
+                            provisioning: report.provisioning.as_ref().map(|value| &value.plan),
+                            provisioning_request: report
+                                .provisioning
+                                .as_ref()
+                                .map(|value| &value.request),
                             extensions: &empty_extensions,
                             findings: &report.findings,
                         }),
@@ -1619,7 +1623,14 @@ pub fn doctor(
                                     ),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
-                                    provisioning: report.provisioning.as_ref(),
+                                    provisioning: report
+                                        .provisioning
+                                        .as_ref()
+                                        .map(|value| &value.plan),
+                                    provisioning_request: report
+                                        .provisioning
+                                        .as_ref()
+                                        .map(|value| &value.request),
                                     extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
@@ -2207,7 +2218,14 @@ pub fn check(
                                     ),
                                     agent: None,
                                     execution: ExecutionSummary::from_contract(&target.contract),
-                                    provisioning: report.provisioning.as_ref(),
+                                    provisioning: report
+                                        .provisioning
+                                        .as_ref()
+                                        .map(|value| &value.plan),
+                                    provisioning_request: report
+                                        .provisioning
+                                        .as_ref()
+                                        .map(|value| &value.request),
                                     extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),

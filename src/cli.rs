@@ -5898,6 +5898,14 @@ policies:
             .as_object()
             .expect("provisioning plan should be present");
         assert_eq!(provisioning["allowed"].as_array().unwrap().len(), 2);
+        let provisioning_request = json["provisioning_request"]
+            .as_object()
+            .expect("provisioning request should be present");
+        assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            provisioning_request["actions"][0]["kind"],
+            "select_source"
+        );
         let findings = json["findings"].as_array().unwrap();
         let finding = findings
             .iter()

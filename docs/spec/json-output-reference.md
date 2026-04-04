@@ -283,6 +283,11 @@ plan with `provisionable` entries for targets policy approves and `blocked` entr
 targets that policy does not currently approve. It exists so humans and agents can see what would
 be provisionable later without mutating the machine today.
 
+When that plan exists, `ota doctor --json` also includes a top-level `provisioning_request`
+object. It is the backend intake form and carries only the selected `actions` from the read-only
+plan, so an installer backend can consume the request without re-deriving policy decisions from
+the diagnostic payload.
+
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
 additive policy keys may appear there as well. When a repo declares execution metadata, the shared
 `execution.env` array may include policy provenance with `source` values such as `repo policy`
