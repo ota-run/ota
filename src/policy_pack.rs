@@ -312,7 +312,7 @@ impl OrgPolicyPack {
         self.provisioning_plan(contract).actions
     }
 
-    pub fn selected_provisioning_backend_request(
+    pub fn provisioning_backend_request(
         &self,
         contract: &crate::schema::Contract,
     ) -> ProvisioningBackendRequest {
@@ -708,7 +708,7 @@ runtimes:
         )
         .unwrap();
 
-        let request = policy.selected_provisioning_backend_request(&contract);
+        let request = policy.provisioning_backend_request(&contract);
         assert_eq!(request.actions.len(), 1);
         assert_eq!(request.actions[0].kind, ProvisioningActionKind::SelectSource);
         assert_eq!(request.actions[0].target_kind, ProvisioningTargetKind::Runtime);
