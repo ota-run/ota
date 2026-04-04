@@ -151,6 +151,11 @@ pub struct ProvisioningAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProvisioningBackendRequest {
+    pub actions: Vec<ProvisioningAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningPlanEntry {
     pub kind: ProvisioningTargetKind,
     pub name: String,
@@ -305,6 +310,15 @@ impl OrgPolicyPack {
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningAction> {
         self.provisioning_plan(contract).actions
+    }
+
+    pub fn selected_provisioning_backend_request(
+        &self,
+        contract: &crate::schema::Contract,
+    ) -> ProvisioningBackendRequest {
+        ProvisioningBackendRequest {
+            actions: self.selected_provisioning_actions(contract),
+        }
     }
 
     fn push_plan_entry(
@@ -668,5 +682,37 @@ runtimes:
         assert_eq!(actions[0].target_kind, ProvisioningTargetKind::Runtime);
         assert_eq!(actions[0].name, "java");
         assert_eq!(actions[0].source, "org-mirror");
+    }
+
+    #[test]
+    fn builds_provisioning_backend_request_from_allowed_targets() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "22"
+"#,
+        )
+        .unwrap();
+
+        let request = policy.selected_provisioning_backend_request(&contract);
+        assert_eq!(request.actions.len(), 1);
+        assert_eq!(request.actions[0].kind, ProvisioningActionKind::SelectSource);
+        assert_eq!(request.actions[0].target_kind, ProvisioningTargetKind::Runtime);
+        assert_eq!(request.actions[0].name, "java");
+        assert_eq!(request.actions[0].source, "org-mirror");
     }
 }
