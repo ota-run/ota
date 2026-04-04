@@ -29,6 +29,8 @@ Status: spec candidate.
 This document defines the next policy extension point for Ota: org-approved provisioning
 sources for declared runtimes and tools.
 
+For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapters.md).
+
 This is not the current shipped `env` resolver. The shipped contract still treats `policies.env`
 as a flat approved-value map. This spec describes the later layer that can decide where an
 approved runtime or tool comes from when a repo asks for one.
@@ -50,12 +52,14 @@ selected provisioning actions into `mise install` calls for declared runtimes an
 
 ## Supported today
 
-The built-in mutating adapter currently supports:
+The built-in mutating adapters currently support:
 
 - `mise`
+- `asdf`
 
-Policy entries should use `source: mise` when they are meant to flow through the shipped backend.
-All other sources remain policy-visible and read-only until a matching adapter is added.
+Policy entries should use `source: mise` or `source: asdf` when they are meant to flow through
+the shipped backends. All other sources remain policy-visible and read-only until a matching
+adapter is added.
 
 ## Non-goals
 
