@@ -47,9 +47,10 @@ Let an organization say:
 The point is to keep provisioning explicit, reviewable, and policy-controlled without turning Ota
 into a general-purpose package manager.
 
-The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, and `uv` as approved
-source/managers. `sdkman` and `uv` are the runtime-oriented backends in that set; `mise` and
-`asdf` can flow through declared runtime and tool entries where the adapter supports them.
+The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `winget`, `choco`,
+and `brew` as approved source/managers. `sdkman` and `uv` are the runtime-oriented backends in
+that set; `mise`, `asdf`, `winget`, `choco`, and `brew` can flow through declared runtime and
+tool entries where the adapter supports them.
 
 ## Supported today
 
@@ -59,10 +60,14 @@ The built-in mutating adapters currently support:
 - `asdf`
 - `sdkman` for runtime-oriented provisioning
 - `uv` for Python/runtime provisioning
+- `winget` for Windows package installs
+- `choco` for Windows package installs
+- `brew` for macOS host tooling
 
-Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, or `source: uv`
-when they are meant to flow through the shipped backends. `sdkman` and `uv` are best suited to
-runtime entries.
+Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
+`source: winget`, `source: choco`, or `source: brew` when they are meant to flow through the
+shipped backends.
+`sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
 
 ## Non-goals
@@ -114,8 +119,9 @@ The exact field names may change, but the shape should remain:
 - the backend intake should use a serialized `ProvisioningBackendRequest { actions: [...] }` shape so the installer layer consumes only the selected actions, not the full diagnostic plan
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
-- the shipped mutating adapters accept `source: mise`, `source: asdf`, `source: sdkman`, and
-  `source: uv` entries from policy, with `sdkman` and `uv` intended for runtime-oriented entries
+- the shipped mutating adapters accept `source: mise`, `source: asdf`, `source: sdkman`,
+  `source: uv`, `source: winget`, and `source: choco` entries from policy, with `sdkman` and `uv`
+  intended for runtime-oriented entries
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow

@@ -78,10 +78,26 @@ pub struct SdkmanProvisioningBackend;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UvProvisioningBackend;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct WingetProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChocoProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BrewProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AptProvisioningBackend;
+
 static MISE_BACKEND: MiseProvisioningBackend = MiseProvisioningBackend;
 static ASDF_BACKEND: AsdfProvisioningBackend = AsdfProvisioningBackend;
 static SDKMAN_BACKEND: SdkmanProvisioningBackend = SdkmanProvisioningBackend;
 static UV_BACKEND: UvProvisioningBackend = UvProvisioningBackend;
+static WINGET_BACKEND: WingetProvisioningBackend = WingetProvisioningBackend;
+static CHOCO_BACKEND: ChocoProvisioningBackend = ChocoProvisioningBackend;
+static BREW_BACKEND: BrewProvisioningBackend = BrewProvisioningBackend;
+static APT_BACKEND: AptProvisioningBackend = AptProvisioningBackend;
 
 impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
@@ -117,6 +133,46 @@ impl UvProvisioningBackend {
         match action.target_kind {
             ProvisioningTargetKind::Runtime => action.name.clone(),
             ProvisioningTargetKind::Tool => action.name.clone(),
+        }
+    }
+}
+
+impl WingetProvisioningBackend {
+    fn install_target(action: &ProvisioningAction) -> String {
+        match action.target_kind {
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.name.clone()
+            }
+        }
+    }
+}
+
+impl ChocoProvisioningBackend {
+    fn install_target(action: &ProvisioningAction) -> String {
+        match action.target_kind {
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.name.clone()
+            }
+        }
+    }
+}
+
+impl BrewProvisioningBackend {
+    fn install_target(action: &ProvisioningAction) -> String {
+        match action.target_kind {
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                format!("{}@{}", action.name, action.requested_version)
+            }
+        }
+    }
+}
+
+impl AptProvisioningBackend {
+    fn install_target(action: &ProvisioningAction) -> String {
+        match action.target_kind {
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                format!("{}={}", action.name, action.requested_version)
+            }
         }
     }
 }
@@ -337,12 +393,223 @@ impl ProvisioningBackend for UvProvisioningBackend {
     }
 }
 
+impl ProvisioningBackend for WingetProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "winget"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let install_target = Self::install_target(action);
+            let output = Command::new("winget")
+                .arg("install")
+                .arg("--id")
+                .arg(&install_target)
+                .arg("--version")
+                .arg(&action.requested_version)
+                .arg("--exact")
+                .arg("--accept-source-agreements")
+                .arg("--accept-package-agreements")
+                .current_dir(working_dir)
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "winget" })?;
+
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+
+            if !output.status.success() {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!("winget install --id {install_target} --version {}", action.requested_version),
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for ChocoProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "choco"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let install_target = Self::install_target(action);
+            let output = Command::new("choco")
+                .arg("install")
+                .arg(&install_target)
+                .arg("--version")
+                .arg(&action.requested_version)
+                .arg("-y")
+                .arg("--no-progress")
+                .current_dir(working_dir)
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "choco" })?;
+
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+
+            if !output.status.success() {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!("choco install {install_target} --version {}", action.requested_version),
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for BrewProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "brew"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let install_target = Self::install_target(action);
+            let output = Command::new("brew")
+                .arg("install")
+                .arg(&install_target)
+                .current_dir(working_dir)
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "brew" })?;
+
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+
+            if !output.status.success() {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!("brew install {install_target}"),
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for AptProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "apt"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let install_target = Self::install_target(action);
+            let output = Command::new("apt-get")
+                .arg("install")
+                .arg("-y")
+                .arg(&install_target)
+                .current_dir(working_dir)
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "apt-get" })?;
+
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+
+            if !output.status.success() {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!("apt-get install -y {install_target}"),
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
 fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> {
     match source {
         "mise" => Some(&MISE_BACKEND),
         "asdf" => Some(&ASDF_BACKEND),
         "sdkman" => Some(&SDKMAN_BACKEND),
         "uv" => Some(&UV_BACKEND),
+        "winget" => Some(&WINGET_BACKEND),
+        "choco" => Some(&CHOCO_BACKEND),
+        "brew" => Some(&BREW_BACKEND),
+        "apt" => Some(&APT_BACKEND),
         _ => None,
     }
 }
@@ -552,6 +819,171 @@ mod tests {
         assert!(log_contents.contains("python"));
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("3.12"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_winget_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("winget.log");
+        make_shim(shim_dir.path(), "winget", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "maven".to_string(),
+                requested_version: "3.9".to_string(),
+                source: "winget".to_string(),
+                approved_version: Some("3.9".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("--id"));
+        assert!(log_contents.contains("maven"));
+        assert!(log_contents.contains("--version"));
+        assert!(log_contents.contains("3.9"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_choco_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("choco.log");
+        make_shim(shim_dir.path(), "choco", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "git".to_string(),
+                requested_version: "2.46.0".to_string(),
+                source: "choco".to_string(),
+                approved_version: Some("2.46.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("git"));
+        assert!(log_contents.contains("2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_brew_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("brew.log");
+        make_shim(shim_dir.path(), "brew", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "jq".to_string(),
+                requested_version: "1.7".to_string(),
+                source: "brew".to_string(),
+                approved_version: Some("1.7".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("jq@1.7"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_apt_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("apt-get.log");
+        make_shim(shim_dir.path(), "apt-get", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "jq".to_string(),
+                requested_version: "1.7".to_string(),
+                source: "apt".to_string(),
+                approved_version: Some("1.7".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("-y"));
+        assert!(log_contents.contains("jq=1.7"));
 
         unsafe {
             env::set_var("PATH", original_path);

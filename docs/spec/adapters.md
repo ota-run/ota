@@ -37,6 +37,9 @@ The built-in mutating provisioning adapters currently support:
 - `asdf`
 - `sdkman` for Java/runtime provisioning
 - `uv` for Python/runtime provisioning
+- `winget` for Windows package installs
+- `choco` for Windows package installs
+- `brew` for macOS host tooling
 
 Use these when a policy entry should flow through the shipped installer path.
 
@@ -44,13 +47,9 @@ Use these when a policy entry should flow through the shipped installer path.
 
 These adapter families are the next likely additions, not current support:
 
-- `brew` for macOS host tooling
-- `uv` for Python repos
 - `apt` for Debian and Ubuntu
 - `dnf` for Fedora and RHEL-style systems
 - `pacman` for Arch-based systems
-- `winget` for Windows package installs
-- `choco` for Windows package installs
 - `scoop` for Windows developer tooling
 
 ## Source adapters
