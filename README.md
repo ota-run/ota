@@ -209,6 +209,11 @@ ota run version:bump --version major
 ota run version:bump --version 2.4.0
 ```
 
+Near-term policy and provisioning direction:
+
+- [Env resolution and policy](docs/spec/env-resolution-and-policy.md)
+- [Policy-backed provisioning sources](docs/spec/policy-backed-provisioning.md)
+
 Global flag:
 
 ```bash
