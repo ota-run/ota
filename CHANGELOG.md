@@ -28,6 +28,10 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.0.1
+
+- fixed the Windows test scaffolding so the release gate compiles cleanly on windows-latest.
+
 ## 1.0.0
 
 - shipped the core adoption path as a stable surface: `doctor`, `explain`, `init`, `detect`, `up`, `run`, and workspace bootstrap.

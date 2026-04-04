@@ -1764,9 +1764,7 @@ mod tests {
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
 
-    use crate::test_support::CWD_MUTEX;
-    #[cfg(unix)]
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
 
     use super::{collapse_blank_lines, commands, maybe_append_update_notice, run_with};
     use crate::output::CommandOutput;
@@ -5570,6 +5568,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn doctor_reports_tool_drift_warning_without_duplicate_blocker_line() {
         let _guard = ENV_MUTEX.lock().unwrap();
@@ -11800,6 +11799,7 @@ repos:
         assert_eq!(json["repos"][1]["name"], "api");
     }
 
+    #[cfg(unix)]
     #[test]
     fn workspace_parallel_commands_preserve_dependency_order_in_json() {
         let _guard = ENV_MUTEX.lock().unwrap();
