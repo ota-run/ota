@@ -35,27 +35,23 @@ The built-in mutating provisioning adapters currently support:
 
 - `mise`
 - `asdf`
+- `sdkman` for Java/runtime provisioning
+- `uv` for Python/runtime provisioning
 
 Use these when a policy entry should flow through the shipped installer path.
 
-## Installer adapters
+## Planned installer families
 
-Installer adapters are the execution backends that install or select a declared runtime or tool.
+These adapter families are the next likely additions, not current support:
 
-Likely next candidates, in order of common repo demand:
-
-1. `sdkman` for Java-heavy repos
-2. `uv` for Python repos
-3. `brew` for macOS host tooling
-4. `apt` for Debian and Ubuntu
-5. `dnf` for Fedora and RHEL-style systems
-6. `pacman` for Arch-based systems
-7. `winget` for Windows package installs
-8. `choco` for Windows package installs
-9. `scoop` for Windows developer tooling
-
-These are not all shipped today. They are the adapter families most likely to matter once
-policy-backed provisioning reaches broader host coverage.
+- `brew` for macOS host tooling
+- `uv` for Python repos
+- `apt` for Debian and Ubuntu
+- `dnf` for Fedora and RHEL-style systems
+- `pacman` for Arch-based systems
+- `winget` for Windows package installs
+- `choco` for Windows package installs
+- `scoop` for Windows developer tooling
 
 ## Source adapters
 
@@ -85,7 +81,6 @@ The least surprising rollout order is:
 ## What this is not
 
 - not a general package manager list
-- not a promise that every source adapter is shipped today
+- not a promise that every planned installer family is shipped today
 - not a hidden workstation manager
 - not a replacement for repo contracts, env policy, or checks
-

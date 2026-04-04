@@ -47,8 +47,9 @@ Let an organization say:
 The point is to keep provisioning explicit, reviewable, and policy-controlled without turning Ota
 into a general-purpose package manager.
 
-The first mutating backend in this shape uses `mise` as the approved source/manager and translates
-selected provisioning actions into `mise install` calls for declared runtimes and tools.
+The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, and `uv` as approved
+source/managers. `sdkman` and `uv` are the runtime-oriented backends in that set; `mise` and
+`asdf` can flow through declared runtime and tool entries where the adapter supports them.
 
 ## Supported today
 
@@ -56,10 +57,13 @@ The built-in mutating adapters currently support:
 
 - `mise`
 - `asdf`
+- `sdkman` for runtime-oriented provisioning
+- `uv` for Python/runtime provisioning
 
-Policy entries should use `source: mise` or `source: asdf` when they are meant to flow through
-the shipped backends. All other sources remain policy-visible and read-only until a matching
-adapter is added.
+Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, or `source: uv`
+when they are meant to flow through the shipped backends. `sdkman` and `uv` are best suited to
+runtime entries.
+All other sources remain policy-visible and read-only until a matching adapter is added.
 
 ## Non-goals
 
@@ -110,7 +114,8 @@ The exact field names may change, but the shape should remain:
 - the backend intake should use a serialized `ProvisioningBackendRequest { actions: [...] }` shape so the installer layer consumes only the selected actions, not the full diagnostic plan
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
-- the first shipped mutating adapter uses `mise` and accepts `source: mise` entries from policy
+- the shipped mutating adapters accept `source: mise`, `source: asdf`, `source: sdkman`, and
+  `source: uv` entries from policy, with `sdkman` and `uv` intended for runtime-oriented entries
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow

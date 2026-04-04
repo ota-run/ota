@@ -11898,6 +11898,14 @@ fn execute_repo_up(
                         kind
                     ));
                 }
+                Err(ProvisioningBackendError::UnsupportedTargetKind {
+                    backend,
+                    target_kind,
+                }) => {
+                    stderr.push_str(&format!(
+                        "provisioning target kind `{target_kind}` is not supported by the built-in backend `{backend}`; falling back to repo setup\n"
+                    ));
+                }
             }
         }
 
