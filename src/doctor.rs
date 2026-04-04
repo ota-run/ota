@@ -101,6 +101,13 @@ impl Finding {
                     mutation_allowed: false,
                 })
             }
+            "Policy-backed provisioning sources are declared" => Some(PolicyFindingContext {
+                outcome: "policy_surface_available",
+                reason: "policy_backed_provisioning_declared",
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            }),
             "Invalid org policy pack" => Some(PolicyFindingContext {
                 outcome: "blocked_by_integrity_policy",
                 reason: "invalid_org_policy_pack",
@@ -164,7 +171,9 @@ impl Finding {
             | "OTA_RUNTIME_MISSING"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING" => "environment",
-            "OTA_POLICY_PACK_VIOLATION" | "OTA_POLICY_PACK_INVALID" => "policy",
+            "OTA_POLICY_PACK_VIOLATION"
+            | "OTA_POLICY_PACK_INVALID"
+            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "policy",
             "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => "execution",
             "OTA_CONTRACT_DRIFT" => "contract",
             _ => "contract",
@@ -194,7 +203,9 @@ impl Finding {
             "OTA_SERVICE_CHECK_FAILED"
             | "OTA_SERVICE_CHECK_TIMED_OUT"
             | "OTA_SERVICE_UNVERIFIABLE" => "service",
-            "OTA_POLICY_PACK_VIOLATION" | "OTA_POLICY_PACK_INVALID" => "org_policy",
+            "OTA_POLICY_PACK_VIOLATION"
+            | "OTA_POLICY_PACK_INVALID"
+            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "org_policy",
             _ => "repo_contract",
         }
     }
@@ -295,6 +306,13 @@ impl Finding {
             "OTA_POLICY_PACK_INVALID" => (
                 "the org policy pack failed to load or validate".to_string(),
                 "the org policy pack loads and validates".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => (
+                "the org policy pack declares approved provisioning sources".to_string(),
+                "the org policy pack has no provisioning sources declared".to_string(),
                 "org_policy".to_string(),
                 String::new(),
                 String::new(),
@@ -843,6 +861,31 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
     if missing_sections.is_empty() && missing_files.is_empty() {
+        if !policy_pack.policies.provisioning.is_empty() {
+            let mut sources = Vec::new();
+            for (name, rule) in &policy_pack.policies.provisioning {
+                let versions = if rule.approved_versions.is_empty() {
+                    String::from("any approved version")
+                } else {
+                    format!("versions {}", rule.approved_versions.join(", "))
+                };
+                sources.push(format!("{name} via {} ({versions})", rule.source));
+            }
+
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: format!(
+                    "`{}` declares approved provisioning sources: {}",
+                    compact_display_path(&policy_path),
+                    sources.join(", ")
+                ),
+                next: String::from(
+                    "use this policy surface when provisioning support for declared runtimes or tools lands",
+                ),
+            });
+        }
+
         return;
     }
 
@@ -2293,6 +2336,54 @@ unexpected: true
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Invalid org policy pack");
         assert!(report.findings[0].why.contains("org-policy.yaml"));
+    }
+
+    #[test]
+    fn reports_policy_backed_provisioning_sources_as_info() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(
+            report.findings[0].summary,
+            "Policy-backed provisioning sources are declared"
+        );
+        assert_eq!(report.findings[0].severity, FindingSeverity::Info);
+        assert!(report.findings[0].why.contains("java via org-mirror"));
     }
 
     #[test]
