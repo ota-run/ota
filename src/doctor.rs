@@ -34,7 +34,7 @@ use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
-use crate::policy_pack::{LoadPolicyPackError, load_org_policy_pack_auto};
+use crate::policy_pack::{LoadPolicyPackError, ProvisioningTargetKind, load_org_policy_pack_auto};
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
 };
@@ -872,14 +872,51 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
                 sources.push(format!("{name} via {} ({versions})", rule.source));
             }
 
+            let mut matched_targets = Vec::new();
+            for (name, requirement) in &contract.runtimes {
+                if let Ok(Some(decision)) = policy_pack.resolve_provisioning(
+                    ProvisioningTargetKind::Runtime,
+                    name,
+                    requirement.version(),
+                ) {
+                    matched_targets.push(format!(
+                        "runtime {name} {} via {}",
+                        requirement.version(),
+                        decision.source
+                    ));
+                }
+            }
+            for (name, requirement) in &contract.tools {
+                if let Ok(Some(decision)) = policy_pack.resolve_provisioning(
+                    ProvisioningTargetKind::Tool,
+                    name,
+                    requirement.version(),
+                ) {
+                    matched_targets.push(format!(
+                        "tool {name} {} via {}",
+                        requirement.version(),
+                        decision.source
+                    ));
+                }
+            }
+
             findings.push(Finding {
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
-                why: format!(
-                    "`{}` declares approved provisioning sources: {}",
-                    compact_display_path(&policy_path),
-                    sources.join(", ")
-                ),
+                why: if matched_targets.is_empty() {
+                    format!(
+                        "`{}` declares approved provisioning sources: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", ")
+                    )
+                } else {
+                    format!(
+                        "`{}` declares approved provisioning sources: {}. This repo's declared prerequisites can be provisioned through: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", "),
+                        matched_targets.join(", ")
+                    )
+                },
                 next: String::from(
                     "use this policy surface when provisioning support for declared runtimes or tools lands",
                 ),
@@ -2347,6 +2384,10 @@ unexpected: true
 version: 1
 project:
   name: ota
+runtimes:
+  java: "22"
+tools:
+  maven: "3.9"
 tasks:
   test:
     run: cargo test
@@ -2365,6 +2406,10 @@ policies:
       source: org-mirror
       approved_versions:
         - "22"
+    maven:
+      source: approved-manager
+      approved_versions:
+        - "3.9"
 "#,
         )
         .unwrap();
@@ -2376,14 +2421,16 @@ policies:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        assert!(report.ok);
-        assert_eq!(report.findings.len(), 1);
-        assert_eq!(
-            report.findings[0].summary,
-            "Policy-backed provisioning sources are declared"
-        );
-        assert_eq!(report.findings[0].severity, FindingSeverity::Info);
-        assert!(report.findings[0].why.contains("java via org-mirror"));
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
+            .expect("policy-backed provisioning finding should be present");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert!(finding.why.contains("java via org-mirror"));
+        assert!(finding.why.contains("runtime java 22 via org-mirror"));
+        assert!(finding.why.contains("tool maven 3.9 via approved-manager"));
     }
 
     #[test]
