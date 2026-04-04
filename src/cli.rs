@@ -7051,6 +7051,41 @@ agent:
     }
 
     #[test]
+    fn init_writes_agent_block_for_setup_and_test_repos() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": {
+    "setup": "pnpm install",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("agent:"));
+        assert!(written.contains("entrypoint: setup"));
+        assert!(written.contains("default_task: test"));
+        assert!(written.contains("safe_tasks:"));
+        assert!(written.contains("protected_paths:"));
+        assert!(written.contains("- ota.yaml"));
+        assert!(written.contains("notes: |"));
+        assert!(written.contains("Use `ota run test` to verify changes."));
+        assert!(!written.contains("entrypoint: null"));
+        let agent_index = written.find("agent:").unwrap();
+        let tasks_index = written.find("tasks:").unwrap();
+        let tools_index = written.find("tools:").unwrap();
+        assert!(agent_index > tasks_index);
+        assert!(agent_index > tools_index);
+    }
+
+    #[test]
     fn init_writes_medium_confidence_starter_when_it_is_valid() {
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");

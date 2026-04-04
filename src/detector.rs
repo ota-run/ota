@@ -58,6 +58,8 @@ pub struct DetectContract {
     pub services: BTreeMap<String, DetectService>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tasks: BTreeMap<String, DetectTask>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<crate::schema::AgentConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -5831,7 +5833,7 @@ name = "ota-api"
         );
         assert_eq!(
             contract.tasks.get("typecheck").and_then(|task| task.notes.as_deref()),
-            Some("Run `ota run typecheck` to execute this task.")
+            Some("Run `ota run typecheck` to execute this task.\n")
         );
         assert_eq!(
             contract.tasks.get("build").map(|task| task.safe_for_agent),

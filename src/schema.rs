@@ -48,13 +48,13 @@ pub struct Contract {
     #[serde(default)]
     pub checks: Vec<CheckSpec>,
     #[serde(default)]
-    pub agent: Option<AgentConfig>,
-    #[serde(default)]
     pub exports: BTreeMap<String, serde_yaml::Value>,
     #[serde(default)]
     pub policies: BTreeMap<String, serde_yaml::Value>,
     #[serde(default)]
     pub metadata: BTreeMap<String, serde_yaml::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentConfig>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -420,21 +420,21 @@ pub enum CheckSeverity {
     Info,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_task: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub safe_tasks: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verify_after_changes: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writable_paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protected_paths: Vec<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }

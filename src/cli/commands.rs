@@ -74,7 +74,7 @@ use crate::runner::{
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{Contract, ExtensionSpec, TaskSpec};
+use crate::schema::{AgentConfig, Contract, ExtensionSpec, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -6394,7 +6394,7 @@ fn render_init(
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
     let compact_root_display = compact_repo_path(&report.root);
-    let bootstrap_contract = bootstrap_init_contract(&report, bootstrap);
+    let bootstrap_contract = bootstrap_init_contract(&report);
     let review_yaml = serde_yaml::to_string(&bootstrap_contract)
         .expect("serializing init contract should not fail");
 
@@ -6434,7 +6434,7 @@ fn render_init(
     }
 
     if write {
-        let write_contract = if mode == "detected" {
+        let mut write_contract = if mode == "detected" {
             if bootstrap {
                 bootstrap_contract
             } else {
@@ -6443,6 +6443,7 @@ fn render_init(
         } else {
             bootstrap_contract
         };
+        apply_starter_contract_defaults(&mut write_contract, &report.root);
         let write_yaml = serde_yaml::to_string(&write_contract)
             .expect("serializing init write contract should not fail");
 
@@ -6633,21 +6634,88 @@ fn render_init(
     }
 }
 
-fn bootstrap_init_contract(
-    report: &DetectReport,
-    bootstrap: bool,
-) -> crate::detector::DetectContract {
-    if !bootstrap {
-        return report.contract.clone();
-    }
-
+fn bootstrap_init_contract(report: &DetectReport) -> crate::detector::DetectContract {
     let mut contract = report.contract.clone();
+    apply_starter_contract_defaults(&mut contract, &report.root);
+    contract
+}
+
+fn apply_starter_contract_defaults(contract: &mut crate::detector::DetectContract, root: &Path) {
     if contract.project.is_none()
-        && let Some(name) = directory_name_for_root(&report.root)
+        && let Some(name) = directory_name_for_root(root)
     {
         contract.project = Some(DetectProject { name });
     }
-    contract
+    if contract.agent.is_none() {
+        contract.agent = starter_agent_from_detected_contract(contract, root);
+    }
+}
+
+fn starter_agent_from_detected_contract(
+    contract: &crate::detector::DetectContract,
+    root: &Path,
+) -> Option<AgentConfig> {
+    let mut safe_tasks = Vec::new();
+    for task_name in ["setup", "test"] {
+        if contract.tasks.contains_key(task_name) {
+            safe_tasks.push(task_name.to_string());
+        }
+    }
+    for (task_name, task) in &contract.tasks {
+        if task.safe_for_agent && !safe_tasks.iter().any(|safe| safe == task_name) {
+            safe_tasks.push(task_name.clone());
+        }
+    }
+    if safe_tasks.is_empty() {
+        return None;
+    }
+
+    let writable_paths = starter_agent_writable_paths(root);
+    let entrypoint = contract.tasks.contains_key("setup").then(|| String::from("setup"));
+    let default_task = if contract.tasks.contains_key("test") {
+        Some(String::from("test"))
+    } else {
+        safe_tasks.first().cloned()
+    };
+    let verify_after_changes = if contract.tasks.contains_key("test") {
+        vec![String::from("test")]
+    } else {
+        Vec::new()
+    };
+
+    let mut notes = String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
+    if let Some(task_name) = default_task
+        .as_deref()
+        .or(entrypoint.as_deref())
+        .or_else(|| safe_tasks.first().map(String::as_str))
+    {
+        notes.push_str(&format!("Use `ota run {task_name}` to verify changes.\n"));
+    }
+
+    Some(AgentConfig {
+        entrypoint,
+        default_task,
+        safe_tasks,
+        verify_after_changes,
+        writable_paths,
+        protected_paths: vec![String::from("ota.yaml")],
+        notes: Some(notes),
+    })
+}
+
+fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
+    let mut writable_paths = Vec::new();
+    for candidate in ["src", "tests", "docs"] {
+        if root.join(candidate).is_dir() {
+            writable_paths.push(candidate.to_string());
+        }
+    }
+
+    if writable_paths.is_empty() {
+        writable_paths.push(String::from("."));
+    }
+
+    writable_paths
 }
 
 fn directory_name_for_root(root: &Path) -> Option<String> {

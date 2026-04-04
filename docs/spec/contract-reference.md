@@ -706,6 +706,11 @@ Current validation rules:
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 
+Starter contracts commonly use a minimal default agent block when the detector has enough
+confidence to write one. That default usually includes `setup` as the entrypoint when present,
+`test` as the verification task when present, `ota.yaml` in `protected_paths`, and a short note
+pointing at the matching `ota run <task>` command.
+
 Agent semantics:
 
 - `entrypoint` is the first task an agent should use to get oriented in the repo
