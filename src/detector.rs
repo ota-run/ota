@@ -68,6 +68,8 @@ pub struct DetectProject {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectTask {
     pub run: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub safe_for_agent: bool,
 }
@@ -89,6 +91,14 @@ pub struct DetectReport {
     pub root: PathBuf,
     pub contract: DetectContract,
     pub inferences: Vec<Inference>,
+}
+
+fn task_notes(task_name: &str) -> Option<String> {
+    if task_name.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!("Run `ota run {task_name}` to execute this task.\n"))
 }
 
 impl DetectReport {
@@ -150,10 +160,12 @@ impl DetectReport {
             {
                 match field_name {
                     "run" => {
+                        let notes = task_notes(task_name);
                         contract.tasks.insert(
                             task_name.to_string(),
                             DetectTask {
                                 run: inference.value.clone(),
+                                notes,
                                 safe_for_agent: false,
                             },
                         );
@@ -3509,10 +3521,12 @@ impl DetectBuilder {
     fn set_task(&mut self, name: String, run: String, source: String, confidence: Confidence) {
         let field = format!("tasks.{name}.run");
         if self.should_replace(&field, &source, confidence) {
+            let notes = task_notes(&name);
             self.contract.tasks.insert(
                 name.clone(),
                 DetectTask {
                     run: run.clone(),
+                    notes,
                     safe_for_agent: false,
                 },
             );
@@ -5816,6 +5830,10 @@ name = "ota-api"
             Some(true)
         );
         assert_eq!(
+            contract.tasks.get("typecheck").and_then(|task| task.notes.as_deref()),
+            Some("Run `ota run typecheck` to execute this task.")
+        );
+        assert_eq!(
             contract.tasks.get("build").map(|task| task.safe_for_agent),
             Some(false)
         );
@@ -5865,6 +5883,10 @@ name = "ota-api"
         assert_eq!(
             contract.tasks.get("dev").map(|task| task.run.as_str()),
             Some("pnpm dev")
+        );
+        assert_eq!(
+            contract.tasks.get("dev").and_then(|task| task.notes.as_deref()),
+            Some("Run `ota run dev` to execute this task.")
         );
         assert!(!contract.runtimes.contains_key("node"));
     }

@@ -803,6 +803,9 @@ counts from checks-only output.
 }
 ```
 
+When task inference is confident enough to write, `config.tasks.<name>.notes` may also be
+present and point at the matching `ota run <task>` command.
+
 Failure example:
 
 ```json
