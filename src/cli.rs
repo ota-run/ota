@@ -5854,6 +5854,59 @@ policies:
     }
 
     #[test]
+    fn doctor_json_includes_policy_backed_provisioning_sources() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let findings = json["findings"].as_array().unwrap();
+        let finding = findings
+            .iter()
+            .find(|finding| finding["summary"] == "Policy-backed provisioning sources are declared")
+            .expect("policy-backed provisioning finding should be present");
+        assert_eq!(
+            finding["summary"],
+            "Policy-backed provisioning sources are declared"
+        );
+        assert_eq!(finding["severity"], "info");
+        assert_eq!(finding["policy_outcome"], "policy_surface_available");
+        assert_eq!(
+            finding["policy_reason"],
+            "policy_backed_provisioning_declared"
+        );
+        assert_eq!(finding["policy_source"], "org");
+        assert_eq!(finding["install_scope"], "repo_local");
+        assert_eq!(finding["mutation_allowed"], false);
+    }
+
+    #[test]
     fn doctor_json_includes_execution_summary() {
         let fixture = ContractFixture::new(
             r#"
