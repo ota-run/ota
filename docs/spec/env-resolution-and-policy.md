@@ -44,6 +44,8 @@ The policy layer described here should extend, not replace, that baseline.
 
 Current implementation recognizes `policies.env` as the approved env source hook for additive
 policy-controlled values.
+Today that contract surface is a flat `NAME: VALUE` map; provenance labels such as `source` are
+documentation and output vocabulary, not YAML fields.
 
 ## Goal
 
@@ -83,6 +85,8 @@ For task execution, the recommended precedence is:
 The policy layer must not silently rewrite repo-declared truth. It may only supply
 approved values, explain why they won, and leave a provenance trail.
 
+Task-scoped `env` overrides repo-level `env` for that task only.
+
 Runtime and tool resolution follow the same inheritance principle:
 
 - repo declarations remain canonical for required versions and tool names
@@ -102,12 +106,9 @@ Examples of requirement fields:
 - `default`
 - `allowed`
 
-Future policy-controlled resolution may add:
-
-- approved source references
-- source provenance
-- injection hints
-- optional fallback rules
+Policy-controlled resolution may add approved source references, injection hints,
+and optional fallback rules, but the shipped contract still uses a flat `policies.env`
+map today.
 
 Workspace-level policy should remain additive. It can describe shared defaults or approved
 sources for member repos, but it should not become a second repo contract.
