@@ -694,6 +694,7 @@ Prepare a repo for use with minimal prior knowledge.
 
 ```bash
 ota up [PATH]
+ota up --provision [PATH]
 ota up --json [PATH]
 ota up --backend container --lifecycle ephemeral [PATH]
 ota up --member api [PATH]
@@ -713,6 +714,8 @@ Current behavior:
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
+- when `--provision` is set, can run `setup` before the normal precondition check so declared
+  repo prerequisites can be prepared explicitly
 - can override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
