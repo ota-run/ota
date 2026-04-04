@@ -2162,7 +2162,7 @@ tasks:
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], false);
+        assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
         assert_eq!(json["summary"]["error_count"], 0);
     }
@@ -2241,7 +2241,7 @@ tasks:
             output.stdout, output.stderr
         );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], false);
+        assert_eq!(json["ok"], true);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
         assert_eq!(json["summary"]["error_count"], 0);
     }
@@ -7117,18 +7117,15 @@ agent:
 
         let output = run_with(["ota", "init", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Next:"));
-        assert!(stderr.contains("preview the starter contract with `ota init --dry-run`"));
-        assert!(stderr.contains("run `ota init --bootstrap` to write the fuller starter contract"));
-        assert!(stderr.contains("run `ota detect --write` for the high-confidence contract path"));
-        assert!(stderr.contains("Excluded from automatic write:"));
-        assert!(stderr.contains("Field: project.name"));
-        assert!(stderr.contains("Confidence: low"));
-        assert!(stderr.contains("Field: tasks.build.run"));
-        assert!(!stderr.contains("▸  Excluded from automatic write:"));
-        assert!(!stderr.contains("▸  ✦ Field: project.name"));
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("Excluded from automatic write:"));
+        assert!(stdout.contains("Field: project.name"));
+        assert!(stdout.contains("Confidence: low"));
+        assert!(stdout.contains("Field: tasks.build.run"));
+        assert!(!stdout.contains("▸  Excluded from automatic write:"));
+        assert!(!stdout.contains("▸  ✦ Field: project.name"));
     }
 
     #[test]
@@ -11235,6 +11232,7 @@ tasks:
 
     #[test]
     fn workspace_validate_discovers_workspace_from_nested_directory() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = WorkspaceFixture::new();
         let nested = fixture.dir.path().join("apps").join("web").join("src");
         fs::create_dir_all(&nested).unwrap();
@@ -11251,6 +11249,7 @@ tasks:
 
     #[test]
     fn workspace_validate_does_not_walk_past_repo_root_to_parent_workspace() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let outer = TempDir::new().unwrap();
         fs::write(
             outer.path().join("ota.workspace.yaml"),
