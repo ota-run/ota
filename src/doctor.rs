@@ -34,7 +34,9 @@ use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
-use crate::policy_pack::{LoadPolicyPackError, ProvisioningPlan, load_org_policy_pack_auto};
+use crate::policy_pack::{
+    LoadPolicyPackError, ProvisioningBackendRequest, ProvisioningPlan, load_org_policy_pack_auto,
+};
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
 };
@@ -78,6 +80,12 @@ struct PolicyFindingContext<'a> {
 struct DriftFindingContext<'a> {
     ownership: &'a str,
     provenance: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProvisioningDiagnostics {
+    pub plan: ProvisioningPlan,
+    pub request: ProvisioningBackendRequest,
 }
 
 impl Finding {
@@ -420,7 +428,7 @@ impl Serialize for Finding {
 pub struct DoctorReport {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provisioning: Option<ProvisioningPlan>,
+    pub provisioning: Option<ProvisioningDiagnostics>,
     pub findings: Vec<Finding>,
 }
 
@@ -855,7 +863,7 @@ fn diagnose_org_policy(
     contract: &Contract,
     contract_path: &Path,
     findings: &mut Vec<Finding>,
-) -> Option<ProvisioningPlan> {
+) -> Option<ProvisioningDiagnostics> {
     let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
         Ok(Some(policy_pack)) => policy_pack,
         Ok(None) => return None,
@@ -871,6 +879,7 @@ fn diagnose_org_policy(
     let missing_files = policy_pack.missing_required_files(contract_root);
     if missing_sections.is_empty() && missing_files.is_empty() {
         let provisioning_plan = policy_pack.provisioning_plan(contract);
+        let provisioning_request = policy_pack.provisioning_backend_request(contract);
 
         if !policy_pack.policies.provisioning.is_empty() {
             let mut sources = Vec::new();
@@ -920,7 +929,10 @@ fn diagnose_org_policy(
             });
         }
 
-        return Some(provisioning_plan);
+        return Some(ProvisioningDiagnostics {
+            plan: provisioning_plan,
+            request: provisioning_request,
+        });
     }
 
     let mut why_parts = Vec::new();

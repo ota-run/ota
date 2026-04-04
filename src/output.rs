@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::runner::policy_env_values;
-use crate::policy_pack::ProvisioningPlan;
+use crate::policy_pack::{ProvisioningBackendRequest, ProvisioningPlan};
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
     TaskVariantView,
@@ -61,6 +61,8 @@ pub struct DoctorSuccess<'a> {
     pub execution: Option<ExecutionSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<&'a ProvisioningPlan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: &'a BTreeMap<String, ExtensionSpec>,
     pub findings: &'a [Finding],

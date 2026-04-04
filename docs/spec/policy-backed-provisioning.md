@@ -92,6 +92,7 @@ The exact field names may change, but the shape should remain:
 - Ota resolves the approved source
 - the approved `allowed` entries form the source-selection interface, and `selected_provisioning_actions` is the backend-agnostic action shape a future installer backend would consume
 - the backend intake should use a serialized `ProvisioningBackendRequest { actions: [...] }` shape so the installer layer consumes only the selected actions, not the full diagnostic plan
+- `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
 - provenance is recorded in doctor, receipts, and execution summaries
 
