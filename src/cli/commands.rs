@@ -1415,6 +1415,7 @@ pub fn doctor(
                             summary: doctor_summary(&report, DoctorVerdict::NotReady),
                             agent: None,
                             execution: None,
+                            provisioning: report.provisioning.as_ref(),
                             extensions: &empty_extensions,
                             findings: &report.findings,
                         }),
@@ -1618,6 +1619,7 @@ pub fn doctor(
                                     ),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
+                                    provisioning: report.provisioning.as_ref(),
                                     extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
@@ -1787,6 +1789,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
 
     DoctorReport {
         ok: false,
+        provisioning: None,
         findings,
     }
 }
@@ -2193,17 +2196,18 @@ pub fn check(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                                stdout: to_json(&DoctorSuccess {
-                                    ok: report.ok,
-                                    path: &path_display,
-                                    summary: doctor_summary(
-                                        &report,
+                            stdout: to_json(&DoctorSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                summary: doctor_summary(
+                                    &report,
                                         crate::workspace::agent_verdict_from_agent(
                                             target.contract.agent.as_ref(),
                                         ),
                                     ),
                                     agent: None,
                                     execution: ExecutionSummary::from_contract(&target.contract),
+                                    provisioning: report.provisioning.as_ref(),
                                     extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
@@ -11873,6 +11877,7 @@ fn execute_repo_up(
                         ),
                         report: DoctorReport {
                             ok: false,
+                            provisioning: None,
                             findings: Vec::new(),
                         },
                         service: None,
@@ -11988,6 +11993,7 @@ fn execute_repo_up(
                         ),
                         report: DoctorReport {
                             ok: false,
+                            provisioning: None,
                             findings: Vec::new(),
                         },
                         service: Some(name.clone()),
@@ -12121,6 +12127,7 @@ fn execute_repo_up(
                     ),
                     report: DoctorReport {
                         ok: false,
+                        provisioning: None,
                         findings: Vec::new(),
                     },
                     service: None,

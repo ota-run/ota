@@ -546,6 +546,8 @@ ota doctor --member api --member web --json [PATH]
 - runs configured checks
 - orders findings by severity
 - includes an `agent` summary when the contract declares one
+- may include a `provisioning` plan when the contract declares runtimes or tools and policy
+  provides approved provisioning sources
 - prints the reason and next action for each finding
 
 Text output:

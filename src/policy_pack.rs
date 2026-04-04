@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadPolicyPackError {
@@ -101,7 +101,8 @@ pub struct PolicyProvisioningRule {
     pub approved_versions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProvisioningTargetKind {
     Runtime,
     Tool,
@@ -116,13 +117,35 @@ impl ProvisioningTargetKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl std::fmt::Display for ProvisioningTargetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningDecision {
     pub kind: ProvisioningTargetKind,
     pub name: String,
     pub requested_version: String,
     pub source: String,
     pub approved_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProvisioningPlanEntry {
+    pub kind: ProvisioningTargetKind,
+    pub name: String,
+    pub requested_version: String,
+    pub source: Option<String>,
+    pub approved_version: Option<String>,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct ProvisioningPlan {
+    pub allowed: Vec<ProvisioningPlanEntry>,
+    pub blocked: Vec<ProvisioningPlanEntry>,
 }
 
 impl OrgPolicyPack {
@@ -199,6 +222,69 @@ impl OrgPolicyPack {
                 .find(|version| version.as_str() == requested_version)
                 .cloned(),
         }))
+    }
+
+    pub fn provisioning_plan(&self, contract: &crate::schema::Contract) -> ProvisioningPlan {
+        let mut plan = ProvisioningPlan::default();
+
+        for (name, requirement) in &contract.runtimes {
+            Self::push_plan_entry(
+                &mut plan,
+                ProvisioningTargetKind::Runtime,
+                name,
+                requirement.version(),
+                self.resolve_provisioning(ProvisioningTargetKind::Runtime, name, requirement.version()),
+            );
+        }
+
+        for (name, requirement) in &contract.tools {
+            Self::push_plan_entry(
+                &mut plan,
+                ProvisioningTargetKind::Tool,
+                name,
+                requirement.version(),
+                self.resolve_provisioning(ProvisioningTargetKind::Tool, name, requirement.version()),
+            );
+        }
+
+        plan
+    }
+
+    fn push_plan_entry(
+        plan: &mut ProvisioningPlan,
+        kind: ProvisioningTargetKind,
+        name: &str,
+        requested_version: &str,
+        resolution: Result<Option<ProvisioningDecision>, String>,
+    ) {
+        match resolution {
+            Ok(Some(decision)) => plan.allowed.push(ProvisioningPlanEntry {
+                kind,
+                name: name.to_string(),
+                requested_version: requested_version.to_string(),
+                source: Some(decision.source),
+                approved_version: decision.approved_version,
+                blocked_reason: None,
+            }),
+            Ok(None) => plan.blocked.push(ProvisioningPlanEntry {
+                kind,
+                name: name.to_string(),
+                requested_version: requested_version.to_string(),
+                source: None,
+                approved_version: None,
+                blocked_reason: Some(format!(
+                    "no approved provisioning source declared for {kind} `{name}`"
+                )),
+            }),
+            Err(message) => plan.blocked.push(ProvisioningPlanEntry {
+                kind,
+                name: name.to_string(),
+                requested_version: requested_version.to_string(),
+                source: None,
+                approved_version: None,
+                blocked_reason: Some(message),
+            }),
+        }
     }
 }
 
@@ -382,6 +468,29 @@ policies:
     }
 
     #[test]
+    fn resolves_approved_policy_provisioning_tool_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    maven:
+      source: approved-manager
+      approved_versions:
+        - "3.9"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Tool, "maven", "3.9")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "approved-manager");
+        assert_eq!(decision.approved_version.as_deref(), Some("3.9"));
+    }
+
+    #[test]
     fn rejects_unapproved_policy_provisioning_version() {
         let policy: OrgPolicyPack = serde_yaml::from_str(
             r#"
@@ -400,5 +509,43 @@ policies:
             .unwrap_err();
 
         assert!(error.contains("is not approved by policy"));
+    }
+
+    #[test]
+    fn builds_provisioning_plan_for_contract_targets() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "22"
+  python: "3.12"
+tools:
+  maven: "3.9"
+"#,
+        )
+        .unwrap();
+
+        let plan = policy.provisioning_plan(&contract);
+        assert_eq!(plan.allowed.len(), 1);
+        assert_eq!(plan.blocked.len(), 2);
+        assert_eq!(plan.allowed[0].name, "java");
+        assert_eq!(plan.allowed[0].source.as_deref(), Some("org-mirror"));
+        assert_eq!(plan.blocked[0].name, "python");
+        assert!(plan.blocked[0].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
+        assert_eq!(plan.blocked[1].name, "maven");
+        assert!(plan.blocked[1].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
     }
 }

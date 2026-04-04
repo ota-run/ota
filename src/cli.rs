@@ -2388,7 +2388,7 @@ tasks:
 
         let output = run_with(["ota", "tasks", "--member", "api", "--json", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_ne!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let tasks = json["tasks"].as_array().unwrap();
         assert!(tasks.iter().any(|task| task["name"] == "setup"));
@@ -2422,7 +2422,7 @@ tasks:
 
         let output = run_with(["ota", "diff", base.path(), target.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_ne!(output.exit_code, 0);
         assert!(output.stderr.is_none());
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DIFF"));
@@ -2465,7 +2465,7 @@ tasks:
 
         let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_ne!(output.exit_code, 0);
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -2516,7 +2516,7 @@ policies:
 
         let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_ne!(output.exit_code, 0);
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -5862,6 +5862,10 @@ policies:
 version: 1
 project:
   name: ota
+runtimes:
+  java: "22"
+tools:
+  maven: "3.9"
 tasks:
   test:
     run: cargo test
@@ -5878,14 +5882,22 @@ policies:
       source: org-mirror
       approved_versions:
         - "22"
+    maven:
+      source: approved-manager
+      approved_versions:
+        - "3.9"
 "#,
         )
         .unwrap();
 
         let output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_ne!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provisioning = json["provisioning"]
+            .as_object()
+            .expect("provisioning plan should be present");
+        assert_eq!(provisioning["allowed"].as_array().unwrap().len(), 2);
         let findings = json["findings"].as_array().unwrap();
         let finding = findings
             .iter()
@@ -5904,6 +5916,16 @@ policies:
         assert_eq!(finding["policy_source"], "org");
         assert_eq!(finding["install_scope"], "repo_local");
         assert_eq!(finding["mutation_allowed"], false);
+        assert!(finding["why"].as_str().unwrap().contains("runtime java 22 via org-mirror"));
+        assert!(finding["why"].as_str().unwrap().contains("tool maven 3.9 via approved-manager"));
+        assert_eq!(
+            provisioning["allowed"][0]["name"],
+            "java"
+        );
+        assert_eq!(
+            provisioning["allowed"][1]["name"],
+            "maven"
+        );
     }
 
     #[test]

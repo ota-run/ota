@@ -34,7 +34,7 @@ use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
-use crate::policy_pack::{LoadPolicyPackError, ProvisioningTargetKind, load_org_policy_pack_auto};
+use crate::policy_pack::{LoadPolicyPackError, ProvisioningPlan, load_org_policy_pack_auto};
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
 };
@@ -419,6 +419,8 @@ impl Serialize for Finding {
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct DoctorReport {
     pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisioning: Option<ProvisioningPlan>,
     pub findings: Vec<Finding>,
 }
 
@@ -452,6 +454,7 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
         ok: !findings
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
+        provisioning: None,
         findings,
     }
 }
@@ -470,6 +473,7 @@ fn diagnose_contract_with_scope(
     scope: DoctorScope,
 ) -> DoctorReport {
     let mut findings = Vec::new();
+    let mut provisioning = None;
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
@@ -477,7 +481,7 @@ fn diagnose_contract_with_scope(
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
-        diagnose_org_policy(contract, contract_path, &mut findings);
+        provisioning = diagnose_org_policy(contract, contract_path, &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
@@ -495,6 +499,7 @@ fn diagnose_contract_with_scope(
         ok: !findings
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
+        provisioning,
         findings,
     }
 }
@@ -846,13 +851,17 @@ fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
     }
 }
 
-fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut Vec<Finding>) {
+fn diagnose_org_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    findings: &mut Vec<Finding>,
+) -> Option<ProvisioningPlan> {
     let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
         Ok(Some(policy_pack)) => policy_pack,
-        Ok(None) => return,
+        Ok(None) => return None,
         Err(err) => {
             findings.push(policy_error_finding(err));
-            return;
+            return None;
         }
     };
 
@@ -861,6 +870,8 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
     if missing_sections.is_empty() && missing_files.is_empty() {
+        let provisioning_plan = policy_pack.provisioning_plan(contract);
+
         if !policy_pack.policies.provisioning.is_empty() {
             let mut sources = Vec::new();
             for (name, rule) in &policy_pack.policies.provisioning {
@@ -872,33 +883,19 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
                 sources.push(format!("{name} via {} ({versions})", rule.source));
             }
 
-            let mut matched_targets = Vec::new();
-            for (name, requirement) in &contract.runtimes {
-                if let Ok(Some(decision)) = policy_pack.resolve_provisioning(
-                    ProvisioningTargetKind::Runtime,
-                    name,
-                    requirement.version(),
-                ) {
-                    matched_targets.push(format!(
-                        "runtime {name} {} via {}",
-                        requirement.version(),
-                        decision.source
-                    ));
-                }
-            }
-            for (name, requirement) in &contract.tools {
-                if let Ok(Some(decision)) = policy_pack.resolve_provisioning(
-                    ProvisioningTargetKind::Tool,
-                    name,
-                    requirement.version(),
-                ) {
-                    matched_targets.push(format!(
-                        "tool {name} {} via {}",
-                        requirement.version(),
-                        decision.source
-                    ));
-                }
-            }
+            let matched_targets: Vec<String> = provisioning_plan
+                .allowed
+                .iter()
+                .map(|entry| {
+                    format!(
+                        "{} {} {} via {}",
+                        entry.kind,
+                        entry.name,
+                        entry.requested_version,
+                        entry.source.as_deref().unwrap_or("unknown")
+                    )
+                })
+                .collect();
 
             findings.push(Finding {
                 severity: FindingSeverity::Info,
@@ -923,7 +920,7 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
             });
         }
 
-        return;
+        return Some(provisioning_plan);
     }
 
     let mut why_parts = Vec::new();
@@ -950,6 +947,8 @@ fn diagnose_org_policy(contract: &Contract, contract_path: &Path, findings: &mut
             compact_display_path(&policy_path)
         ),
     });
+
+    None
 }
 
 fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
