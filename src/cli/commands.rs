@@ -2934,7 +2934,6 @@ pub fn up(
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
     members: &[String],
-    provision: bool,
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
@@ -2986,7 +2985,6 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
-                        provision,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -3047,7 +3045,6 @@ pub fn up(
                                 &member_target.contract_path,
                                 overrides,
                                 None,
-                                provision,
                                 RepoExecutionMode::Stream,
                             ) {
                                 Ok(result) => result,
@@ -3106,7 +3103,6 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
-                        provision,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => render_up_result(
@@ -3168,7 +3164,6 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
-                        provision,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -11814,15 +11809,14 @@ fn execute_repo_up(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
-    provision: bool,
     mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
     let mut stdout = String::new();
     let mut stderr = String::new();
-    let mut preflight = diagnose_preconditions(contract, resolved_path);
     let mut provisioned_setup = false;
+    let preflight = diagnose_preconditions(contract, resolved_path);
     if !preflight.ok {
-        if provision && contract.tasks.contains_key("setup") {
+        if contract.tasks.contains_key("setup") {
             let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
             let run_result = match mode {
                 RepoExecutionMode::Stream => {
@@ -11863,14 +11857,14 @@ fn execute_repo_up(
                     stderr.push_str(&outcome.stderr);
                     return Ok(RepoUpResult {
                         ok: false,
-                        status: "PROVISION FAILED",
-                        phase: "provisioning",
+                        status: "SETUP FAILED",
+                        phase: "setup",
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
                             overrides,
-                            "PROVISION FAILED",
-                            "provisioning",
+                            "SETUP FAILED",
+                            "setup",
                             None,
                             Some("setup"),
                             &[],
@@ -11891,7 +11885,6 @@ fn execute_repo_up(
                     });
                 }
                 Ok(outcome) => {
-                    provisioned_setup = true;
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
                     let refreshed = diagnose_preconditions(contract, resolved_path);
@@ -11925,7 +11918,7 @@ fn execute_repo_up(
                             stderr,
                         });
                     }
-                    preflight = refreshed;
+                    provisioned_setup = true;
                 }
                 Err(error) => return Err(render_run_error(error)),
             }
@@ -12147,29 +12140,17 @@ fn execute_repo_up(
         }
     }
 
-    let report = if preflight.ok {
-        diagnose_contract(contract, resolved_path)
-    } else {
-        preflight
-    };
+    let report = diagnose_contract(contract, resolved_path);
     Ok(RepoUpResult {
         ok: report.ok,
         status: if report.ok { "READY" } else { "NOT READY" },
-        phase: if provisioned_setup {
-            "post-provision diagnosis"
-        } else {
-            "post-setup diagnosis"
-        },
+        phase: "post-setup diagnosis",
         receipt: repo_execution_receipt(
             resolved_path,
             contract,
             overrides,
             if report.ok { "READY" } else { "NOT READY" },
-            if provisioned_setup {
-                "post-provision diagnosis"
-            } else {
-                "post-setup diagnosis"
-            },
+            "post-setup diagnosis",
             None,
             None,
             &report.findings,
@@ -13170,7 +13151,6 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 &target.contract_path,
                 ExecutionOverrides::default(),
                 Some(&repo.policy_env),
-                false,
                 mode,
             ) {
                 Ok(result) => WorkspaceRepoUpReport {

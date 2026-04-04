@@ -50,11 +50,12 @@ Current behavior:
 
 1. validate the contract
 2. run blocking preconditions
-3. start required services, and required-service dependencies, in declared dependency order
-4. verify required service healthchecks as readiness gates
-5. stop in the `services` phase if required services still are not ready
-6. run `setup` if present
-7. re-run readiness diagnosis
+3. if preconditions fail and `setup` exists, run `setup` early and re-check readiness
+4. start required services, and required-service dependencies, in declared dependency order
+5. verify required service healthchecks as readiness gates
+6. stop in the `services` phase if required services still are not ready
+7. run `setup` if present
+8. re-run readiness diagnosis
 
 Important boundaries:
 
