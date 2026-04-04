@@ -898,10 +898,7 @@ fn diagnose_org_policy(
                 .map(|entry| {
                     format!(
                         "{} {} {} via {}",
-                        entry.target_kind,
-                        entry.name,
-                        entry.requested_version,
-                        entry.source
+                        entry.target_kind, entry.name, entry.requested_version, entry.source
                     )
                 })
                 .collect();

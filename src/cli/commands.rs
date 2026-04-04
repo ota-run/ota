@@ -2216,11 +2216,11 @@ pub fn check(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                            stdout: to_json(&DoctorSuccess {
-                                ok: report.ok,
-                                path: &path_display,
-                                summary: doctor_summary(
-                                    &report,
+                                stdout: to_json(&DoctorSuccess {
+                                    ok: report.ok,
+                                    path: &path_display,
+                                    summary: doctor_summary(
+                                        &report,
                                         crate::workspace::agent_verdict_from_agent(
                                             target.contract.agent.as_ref(),
                                         ),
@@ -6679,7 +6679,10 @@ fn starter_agent_from_detected_contract(
     }
 
     let writable_paths = starter_agent_writable_paths(root);
-    let entrypoint = contract.tasks.contains_key("setup").then(|| String::from("setup"));
+    let entrypoint = contract
+        .tasks
+        .contains_key("setup")
+        .then(|| String::from("setup"));
     let default_task = if contract.tasks.contains_key("test") {
         Some(String::from("test"))
     } else {
@@ -6691,7 +6694,8 @@ fn starter_agent_from_detected_contract(
         Vec::new()
     };
 
-    let mut notes = String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
+    let mut notes =
+        String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
     if let Some(task_name) = default_task
         .as_deref()
         .or(entrypoint.as_deref())

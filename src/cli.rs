@@ -5902,10 +5902,7 @@ policies:
             .as_object()
             .expect("provisioning request should be present");
         assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            provisioning_request["actions"][0]["kind"],
-            "select_source"
-        );
+        assert_eq!(provisioning_request["actions"][0]["kind"], "select_source");
         let findings = json["findings"].as_array().unwrap();
         let finding = findings
             .iter()
@@ -5924,16 +5921,20 @@ policies:
         assert_eq!(finding["policy_source"], "org");
         assert_eq!(finding["install_scope"], "repo_local");
         assert_eq!(finding["mutation_allowed"], false);
-        assert!(finding["why"].as_str().unwrap().contains("runtime java 22 via org-mirror"));
-        assert!(finding["why"].as_str().unwrap().contains("tool maven 3.9 via approved-manager"));
-        assert_eq!(
-            provisioning["allowed"][0]["name"],
-            "java"
+        assert!(
+            finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("runtime java 22 via org-mirror")
         );
-        assert_eq!(
-            provisioning["allowed"][1]["name"],
-            "maven"
+        assert!(
+            finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("tool maven 3.9 via approved-manager")
         );
+        assert_eq!(provisioning["allowed"][0]["name"], "java");
+        assert_eq!(provisioning["allowed"][1]["name"], "maven");
         assert_eq!(provisioning["actions"].as_array().unwrap().len(), 2);
         assert_eq!(provisioning["actions"][0]["kind"], "select_source");
         assert_eq!(provisioning["actions"][0]["target_kind"], "runtime");

@@ -5832,7 +5832,10 @@ name = "ota-api"
             Some(true)
         );
         assert_eq!(
-            contract.tasks.get("typecheck").and_then(|task| task.notes.as_deref()),
+            contract
+                .tasks
+                .get("typecheck")
+                .and_then(|task| task.notes.as_deref()),
             Some("Run `ota run typecheck` to execute this task.\n")
         );
         assert_eq!(
@@ -5887,7 +5890,10 @@ name = "ota-api"
             Some("pnpm dev")
         );
         assert_eq!(
-            contract.tasks.get("dev").and_then(|task| task.notes.as_deref()),
+            contract
+                .tasks
+                .get("dev")
+                .and_then(|task| task.notes.as_deref()),
             Some("Run `ota run dev` to execute this task.\n")
         );
         assert!(!contract.runtimes.contains_key("node"));
