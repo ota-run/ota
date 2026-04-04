@@ -40,12 +40,16 @@ pub enum LoadPolicyPackError {
         #[source]
         source: serde_yaml::Error,
     },
+    #[error("failed to validate policy pack `{path}`: {message}")]
+    Validate { path: String, message: String },
 }
 
 impl LoadPolicyPackError {
     pub fn path(&self) -> &str {
         match self {
-            Self::Read { path, .. } | Self::Parse { path, .. } => path,
+            Self::Read { path, .. } | Self::Parse { path, .. } | Self::Validate { path, .. } => {
+                path
+            }
         }
     }
 }
@@ -115,6 +119,24 @@ impl OrgPolicyPack {
             .cloned()
             .collect()
     }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, rule) in &self.policies.provisioning {
+            if rule.source.trim().is_empty() {
+                return Err(format!(
+                    "policy-backed provisioning source `{name}` must not be empty"
+                ));
+            }
+
+            if rule.approved_versions.iter().any(|version| version.trim().is_empty()) {
+                return Err(format!(
+                    "policy-backed provisioning source `{name}` must not contain empty approved versions"
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub fn load_org_policy_pack_auto(
@@ -130,9 +152,14 @@ pub fn load_org_policy_pack_auto(
             source,
         })?;
 
-    let pack = serde_yaml::from_str(&contents).map_err(|source| LoadPolicyPackError::Parse {
+    let pack: OrgPolicyPack =
+        serde_yaml::from_str(&contents).map_err(|source| LoadPolicyPackError::Parse {
+            path: policy_path.display().to_string(),
+            source,
+        })?;
+    pack.validate().map_err(|message| LoadPolicyPackError::Validate {
         path: policy_path.display().to_string(),
-        source,
+        message,
     })?;
 
     Ok(Some((pack, policy_path)))
@@ -250,5 +277,21 @@ policies:
             policy.policies.provisioning["maven"].approved_versions,
             vec![String::from("3.9")]
         );
+    }
+
+    #[test]
+    fn rejects_empty_policy_provisioning_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: " "
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("must not be empty"));
     }
 }
