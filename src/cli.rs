@@ -7073,6 +7073,8 @@ agent:
         assert!(written.contains("entrypoint: setup"));
         assert!(written.contains("default_task: test"));
         assert!(written.contains("safe_tasks:"));
+        assert!(written.contains("verify_after_changes:"));
+        assert!(written.contains("- test"));
         assert!(written.contains("protected_paths:"));
         assert!(written.contains("- ota.yaml"));
         assert!(written.contains("notes: |"));
