@@ -137,6 +137,8 @@ tasks:
     notes: |
       Use this to verify the repo against the release gate checks that run in GitHub Actions.
     category: test
+    env:
+      RUST_MIN_STACK: 33554432
     script: |
       cargo test --test real_repo_fixtures
       cargo test --test examples_validate
