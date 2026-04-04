@@ -25,8 +25,8 @@ use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::{Finding, FindingSeverity};
-use crate::runner::policy_env_values;
 use crate::policy_pack::{ProvisioningBackendRequest, ProvisioningPlan};
+use crate::runner::policy_env_values;
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
     TaskVariantView,

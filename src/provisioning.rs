@@ -124,9 +124,7 @@ impl MiseProvisioningBackend {
 impl AsdfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                action.name.clone()
-            }
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
 }
@@ -152,9 +150,7 @@ impl UvProvisioningBackend {
 impl WingetProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                action.name.clone()
-            }
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
 }
@@ -162,9 +158,7 @@ impl WingetProvisioningBackend {
 impl ChocoProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                action.name.clone()
-            }
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
 }
@@ -304,10 +298,7 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
 
             if !output.status.success() {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!(
-                        "asdf install {install_target} {}",
-                        action.requested_version
-                    ),
+                    command: format!("asdf install {install_target} {}", action.requested_version),
                     exit_code: output.status.code().unwrap_or(1),
                     stdout,
                     stderr,
@@ -476,7 +467,10 @@ impl ProvisioningBackend for WingetProvisioningBackend {
 
             if !output.status.success() {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("winget install --id {install_target} --version {}", action.requested_version),
+                    command: format!(
+                        "winget install --id {install_target} --version {}",
+                        action.requested_version
+                    ),
                     exit_code: output.status.code().unwrap_or(1),
                     stdout,
                     stderr,
@@ -529,7 +523,10 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
 
             if !output.status.success() {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("choco install {install_target} --version {}", action.requested_version),
+                    command: format!(
+                        "choco install {install_target} --version {}",
+                        action.requested_version
+                    ),
                     exit_code: output.status.code().unwrap_or(1),
                     stdout,
                     stderr,
@@ -1303,5 +1300,4 @@ mod tests {
             env::set_var("PATH", original_path);
         }
     }
-
 }

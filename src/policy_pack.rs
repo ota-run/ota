@@ -199,7 +199,11 @@ impl OrgPolicyPack {
                 ));
             }
 
-            if rule.approved_versions.iter().any(|version| version.trim().is_empty()) {
+            if rule
+                .approved_versions
+                .iter()
+                .any(|version| version.trim().is_empty())
+            {
                 return Err(format!(
                     "policy-backed provisioning source `{name}` must not contain empty approved versions"
                 ));
@@ -226,7 +230,10 @@ impl OrgPolicyPack {
         }
 
         if !rule.approved_versions.is_empty()
-            && !rule.approved_versions.iter().any(|version| version == requested_version)
+            && !rule
+                .approved_versions
+                .iter()
+                .any(|version| version == requested_version)
         {
             return Err(format!(
                 "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
@@ -257,7 +264,11 @@ impl OrgPolicyPack {
                 ProvisioningTargetKind::Runtime,
                 name,
                 requirement.version(),
-                self.resolve_provisioning(ProvisioningTargetKind::Runtime, name, requirement.version()),
+                self.resolve_provisioning(
+                    ProvisioningTargetKind::Runtime,
+                    name,
+                    requirement.version(),
+                ),
             );
         }
 
@@ -267,7 +278,11 @@ impl OrgPolicyPack {
                 ProvisioningTargetKind::Tool,
                 name,
                 requirement.version(),
-                self.resolve_provisioning(ProvisioningTargetKind::Tool, name, requirement.version()),
+                self.resolve_provisioning(
+                    ProvisioningTargetKind::Tool,
+                    name,
+                    requirement.version(),
+                ),
             );
         }
 
@@ -377,10 +392,11 @@ pub fn load_org_policy_pack_auto(
             path: policy_path.display().to_string(),
             source,
         })?;
-    pack.validate().map_err(|message| LoadPolicyPackError::Validate {
-        path: policy_path.display().to_string(),
-        message,
-    })?;
+    pack.validate()
+        .map_err(|message| LoadPolicyPackError::Validate {
+            path: policy_path.display().to_string(),
+            message,
+        })?;
 
     Ok(Some((pack, policy_path)))
 }
@@ -425,7 +441,9 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{OrgPolicyPack, ProvisioningActionKind, ProvisioningTargetKind, load_org_policy_pack_auto};
+    use super::{
+        OrgPolicyPack, ProvisioningActionKind, ProvisioningTargetKind, load_org_policy_pack_auto,
+    };
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
@@ -615,9 +633,21 @@ tools:
         assert_eq!(plan.allowed[0].name, "java");
         assert_eq!(plan.allowed[0].source.as_deref(), Some("org-mirror"));
         assert_eq!(plan.blocked[0].name, "python");
-        assert!(plan.blocked[0].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
+        assert!(
+            plan.blocked[0]
+                .blocked_reason
+                .as_ref()
+                .unwrap()
+                .contains("no approved provisioning source")
+        );
         assert_eq!(plan.blocked[1].name, "maven");
-        assert!(plan.blocked[1].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
+        assert!(
+            plan.blocked[1]
+                .blocked_reason
+                .as_ref()
+                .unwrap()
+                .contains("no approved provisioning source")
+        );
     }
 
     #[test]
@@ -710,8 +740,14 @@ runtimes:
 
         let request = policy.provisioning_backend_request(&contract);
         assert_eq!(request.actions.len(), 1);
-        assert_eq!(request.actions[0].kind, ProvisioningActionKind::SelectSource);
-        assert_eq!(request.actions[0].target_kind, ProvisioningTargetKind::Runtime);
+        assert_eq!(
+            request.actions[0].kind,
+            ProvisioningActionKind::SelectSource
+        );
+        assert_eq!(
+            request.actions[0].target_kind,
+            ProvisioningTargetKind::Runtime
+        );
         assert_eq!(request.actions[0].name, "java");
         assert_eq!(request.actions[0].source, "org-mirror");
     }
