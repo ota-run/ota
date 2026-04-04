@@ -64,11 +64,27 @@ pub trait ProvisioningBackend {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiseProvisioningBackend;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AsdfProvisioningBackend;
+
+static MISE_BACKEND: MiseProvisioningBackend = MiseProvisioningBackend;
+static ASDF_BACKEND: AsdfProvisioningBackend = AsdfProvisioningBackend;
+
 impl MiseProvisioningBackend {
-    fn install_command(action: &ProvisioningAction) -> String {
+    fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
                 format!("{}@{}", action.name, action.requested_version)
+            }
+        }
+    }
+}
+
+impl AsdfProvisioningBackend {
+    fn install_target(action: &ProvisioningAction) -> String {
+        match action.target_kind {
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.name.clone()
             }
         }
     }
@@ -98,7 +114,7 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
-            let install_target = Self::install_command(action);
+            let install_target = Self::install_target(action);
             let output = Command::new("mise")
                 .arg("install")
                 .arg(&install_target)
@@ -123,11 +139,89 @@ impl ProvisioningBackend for MiseProvisioningBackend {
     }
 }
 
+impl ProvisioningBackend for AsdfProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "asdf"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let install_target = Self::install_target(action);
+            let output = Command::new("asdf")
+                .arg("install")
+                .arg(&install_target)
+                .arg(&action.requested_version)
+                .current_dir(working_dir)
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "asdf" })?;
+
+            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
+            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+
+            if !output.status.success() {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!(
+                        "asdf install {install_target} {}",
+                        action.requested_version
+                    ),
+                    exit_code: output.status.code().unwrap_or(1),
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> {
+    match source {
+        "mise" => Some(&MISE_BACKEND),
+        "asdf" => Some(&ASDF_BACKEND),
+        _ => None,
+    }
+}
+
 pub fn apply_provisioning_request(
     request: &ProvisioningBackendRequest,
     working_dir: &Path,
 ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
-    MiseProvisioningBackend.apply(request, working_dir)
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    for action in &request.actions {
+        let backend = backend_for_source(&action.source).ok_or_else(|| {
+            ProvisioningBackendError::UnsupportedSource {
+                provisioning_source: action.source.clone(),
+            }
+        })?;
+        let single_action_request = ProvisioningBackendRequest {
+            actions: vec![action.clone()],
+        };
+        let result = backend.apply(&single_action_request, working_dir)?;
+        stdout.push_str(&result.stdout);
+        stderr.push_str(&result.stderr);
+    }
+
+    Ok(ProvisioningBackendOutput { stdout, stderr })
 }
 
 #[cfg(test)]
@@ -138,12 +232,8 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    #[test]
-    fn applies_provisioning_request_with_mise_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        let shim_dir = TempDir::new().unwrap();
-        let shim = shim_dir.path().join("mise");
-        let log = shim_dir.path().join("mise.log");
+    fn make_shim(dir: &Path, name: &str, log: &Path) {
+        let shim = dir.join(name);
         let script = format!(
             "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nexit 0\n",
             log.display()
@@ -156,6 +246,14 @@ mod tests {
             perms.set_mode(0o755);
         }
         fs::set_permissions(&shim, perms).unwrap();
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_mise_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("mise.log");
+        make_shim(shim_dir.path(), "mise", &log);
 
         let original_path = env::var("PATH").unwrap_or_default();
         let mut new_path = shim_dir.path().display().to_string();
@@ -184,6 +282,47 @@ mod tests {
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("java@22"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_asdf_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("asdf.log");
+        make_shim(shim_dir.path(), "asdf", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Runtime,
+                name: "java".to_string(),
+                requested_version: "22".to_string(),
+                source: "asdf".to_string(),
+                approved_version: Some("22".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("java"));
+        assert!(log_contents.contains("22"));
 
         unsafe {
             env::set_var("PATH", original_path);
