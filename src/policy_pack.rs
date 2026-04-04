@@ -250,6 +250,25 @@ impl OrgPolicyPack {
         plan
     }
 
+    pub fn selected_provisioning_sources(
+        &self,
+        contract: &crate::schema::Contract,
+    ) -> Vec<ProvisioningDecision> {
+        self.provisioning_plan(contract)
+            .allowed
+            .into_iter()
+            .filter_map(|entry| {
+                entry.source.map(|source| ProvisioningDecision {
+                    kind: entry.kind,
+                    name: entry.name,
+                    requested_version: entry.requested_version,
+                    source,
+                    approved_version: entry.approved_version,
+                })
+            })
+            .collect()
+    }
+
     fn push_plan_entry(
         plan: &mut ProvisioningPlan,
         kind: ProvisioningTargetKind,
@@ -547,5 +566,37 @@ tools:
         assert!(plan.blocked[0].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
         assert_eq!(plan.blocked[1].name, "maven");
         assert!(plan.blocked[1].blocked_reason.as_ref().unwrap().contains("no approved provisioning source"));
+    }
+
+    #[test]
+    fn selects_provisioning_sources_for_allowed_targets() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "22"
+tools:
+  maven: "3.9"
+"#,
+        )
+        .unwrap();
+
+        let selections = policy.selected_provisioning_sources(&contract);
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].name, "java");
+        assert_eq!(selections[0].source, "org-mirror");
     }
 }

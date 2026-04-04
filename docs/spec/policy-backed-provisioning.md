@@ -90,6 +90,7 @@ The exact field names may change, but the shape should remain:
 - repo declares what it needs
 - policy declares where it may come from
 - Ota resolves the approved source
+- the approved `allowed` entries form the source-selection interface a future installer backend would consume
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow

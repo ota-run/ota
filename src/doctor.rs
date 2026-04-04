@@ -883,16 +883,16 @@ fn diagnose_org_policy(
                 sources.push(format!("{name} via {} ({versions})", rule.source));
             }
 
-            let matched_targets: Vec<String> = provisioning_plan
-                .allowed
-                .iter()
+            let matched_targets: Vec<String> = policy_pack
+                .selected_provisioning_sources(contract)
+                .into_iter()
                 .map(|entry| {
                     format!(
                         "{} {} {} via {}",
                         entry.kind,
                         entry.name,
                         entry.requested_version,
-                        entry.source.as_deref().unwrap_or("unknown")
+                        entry.source.as_str()
                     )
                 })
                 .collect();
