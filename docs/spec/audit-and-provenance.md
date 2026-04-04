@@ -59,6 +59,10 @@ The intended provenance categories are:
 - detector-inferred
 - user-mutated
 
+Policy-backed provisioning should use the same provenance idea once source-selection lands:
+the repo declares what it needs, policy declares where it may come from, and the receipt records
+which approved source won.
+
 ## Signed config direction
 
 Signed config is an optional trust mechanism for environments that need stronger integrity guarantees.
