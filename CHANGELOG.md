@@ -28,6 +28,13 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.0.2
+
+- clarified policy pack discovery so shared org rules live in `.ota/org-policy.yaml` and workspace trees can inherit them deterministically.
+- documented policy-backed provisioning, adapter coverage, and the public provisioning-policy example so the current behavior is easier to adopt.
+- improved starter contract generation with task notes, safer agent defaults, and a protected `ota.yaml` by default.
+- fixed `ota diff` exit semantics so changed contracts return a nonzero code and JSON `ok` matches the semantic result.
+
 ## 1.0.1
 
 - fixed the Windows release-gate stack so the real repository fixture suite completes on windows-latest.

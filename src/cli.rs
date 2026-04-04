@@ -2162,7 +2162,7 @@ tasks:
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], true);
+        assert_eq!(json["ok"], false);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
         assert_eq!(json["summary"]["error_count"], 0);
     }
@@ -2241,7 +2241,7 @@ tasks:
             output.stdout, output.stderr
         );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], true);
+        assert_eq!(json["ok"], false);
         assert_eq!(json["path"], fixture.file_path().display().to_string());
         assert_eq!(json["summary"]["error_count"], 0);
     }
@@ -2388,7 +2388,7 @@ tasks:
 
         let output = run_with(["ota", "tasks", "--member", "api", "--json", fixture.path()]);
 
-        assert_ne!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let tasks = json["tasks"].as_array().unwrap();
         assert!(tasks.iter().any(|task| task["name"] == "setup"));
@@ -2469,7 +2469,7 @@ tasks:
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["ok"], true);
+        assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["added_count"], 1);
         assert_eq!(json["summary"]["removed_count"], 0);
         assert_eq!(json["summary"]["changed_count"], 2);

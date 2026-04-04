@@ -34,6 +34,12 @@ For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapte
 This is not the current shipped `env` resolver. The shipped contract still treats `policies.env`
 as a flat approved-value map. This spec describes the later layer that can decide where an
 approved runtime or tool comes from when a repo asks for one.
+Org policy packs are currently discovered from `.ota/org-policy.yaml` by walking ancestor
+directories from the repo contract path; one ancestor policy file can therefore cover a workspace
+tree.
+See [`policy-packs.md`](policy-packs.md) for the current file-based behavior and the future
+policy-source precedence model.
+The future remote policy source is intended as an enterprise feature, not a repo-local default.
 
 ## Goal
 

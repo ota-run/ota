@@ -49,6 +49,39 @@ The canonical policy pack lives at:
 .ota/org-policy.yaml
 ```
 
+## Policy path and discovery
+
+Today, Ota looks for the org policy pack by walking up from the repo contract path and checking
+for `.ota/org-policy.yaml` in each ancestor directory.
+
+That means:
+
+- a single policy pack can apply to multiple repos inside one workspace tree
+- a repo can inherit an org policy from a parent directory
+- the canonical policy pack lives at `.ota/org-policy.yaml`, so shared org rules have one deterministic place to live today
+- `OTA_POLICY`, a single remote policy source, and arbitrary policy file names are future work
+
+If there is no ancestor policy file, Ota simply keeps running with repo-local contract behavior.
+
+## Future policy-source model
+
+The current implementation is file-based only. A later policy-source model could support:
+
+- a local file path
+- an environment override such as `OTA_POLICY`
+- a workspace-root policy file that applies to multiple repos
+- one remote URL or hosted policy source, intended as an enterprise feature
+
+The intended precedence for that future model should be:
+
+1. explicit environment override
+2. nearest ancestor `.ota/org-policy.yaml`
+3. workspace-root policy file, if the workspace declares one
+4. one explicitly configured remote policy source, if present
+
+That order keeps the most explicit source first and leaves the current file-based behavior intact
+until the model is implemented.
+
 ## Target shape
 
 ```yaml
@@ -71,7 +104,7 @@ policies:
 
 For a team that wants a quick rollout, the practical path is:
 
-1. add `.ota/org-policy.yaml` at the org root or repo root
+1. add `.ota/org-policy.yaml` at the org root or any ancestor of the governed repos
 2. start with a small set of required sections and files
 3. run `ota doctor` in one repo and compare the output before and after
 4. expand policy only after the first rules are easy to understand
@@ -129,7 +162,7 @@ It constrains and interprets it at the org layer.
 
 ## Current implementation
 
-`ota doctor` reads `.ota/org-policy.yaml` when it exists, validates the file shape, and reports a finding if:
+`ota doctor` reads `.ota/org-policy.yaml` from the nearest ancestor when it exists, validates the file shape, and reports a finding if:
 
 - the policy pack cannot be read or parsed
 - required sections declared by the policy pack are missing from the repo contract

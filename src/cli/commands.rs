@@ -650,15 +650,23 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                             );
                         }
                         stdout.push_str(&render_diff_summary_text(&summary));
-                        CommandOutput::success(stdout)
+                        CommandOutput {
+                            stdout,
+                            stderr: None,
+                            exit_code: if changes.is_empty() { 0 } else { 1 },
+                        }
                     }
-                    OutputFormat::Json => CommandOutput::success(to_json(&DiffSuccess {
-                        ok: true,
-                        base: &base_display,
-                        target: &target_display,
-                        summary,
-                        changes: &changes,
-                    })),
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&DiffSuccess {
+                            ok: changes.is_empty(),
+                            base: &base_display,
+                            target: &target_display,
+                            summary,
+                            changes: &changes,
+                        }),
+                        stderr: None,
+                        exit_code: if changes.is_empty() { 0 } else { 1 },
+                    },
                 }
             }
             (Err(error), _) | (_, Err(error)) => match format {
