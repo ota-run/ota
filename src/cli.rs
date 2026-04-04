@@ -5926,6 +5926,9 @@ policies:
             provisioning["allowed"][1]["name"],
             "maven"
         );
+        assert_eq!(provisioning["actions"].as_array().unwrap().len(), 2);
+        assert_eq!(provisioning["actions"][0]["kind"], "select_source");
+        assert_eq!(provisioning["actions"][0]["target_kind"], "runtime");
     }
 
     #[test]
