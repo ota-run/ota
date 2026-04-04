@@ -11755,6 +11755,79 @@ policies:
     }
 
     #[test]
+    fn workspace_doctor_json_includes_provisioning_request() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web")).unwrap();
+        fs::write(
+            fixture.path().join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+runtimes:
+  java: "22"
+tools:
+  maven: "3.9"
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("web").join(".ota")).unwrap();
+        fs::write(
+            fixture
+                .path()
+                .join("web")
+                .join(".ota")
+                .join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+    maven:
+      source: approved-manager
+      approved_versions:
+        - "3.9"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "doctor",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_ne!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provisioning = json["repos"][0]["provisioning"]
+            .as_object()
+            .expect("workspace provisioning should be present");
+        assert_eq!(provisioning["plan"]["allowed"].as_array().unwrap().len(), 2);
+        let provisioning_request = provisioning["request"]
+            .as_object()
+            .expect("workspace provisioning request should be present");
+        assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 2);
+        assert_eq!(provisioning_request["actions"][0]["kind"], "select_source");
+    }
+
+    #[test]
     fn workspace_doctor_downgrades_optional_repo_errors_to_warnings() {
         let fixture = WorkspaceFixture::new();
         fs::write(

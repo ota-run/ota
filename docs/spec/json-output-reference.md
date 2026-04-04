@@ -589,6 +589,12 @@ Failure shape can also include:
 }
 ```
 
+When a workspace repo declares runtimes or tools and policy provides approved sources for them,
+the per-repo item may also include the same `provisioning` diagnostics bundle as repo-level
+doctor output. That bundle carries the read-only plan and the backend intake request together,
+so workspace consumers can inspect the same future provisioning signal without mutating
+anything.
+
 ## `ota workspace tasks --json`
 
 ```json

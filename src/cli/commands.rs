@@ -67,6 +67,7 @@ use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
     parse_contract_str,
 };
+use crate::provisioning::{ProvisioningBackendError, apply_provisioning_request};
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
     effective_execution, resolve_task_env_details, resolve_task_env_details_with_policy,
@@ -11836,9 +11837,73 @@ fn execute_repo_up(
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut provisioned_setup = false;
-    let preflight = diagnose_preconditions(contract, resolved_path);
+    let mut preflight = diagnose_preconditions(contract, resolved_path);
     if !preflight.ok {
-        if contract.tasks.contains_key("setup") {
+        if let Some(provisioning) = preflight.provisioning.as_ref() {
+            match apply_provisioning_request(&provisioning.request, resolved_path) {
+                Ok(outcome) => {
+                    stdout.push_str(&outcome.stdout);
+                    stderr.push_str(&outcome.stderr);
+                    preflight = diagnose_preconditions(contract, resolved_path);
+                }
+                Err(ProvisioningBackendError::CommandFailed {
+                    stdout: backend_stdout,
+                    stderr: backend_stderr,
+                    exit_code,
+                    ..
+                }) => {
+                    stdout.push_str(&backend_stdout);
+                    stderr.push_str(&backend_stderr);
+                    return Ok(RepoUpResult {
+                        ok: false,
+                        status: "PROVISION FAILED",
+                        phase: "provisioning",
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            overrides,
+                            "PROVISION FAILED",
+                            "provisioning",
+                            None,
+                            None,
+                            &preflight.findings,
+                            Some(exit_code),
+                            None,
+                        ),
+                        report: preflight,
+                        service: None,
+                        service_command: None,
+                        task: None,
+                        task_command: None,
+                        exit_code: Some(exit_code),
+                        stdout,
+                        stderr,
+                    });
+                }
+                Err(ProvisioningBackendError::MissingCommand { command }) => {
+                    stderr.push_str(&format!(
+                        "provisioning backend `{command}` is unavailable; falling back to repo setup\n"
+                    ));
+                }
+                Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: source,
+                }) => {
+                    stderr.push_str(&format!(
+                        "provisioning source `{source}` is not supported by the built-in backend; falling back to repo setup\n"
+                    ));
+                }
+                Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
+                    stderr.push_str(&format!(
+                        "provisioning action kind `{:?}` is not supported by the built-in backend; falling back to repo setup\n",
+                        kind
+                    ));
+                }
+            }
+        }
+
+        if preflight.ok {
+            // The backend fixed the missing prerequisites; fall through to the normal flow.
+        } else if contract.tasks.contains_key("setup") {
             let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
             let run_result = match mode {
                 RepoExecutionMode::Stream => {
@@ -14466,6 +14531,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
+            provisioning: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
@@ -14511,6 +14577,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                         &contract,
                         Some(&repo.policy_env),
                     ),
+                    provisioning: None,
                     extensions: contract.extensions.clone(),
                     findings: error
                         .errors()
@@ -14551,6 +14618,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     &contract,
                     Some(&repo.policy_env),
                 ),
+                provisioning: None,
                 extensions: contract.extensions.clone(),
                 findings,
             }
@@ -14563,6 +14631,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
+            provisioning: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
