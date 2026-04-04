@@ -29,6 +29,7 @@ Status: complete.
 Source direction:
 
 - [Env resolution and policy](../../spec/env-resolution-and-policy.md)
+- [Policy-backed provisioning sources](../../spec/policy-backed-provisioning.md)
 
 V9 theme:
 
@@ -37,6 +38,11 @@ V9 theme:
 - repository operability with explicit env boundaries
 
 This slice is complete; the next active slice should be v10.
+
+Follow-on direction:
+
+- keep env resolution separate from provisioning source selection
+- use policy-backed provisioning sources only when repo-declared runtimes or tools need approved install origins
 
 ## Included capabilities
 
