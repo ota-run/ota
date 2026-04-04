@@ -292,7 +292,8 @@ When a workspace repo declares runtimes or tools and policy provides approved so
 `ota workspace doctor --json` may also include the same read-only `provisioning` plan on the
 per-repo item. That plan uses the same `allowed`, `blocked`, and `actions` entries as repo-level
 `ota doctor --json`, so editors and hosted validation can inspect the same future provisioning
-signal without mutating anything.
+signal without mutating anything. The action kinds are reserved for `select_source`, `install`,
+and `verify` so the shape can grow without a breaking redesign.
 
 `ota doctor --json` may also include an `execution` object when the contract declares execution
 metadata that editors and remote-runner tooling can consume. Each `execution.env` entry may also

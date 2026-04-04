@@ -136,6 +136,8 @@ pub struct ProvisioningDecision {
 #[serde(rename_all = "snake_case")]
 pub enum ProvisioningActionKind {
     SelectSource,
+    Install,
+    Verify,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
