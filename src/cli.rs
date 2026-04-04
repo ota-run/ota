@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
+    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up\n  ota up --provision",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -7923,6 +7923,32 @@ tasks:
         assert!(stdout.contains("Phase: post-provision diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
         assert!(bin_dir.path().join("provisioned-tool").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn up_with_provision_reports_not_ready_when_setup_does_not_fix_prerequisites() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  provisioned-tool: "1"
+tasks:
+  setup:
+    run: printf setup > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--provision", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("Phase: provisioning"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
     #[test]
