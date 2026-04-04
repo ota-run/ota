@@ -101,6 +101,30 @@ pub struct PolicyProvisioningRule {
     pub approved_versions: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvisioningTargetKind {
+    Runtime,
+    Tool,
+}
+
+impl ProvisioningTargetKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Runtime => "runtime",
+            Self::Tool => "tool",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProvisioningDecision {
+    pub kind: ProvisioningTargetKind,
+    pub name: String,
+    pub requested_version: String,
+    pub source: String,
+    pub approved_version: Option<String>,
+}
+
 impl OrgPolicyPack {
     pub fn missing_required_sections(&self, contract: &crate::schema::Contract) -> Vec<String> {
         self.policies
@@ -136,6 +160,45 @@ impl OrgPolicyPack {
         }
 
         Ok(())
+    }
+
+    pub fn resolve_provisioning(
+        &self,
+        kind: ProvisioningTargetKind,
+        name: &str,
+        requested_version: &str,
+    ) -> Result<Option<ProvisioningDecision>, String> {
+        let Some(rule) = self.policies.provisioning.get(name) else {
+            return Ok(None);
+        };
+
+        if rule.source.trim().is_empty() {
+            return Err(format!(
+                "policy-backed provisioning source `{name}` must not be empty"
+            ));
+        }
+
+        if !rule.approved_versions.is_empty()
+            && !rule.approved_versions.iter().any(|version| version == requested_version)
+        {
+            return Err(format!(
+                "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+                kind.as_str(),
+                rule.approved_versions.join(", ")
+            ));
+        }
+
+        Ok(Some(ProvisioningDecision {
+            kind,
+            name: name.to_string(),
+            requested_version: requested_version.to_string(),
+            source: rule.source.clone(),
+            approved_version: rule
+                .approved_versions
+                .iter()
+                .find(|version| version.as_str() == requested_version)
+                .cloned(),
+        }))
     }
 }
 
@@ -205,7 +268,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{OrgPolicyPack, load_org_policy_pack_auto};
+    use super::{OrgPolicyPack, ProvisioningTargetKind, load_org_policy_pack_auto};
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
@@ -293,5 +356,49 @@ policies:
 
         let error = policy.validate().unwrap_err();
         assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn resolves_approved_policy_provisioning_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "java", "22")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "org-mirror");
+        assert_eq!(decision.approved_version.as_deref(), Some("22"));
+    }
+
+    #[test]
+    fn rejects_unapproved_policy_provisioning_version() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let error = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "java", "21")
+            .unwrap_err();
+
+        assert!(error.contains("is not approved by policy"));
     }
 }

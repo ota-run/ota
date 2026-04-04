@@ -226,6 +226,8 @@ Current guidance:
 
 - `exports` should describe export preferences or downstream artifact intent
 - `policies` should describe repo-local policy overlays and guardrails
+- `policies.env` is the shipped approved-value map for environment variables
+- `policies.provisioning` is the next policy extension point for approved runtime and tool sources
 - neither section should replace core readiness fields such as `tasks`, `services`, or `checks`
 - newer spec drafts discuss additional policy and readiness-gate behavior; those are not part of
   the current shipped parser unless the implementation explicitly accepts them

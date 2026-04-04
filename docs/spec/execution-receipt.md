@@ -78,6 +78,14 @@ The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`
 workspace execution flows. The summary is shown in the normal text output, and the
 receipt keeps the structured summary data for JSON and optional receipt output.
 
+Future policy-backed provisioning receipts should additionally be able to record:
+
+- the requested runtime or tool
+- the approved source that won
+- the version or distribution that was selected
+- whether the action was install, select, or verify-only
+- whether policy allowed mutation for that decision
+
 ## Behavior
 
 - deterministic ordering
@@ -85,6 +93,7 @@ receipt keeps the structured summary data for JSON and optional receipt output.
 - human-readable summary in the normal execution output
 - explicit source of truth for decisions
 - no hidden auto-fix behavior
+- provenance for policy-backed provisioning when that layer exists
 
 ## Non-goals
 
