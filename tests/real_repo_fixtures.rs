@@ -1040,17 +1040,26 @@ fn init_write_writes_high_confidence_contract_for_rust_cargo_fixture() {
 }
 
 #[test]
-fn init_write_refuses_when_high_confidence_fields_are_insufficient_for_python_requirements_fixture()
-{
+fn init_write_writes_high_confidence_contract_for_python_requirements_fixture() {
     let fixture = copy_fixture_to_temp("python-requirements");
 
     let output = run_ota(&["init", "--write", fixture.path().to_str().unwrap()]);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert!(!output.status.success(), "stderr was: {stderr}");
-    assert!(stderr.contains("required for a valid contract"));
-    assert!(stderr.contains("tools.pip"));
-    assert!(!fixture.path().join("ota.yaml").exists());
+    assert!(output.status.success(), "stderr was: {stderr}");
+
+    let written = fs::read_to_string(fixture.path().join("ota.yaml"))
+        .expect("ota.yaml should be written for python requirements fixture");
+
+    assert!(written.contains("python: 3.12.7"));
+    assert!(written.contains("pip: '*'"));
+
+    let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
+    assert!(
+        validate_output.status.success(),
+        "validate stderr was: {}",
+        String::from_utf8_lossy(&validate_output.stderr)
+    );
 }
 
 #[test]
