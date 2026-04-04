@@ -29,7 +29,9 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
-use crate::doctor::{DoctorReport, Finding, FindingSeverity, diagnose_contract};
+use crate::doctor::{
+    DoctorReport, Finding, FindingSeverity, ProvisioningDiagnostics, diagnose_contract,
+};
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
 use crate::parser::{LoadContractError, load_contract};
@@ -238,6 +240,8 @@ pub struct WorkspaceRepoDoctorReport {
     pub agent_verdict: DoctorVerdict,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<WorkspaceExecutionSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisioning: Option<ProvisioningDiagnostics>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, ExtensionSpec>,
     pub findings: Vec<Finding>,
@@ -682,6 +686,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             ok: !repo.required,
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
+            provisioning: None,
             extensions: BTreeMap::new(),
             findings,
         };
@@ -690,6 +695,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
     let mut execution = None;
     let mut extensions = BTreeMap::new();
     let mut agent_verdict = DoctorVerdict::NotReady;
+    let mut provisioning = None;
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
@@ -699,11 +705,12 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
                 );
                 extensions = contract.extensions.clone();
                 agent_verdict = agent_verdict_from_agent(contract.agent.as_ref());
-                adjust_repo_findings(
+                let report = adjust_repo_findings(
                     diagnose_contract(&contract, &repo.contract_path),
                     repo.required,
-                )
-                .findings
+                );
+                provisioning = report.provisioning;
+                report.findings
             }
             Err(error) => error
                 .errors()
@@ -767,6 +774,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
         ok,
         agent_verdict,
         execution,
+        provisioning,
         extensions,
         findings,
     }

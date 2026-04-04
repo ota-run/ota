@@ -28,6 +28,7 @@ pub(crate) mod execution;
 pub mod output;
 pub mod parser;
 pub mod policy_pack;
+pub mod provisioning;
 pub mod runner;
 pub mod schema;
 #[cfg(test)]

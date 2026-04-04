@@ -45,6 +45,9 @@ Let an organization say:
 The point is to keep provisioning explicit, reviewable, and policy-controlled without turning Ota
 into a general-purpose package manager.
 
+The first mutating backend in this shape uses `mise` as the approved source/manager and translates
+selected provisioning actions into `mise install` calls for declared runtimes and tools.
+
 ## Non-goals
 
 - no hidden workstation management
@@ -94,6 +97,7 @@ The exact field names may change, but the shape should remain:
 - the backend intake should use a serialized `ProvisioningBackendRequest { actions: [...] }` shape so the installer layer consumes only the selected actions, not the full diagnostic plan
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
+- the first shipped mutating adapter uses `mise` and accepts `source: mise` entries from policy
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow
