@@ -48,9 +48,9 @@ The point is to keep provisioning explicit, reviewable, and policy-controlled wi
 into a general-purpose package manager.
 
 The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `winget`, `choco`,
-and `brew` as approved source/managers. `sdkman` and `uv` are the runtime-oriented backends in
-that set; `mise`, `asdf`, `winget`, `choco`, and `brew` can flow through declared runtime and
-tool entries where the adapter supports them.
+`brew`, and `apt` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
+backends in that set; `mise`, `asdf`, `winget`, `choco`, `brew`, and `apt` can flow through
+declared runtime and tool entries where the adapter supports them.
 
 ## Supported today
 
@@ -63,10 +63,11 @@ The built-in mutating adapters currently support:
 - `winget` for Windows package installs
 - `choco` for Windows package installs
 - `brew` for macOS host tooling
+- `apt` for Debian and Ubuntu package installs
 
 Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
-`source: winget`, `source: choco`, or `source: brew` when they are meant to flow through the
-shipped backends.
+`source: winget`, `source: choco`, `source: brew`, or `source: apt` when they are meant to flow
+through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
 
@@ -120,8 +121,8 @@ The exact field names may change, but the shape should remain:
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
 - the action kind space is intentionally reserved for `select_source`, `install`, and `verify` so the planner does not have to be redesigned when installer backends arrive
 - the shipped mutating adapters accept `source: mise`, `source: asdf`, `source: sdkman`,
-  `source: uv`, `source: winget`, and `source: choco` entries from policy, with `sdkman` and `uv`
-  intended for runtime-oriented entries
+  `source: uv`, `source: winget`, `source: choco`, `source: brew`, and `source: apt` entries from
+  policy, with `sdkman` and `uv` intended for runtime-oriented entries
 - provenance is recorded in doctor, receipts, and execution summaries
 
 ## Concrete flow
