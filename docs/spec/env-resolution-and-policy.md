@@ -46,6 +46,10 @@ Current implementation recognizes `policies.env` as the approved env source hook
 policy-controlled values.
 Today that contract surface is a flat `NAME: VALUE` map; provenance labels such as `source` are
 documentation and output vocabulary, not YAML fields.
+Org policy packs are discovered from `.ota/org-policy.yaml` by walking ancestor directories from
+the contract path; a single policy pack can therefore apply to a whole workspace tree.
+`OTA_POLICY`, a single remote policy source, and alternate policy file names are not implemented yet.
+See [`policy-packs.md`](policy-packs.md) for the future policy-source precedence model.
 
 ## Goal
 

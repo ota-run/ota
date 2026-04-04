@@ -5888,7 +5888,7 @@ name = "ota-api"
         );
         assert_eq!(
             contract.tasks.get("dev").and_then(|task| task.notes.as_deref()),
-            Some("Run `ota run dev` to execute this task.")
+            Some("Run `ota run dev` to execute this task.\n")
         );
         assert!(!contract.runtimes.contains_key("node"));
     }

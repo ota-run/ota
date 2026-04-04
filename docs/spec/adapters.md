@@ -69,6 +69,23 @@ Useful source families include:
 These are policy targets, not installer implementations. They tell Ota which origin is allowed,
 not how the package manager itself works.
 
+## Sample policy
+
+Use a policy block when you want Ota to know which source is approved for a runtime or tool:
+
+```yaml
+policies:
+  provisioning:
+    node:
+      source: pacman
+      approved_versions:
+        - "22"
+    git:
+      source: brew
+      approved_versions:
+        - "2.46.0"
+```
+
 ## Recommended order
 
 The least surprising rollout order is:
