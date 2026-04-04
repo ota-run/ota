@@ -206,7 +206,7 @@ This means:
 
 V1 is the product contract. Phases are the implementation plan.
 
-Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md), the archived V2 plan in [docs/planning/v2/plan.md](docs/planning/v2/plan.md), the archived V2.1 plan in [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md) when touching shipped behavior, and the active V3 plan in [docs/planning/v3/plan.md](docs/planning/v3/plan.md) for new feature work.
+Agents must follow the archived V1 plan in [docs/planning/v1/phases.md](docs/planning/v1/phases.md), the archived V2 plan in [docs/planning/v2/plan.md](docs/planning/v2/plan.md), the archived V2.1 plan in [docs/planning/v2.1/plan.md](docs/planning/v2.1/plan.md) when touching shipped behavior, and the active V9.1 plan in [docs/planning/v9.1/plan.md](docs/planning/v9.1/plan.md) for new feature work. Plans V3 through V9 are complete and archived in `docs/planning/`.
 
 Version discipline:
 
@@ -322,6 +322,10 @@ Recommended logical boundaries:
 - `init` → onboarding UX above detect
 - `runner` → task execution
 - `workspace` → multi-repo bootstrap logic
+- `contract_drift` → detect drift between existing contract declarations and current repo state; feeds additional findings into `doctor`
+- `policy_pack` → org-level policy pack loading and provisioning rules evaluation
+- `update` → self-update binary logic for `ota self-update`
+- `test_support` → shared test synchronization primitives (`ENV_MUTEX`, `CWD_MUTEX`) used by integration tests
 - `export` → interop outputs and generated artifacts
 - `output` → human-readable and JSON output formatting
 - `cli` → command definitions and orchestration only
@@ -349,6 +353,14 @@ Use canonical terms consistently:
 - **up** = prepare environment and make repo ready
 - **run** = execute named task
 - **check** = run readiness checks without task execution
+- **validate** = verify an `ota.yaml` is structurally and semantically valid
+- **diff** = compare two contracts semantically and surface changes
+- **explain** = produce an ordered remediation plan from doctor findings
+- **annotations** = render doctor JSON output as CI annotations or log lines
+- **agents** = generate or sync `AGENTS.md` from `ota.yaml`
+- **extensions** = list and execute staged extension descriptors
+- **clean** = remove persistent execution state for a repo
+- **self-update** = update the installed Ota binary (alias: `upgrade`)
 - **contract** = the canonical declarative spec
 
 Avoid inventing overlapping terms if the above already fit.
@@ -441,9 +453,13 @@ Use stable foundations such as:
 - `clap`
 - `serde`
 - `serde_yaml`
+- `serde_json`
 - `thiserror`
-- `anyhow`
-- `schemars` where helpful
+- `toml`
+- `time` (with `formatting` and `macros` features)
+- `tempfile` (dev-dependency for tests)
+
+Do not add `anyhow` or `schemars` — they are not used in this codebase. Check `Cargo.toml` before adding a new crate.
 
 Avoid unnecessary complexity in the early core.
 
