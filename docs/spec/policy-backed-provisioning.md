@@ -48,6 +48,15 @@ into a general-purpose package manager.
 The first mutating backend in this shape uses `mise` as the approved source/manager and translates
 selected provisioning actions into `mise install` calls for declared runtimes and tools.
 
+## Supported today
+
+The built-in mutating adapter currently supports:
+
+- `mise`
+
+Policy entries should use `source: mise` when they are meant to flow through the shipped backend.
+All other sources remain policy-visible and read-only until a matching adapter is added.
+
 ## Non-goals
 
 - no hidden workstation management
