@@ -92,6 +92,60 @@ The exact field names may change, but the shape should remain:
 - Ota resolves the approved source
 - provenance is recorded in doctor, receipts, and execution summaries
 
+## Concrete flow
+
+```mermaid
+flowchart LR
+  A["Repo contract"] --> B["ota up"]
+  B --> C["Checks readiness"]
+  C -->|missing Java 22 / Maven| D["Policy lookup"]
+  D --> E["Approved source"]
+  E --> F["Provision / select"]
+  F --> G["Re-check readiness"]
+  G --> H["Run repo tasks"]
+```
+
+Example:
+
+```yaml
+runtimes:
+  java: "22"
+tools:
+  maven: "3.9"
+checks:
+  - name: java-installed
+    kind: precondition
+    severity: error
+    run: java --version
+  - name: maven-installed
+    kind: precondition
+    severity: error
+    run: mvn -version
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+    tools:
+      maven:
+        source: approved-manager
+        approved_versions:
+          - "3.9"
+tasks:
+  setup:
+    run: mvn -q -DskipTests package
+  test:
+    run: mvn test
+```
+
+With that shape:
+
+- `ota doctor` can say Java 22 and Maven are missing or unverified
+- `ota up` can run the repo-owned setup path when checks fail
+- a later provisioning layer can use policy to select Java 22 from the internal mirror and Maven 3.9 from the approved manager
+- receipts can show the source that won
+
 ## Source meaning
 
 `source` should identify the approved provisioning origin, such as:
@@ -156,4 +210,3 @@ This spec becomes implementation-bound when Ota can:
 - refuse unapproved sources
 - explain the chosen source in diagnostics and receipts
 - keep the current `policies.env` behavior unchanged
-
