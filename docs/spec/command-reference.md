@@ -593,6 +593,7 @@ Current behavior:
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
 - when `project.name` is still missing in bootstrap mode, Ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
+- confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
 
 Modes:
 

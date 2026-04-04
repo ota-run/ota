@@ -7046,6 +7046,8 @@ agent:
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("notes: |"));
+        assert!(written.contains("Run `ota run dev` to execute this task."));
     }
 
     #[test]
@@ -7112,6 +7114,8 @@ agent:
         assert!(written.contains("name: tclapp"));
         assert!(written.contains("tclsh: '*"));
         assert!(written.contains("run: tclsh tclapp.tcl"));
+        assert!(written.contains("notes: |"));
+        assert!(written.contains("Run `ota run run` to execute this task."));
     }
 
     #[test]
