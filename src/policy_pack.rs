@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -68,6 +69,8 @@ pub struct PolicyRules {
     pub agent: Option<PolicyAgentRules>,
     #[serde(default)]
     pub exports: Option<PolicyExportsRules>,
+    #[serde(default)]
+    pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -84,6 +87,14 @@ pub struct PolicyAgentRules {
 pub struct PolicyExportsRules {
     #[serde(default)]
     pub require_agents_md: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyProvisioningRule {
+    pub source: String,
+    #[serde(default)]
+    pub approved_versions: Vec<String>,
 }
 
 impl OrgPolicyPack {
@@ -215,6 +226,15 @@ policies:
     require_writable_paths: true
   exports:
     require_agents_md: true
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+    maven:
+      source: approved-manager
+      approved_versions:
+        - "3.9"
 "#,
         )
         .unwrap();
@@ -224,6 +244,11 @@ policies:
         assert_eq!(
             policy.policies.required_files,
             vec![String::from("AGENTS.md")]
+        );
+        assert_eq!(policy.policies.provisioning["java"].source, "org-mirror");
+        assert_eq!(
+            policy.policies.provisioning["maven"].approved_versions,
+            vec![String::from("3.9")]
         );
     }
 }
