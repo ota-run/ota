@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up\n  ota up --provision",
+    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -249,9 +249,6 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Allow repo-scoped provisioning before the normal up flow.
-        #[arg(long, action = ArgAction::SetTrue)]
-        provision: bool,
         /// Override the execution backend for this invocation.
         #[arg(long, value_enum)]
         backend: Option<RunBackend>,
@@ -1172,7 +1169,6 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Up {
             json,
-            provision,
             backend,
             lifecycle,
             receipt,
@@ -1186,7 +1182,6 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 lifecycle: lifecycle.map(Into::into),
             },
             &member,
-            provision,
             format_from_json(json),
             debug,
             receipt,
@@ -7845,33 +7840,7 @@ tasks:
     }
 
     #[test]
-    fn up_stops_before_setup_when_preconditions_fail() {
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: ota
-env:
-  OTA_UP_REQUIRED_MISSING:
-    required: true
-tasks:
-  setup:
-    run: printf ready > prepared.txt
-"#,
-        );
-
-        let output = run_with(["ota", "up", fixture.path()]);
-
-        assert_eq!(output.exit_code, 1);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("Phase: preconditions"));
-        assert!(!fixture.dir.path().join("prepared.txt").exists());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn up_with_provision_runs_setup_before_preconditions_fail() {
+    fn up_reports_setup_failure_with_exit_code() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let bin_dir = TempDir::new().unwrap();
         let contract = format!(
@@ -7879,8 +7848,59 @@ tasks:
 version: 1
 project:
   name: ota
-tools:
-  provisioned-tool: "1"
+checks:
+  - name: provisioned-tool
+    kind: precondition
+    severity: error
+    run: provisioned-tool --version
+tasks:
+  setup:
+    run: exit 7
+"#
+        );
+        let fixture = ContractFixture::new(&contract);
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.path().to_path_buf()];
+        if let Some(path) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(path));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        unsafe {
+            match original_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 7);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("SETUP FAILED"));
+        assert!(stdout.contains("Phase: setup"));
+        assert!(stdout.contains("Task: setup"));
+        assert!(stdout.contains("Exit code: 7"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn up_runs_setup_before_preconditions_fail() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let bin_dir = TempDir::new().unwrap();
+        let contract = format!(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: provisioned-tool
+    kind: precondition
+    severity: error
+    run: provisioned-tool --version
 tasks:
   setup:
     run: |
@@ -7894,7 +7914,7 @@ tasks:
         'exit 0' > "{bin_dir}/provisioned-tool"
       chmod +x "{bin_dir}/provisioned-tool"
       printf ready > prepared.txt
-            "#,
+"#,
             bin_dir = bin_dir.path().display()
         );
         let fixture = ContractFixture::new(&contract);
@@ -7908,7 +7928,7 @@ tasks:
             std::env::set_var("PATH", &joined_path);
         }
 
-        let output = run_with(["ota", "up", "--provision", fixture.path()]);
+        let output = run_with(["ota", "up", fixture.path()]);
 
         unsafe {
             match original_path {
@@ -7920,58 +7940,38 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("Phase: post-provision diagnosis"));
+        assert!(stdout.contains("Phase: post-setup diagnosis"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
         assert!(bin_dir.path().join("provisioned-tool").exists());
     }
 
     #[test]
     #[cfg(unix)]
-    fn up_with_provision_reports_not_ready_when_setup_does_not_fix_prerequisites() {
+    fn up_reports_not_ready_when_setup_does_not_fix_prerequisites() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
 project:
   name: ota
-tools:
-  provisioned-tool: "1"
+checks:
+  - name: provisioned-tool
+    kind: precondition
+    severity: error
+    run: provisioned-tool --version
 tasks:
   setup:
     run: printf setup > prepared.txt
 "#,
         );
 
-        let output = run_with(["ota", "up", "--provision", fixture.path()]);
+        let output = run_with(["ota", "up", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: provisioning"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
-    }
-
-    #[test]
-    fn up_reports_setup_failure_with_exit_code() {
-        let fixture = ContractFixture::new(
-            r#"
-version: 1
-project:
-  name: ota
-tasks:
-  setup:
-    run: exit 7
-"#,
-        );
-
-        let output = run_with(["ota", "up", fixture.path()]);
-
-        assert_eq!(output.exit_code, 7);
-        let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("SETUP FAILED"));
-        assert!(stdout.contains("Phase: setup"));
-        assert!(stdout.contains("Task: setup"));
-        assert!(stdout.contains("Exit code: 7"));
     }
 
     #[test]

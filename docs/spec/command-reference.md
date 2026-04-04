@@ -694,7 +694,6 @@ Prepare a repo for use with minimal prior knowledge.
 
 ```bash
 ota up [PATH]
-ota up --provision [PATH]
 ota up --json [PATH]
 ota up --backend container --lifecycle ephemeral [PATH]
 ota up --member api [PATH]
@@ -709,13 +708,12 @@ Current behavior:
 - repeated `--member` values prepare those members in the provided order
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
+- when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
-- when `--provision` is set, can run `setup` before the normal precondition check so declared
-  repo prerequisites can be prepared explicitly
 - can override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
@@ -723,6 +721,7 @@ Current behavior:
 - still runs service start commands, service healthchecks, and diagnosis on the host today
 - returns `READY` or `NOT READY`
 - reports the phase where execution stopped: `preconditions`, `services`, `setup`, or `post-setup diagnosis`
+- reports `provisioning` when early setup ran but the repo is still not ready
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output

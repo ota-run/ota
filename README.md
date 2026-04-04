@@ -236,7 +236,7 @@ Current behavior:
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
-- `ota up` validates, runs blocking preconditions, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
+- `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
 - `ota detect --write` writes a contract conservatively from `high` confidence fields only
 - `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing and surfaces stale contract fields that no longer match repo reality
@@ -257,7 +257,6 @@ Current behavior:
 - `ota workspace diff` compares local workspace repo state against the declared source without mutating anything
 - `ota workspace status` combines readiness and drift into one read-only workspace summary
 - `ota workspace receipt` captures the same workspace state as a read-only receipt artifact for CI and archiving
-- `ota up --provision` can run repo-declared setup before the normal precondition flow when the contract needs preparation
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
 
 ## Execution Modes and Provisioning
@@ -516,7 +515,6 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [V7 plan](docs/planning/v7/plan.md)
 - [V8 plan](docs/planning/v8/plan.md)
 - [V9 plan](docs/planning/v9/plan.md)
-- [V10 plan](docs/planning/v10/plan.md)
 - [V5 UX hardening completion slice](docs/planning/v5-ux-hardening.md)
 - [Hosted validation workflow](docs/spec/hosted-validation-workflow.md)
 - [Fixture repo plan](docs/planning/fixture-repo-plan.md)

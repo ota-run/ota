@@ -40,7 +40,7 @@ checks:
   - name: rust-installed
     kind: precondition
     severity: error
-    run: rustc --version
+    run: missing-ota-provision-tool --version
 tasks:
   setup:
     description: Fetch Rust dependencies
@@ -48,7 +48,7 @@ tasks:
       Use this as the first step in a fresh checkout or after dependency changes.
       It prepares the workspace without compiling the crate.
     category: setup
-    run: cargo fetch
+    run: printf setup > prepared.txt
     safe_for_agent: true
   build:
     description: Compile the CLI
