@@ -169,6 +169,48 @@ policies:
         - "2.46.0"
 ```
 
+## Platform-specific provisioning
+
+Use `platforms` when the same runtime or tool should resolve to different sources on macOS,
+Linux, and Windows. The root rule acts as the default; platform entries override it when the
+current OS matches.
+
+Example:
+
+```yaml
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+      platforms:
+        macos:
+          source: brew
+          approved_versions:
+            - "22"
+        linux:
+          source: apt
+          source_config:
+            sources_list:
+              - deb http://mirror.local/debian bookworm main
+          approved_versions:
+            - "22"
+        windows:
+          source: choco
+          source_config:
+            feed: internal-choco
+          approved_versions:
+            - "22"
+```
+
+In that example:
+
+- macOS uses the explicit `platforms.macos` rule
+- Linux uses the `apt` override
+- Windows uses the `choco` override
+- the repo keeps one contract while the approved source changes by OS
+
 ## Sample policy
 
 Use a policy block when you want ota to know which source is approved for a runtime or tool:

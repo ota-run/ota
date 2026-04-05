@@ -27,14 +27,12 @@
 ## Unreleased
 
 - Future changes will be tracked here before the next version bump.
-- added `dnf` `source_config.baseurl` plus `repo_id` support so approved Fedora and RHEL mirror sources can stay in policy.
-- added `apt` `source_config.sources_list` support so approved Debian or Ubuntu mirrors can stay in policy.
-- added `winget-bootstrap` so ota can bootstrap winget as another Windows source-manager path.
-- added `winget` `source_config.source_name` support so approved Windows sources can stay in policy.
-- added `scoop` `source_config.bucket_name` and `bucket_url` support so approved Windows buckets can stay in policy.
-- added `brew` `source_config.tap_name` and `tap_url` support so approved Homebrew taps can stay in policy.
-- grouped custom source configuration by adapter family in the docs so Windows, Linux, and macOS examples read more clearly.
-- added policy-backed Chocolatey feed selection via `source_config.feed` so internal package feeds stay reviewable in policy.
+
+## 1.1.0
+
+- added platform-specific provisioning overrides so a single policy entry can choose brew, apt, or choco by OS.
+- made the platform-specific provisioning example explicit for macOS so the default fallback is not implied.
+- grouped custom source configuration by adapter family so the policy examples read more clearly.
 
 ## 1.0.4
 

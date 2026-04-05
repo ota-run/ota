@@ -88,6 +88,44 @@ meant to flow through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
 
+## Platform-specific provisioning
+
+Use `platforms` when the same runtime or tool should resolve to different sources on macOS,
+Linux, and Windows. The root rule acts as the default, and platform entries override it when the
+current OS matches.
+
+Example:
+
+```yaml
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+      platforms:
+        macos:
+          source: brew
+          approved_versions:
+            - "22"
+        linux:
+          source: apt
+          source_config:
+            sources_list:
+              - deb http://mirror.local/debian bookworm main
+          approved_versions:
+            - "22"
+        windows:
+          source: choco
+          source_config:
+            feed: internal-choco
+          approved_versions:
+            - "22"
+```
+
+This lets ota keep one contract for the repo while still choosing the approved source that
+matches the OS it is running on.
+
 ## Non-goals
 
 - no hidden workstation management
