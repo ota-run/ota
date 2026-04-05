@@ -1657,7 +1657,28 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     } else {
         format!("`{suggestion}`")
     };
+
+    if let Some(summary_title) = trailing_summary_title(&stderr) {
+        let trimmed = stderr.trim_end_matches('\n');
+        if let Some(idx) = trimmed.rfind(summary_title) {
+            let (before_summary, summary_block) = trimmed.split_at(idx);
+            return commands::stylize_inline_text(&format!(
+                "{before_summary}\n\n{next_header} {next_value}\n\n{summary_block}"
+            ));
+        }
+    }
+
     commands::stylize_inline_text(&format!("{stderr}\n\n{next_header} {next_value}"))
+}
+
+fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
+    if stderr.rfind("🦦  RUN SUMMARY").is_some() {
+        Some("🦦  RUN SUMMARY")
+    } else if stderr.rfind("🦦  UP SUMMARY").is_some() {
+        Some("🦦  UP SUMMARY")
+    } else {
+        None
+    }
 }
 
 fn collapse_blank_lines(text: String) -> String {
@@ -4557,9 +4578,15 @@ tasks:
 
         assert_eq!(output.exit_code, 7);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("RUN SUMMARY"));
+        let why = stderr.find("Why:").unwrap();
+        let next = stderr.find("Next:").unwrap();
+        let summary = stderr.find("RUN SUMMARY").unwrap();
+        assert!(why < summary);
+        assert!(why < next);
+        assert!(next < summary);
         assert!(stderr.contains("Mode:"));
         assert!(stderr.contains("remote"));
+        assert!(!stderr.contains("Why: 🦦  RUN SUMMARY"));
     }
 
     #[test]

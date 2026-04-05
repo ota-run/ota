@@ -175,6 +175,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
 
     let compact_message = compact_backticked_paths(message);
     let where_value = infer_failure_where(where_label, &compact_message);
+    let (summary_block, body_message) = split_summary_block(&compact_message);
 
     let mut out = format!(
         "{}  {}",
@@ -187,7 +188,19 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         paint_code(&where_value)
     ));
 
-    let lines = compact_message
+    if let Some(summary_block) = summary_block.as_ref() {
+        if body_message.trim().is_empty() {
+            out.push_str("\n\n");
+            out.push_str(&summary_block);
+            return out;
+        }
+    }
+
+    if body_message.trim().is_empty() {
+        return out;
+    }
+
+    let lines = body_message
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -201,12 +214,13 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
-    if let Some(missing) = detect_missing_contract_context(&compact_message) {
-        render_missing_contract_guidance(&mut out, where_label, &compact_message, missing);
+    if let Some(missing) = detect_missing_contract_context(&body_message) {
+        render_missing_contract_guidance(&mut out, where_label, &body_message, missing);
+        append_summary_block(&mut out, summary_block.as_ref());
         return out;
     }
 
-    if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
+    if let Some((why, next_steps)) = split_embedded_next_block(&body_message) {
         if why.is_empty() {
             out.push_str(&format!(
                 "\n{} command failed with no additional details",
@@ -249,16 +263,74 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 }
             }
         }
+        append_summary_block(&mut out, summary_block.as_ref());
         return out;
     }
 
     if lines.len() == 1 {
         out.push_str(&format!("\n{} {}", error_key("Why:"), lines[0]));
+        append_summary_block(&mut out, summary_block.as_ref());
         return out;
     }
 
     out.push_str(&format!("\n{} {}", error_key("Why:"), lines.join(" | ")));
+    append_summary_block(&mut out, summary_block.as_ref());
     out
+}
+
+fn split_summary_block(message: &str) -> (Option<String>, String) {
+    let mut lines = message.lines();
+    let Some(first_line) = lines.next() else {
+        return (None, message.to_string());
+    };
+
+    let (title_line, mut lines) = if first_line.trim().is_empty() {
+        let Some(title_line) = lines.next() else {
+            return (None, message.to_string());
+        };
+        (title_line, lines)
+    } else {
+        (first_line, lines)
+    };
+
+    if !title_line.contains("RUN SUMMARY") && !title_line.contains("UP SUMMARY") {
+        return (None, message.to_string());
+    }
+
+    let Some(blank_line) = lines.next() else {
+        return (Some(message.to_string()), String::new());
+    };
+
+    if !blank_line.trim().is_empty() {
+        return (None, message.to_string());
+    }
+
+    let mut summary_lines = vec![String::new(), title_line.to_string(), String::new()];
+    let mut remainder_lines = Vec::new();
+    let mut in_remainder = false;
+
+    for line in lines {
+        if in_remainder {
+            remainder_lines.push(line.to_string());
+        } else if line.trim().is_empty() {
+            in_remainder = true;
+        } else {
+            summary_lines.push(line.to_string());
+        }
+    }
+
+    if !in_remainder {
+        return (Some(summary_lines.join("\n")), String::new());
+    }
+
+    (Some(summary_lines.join("\n")), remainder_lines.join("\n"))
+}
+
+fn append_summary_block(out: &mut String, summary_block: Option<&String>) {
+    if let Some(summary_block) = summary_block {
+        out.push_str("\n\n");
+        out.push_str(summary_block);
+    }
 }
 
 fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
@@ -9010,8 +9082,8 @@ mod tests {
 
     use super::{
         RepoExecutionMode, compact_contract_file_path_relative_to, compact_path_relative_to,
-        execute_repo_up, render_execution_receipt_text, run_execution_receipt,
-        workspace_refresh_command,
+        execute_repo_up, render_execution_receipt_summary_block, render_execution_receipt_text,
+        run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
     };
     use crate::parser::parse_contract_str;
     use crate::runner::ExecutionOverrides;
@@ -9130,6 +9202,43 @@ tasks:
         assert!(rendered.contains("Env sources:"));
         assert!(rendered.contains("OTA_TEST_SECRET"));
         assert!(rendered.contains("(task)"));
+    }
+
+    #[test]
+    fn stylize_text_failure_keeps_run_summary_block_separate() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fail:
+    run: exit 127
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "fail",
+            None,
+            &["fail".to_string()],
+            127,
+            false,
+            Some(String::from("container")),
+            Some(String::from("install the missing tool and rerun the task")),
+        );
+        let summary = render_execution_receipt_summary_block(&receipt, Some("fail"), "RUN SUMMARY");
+        let message = format!("{summary}\n\ntask `fail` failed with exit code 127");
+
+        let rendered = strip_ansi_codes(&stylize_text_failure("ota run", &message));
+
+        assert!(rendered.contains("RUN SUMMARY"));
+        assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
+        assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
+        assert!(rendered.contains("\n🦦  RUN SUMMARY\n\nScope:"));
     }
 
     #[test]
