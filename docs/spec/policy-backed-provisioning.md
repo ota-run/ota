@@ -57,9 +57,11 @@ The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `win
 `scoop`, `brew`, `apt`, `dnf`, and `pacman` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
 backends in that set; `mise`, `asdf`, `winget`, `choco`, `scoop`, `brew`, `apt`, `dnf`, and `pacman` can flow through
 declared runtime and tool entries where the adapter supports them.
-Chocolatey entries can also carry `source_config.feed` so an approved internal feed or mirror
-stays reviewable in policy.
-`source_config` is otherwise backend-specific, so backends can read only the keys they understand.
+A custom feed or mirror for an existing package manager, for example, Chocolatey, remains within
+the same adapter family and does not create a new ota source.
+
+ota can provide an approved feed through policy where the adapter supports that behavior, while
+other adapters may specify equivalent source details through their own `source_config` keys.
 
 ## Supported today
 

@@ -5911,6 +5911,8 @@ policies:
   provisioning:
     java:
       source: org-mirror
+      source_config:
+        feed: internal-jdk
       approved_versions:
         - "22"
     maven:
@@ -5958,6 +5960,24 @@ policies:
         );
         assert_eq!(adapter_bootstrap["request"]["actions"][0]["source"], "brew");
         let findings = json["findings"].as_array().unwrap();
+        let provisioning_finding = findings
+            .iter()
+            .find(|finding| finding["summary"] == "Policy-backed provisioning sources are declared")
+            .expect("provisioning finding should be present");
+        assert_eq!(provisioning_finding["severity"], "info");
+        assert_eq!(
+            provisioning_finding["policy_reason"],
+            "policy_backed_provisioning_declared"
+        );
+        assert_eq!(provisioning_finding["policy_source"], "org");
+        assert_eq!(provisioning_finding["install_scope"], "repo_local");
+        assert_eq!(provisioning_finding["mutation_allowed"], false);
+        assert!(
+            provisioning_finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("source_config: feed=internal-jdk")
+        );
         let finding = findings
             .iter()
             .find(|finding| finding["summary"] == "Adapter bootstrap sources are declared")

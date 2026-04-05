@@ -9084,11 +9084,11 @@ mod tests {
         execute_repo_up, render_execution_receipt_summary_block, render_execution_receipt_text,
         run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
     };
+    use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest,
         ProvisioningTargetKind,
     };
-    use crate::parser::parse_contract_str;
     use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
     use crate::test_support::ENV_MUTEX;
@@ -9349,10 +9349,10 @@ policies:
 
         let bootstrap_log = fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
             .unwrap_or_else(|_| String::from("<missing>"));
-        let brew_log =
-            fs::read_to_string(shim_dir.path().join("brew.log")).unwrap_or_else(|_| String::from("<missing>"));
-        let node_log =
-            fs::read_to_string(shim_dir.path().join("node.log")).unwrap_or_else(|_| String::from("<missing>"));
+        let brew_log = fs::read_to_string(shim_dir.path().join("brew.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+        let node_log = fs::read_to_string(shim_dir.path().join("node.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
 
         assert!(
             result.ok,
@@ -9418,11 +9418,14 @@ policies:
             result.stderr.is_empty(),
             "stderr=\n{}\nbootstrap_log=\n{}",
             result.stderr,
-            fs::read_to_string(shim_dir.path().join("brew-bootstrap.log")).unwrap_or_else(|_| String::from("<missing>"))
+            fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
+                .unwrap_or_else(|_| String::from("<missing>"))
         );
-        assert!(fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
-            .unwrap()
-            .contains("-lc"));
+        assert!(
+            fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
+                .unwrap()
+                .contains("-lc")
+        );
         assert!(fs::metadata(shim_dir.path().join("brew")).is_ok());
 
         unsafe {
