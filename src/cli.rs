@@ -11902,6 +11902,8 @@ policies:
   provisioning:
     java:
       source: org-mirror
+      source_config:
+        feed: internal-jdk
       approved_versions:
         - "22"
     maven:
@@ -11927,6 +11929,19 @@ policies:
 
         assert_ne!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provisioning_finding = json["repos"][0]["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "Policy-backed provisioning sources are declared")
+            .expect("workspace provisioning finding should be present");
+        assert_eq!(provisioning_finding["severity"], "info");
+        assert!(
+            provisioning_finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("source_config: feed=internal-jdk")
+        );
         let provisioning = json["repos"][0]["provisioning"]
             .as_object()
             .expect("workspace provisioning should be present");
