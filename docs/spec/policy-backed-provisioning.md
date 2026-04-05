@@ -92,7 +92,7 @@ All other sources remain policy-visible and read-only until a matching adapter i
 - no silent installs from unapproved sources
 - no general package-manager replacement
 - no broad control plane for every software installation case
-- adapter bootstrap policy is a separate layer for getting ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, and `uv-bootstrap`.
+- adapter bootstrap policy is a separate layer for getting ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, `uv-bootstrap`, `winget-bootstrap`, `choco-bootstrap`, and `scoop-bootstrap`.
 
 ## Relationship to current contract surfaces
 

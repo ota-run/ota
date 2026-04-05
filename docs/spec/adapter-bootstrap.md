@@ -95,6 +95,7 @@ The shipped bootstrap backends are named separately from the repo provisioning b
 - `mise-bootstrap`
 - `sdkman-bootstrap`
 - `uv-bootstrap`
+- `winget-bootstrap`
 - `choco-bootstrap`
 - `scoop-bootstrap`
 

@@ -128,6 +128,9 @@ pub struct SdkmanBootstrapProvisioningBackend;
 pub struct UvBootstrapProvisioningBackend;
 
 #[derive(Debug, Clone, Copy, Default)]
+pub struct WingetBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ChocoBootstrapProvisioningBackend;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -150,6 +153,8 @@ static MISE_BOOTSTRAP_BACKEND: MiseBootstrapProvisioningBackend = MiseBootstrapP
 static SDKMAN_BOOTSTRAP_BACKEND: SdkmanBootstrapProvisioningBackend =
     SdkmanBootstrapProvisioningBackend;
 static UV_BOOTSTRAP_BACKEND: UvBootstrapProvisioningBackend = UvBootstrapProvisioningBackend;
+static WINGET_BOOTSTRAP_BACKEND: WingetBootstrapProvisioningBackend =
+    WingetBootstrapProvisioningBackend;
 static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend =
     ChocoBootstrapProvisioningBackend;
 static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend =
@@ -315,6 +320,15 @@ impl SdkmanBootstrapProvisioningBackend {
 impl UvBootstrapProvisioningBackend {
     fn bootstrap_script() -> &'static str {
         r#"curl -LsSf https://astral.sh/uv/install.sh | sh"#
+    }
+}
+
+impl WingetBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"$ErrorActionPreference = 'Stop'
+if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+}"#
     }
 }
 
@@ -1316,6 +1330,77 @@ impl ProvisioningBackend for UvBootstrapProvisioningBackend {
     }
 }
 
+impl ProvisioningBackend for WingetBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "winget-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "winget" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    Self::bootstrap_script(),
+                ],
+            )?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("powershell winget bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "winget",
+                &["--version"],
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
 impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
     fn source(&self) -> &'static str {
         "choco-bootstrap"
@@ -1476,6 +1561,7 @@ fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> 
         "mise-bootstrap" => Some(&MISE_BOOTSTRAP_BACKEND),
         "sdkman-bootstrap" => Some(&SDKMAN_BOOTSTRAP_BACKEND),
         "uv-bootstrap" => Some(&UV_BOOTSTRAP_BACKEND),
+        "winget-bootstrap" => Some(&WINGET_BOOTSTRAP_BACKEND),
         "choco-bootstrap" => Some(&CHOCO_BOOTSTRAP_BACKEND),
         "scoop-bootstrap" => Some(&SCOOP_BOOTSTRAP_BACKEND),
         _ => None,
@@ -2155,6 +2241,41 @@ mod tests {
         assert!(result.stdout.is_empty());
         assert!(fs::read_to_string(log).unwrap().contains("-Command"));
         assert!(fs::metadata(shim_dir.path().join("scoop")).is_ok());
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn bootstraps_winget_source_manager_with_powershell_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("powershell.log");
+        make_powershell_bootstrap_shim(shim_dir.path(), "winget", "1.8.0", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "winget".to_string(),
+                requested_version: "1.0".to_string(),
+                source: "winget-bootstrap".to_string(),
+                source_config: None,
+                approved_version: Some("1.8.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        assert!(fs::read_to_string(log).unwrap().contains("-Command"));
+        assert!(fs::metadata(shim_dir.path().join("winget")).is_ok());
 
         unsafe {
             env::set_var("PATH", original_path);
