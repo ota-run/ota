@@ -357,8 +357,8 @@ fn compose_path_value(
         })
 }
 
-fn command_with_path_export(command: &str, env_overrides: &BTreeMap<String, String>) -> String {
-    let Some(path) = env_overrides.get("PATH") else {
+fn command_with_path_export(command: &str, path_export: Option<&str>) -> String {
+    let Some(path) = path_export else {
         return command.to_string();
     };
 
@@ -733,6 +733,16 @@ fn run_task_internal(
             });
         }
         let env_overrides = resolve_task_env_with_policy(contract, Some(&task.env), policy_env)?;
+        let path_export = match backend {
+            ResolvedExecutionBackend::Container { .. } => env_details
+                .get("PATH")
+                .map(|resolved| resolved.value.clone()),
+            _ => None,
+        };
+        let mut env_overrides = env_overrides;
+        if path_export.is_some() {
+            env_overrides.remove("PATH");
+        }
         let input_overrides = if task_name == &requested_task_name {
             resolve_task_inputs(task_name, task, input_args)?
         } else {
@@ -747,6 +757,7 @@ fn run_task_internal(
             &command,
             working_dir,
             &combined_env,
+            path_export.as_deref(),
             &secret_env_names,
             &backend,
             mode,
@@ -784,6 +795,7 @@ fn execute_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     backend: &ResolvedExecutionBackend,
     mode: TaskExecutionMode,
@@ -841,6 +853,7 @@ fn execute_task_command(
             command,
             working_dir,
             env_overrides,
+            path_export,
             secret_env_names,
             image,
             engine,
@@ -1597,6 +1610,7 @@ fn execute_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
@@ -1618,6 +1632,7 @@ fn execute_container_task_command(
             command,
             working_dir,
             env_overrides,
+            path_export,
             secret_env_names,
             image,
             engine,
@@ -1628,6 +1643,7 @@ fn execute_container_task_command(
             command,
             working_dir,
             env_overrides,
+            path_export,
             secret_env_names,
             image,
             engine,
@@ -1662,6 +1678,7 @@ fn execute_ephemeral_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
@@ -1688,7 +1705,7 @@ fn execute_ephemeral_container_task_command(
         .arg(image)
         .arg("sh")
         .arg("-lc")
-        .arg(command_with_path_export(command, env_overrides));
+        .arg(command_with_path_export(command, path_export));
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -1736,6 +1753,7 @@ fn execute_persistent_container_task_command(
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
@@ -1799,7 +1817,7 @@ fn execute_persistent_container_task_command(
         .arg(&container_name)
         .arg("sh")
         .arg("-lc")
-        .arg(command_with_path_export(command, env_overrides));
+        .arg(command_with_path_export(command, path_export));
 
     match mode {
         TaskExecutionMode::Stream { .. } => {

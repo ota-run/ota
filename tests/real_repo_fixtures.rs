@@ -20,7 +20,9 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -29,6 +31,7 @@ use tempfile::TempDir;
 
 use ota::parser::load_contract;
 use ota::policy_pack::load_org_policy_pack_auto;
+use ota::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request_with_target};
 use ota::validator::validate_contract;
 
 fn real_fixture_path(name: &str) -> PathBuf {
@@ -82,6 +85,90 @@ fn copy_fixture_to_temp(name: &str) -> TempDir {
     let temp = TempDir::new().expect("temp dir should be created");
     copy_dir_recursive(&real_fixture_path(name), temp.path());
     temp
+}
+
+fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    working_dir.display().to_string().hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    format!("ota-{:x}", hasher.finish())
+}
+
+#[cfg(unix)]
+fn install_fake_container_engine(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+command="$1"
+shift
+
+case "$command" in
+  info)
+    exit 0
+    ;;
+  run)
+    mount=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --rm|-i)
+          shift
+          ;;
+        --env)
+          shift 2
+          ;;
+        -v)
+          mount="$2"
+          shift 2
+          ;;
+        -w)
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir="${mount%%:*}"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    PATH="/usr/bin:/bin"
+    export PATH
+    cd "$host_dir" || exit 1
+    exec /bin/sh -lc "$3"
+    ;;
+esac
+
+exit 1
+"#,
+    )
+    .expect("fake container engine should be written");
+
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+#[cfg(unix)]
+fn install_fake_cargo(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "cargo 1.99.0"
+  exit 0
+fi
+exit 1
+"#,
+    )
+    .expect("fake cargo should be written");
+
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
 }
 
 fn write_contract(root: &Path, contents: &str) {
@@ -583,6 +670,103 @@ fn up_uses_container_provisioning_target_on_real_command_path() {
     assert!(stdout.contains("➤ NOT READY"));
     assert!(stdout.contains("Backend: container"));
     assert!(stdout.contains("Phase: preconditions"));
+}
+
+#[cfg(unix)]
+#[test]
+fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("container-path-probe");
+
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("fixture bin dir should be created");
+    install_fake_container_engine(&bin_dir.join("docker-test"));
+    install_fake_cargo(&bin_dir.join("cargo"));
+
+    let original_path = std::env::var_os("PATH");
+    let mut path_entries = vec![bin_dir.clone()];
+    if let Some(existing) = original_path.as_ref() {
+        path_entries.extend(std::env::split_paths(existing));
+    }
+    let joined_path = std::env::join_paths(path_entries).expect("test PATH should join");
+    unsafe {
+        std::env::set_var("PATH", &joined_path);
+    }
+
+    let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    match original_path {
+        Some(path) => unsafe {
+            std::env::set_var("PATH", path);
+        },
+        None => unsafe {
+            std::env::remove_var("PATH");
+        },
+    }
+
+    assert!(output.status.success(), "stderr was: {stderr}");
+    assert!(stdout.contains("➤ READY"));
+    assert!(stdout.contains("Backend: container"));
+    assert!(stdout.contains("Mode:       container"));
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("prepared.txt")).expect("prepared file"),
+        "cargo 1.99.0\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn provisioning_request_installs_real_tool_inside_container_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("container-apt-probe");
+
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = load_contract(&contract_path).expect("contract should parse");
+    validate_contract(&contract).expect("contract should validate");
+    let (policy_pack, _policy_path) = load_org_policy_pack_auto(&contract_path)
+        .expect("policy pack should load")
+        .expect("policy pack should exist");
+    let request = policy_pack.provisioning_backend_request(&contract);
+    assert!(
+        !request.actions.is_empty(),
+        "provisioning request should not be empty"
+    );
+
+    let target = ProvisioningExecutionTarget::Container {
+        image: String::from("rust:1.94-bookworm"),
+        engine: String::from("docker"),
+        lifecycle: ota::schema::Lifecycle::Persistent,
+    };
+
+    let outcome = apply_provisioning_request_with_target(&request, fixture.path(), &target)
+        .expect("provisioning request should apply");
+    assert!(
+        outcome.stderr.contains("apt-utils"),
+        "stderr was: {}",
+        outcome.stderr
+    );
+
+    let container_name = persistent_container_name(fixture.path(), "rust:1.94-bookworm", "docker");
+    let exec_output = Command::new("docker")
+        .args([
+            "exec",
+            "-i",
+            &container_name,
+            "sh",
+            "-lc",
+            "pv --version > prepared.txt",
+        ])
+        .current_dir(fixture.path())
+        .output()
+        .expect("docker exec should run");
+    assert!(
+        exec_output.status.success(),
+        "docker exec stderr was: {}",
+        String::from_utf8_lossy(&exec_output.stderr)
+    );
+    let prepared = fs::read_to_string(fixture.path().join("prepared.txt")).expect("prepared file");
+    assert!(prepared.contains("pv 1.6.20 - Copyright 2015 Andrew Wood <andrew.wood@ivarch.com>"));
+    assert!(prepared.contains("Artistic License 2.0"));
 }
 
 #[cfg(unix)]

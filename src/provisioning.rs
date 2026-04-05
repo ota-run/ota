@@ -212,6 +212,29 @@ impl AptProvisioningBackend {
             }
         }
     }
+
+    fn install_command(
+        target: &ProvisioningExecutionTarget,
+        install_target: &str,
+    ) -> (String, Vec<String>) {
+        match target {
+            ProvisioningExecutionTarget::Native => (
+                String::from("apt-get"),
+                vec![
+                    String::from("install"),
+                    String::from("-y"),
+                    install_target.to_string(),
+                ],
+            ),
+            ProvisioningExecutionTarget::Container { .. } => (
+                String::from("sh"),
+                vec![
+                    String::from("-lc"),
+                    format!("apt-get update >/dev/null && apt-get install -y {install_target}"),
+                ],
+            ),
+        }
+    }
 }
 
 impl DnfProvisioningBackend {
@@ -736,19 +759,23 @@ impl ProvisioningBackend for AptProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = execute_provisioning_command(
-                target,
-                working_dir,
-                "apt-get",
-                &["install", "-y", &install_target],
-            )?;
+            let (command, args) = Self::install_command(target, &install_target);
+            let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+            let output = execute_provisioning_command(target, working_dir, &command, &arg_refs)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("apt-get install -y {install_target}"),
+                    command: match target {
+                        ProvisioningExecutionTarget::Native => {
+                            format!("apt-get install -y {install_target}")
+                        }
+                        ProvisioningExecutionTarget::Container { .. } => {
+                            format!("apt-get update && apt-get install -y {install_target}")
+                        }
+                    },
                     exit_code: output.exit_code,
                     stdout,
                     stderr,

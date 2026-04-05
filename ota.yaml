@@ -30,10 +30,22 @@ metadata:
   owner: ota
   repo_class: open-core
 execution:
-  preferred: native
-  lifecycle: persistent
+  preferred: container
+  lifecycle: ephemeral
   supported:
     - native
+    - container
+  backends:
+    container:
+      image: rust:1.94-bookworm
+      engines:
+        - docker
+        - podman
+env:
+  PATH:
+    prepend:
+      - /usr/local/cargo/bin
+      - /usr/local/rustup/bin
 tools:
   cargo: "*"
 checks:
