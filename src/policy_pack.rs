@@ -100,6 +100,8 @@ pub struct PolicyExportsRules {
 pub struct PolicyProvisioningRule {
     pub source: String,
     #[serde(default)]
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
+    #[serde(default)]
     pub approved_versions: Vec<String>,
 }
 
@@ -160,6 +162,7 @@ pub struct ProvisioningDecision {
     pub name: String,
     pub requested_version: String,
     pub source: String,
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
 }
 
@@ -178,6 +181,7 @@ pub struct ProvisioningAction {
     pub name: String,
     pub requested_version: String,
     pub source: String,
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
 }
 
@@ -192,6 +196,7 @@ pub struct ProvisioningPlanEntry {
     pub name: String,
     pub requested_version: String,
     pub source: Option<String>,
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
     pub blocked_reason: Option<String>,
 }
@@ -269,6 +274,7 @@ impl OrgPolicyPack {
             name: name.to_string(),
             requested_version: requested_version.to_string(),
             source: rule.source.clone(),
+            source_config: rule.source_config.clone(),
             approved_version: rule
                 .approved_versions
                 .iter()
@@ -346,6 +352,7 @@ impl OrgPolicyPack {
                     .clone()
                     .unwrap_or_else(|| String::from("latest")),
                 source: entry.source.unwrap_or_default(),
+                source_config: None,
                 approved_version: entry.approved_version,
             })
             .collect();
@@ -394,6 +401,7 @@ impl OrgPolicyPack {
                     name: entry.name.clone(),
                     requested_version: entry.requested_version.clone(),
                     source: source.clone(),
+                    source_config: entry.source_config.clone(),
                     approved_version: entry.approved_version.clone(),
                 })
             })
@@ -413,6 +421,7 @@ impl OrgPolicyPack {
                 name: action.name,
                 requested_version: action.requested_version,
                 source: action.source,
+                source_config: action.source_config,
                 approved_version: action.approved_version,
             })
             .collect()
@@ -447,6 +456,7 @@ impl OrgPolicyPack {
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
                 source: Some(decision.source),
+                source_config: decision.source_config.clone(),
                 approved_version: decision.approved_version,
                 blocked_reason: None,
             }),
@@ -455,6 +465,7 @@ impl OrgPolicyPack {
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
                 source: None,
+                source_config: None,
                 approved_version: None,
                 blocked_reason: Some(format!(
                     "no approved provisioning source declared for {kind} `{name}`"
@@ -465,6 +476,7 @@ impl OrgPolicyPack {
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
                 source: None,
+                source_config: None,
                 approved_version: None,
                 blocked_reason: Some(message),
             }),
@@ -824,6 +836,79 @@ policies:
 
         assert_eq!(decision.source, "approved-manager");
         assert_eq!(decision.approved_version.as_deref(), Some("3.9"));
+    }
+
+    #[test]
+    fn resolves_approved_policy_provisioning_choco_feed() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: choco
+      source_config:
+        feed: internal-choco
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Tool, "node", "22")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "choco");
+        assert_eq!(
+            decision
+                .source_config
+                .as_ref()
+                .and_then(|config| config.get("feed"))
+                .and_then(|value| value.as_str()),
+            Some("internal-choco")
+        );
+    }
+
+    #[test]
+    fn preserves_open_policy_provisioning_source_config() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: brew
+      source_config:
+        channel: stable
+        mirror: internal-brew
+      approved_versions:
+        - "21"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "java", "21")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "brew");
+        assert_eq!(
+            decision
+                .source_config
+                .as_ref()
+                .and_then(|config| config.get("channel"))
+                .and_then(|value| value.as_str()),
+            Some("stable")
+        );
+        assert_eq!(
+            decision
+                .source_config
+                .as_ref()
+                .and_then(|config| config.get("mirror"))
+                .and_then(|value| value.as_str()),
+            Some("internal-brew")
+        );
     }
 
     #[test]

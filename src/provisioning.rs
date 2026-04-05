@@ -112,6 +112,27 @@ pub struct AptProvisioningBackend;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DnfProvisioningBackend;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BrewBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AsdfBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MiseBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SdkmanBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UvBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChocoBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScoopBootstrapProvisioningBackend;
+
 static MISE_BACKEND: MiseProvisioningBackend = MiseProvisioningBackend;
 static ASDF_BACKEND: AsdfProvisioningBackend = AsdfProvisioningBackend;
 static SDKMAN_BACKEND: SdkmanProvisioningBackend = SdkmanProvisioningBackend;
@@ -123,6 +144,13 @@ static BREW_BACKEND: BrewProvisioningBackend = BrewProvisioningBackend;
 static PACMAN_BACKEND: PacmanProvisioningBackend = PacmanProvisioningBackend;
 static APT_BACKEND: AptProvisioningBackend = AptProvisioningBackend;
 static DNF_BACKEND: DnfProvisioningBackend = DnfProvisioningBackend;
+static BREW_BOOTSTRAP_BACKEND: BrewBootstrapProvisioningBackend = BrewBootstrapProvisioningBackend;
+static ASDF_BOOTSTRAP_BACKEND: AsdfBootstrapProvisioningBackend = AsdfBootstrapProvisioningBackend;
+static MISE_BOOTSTRAP_BACKEND: MiseBootstrapProvisioningBackend = MiseBootstrapProvisioningBackend;
+static SDKMAN_BOOTSTRAP_BACKEND: SdkmanBootstrapProvisioningBackend = SdkmanBootstrapProvisioningBackend;
+static UV_BOOTSTRAP_BACKEND: UvBootstrapProvisioningBackend = UvBootstrapProvisioningBackend;
+static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend = ChocoBootstrapProvisioningBackend;
+static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend = ScoopBootstrapProvisioningBackend;
 
 impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
@@ -173,6 +201,16 @@ impl ChocoProvisioningBackend {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
+    }
+
+    fn source_args(action: &ProvisioningAction) -> Vec<String> {
+        action
+            .source_config
+            .as_ref()
+            .and_then(|config| config.get("feed"))
+            .and_then(|value| value.as_str())
+            .map(|feed| vec![String::from("--source"), feed.to_string()])
+            .unwrap_or_default()
     }
 }
 
@@ -245,6 +283,130 @@ impl DnfProvisioningBackend {
             }
         }
     }
+}
+
+impl BrewBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)""#
+    }
+}
+
+impl AsdfBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"git clone https://github.com/asdf-vm/asdf.git "$HOME/.asdf" --branch v0.16.4"#
+    }
+}
+
+impl MiseBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"curl https://mise.run | bash"#
+    }
+}
+
+impl SdkmanBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"curl -s "https://get.sdkman.io" | bash"#
+    }
+}
+
+impl UvBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"curl -LsSf https://astral.sh/uv/install.sh | sh"#
+    }
+}
+
+impl ChocoBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"$ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"#
+    }
+}
+
+impl ScoopBootstrapProvisioningBackend {
+    fn bootstrap_script() -> &'static str {
+        r#"$ErrorActionPreference = 'Stop'
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Invoke-Expression (New-Object Net.WebClient).DownloadString('https://get.scoop.sh')"#
+    }
+}
+
+fn bootstrap_source_version(
+    target: &ProvisioningExecutionTarget,
+    working_dir: &Path,
+    command: &str,
+    version_args: &[&str],
+) -> Result<Option<String>, ProvisioningBackendError> {
+    let output = execute_provisioning_command(target, working_dir, command, version_args)?;
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: format!("{} {}", command, version_args.join(" ")),
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    let version = output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            output
+                .stderr
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+        });
+
+    Ok(version)
+}
+
+fn apply_bootstrap_script(
+    script: &str,
+    target: &ProvisioningExecutionTarget,
+    working_dir: &Path,
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    execute_provisioning_command(target, working_dir, "sh", &["-lc", script])
+}
+
+fn ensure_bootstrap_source_version(
+    target: &ProvisioningExecutionTarget,
+    working_dir: &Path,
+    command: &str,
+    version_args: &[&str],
+    approved_versions: &[String],
+) -> Result<(), ProvisioningBackendError> {
+    if approved_versions.is_empty() {
+        return Ok(());
+    }
+
+    let version = bootstrap_source_version(target, working_dir, command, version_args)?;
+    let Some(version) = version else {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: format!("{} {}", command, version_args.join(" ")),
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::from("bootstrap command did not report a version"),
+        });
+    };
+
+    if approved_versions.iter().any(|approved| version.contains(approved)) {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: format!("{} {}", command, version_args.join(" ")),
+        exit_code: 0,
+        stdout: version,
+        stderr: format!(
+            "bootstrap version is not approved by policy; expected one of: {}",
+            approved_versions.join(", ")
+        ),
+    })
 }
 
 impl ProvisioningBackend for MiseProvisioningBackend {
@@ -549,18 +711,22 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let source_args = Self::source_args(action);
+            let mut args = vec![
+                "install".to_string(),
+                install_target.clone(),
+                "--version".to_string(),
+                action.requested_version.clone(),
+                "-y".to_string(),
+                "--no-progress".to_string(),
+            ];
+            args.extend(source_args.clone());
+            let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
             let output = execute_provisioning_command(
                 target,
                 working_dir,
                 "choco",
-                &[
-                    "install",
-                    &install_target,
-                    "--version",
-                    &action.requested_version,
-                    "-y",
-                    "--no-progress",
-                ],
+                &arg_refs,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -568,10 +734,20 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!(
-                        "choco install {install_target} --version {}",
-                        action.requested_version
-                    ),
+                    command: {
+                        let mut command =
+                            format!("choco install {install_target} --version {}", action.requested_version);
+                        if let Some(feed) = action
+                            .source_config
+                            .as_ref()
+                            .and_then(|config| config.get("feed"))
+                            .and_then(|value| value.as_str())
+                        {
+                            command.push_str(" --source ");
+                            command.push_str(feed);
+                        }
+                        command
+                    },
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -837,6 +1013,441 @@ impl ProvisioningBackend for DnfProvisioningBackend {
     }
 }
 
+impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "brew-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "brew" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("brew bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "brew",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for AsdfBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "asdf-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "asdf" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("asdf bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "asdf",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "mise-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "mise" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("mise bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "mise",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "sdkman-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "sdkman" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("sdkman bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "sdk",
+                &["version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for UvBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "uv-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "uv" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("uv bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "uv",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "choco-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "choco" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    Self::bootstrap_script(),
+                ],
+            )?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("powershell choco bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "choco",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
+impl ProvisioningBackend for ScoopBootstrapProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "scoop-bootstrap"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.name != "scoop" {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.name.clone(),
+                });
+            }
+
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "powershell",
+                &[
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    Self::bootstrap_script(),
+                ],
+            )?;
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: String::from("powershell scoop bootstrap"),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            ensure_bootstrap_source_version(
+                target,
+                working_dir,
+                "scoop",
+                &["--version"],
+                action.approved_version.as_ref().map_or(&[], |value| {
+                    std::slice::from_ref(value)
+                }),
+            )?;
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
 fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> {
     match source {
         "mise" => Some(&MISE_BACKEND),
@@ -850,6 +1461,13 @@ fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> 
         "pacman" => Some(&PACMAN_BACKEND),
         "apt" => Some(&APT_BACKEND),
         "dnf" => Some(&DNF_BACKEND),
+        "brew-bootstrap" => Some(&BREW_BOOTSTRAP_BACKEND),
+        "asdf-bootstrap" => Some(&ASDF_BOOTSTRAP_BACKEND),
+        "mise-bootstrap" => Some(&MISE_BOOTSTRAP_BACKEND),
+        "sdkman-bootstrap" => Some(&SDKMAN_BOOTSTRAP_BACKEND),
+        "uv-bootstrap" => Some(&UV_BOOTSTRAP_BACKEND),
+        "choco-bootstrap" => Some(&CHOCO_BOOTSTRAP_BACKEND),
+        "scoop-bootstrap" => Some(&SCOOP_BOOTSTRAP_BACKEND),
         _ => None,
     }
 }
@@ -1051,6 +1669,27 @@ mod tests {
         fs::set_permissions(&shim, perms).unwrap();
     }
 
+    fn make_powershell_bootstrap_shim(dir: &Path, target_name: &str, version: &str, log: &Path) {
+        let shim = dir.join("powershell");
+        let target = dir.join(target_name);
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nif [ \"$1\" = \"--version\" ]; then\n  echo '{}'\nfi\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
+            log.display(),
+            target.display(),
+            log.display(),
+            version,
+            target.display(),
+        );
+        fs::write(&shim, script).unwrap();
+        let mut perms = fs::metadata(&shim).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&shim, perms).unwrap();
+    }
+
     #[test]
     fn applies_provisioning_request_with_mise_shim() {
         let _guard = ENV_MUTEX.lock().unwrap();
@@ -1075,6 +1714,7 @@ mod tests {
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
                 source: "mise".to_string(),
+                source_config: None,
                 approved_version: Some("22".to_string()),
             }],
         };
@@ -1115,6 +1755,7 @@ mod tests {
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
                 source: "mise".to_string(),
+                source_config: None,
                 approved_version: Some("22".to_string()),
             }],
         };
@@ -1164,6 +1805,7 @@ mod tests {
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
                 source: "asdf".to_string(),
+                source_config: None,
                 approved_version: Some("22".to_string()),
             }],
         };
@@ -1205,6 +1847,7 @@ mod tests {
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
                 source: "sdkman".to_string(),
+                source_config: None,
                 approved_version: Some("22".to_string()),
             }],
         };
@@ -1246,6 +1889,7 @@ mod tests {
                 name: "python".to_string(),
                 requested_version: "3.12".to_string(),
                 source: "uv".to_string(),
+                source_config: None,
                 approved_version: Some("3.12".to_string()),
             }],
         };
@@ -1287,6 +1931,7 @@ mod tests {
                 name: "maven".to_string(),
                 requested_version: "3.9".to_string(),
                 source: "winget".to_string(),
+                source_config: None,
                 approved_version: Some("3.9".to_string()),
             }],
         };
@@ -1330,6 +1975,7 @@ mod tests {
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
                 source: "choco".to_string(),
+                source_config: None,
                 approved_version: Some("2.46.0".to_string()),
             }],
         };
@@ -1341,6 +1987,53 @@ mod tests {
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("git"));
         assert!(log_contents.contains("2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_choco_feed_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("choco.log");
+        make_shim(shim_dir.path(), "choco", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "node".to_string(),
+                requested_version: "22".to_string(),
+                source: "choco".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([(
+                    "feed".to_string(),
+                    serde_yaml::Value::String("internal-choco".to_string()),
+                )])),
+                approved_version: Some("22".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("node"));
+        assert!(log_contents.contains("22"));
+        assert!(log_contents.contains("--source"));
+        assert!(log_contents.contains("internal-choco"));
 
         unsafe {
             env::set_var("PATH", original_path);
@@ -1371,6 +2064,7 @@ mod tests {
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
                 source: "scoop".to_string(),
+                source_config: None,
                 approved_version: Some("2.46.0".to_string()),
             }],
         };
@@ -1381,6 +2075,76 @@ mod tests {
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("git@2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn bootstraps_choco_source_manager_with_powershell_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("powershell.log");
+        make_powershell_bootstrap_shim(shim_dir.path(), "choco", "2.0.0", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "choco".to_string(),
+                requested_version: "1.0".to_string(),
+                source: "choco-bootstrap".to_string(),
+                source_config: None,
+                approved_version: Some("2.0.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        assert!(fs::read_to_string(log).unwrap().contains("-Command"));
+        assert!(fs::metadata(shim_dir.path().join("choco")).is_ok());
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn bootstraps_scoop_source_manager_with_powershell_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("powershell.log");
+        make_powershell_bootstrap_shim(shim_dir.path(), "scoop", "2.0.0", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "scoop".to_string(),
+                requested_version: "1.0".to_string(),
+                source: "scoop-bootstrap".to_string(),
+                source_config: None,
+                approved_version: Some("2.0.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        assert!(fs::read_to_string(log).unwrap().contains("-Command"));
+        assert!(fs::metadata(shim_dir.path().join("scoop")).is_ok());
 
         unsafe {
             env::set_var("PATH", original_path);
@@ -1411,6 +2175,7 @@ mod tests {
                 name: "jq".to_string(),
                 requested_version: "1.7".to_string(),
                 source: "brew".to_string(),
+                source_config: None,
                 approved_version: Some("1.7".to_string()),
             }],
         };
@@ -1451,6 +2216,7 @@ mod tests {
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
                 source: "pacman".to_string(),
+                source_config: None,
                 approved_version: Some("2.46.0".to_string()),
             }],
         };
@@ -1492,6 +2258,7 @@ mod tests {
                 name: "jq".to_string(),
                 requested_version: "1.7".to_string(),
                 source: "apt".to_string(),
+                source_config: None,
                 approved_version: Some("1.7".to_string()),
             }],
         };
@@ -1533,6 +2300,7 @@ mod tests {
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
                 source: "dnf".to_string(),
+                source_config: None,
                 approved_version: Some("2.46.0".to_string()),
             }],
         };

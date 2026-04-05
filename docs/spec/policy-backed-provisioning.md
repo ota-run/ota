@@ -26,14 +26,14 @@
 
 Status: spec candidate.
 
-This document defines the next policy extension point for Ota: org-approved provisioning
-sources for declared runtimes and tools.
+This document defines ota's policy surface for approved provisioning sources for declared
+runtimes and tools.
 
 For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapters.md).
 
 This is not the current shipped `env` resolver. The shipped contract still treats `policies.env`
-as a flat approved-value map. This spec describes the later layer that can decide where an
-approved runtime or tool comes from when a repo asks for one.
+as a flat approved-value map. This page covers the provisioning source selection layer that
+decides where an approved runtime or tool comes from when a repo asks for one.
 Org policy packs are currently discovered from `.ota/org-policy.yaml` by walking ancestor
 directories from the repo contract path; one ancestor policy file can therefore cover a workspace
 tree.
@@ -57,6 +57,9 @@ The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `win
 `scoop`, `brew`, `apt`, `dnf`, and `pacman` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
 backends in that set; `mise`, `asdf`, `winget`, `choco`, `scoop`, `brew`, `apt`, `dnf`, and `pacman` can flow through
 declared runtime and tool entries where the adapter supports them.
+Chocolatey entries can also carry `source_config.feed` so an approved internal feed or mirror
+stays reviewable in policy.
+`source_config` is otherwise backend-specific, so backends can read only the keys they understand.
 
 ## Supported today
 
@@ -87,7 +90,7 @@ All other sources remain policy-visible and read-only until a matching adapter i
 - no silent installs from unapproved sources
 - no general package-manager replacement
 - no broad control plane for every software installation case
-- adapter bootstrap policy is a separate layer for getting Ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md)
+- adapter bootstrap policy is a separate layer for getting Ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, and `uv-bootstrap`.
 
 ## Relationship to current contract surfaces
 
@@ -105,27 +108,33 @@ The first useful shape should stay small and declarative:
 ```yaml
 policies:
   provisioning:
-    java:
-      source: org-mirror
-      approved_versions:
-        - "21"
-        - "22"
-    node:
+    defaults:
       source: approved-manager
       approved_versions:
-        - "22"
+        - "*"
+    runtimes:
+      java:
+        source: org-mirror
+        approved_versions:
+          - "21"
+          - "22"
     tools:
       pnpm:
         source: approved-manager
         approved_versions:
           - "10"
+      node:
+        source: approved-manager
+        approved_versions:
+          - "22"
 ```
 
 The exact field names may change, but the shape should remain:
 
-- repo declares what it needs
-- policy declares where it may come from
-- Ota resolves the approved source
+- repo declares what it needs in `runtimes` and `tools`
+- policy can provide a default source for every declared runtime or tool
+- policy can override the default source for a specific runtime or tool when needed
+- ota resolves the approved source
 - the approved `allowed` entries form the source-selection interface, and `selected_provisioning_actions` is the backend-agnostic action shape a future installer backend would consume
 - the backend intake should use a serialized `ProvisioningBackendRequest { actions: [...] }` shape so the installer layer consumes only the selected actions, not the full diagnostic plan
 - `ota doctor --json` should surface that request separately as `provisioning_request`, so machine consumers do not have to re-derive it from the plan
@@ -155,6 +164,7 @@ runtimes:
   java: "22"
 tools:
   maven: "3.9"
+  node: "22"
 checks:
   - name: java-installed
     kind: precondition
@@ -166,11 +176,22 @@ checks:
     run: mvn -version
 policies:
   provisioning:
-    java:
-      source: org-mirror
+    defaults:
+      source: approved-manager
       approved_versions:
-        - "22"
+        - "*"
+    runtimes:
+      java:
+        source: org-mirror
+        approved_versions:
+          - "22"
     tools:
+      node:
+        source: choco
+        source_config:
+          feed: internal-choco
+        approved_versions:
+          - "22"
       maven:
         source: approved-manager
         approved_versions:
@@ -186,7 +207,7 @@ With that shape:
 
 - `ota doctor` can say Java 22 and Maven are missing or unverified
 - `ota up` can run the repo-owned setup path when checks fail
-- a later provisioning layer can use policy to select Java 22 from the internal mirror and Maven 3.9 from the approved manager
+- the provisioning layer can use the default policy rule for every declared runtime or tool, then override Java 22 from the internal mirror, Maven 3.9 from the approved manager, and Node 22 from the approved Chocolatey feed
 - receipts can show the source that won
 
 ## Source meaning
@@ -201,9 +222,12 @@ With that shape:
 
 It should not encode raw download scripts or ad hoc shell commands.
 
+For Chocolatey, `source_config.feed` can name an approved internal feed or mirror so the feed
+selection stays reviewable in policy.
+
 ## Expected behavior
 
-When this layer exists, Ota should be able to:
+When this layer exists, ota should be able to:
 
 - explain which source is approved for a requested runtime or tool
 - reject unapproved sources
@@ -227,7 +251,7 @@ The command should:
 
 ## Provenance
 
-When a policy-approved source wins, Ota should explain:
+When a policy-approved source wins, ota should explain:
 
 - the requested runtime or tool
 - the approved source that was selected
@@ -248,7 +272,7 @@ That separation keeps policy readable and keeps the shipped `env` layer honest.
 
 ## Exit criteria
 
-This spec becomes implementation-bound when Ota can:
+This spec becomes implementation-bound when ota can:
 
 - resolve a repo-declared runtime or tool through an approved source
 - refuse unapproved sources

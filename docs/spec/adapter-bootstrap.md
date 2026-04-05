@@ -43,8 +43,8 @@ already has the adapter command available. If a repo wants `brew`, `mise`, `asdf
 `uv`, `winget`, `choco`, `scoop`, `apt`, `dnf`, or `pacman`, Ota still needs the corresponding
 adapter binary or package manager on the machine or in the container image.
 
-An adapter bootstrap policy would let an organization declare where those adapter binaries may
-come from without turning Ota into a hidden workstation manager.
+An adapter bootstrap policy would let an organization declare how Ota may install missing
+adapter binaries without turning Ota into a hidden workstation manager.
 
 ## Non-goals
 
@@ -62,17 +62,17 @@ come from without turning Ota into a hidden workstation manager.
 
 ## Proposed shape
 
-The policy should stay explicit and source-oriented:
+The policy should stay explicit and backend-oriented:
 
 ```yaml
 policies:
   adapter_bootstrap:
     brew:
-      source: approved-manager
+      source: brew-bootstrap
       approved_versions:
         - "4.4"
     mise:
-      source: internal-mirror
+      source: mise-bootstrap
       approved_versions:
         - "2024.12"
 ```
@@ -80,16 +80,26 @@ policies:
 In that example:
 
 - `brew` and `mise` are the adapters Ota may need to bootstrap
-- `source` names the approved origin for the adapter binary itself
-- `approved_versions` limits which adapter versions are allowed
+- `source` names the bootstrap backend Ota should use for that adapter
+- `approved_versions` limits which adapter versions are allowed after bootstrap
 
 ## Current implementation
 
 Ota now validates `policies.adapter_bootstrap`, can resolve a plan for missing adapters,
-and will bootstrap an approved adapter source before retrying repo provisioning.
+and will bootstrap an approved source-manager backend before retrying repo provisioning.
 
-The first shipped path reuses the built-in provisioning backends to install the missing
-adapter binary from the approved source in policy.
+The shipped bootstrap backends are named separately from the repo provisioning backends:
+
+- `brew-bootstrap`
+- `asdf-bootstrap`
+- `mise-bootstrap`
+- `sdkman-bootstrap`
+- `uv-bootstrap`
+- `choco-bootstrap`
+- `scoop-bootstrap`
+
+Those bootstrap backends install the missing adapter binary first, then Ota retries repo
+provisioning with the now-available manager.
 
 ## Expected behavior
 
@@ -100,6 +110,37 @@ When this layer is used, Ota should be able to:
 - refuse unapproved adapter sources
 - keep adapter bootstrap separate from repo provisioning
 - record the selected bootstrap source in diagnostics and receipts
+
+## Source bootstrap in practice
+
+When the source manager itself is missing, policy can approve a bootstrap backend first and then
+let repo provisioning use the newly available manager.
+
+Example:
+
+```yaml
+policies:
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+    sdkman:
+      source: sdkman-bootstrap
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+    java:
+      source: sdkman
+      approved_versions:
+        - "21"
+```
+
+In that example:
+
+- `brew-bootstrap` installs `brew` first when it is missing
+- `sdkman-bootstrap` installs `sdkman` first when it is missing
+- repo provisioning then uses the approved source managers to install the declared tools and runtimes
 
 ## Scope boundaries
 

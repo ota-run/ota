@@ -26,7 +26,7 @@
 
 Status: spec candidate.
 
-This page lists the adapter families Ota can support for policy-backed provisioning.
+This page lists the adapter families ota can support for policy-backed provisioning.
 It separates execution backends from source origins so the contract stays clear.
 
 ## Supported today
@@ -66,12 +66,47 @@ Useful source families include:
 - offline bundle
 - enterprise package proxy
 
-These are policy targets, not installer implementations. They tell Ota which origin is allowed,
+These are policy targets, not installer implementations. They tell ota which origin is allowed,
 not how the package manager itself works.
+
+## Custom source configuration
+
+Some organizations use an existing manager with a custom feed or mirror.
+That is still the same adapter family, not a new ota source, and ota can carry the approved
+feed in policy when the adapter supports it. The `source_config` bag is backend-specific, so
+Chocolatey reads `feed` today while other backends can ignore or interpret their own keys.
+
+For example, an internal Chocolatey feed is modeled as:
+
+- `choco` as the manager
+- Chocolatey configured to point at the company feed
+- `choco-bootstrap` only if Chocolatey itself is missing
+
+Example:
+
+```yaml
+policies:
+  adapter_bootstrap:
+    choco:
+      source: choco-bootstrap
+  provisioning:
+    node:
+      source: choco
+      source_config:
+        feed: internal-choco
+      approved_versions:
+        - "22"
+```
+
+In that example:
+
+- ota uses the shipped `choco` adapter
+- the company feed is part of the approved provisioning policy
+- the feed name or URL stays reviewable in policy instead of hiding in a script
 
 ## Sample policy
 
-Use a policy block when you want Ota to know which source is approved for a runtime or tool:
+Use a policy block when you want ota to know which source is approved for a runtime or tool:
 
 ```yaml
 policies:

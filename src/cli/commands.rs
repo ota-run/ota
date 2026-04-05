@@ -9084,7 +9084,12 @@ mod tests {
         execute_repo_up, render_execution_receipt_summary_block, render_execution_receipt_text,
         run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
     };
+    use crate::policy_pack::{
+        ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest,
+        ProvisioningTargetKind,
+    };
     use crate::parser::parse_contract_str;
+    use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
     use crate::test_support::ENV_MUTEX;
     use tempfile::TempDir;
@@ -9106,7 +9111,7 @@ mod tests {
         let java_log = dir.join("java.log");
 
         let brew_script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\ncat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\ncat > \"{}\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\necho 'openjdk 22'\nexit 0\nEOJ\nchmod +x \"{}\"\nexit 0\nEOF\nchmod +x \"{}\"\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'EOJ'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\necho 'openjdk 22'\nexit 0\nEOJ\n/bin/chmod +x \"{}\"\nexit 0\nEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
             brew_log.display(),
             dir.join("mise").display(),
             mise_log.display(),
@@ -9116,6 +9121,29 @@ mod tests {
             dir.join("mise").display(),
         );
         write_executable_script(&dir.join("brew"), &brew_script);
+    }
+
+    fn make_source_bootstrap_shims(dir: &Path) {
+        let bootstrap_log = dir.join("brew-bootstrap.log");
+        let brew_log = dir.join("brew.log");
+        let node_log = dir.join("node.log");
+        let brew_path = dir.join("brew");
+        let node_path = dir.join("node");
+        let brew_script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'NODEEOF'\n#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\ncase \"$1\" in\n  --version|-v) echo 'v22.0.0' ;;\n  *) exit 0 ;;\nesac\nNODEEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
+            brew_log.display(),
+            node_path.display(),
+            node_log.display(),
+            node_path.display(),
+        );
+        let bootstrap_script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\n/bin/cat > \"{}\" <<'BREWEOF'\n{}\nBREWEOF\n/bin/chmod +x \"{}\"\nexit 0\n",
+            bootstrap_log.display(),
+            brew_path.display(),
+            brew_script,
+            brew_path.display(),
+        );
+        write_executable_script(&dir.join("sh"), &bootstrap_script);
     }
 
     #[test]
@@ -9300,11 +9328,7 @@ policies:
         make_bootstrap_shims(shim_dir.path());
 
         let original_path = env::var("PATH").unwrap_or_default();
-        let mut new_path = shim_dir.path().display().to_string();
-        if !original_path.is_empty() {
-            new_path.push(':');
-            new_path.push_str(&original_path);
-        }
+        let new_path = shim_dir.path().display().to_string();
         unsafe {
             env::set_var("PATH", new_path);
         }
@@ -9323,7 +9347,25 @@ policies:
         )
         .unwrap();
 
-        assert!(result.ok);
+        let bootstrap_log = fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
+            .unwrap_or_else(|_| String::from("<missing>"));
+        let brew_log =
+            fs::read_to_string(shim_dir.path().join("brew.log")).unwrap_or_else(|_| String::from("<missing>"));
+        let node_log =
+            fs::read_to_string(shim_dir.path().join("node.log")).unwrap_or_else(|_| String::from("<missing>"));
+
+        assert!(
+            result.ok,
+            "status={} phase={} exit={:?}\nstdout=\n{}\nstderr=\n{}\nbootstrap_log=\n{}\nbrew_log=\n{}\nnode_log=\n{}",
+            result.status,
+            result.phase,
+            result.exit_code,
+            result.stdout,
+            result.stderr,
+            bootstrap_log,
+            brew_log,
+            node_log
+        );
         assert_eq!(result.status, "READY");
         assert!(
             fs::read_to_string(shim_dir.path().join("brew.log"))
@@ -9340,6 +9382,48 @@ policies:
                 .unwrap()
                 .contains("--version")
         );
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn up_bootstraps_missing_source_manager_before_repo_provisioning() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        make_source_bootstrap_shims(shim_dir.path());
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let new_path = shim_dir.path().display().to_string();
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("brew"),
+                requested_version: String::from("4.4"),
+                source: String::from("brew-bootstrap"),
+                source_config: None,
+                approved_version: None,
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, shim_dir.path()).unwrap();
+        assert!(result.stdout.is_empty());
+        assert!(
+            result.stderr.is_empty(),
+            "stderr=\n{}\nbootstrap_log=\n{}",
+            result.stderr,
+            fs::read_to_string(shim_dir.path().join("brew-bootstrap.log")).unwrap_or_else(|_| String::from("<missing>"))
+        );
+        assert!(fs::read_to_string(shim_dir.path().join("brew-bootstrap.log"))
+            .unwrap()
+            .contains("-lc"));
+        assert!(fs::metadata(shim_dir.path().join("brew")).is_ok());
 
         unsafe {
             env::set_var("PATH", original_path);
