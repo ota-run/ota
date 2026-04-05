@@ -877,6 +877,7 @@ fn adjust_repo_findings(report: DoctorReport, required: bool) -> DoctorReport {
     DoctorReport {
         ok: true,
         provisioning: report.provisioning,
+        adapter_bootstrap: report.adapter_bootstrap,
         findings: report
             .findings
             .into_iter()

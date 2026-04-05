@@ -75,6 +75,8 @@ pub struct PolicyRules {
     pub exports: Option<PolicyExportsRules>,
     #[serde(default)]
     pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
+    #[serde(default)]
+    pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -99,6 +101,35 @@ pub struct PolicyProvisioningRule {
     pub source: String,
     #[serde(default)]
     pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyAdapterBootstrapRule {
+    pub source: String,
+    #[serde(default)]
+    pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdapterBootstrapDecision {
+    pub name: String,
+    pub source: String,
+    pub approved_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdapterBootstrapPlanEntry {
+    pub name: String,
+    pub source: Option<String>,
+    pub approved_version: Option<String>,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct AdapterBootstrapPlan {
+    pub allowed: Vec<AdapterBootstrapPlanEntry>,
+    pub blocked: Vec<AdapterBootstrapPlanEntry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -192,23 +223,14 @@ impl OrgPolicyPack {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        for (name, rule) in &self.policies.provisioning {
-            if rule.source.trim().is_empty() {
-                return Err(format!(
-                    "policy-backed provisioning source `{name}` must not be empty"
-                ));
-            }
-
-            if rule
-                .approved_versions
-                .iter()
-                .any(|version| version.trim().is_empty())
-            {
-                return Err(format!(
-                    "policy-backed provisioning source `{name}` must not contain empty approved versions"
-                ));
-            }
-        }
+        validate_source_rules(
+            &self.policies.provisioning,
+            "policy-backed provisioning source",
+        )?;
+        validate_source_rules(
+            &self.policies.adapter_bootstrap,
+            "policy-backed adapter bootstrap source",
+        )?;
 
         Ok(())
     }
@@ -253,6 +275,82 @@ impl OrgPolicyPack {
                 .find(|version| version.as_str() == requested_version)
                 .cloned(),
         }))
+    }
+
+    pub fn resolve_adapter_bootstrap(
+        &self,
+        adapter: &str,
+    ) -> Result<Option<AdapterBootstrapDecision>, String> {
+        let Some(rule) = self.policies.adapter_bootstrap.get(adapter) else {
+            return Ok(None);
+        };
+
+        if rule.source.trim().is_empty() {
+            return Err(format!(
+                "policy-backed adapter bootstrap source `{adapter}` must not be empty"
+            ));
+        }
+
+        Ok(Some(AdapterBootstrapDecision {
+            name: adapter.to_string(),
+            source: rule.source.clone(),
+            approved_version: rule.approved_versions.first().cloned(),
+        }))
+    }
+
+    pub fn adapter_bootstrap_plan(&self, missing_adapters: &[&str]) -> AdapterBootstrapPlan {
+        let mut plan = AdapterBootstrapPlan::default();
+
+        for adapter in missing_adapters {
+            match self.resolve_adapter_bootstrap(adapter) {
+                Ok(Some(decision)) => plan.allowed.push(AdapterBootstrapPlanEntry {
+                    name: decision.name,
+                    source: Some(decision.source),
+                    approved_version: decision.approved_version,
+                    blocked_reason: None,
+                }),
+                Ok(None) => plan.blocked.push(AdapterBootstrapPlanEntry {
+                    name: (*adapter).to_string(),
+                    source: None,
+                    approved_version: None,
+                    blocked_reason: Some(format!(
+                        "no approved adapter bootstrap source declared for `{adapter}`"
+                    )),
+                }),
+                Err(message) => plan.blocked.push(AdapterBootstrapPlanEntry {
+                    name: (*adapter).to_string(),
+                    source: None,
+                    approved_version: None,
+                    blocked_reason: Some(message),
+                }),
+            }
+        }
+
+        plan
+    }
+
+    pub fn adapter_bootstrap_backend_request(
+        &self,
+        missing_adapters: &[&str],
+    ) -> ProvisioningBackendRequest {
+        let plan = self.adapter_bootstrap_plan(missing_adapters);
+        let actions = plan
+            .allowed
+            .into_iter()
+            .map(|entry| ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: entry.name,
+                requested_version: entry
+                    .approved_version
+                    .clone()
+                    .unwrap_or_else(|| String::from("latest")),
+                source: entry.source.unwrap_or_default(),
+                approved_version: entry.approved_version,
+            })
+            .collect();
+
+        ProvisioningBackendRequest { actions }
     }
 
     pub fn provisioning_plan(&self, contract: &crate::schema::Contract) -> ProvisioningPlan {
@@ -371,6 +469,57 @@ impl OrgPolicyPack {
                 blocked_reason: Some(message),
             }),
         }
+    }
+}
+
+fn validate_source_rules<T>(
+    rules: &BTreeMap<String, T>,
+    label: &str,
+) -> Result<(), String>
+where
+    T: SourceRule,
+{
+    for (name, rule) in rules {
+        if rule.source().trim().is_empty() {
+            return Err(format!("{label} `{name}` must not be empty"));
+        }
+
+        if rule
+            .approved_versions()
+            .iter()
+            .any(|version| version.trim().is_empty())
+        {
+            return Err(format!(
+                "{label} `{name}` must not contain empty approved versions"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+trait SourceRule {
+    fn source(&self) -> &str;
+    fn approved_versions(&self) -> &[String];
+}
+
+impl SourceRule for PolicyProvisioningRule {
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn approved_versions(&self) -> &[String] {
+        &self.approved_versions
+    }
+}
+
+impl SourceRule for PolicyAdapterBootstrapRule {
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn approved_versions(&self) -> &[String] {
+        &self.approved_versions
     }
 }
 
@@ -500,6 +649,11 @@ policies:
       source: approved-manager
       approved_versions:
         - "3.9"
+  adapter_bootstrap:
+    mise:
+      source: approved-manager
+      approved_versions:
+        - "2024.12"
 "#,
         )
         .unwrap();
@@ -514,6 +668,10 @@ policies:
         assert_eq!(
             policy.policies.provisioning["maven"].approved_versions,
             vec![String::from("3.9")]
+        );
+        assert_eq!(
+            policy.policies.adapter_bootstrap["mise"].source,
+            "approved-manager"
         );
     }
 
@@ -531,6 +689,104 @@ policies:
 
         let error = policy.validate().unwrap_err();
         assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn rejects_empty_policy_adapter_bootstrap_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  adapter_bootstrap:
+    mise:
+      source: " "
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn resolves_approved_policy_adapter_bootstrap_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  adapter_bootstrap:
+    mise:
+      source: approved-manager
+      approved_versions:
+        - "2024.12"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_adapter_bootstrap("mise")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.name, "mise");
+        assert_eq!(decision.source, "approved-manager");
+        assert_eq!(decision.approved_version.as_deref(), Some("2024.12"));
+    }
+
+    #[test]
+    fn builds_adapter_bootstrap_plan_for_missing_adapters() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  adapter_bootstrap:
+    mise:
+      source: approved-manager
+      approved_versions:
+        - "2024.12"
+"#,
+        )
+        .unwrap();
+
+        let plan = policy.adapter_bootstrap_plan(&["mise", "brew"]);
+        assert_eq!(plan.allowed.len(), 1);
+        assert_eq!(plan.blocked.len(), 1);
+        assert_eq!(plan.allowed[0].name, "mise");
+        assert_eq!(plan.allowed[0].source.as_deref(), Some("approved-manager"));
+        assert_eq!(plan.allowed[0].approved_version.as_deref(), Some("2024.12"));
+        assert_eq!(plan.blocked[0].name, "brew");
+        assert!(
+            plan.blocked[0]
+                .blocked_reason
+                .as_ref()
+                .unwrap()
+                .contains("no approved adapter bootstrap source")
+        );
+    }
+
+    #[test]
+    fn builds_adapter_bootstrap_backend_request_for_allowed_adapters() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  adapter_bootstrap:
+    mise:
+      source: approved-manager
+      approved_versions:
+        - "2024.12"
+"#,
+        )
+        .unwrap();
+
+        let request = policy.adapter_bootstrap_backend_request(&["mise"]);
+        assert_eq!(request.actions.len(), 1);
+        assert_eq!(
+            request.actions[0].kind,
+            ProvisioningActionKind::SelectSource
+        );
+        assert_eq!(
+            request.actions[0].target_kind,
+            ProvisioningTargetKind::Tool
+        );
+        assert_eq!(request.actions[0].name, "mise");
+        assert_eq!(request.actions[0].source, "approved-manager");
     }
 
     #[test]
