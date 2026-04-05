@@ -233,6 +233,9 @@ mirror or custom repository so the selected package source stays reviewable in p
 For `dnf`, `source_config.baseurl` and `repo_id` can point at an approved repo mirror so the
 temporary repo label and package source stay reviewable in policy.
 
+For `winget`, `source_config.source_name` can name an approved Windows source so installs stay
+reviewable in policy while still using the shipped `winget` adapter.
+
 ## Expected behavior
 
 When this layer exists, ota should be able to:

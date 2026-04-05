@@ -203,6 +203,16 @@ impl WingetProvisioningBackend {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
+
+    fn source_args(action: &ProvisioningAction) -> Vec<String> {
+        action
+            .source_config
+            .as_ref()
+            .and_then(|config| config.get("source_name"))
+            .and_then(|value| value.as_str())
+            .map(|source_name| vec![String::from("--source"), source_name.to_string()])
+            .unwrap_or_default()
+    }
 }
 
 impl ChocoProvisioningBackend {
@@ -724,20 +734,21 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let source_args = Self::source_args(action);
+            let mut args = vec![
+                "install".to_string(),
+                "--id".to_string(),
+                install_target.clone(),
+                "--version".to_string(),
+                action.requested_version.clone(),
+                "--exact".to_string(),
+                "--accept-source-agreements".to_string(),
+                "--accept-package-agreements".to_string(),
+            ];
+            args.extend(source_args.clone());
+            let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
             let output = execute_provisioning_command(
-                target,
-                working_dir,
-                "winget",
-                &[
-                    "install",
-                    "--id",
-                    &install_target,
-                    "--version",
-                    &action.requested_version,
-                    "--exact",
-                    "--accept-source-agreements",
-                    "--accept-package-agreements",
-                ],
+                target, working_dir, "winget", &arg_refs,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -745,10 +756,15 @@ impl ProvisioningBackend for WingetProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!(
-                        "winget install --id {install_target} --version {}",
-                        action.requested_version
-                    ),
+                    command: if source_args.is_empty() {
+                        format!("winget install --id {install_target} --version {}", action.requested_version)
+                    } else {
+                        let source_arg = source_args.join(" ");
+                        format!(
+                            "winget install --id {install_target} --version {} {source_arg}",
+                            action.requested_version
+                        )
+                    },
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -2097,6 +2113,51 @@ mod tests {
         assert!(log_contents.contains("maven"));
         assert!(log_contents.contains("--version"));
         assert!(log_contents.contains("3.9"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_winget_source_name_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("winget.log");
+        make_shim(shim_dir.path(), "winget", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "maven".to_string(),
+                requested_version: "3.9".to_string(),
+                source: "winget".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([(
+                    String::from("source_name"),
+                    Value::String("internal-winget".to_string()),
+                )])),
+                approved_version: Some("3.9".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("--source"));
+        assert!(log_contents.contains("internal-winget"));
 
         unsafe {
             env::set_var("PATH", original_path);
