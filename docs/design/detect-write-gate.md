@@ -50,6 +50,6 @@ Current precedence rule:
 
 ## Why this exists
 
-Ota wins trust when detection is reviewable, explicit, and unsurprising.
+ota wins trust when detection is reviewable, explicit, and unsurprising.
 
 It loses trust when detection writes configuration that looks confident but is actually guessed.

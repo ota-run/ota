@@ -28,7 +28,7 @@ Status: complete.
 
 Source direction:
 
-- `/Users/bobai/Desktop/Ota.run/Spec/new/21a-v6-extension-contract-normative.md`
+- `/Users/bobai/Desktop/ota.run/Spec/new/21a-v6-extension-contract-normative.md`
 - [Extension execution boundary](../../spec/extension-execution-boundary.md)
 - [Compatibility policy](../../spec/compatibility-policy.md)
 - [Remote runner and editor surface](../../spec/remote-runner-and-editor-surface.md)

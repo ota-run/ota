@@ -26,11 +26,11 @@
 
 Status: completed and archived.
 
-V2 should expand Ota only after preserving the shipped V1 trust model.
+V2 should expand ota only after preserving the shipped V1 trust model.
 
 The point of V2 is not broader surface area for its own sake.
 
-The point of V2 is to make Ota:
+The point of V2 is to make ota:
 
 - more trustworthy on real repos
 - easier to adopt
@@ -70,9 +70,9 @@ Current V2 slices already in motion include:
 
 ### Track 2: Adoption
 
-- reduce the cost of getting a real repo into Ota
+- reduce the cost of getting a real repo into ota
 - improve import and migration paths without weakening trust-sensitive writes
-- prioritize work that helps one repo or one team adopt Ota faster
+- prioritize work that helps one repo or one team adopt ota faster
 - keep detect merge/update review-first and additive-only unless broader write behavior earns trust through real fixtures
 
 ### Track 3: Better Real-Repo Handling
@@ -97,7 +97,7 @@ These are not core V2 pillars.
 ### Narrow Export
 
 - consider export only if one exact target proves real duplicated-truth pain
-- Ota must remain the source of truth and exports must remain derived artifacts
+- ota must remain the source of truth and exports must remain derived artifacts
 - do not start a broad export program
 
 ### Workspace UX Extensions
@@ -112,7 +112,7 @@ These are not core V2 pillars.
 ## Non-goals
 
 - replacing `ota.yaml` as the repo source of truth
-- turning Ota into a hidden workstation manager
+- turning ota into a hidden workstation manager
 - adding provider-specific GitHub, GitLab, or Bitbucket behavior into the core model
 - building a broad export matrix before a single target proves clear value
 - introducing a second execution truth outside the contract

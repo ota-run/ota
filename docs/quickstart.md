@@ -22,9 +22,9 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Quickstart
+# ota Quickstart
 
-Install Ota first: [installation.md](installation.md)
+Install ota first: [installation.md](installation.md)
 
 ## Start Here
 
@@ -74,7 +74,7 @@ ota workspace status
 ota workspace receipt
 ```
 
-Ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.
+ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.
 
 If a workspace repo is missing locally but declares `repos.<name>.source`, `ota workspace up` can acquire it first and then reuse the existing repo-level bootstrap flow.
 

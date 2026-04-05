@@ -26,13 +26,13 @@
 
 Status: implemented.
 
-This document defines the policy layer for how Ota should obtain its own provisioning
+This document defines the policy layer for how ota should obtain its own provisioning
 adapters when the host or container does not already have them installed.
 
 This is intentionally separate from repo provisioning:
 
 - repo provisioning answers what the repo needs
-- adapter bootstrap answers how Ota gets the adapter binary it needs to satisfy that repo
+- adapter bootstrap answers how ota gets the adapter binary it needs to satisfy that repo
 
 That separation keeps repository readiness honest and keeps adapter installation policy-controlled.
 
@@ -40,11 +40,11 @@ That separation keeps repository readiness honest and keeps adapter installation
 
 The current built-in provisioning adapters are useful only when the selected execution target
 already has the adapter command available. If a repo wants `brew`, `mise`, `asdf`, `sdkman`,
-`uv`, `winget`, `choco`, `scoop`, `apt`, `dnf`, or `pacman`, Ota still needs the corresponding
+`uv`, `winget`, `choco`, `scoop`, `apt`, `dnf`, or `pacman`, ota still needs the corresponding
 adapter binary or package manager on the machine or in the container image.
 
-An adapter bootstrap policy would let an organization declare how Ota may install missing
-adapter binaries without turning Ota into a hidden workstation manager.
+An adapter bootstrap policy would let an organization declare how ota may install missing
+adapter binaries without turning ota into a hidden workstation manager.
 
 ## Non-goals
 
@@ -57,7 +57,7 @@ adapter binaries without turning Ota into a hidden workstation manager.
 ## Relationship to current policy surfaces
 
 - `policies.provisioning` says where repo prerequisites may come from
-- `policies.adapter_bootstrap` says where Ota may obtain the adapter binary that performs that work
+- `policies.adapter_bootstrap` says where ota may obtain the adapter binary that performs that work
 - `policies.env` remains the shipped env-value resolver
 
 ## Proposed shape
@@ -79,13 +79,13 @@ policies:
 
 In that example:
 
-- `brew` and `mise` are the adapters Ota may need to bootstrap
-- `source` names the bootstrap backend Ota should use for that adapter
+- `brew` and `mise` are the adapters ota may need to bootstrap
+- `source` names the bootstrap backend ota should use for that adapter
 - `approved_versions` limits which adapter versions are allowed after bootstrap
 
 ## Current implementation
 
-Ota now validates `policies.adapter_bootstrap`, can resolve a plan for missing adapters,
+ota now validates `policies.adapter_bootstrap`, can resolve a plan for missing adapters,
 and will bootstrap an approved source-manager backend before retrying repo provisioning.
 
 The shipped bootstrap backends are named separately from the repo provisioning backends:
@@ -98,12 +98,12 @@ The shipped bootstrap backends are named separately from the repo provisioning b
 - `choco-bootstrap`
 - `scoop-bootstrap`
 
-Those bootstrap backends install the missing adapter binary first, then Ota retries repo
+Those bootstrap backends install the missing adapter binary first, then ota retries repo
 provisioning with the now-available manager.
 
 ## Expected behavior
 
-When this layer is used, Ota should be able to:
+When this layer is used, ota should be able to:
 
 - tell the user which adapter binary is missing
 - explain the approved source for that adapter
@@ -157,7 +157,7 @@ It should not:
 
 ## Exit criteria
 
-This spec becomes implementation-bound when Ota can:
+This spec becomes implementation-bound when ota can:
 
 - resolve an adapter binary through an approved source
 - report that source in doctor output

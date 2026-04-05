@@ -24,7 +24,7 @@
 
 # Remote Runner Metadata and Editor Surface
 
-This document defines the V7 target for remote-runner metadata and editor/IDE integration in Ota.
+This document defines the V7 target for remote-runner metadata and editor/IDE integration in ota.
 
 The goal is to make remote execution and editor discovery use the same contract language instead of separate ad hoc surfaces.
 
@@ -114,7 +114,7 @@ Typical editor behavior:
 
 - annotate missing tasks, runtimes, tools, and workspace acquisition problems inline
 - expose a readiness summary panel sourced from JSON
-- surface explicit actions that map back to Ota commands
+- surface explicit actions that map back to ota commands
 - avoid custom per-repo heuristics when the contract already says what to do
 
 ## Semantics

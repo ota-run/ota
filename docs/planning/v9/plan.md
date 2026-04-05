@@ -54,7 +54,7 @@ Follow-on direction:
 
 1. Keep env resolution explicit and auditable
 2. Preserve repo/workspace trust boundaries
-3. Keep app config ownership outside Ota
+3. Keep app config ownership outside ota
 
 ## Execution slices
 
@@ -77,4 +77,4 @@ Follow-on direction:
 
 - env values can be resolved from approved sources
 - execution receipts can show env provenance
-- Ota remains bounded and does not become a generic app config system
+- ota remains bounded and does not become a generic app config system

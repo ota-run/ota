@@ -24,17 +24,17 @@
 
 # Brand Policy
 
-Ota’s brand is separate from the Apache 2.0 code license.
+ota’s brand is separate from the Apache 2.0 code license.
 
 ## Reserved marks
 
-- `Ota`
-- the Ota logo and visual identity
+- `ota`
+- the ota logo and visual identity
 
 ## Usage
 
 - use the brand only to refer to the official project
-- do not present derivative products as the official Ota project
+- do not present derivative products as the official ota project
 - keep downstream packaging and enterprise offerings clearly branded as separate products
 
 ## Relationship to commercial policy

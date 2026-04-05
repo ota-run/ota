@@ -24,7 +24,7 @@
 
 # Commercial Policy
 
-Ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
+ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
 
 ## What is open
 
@@ -39,7 +39,7 @@ Ota is open source under Apache 2.0. The commercial model stays separate from th
 
 ## What is reserved
 
-- the `Ota` name
+- the `ota` name
 - the logo and branding
 - commercial packaging and enterprise offerings
 

@@ -22,11 +22,11 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Command Reference
+# ota Command Reference
 
 This document describes the current shipped CLI surface.
 
-Ota's canonical repo contract is `ota.yaml`. This reference covers the current repo-level CLI surface only.
+ota's canonical repo contract is `ota.yaml`. This reference covers the current repo-level CLI surface only.
 
 For machine-readable command contracts, see [json-output-reference.md](json-output-reference.md).
 For canonical exit-code behavior, see [exit-codes.md](exit-codes.md).
@@ -67,7 +67,7 @@ Repo commands that read an existing `ota.yaml` can also target a monorepo member
 ota <command> --member <name> [PATH]
 ```
 
-Ota currently ships these commands:
+ota currently ships these commands:
 
 - `ota doctor`
 - `ota explain`
@@ -117,7 +117,7 @@ When a command accepts a `PATH`, it may be either:
 - a direct path to `ota.yaml`
 - a directory containing `ota.yaml`
 
-For commands that read an existing contract, Ota now resolves in this order:
+For commands that read an existing contract, ota now resolves in this order:
 
 - `--file <path>`
 - `OTA_FILE`
@@ -125,7 +125,7 @@ For commands that read an existing contract, Ota now resolves in this order:
 - an explicitly supplied directory `PATH` is treated as the contract boundary
 - upward discovery from the current directory when no `PATH` is supplied
 
-When the discovered `ota.yaml` is a declared monorepo member contract, Ota now loads the merged
+When the discovered `ota.yaml` is a declared monorepo member contract, ota now loads the merged
 member contract automatically from that member path.
 
 `ota detect` is different. Its `PATH` is a repo root to inspect.
@@ -181,7 +181,7 @@ Current intent:
 
 ## `ota validate`
 
-Validate an Ota contract.
+Validate an ota contract.
 
 ```bash
 ota validate [PATH]
@@ -290,7 +290,7 @@ JSON output:
 
 ## `ota diff`
 
-Compare two Ota contracts semantically.
+Compare two ota contracts semantically.
 
 ```bash
 ota diff ./before/ota.yaml ./after/ota.yaml
@@ -357,7 +357,7 @@ JSON output:
 
 ## `ota annotations`
 
-Render Ota doctor findings as CI annotations or provider-neutral log lines.
+Render ota doctor findings as CI annotations or provider-neutral log lines.
 
 ```bash
 ota annotations --mode doctor --format github --input ./doctor.json
@@ -367,7 +367,7 @@ ota doctor --json | ota annotations --mode doctor --format github --input -
 
 Current behavior:
 
-- reads Ota JSON from a file or from stdin when `--input -` is used
+- reads ota JSON from a file or from stdin when `--input -` is used
 - emits one primary blocker line when `summary.primary_blocker` is present
 - emits one line per finding
 - maps `severity: error` to `::error` or `ERROR` and all other severities to
@@ -573,7 +573,7 @@ Warnings can still produce `READY`. Errors produce `NOT READY`.
 
 ## `ota init`
 
-Create a starter Ota contract for a repo that does not yet have one.
+Create a starter ota contract for a repo that does not yet have one.
 
 ```bash
 ota init [PATH]
@@ -594,7 +594,7 @@ Current behavior:
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
-- when `project.name` is still missing in bootstrap mode, Ota falls back to the repo directory name rather than leaving the contract invalid
+- when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
 - when the detected tasks are confident enough, the starter contract may also include a minimal `agent` block and review notes; see [`contract-reference.md`](contract-reference.md) for the `agent` field semantics
@@ -622,7 +622,7 @@ JSON output:
 - `mode`
 - `config`
 - `inferred`
-- failure responses can include `next` when Ota can point to one safe follow-up command
+- failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota agents`
 
@@ -640,9 +640,9 @@ Current behavior:
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
 - falls back to a lightweight scaffold that makes the missing `agent` block explicit when one is not present
 - includes a fallback hint to run `ota tasks` when you want to inspect runnable task commands before generating or editing agent guidance
-- preserves existing `AGENTS.md` content and appends or refreshes an Ota-managed block instead of overwriting user-authored guidance
+- preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
 - skips the write if the existing file already contains the generated AGENTS content
-- renders a `Managed block:` label in text output so the Ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
+- renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 - writes to `AGENTS.md` by default when `--write` is set
 - accepts `--output` to write elsewhere
 - keeps output deterministic and reviewable
@@ -660,7 +660,7 @@ JSON output:
 - `output`
 - `written`
 - `content`
-- failure responses can include `next` when Ota can point to one safe follow-up command
+- failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota check`
 
@@ -738,7 +738,7 @@ This is the onboarding command. It is intentionally narrower than a general-purp
 
 ## `ota self-update`
 
-Update the installed Ota binary.
+Update the installed ota binary.
 
 ```bash
 ota self-update
@@ -762,7 +762,7 @@ Current behavior:
 
 Use this when:
 
-- you already have Ota installed and want to update it in place
+- you already have ota installed and want to update it in place
 
 Use-case:
 
@@ -866,7 +866,7 @@ Current detect sources:
 - `docker-compose.yml` / `docker-compose.yaml`
 - `compose.yml` / `compose.yaml`
 
-For Docker Compose service inference, Ota currently derives:
+For Docker Compose service inference, ota currently derives:
 
 - `provider` at high confidence
 - `start` / `stop` at medium confidence
@@ -948,7 +948,7 @@ Write behavior:
 - refuses to overwrite an existing `ota.yaml`
 - when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run`
 - fails if the high-confidence projection is not sufficient
-- JSON failure responses can include `next` when Ota can point to one safe follow-up command
+- JSON failure responses can include `next` when ota can point to one safe follow-up command
 
 This is intentionally conservative. Review mode comes first, write mode second.
 
@@ -1016,7 +1016,7 @@ Current behavior:
 
 ## `ota workspace validate`
 
-Validate an Ota workspace contract.
+Validate an ota workspace contract.
 
 ```bash
 ota workspace validate [PATH]
@@ -1219,7 +1219,7 @@ JSON output:
 
 ## `ota workspace doctor`
 
-Diagnose workspace repo readiness from an Ota workspace contract.
+Diagnose workspace repo readiness from an ota workspace contract.
 
 ```bash
 ota workspace doctor [PATH]
@@ -1299,7 +1299,7 @@ The `summary` object on success mirrors the top-level receipt summary and includ
 
 ## `ota workspace up`
 
-Prepare every repo in an Ota workspace contract.
+Prepare every repo in an ota workspace contract.
 
 ```bash
 ota workspace up [PATH]
@@ -1350,7 +1350,7 @@ Current non-goals:
 
 ## `ota workspace refresh`
 
-Refresh existing repos in an Ota workspace contract without cloning missing ones.
+Refresh existing repos in an ota workspace contract without cloning missing ones.
 
 ```bash
 ota workspace refresh [PATH]

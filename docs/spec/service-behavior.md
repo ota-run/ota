@@ -1,4 +1,4 @@
-# Ota Service Behavior
+# ota Service Behavior
 
 This page describes the current shipped service behavior across `ota doctor`, `ota up`, and `ota detect`.
 
@@ -59,10 +59,10 @@ Current behavior:
 
 Important boundaries:
 
-- Ota preserves child exit codes for service start failures
-- Ota does not perform automatic teardown
-- Ota does not provide deep service orchestration
-- Ota does not infer service dependency ordering
+- ota preserves child exit codes for service start failures
+- ota does not perform automatic teardown
+- ota does not provide deep service orchestration
+- ota does not infer service dependency ordering
 
 ## `ota detect`
 
@@ -81,8 +81,8 @@ Current supported Compose filenames:
 
 Important boundaries:
 
-- Ota does not invent healthchecks
-- Ota does not infer service dependency ordering
+- ota does not invent healthchecks
+- ota does not infer service dependency ordering
 - write mode still writes only high-confidence fields
 
 ## Recommendation

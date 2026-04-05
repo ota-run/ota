@@ -27,8 +27,8 @@
 Status: complete (started 2026-03-24, completed 2026-03-26).
 
 Source direction:
-- `/Users/bobai/Desktop/Ota.run/Spec/New/10-v5-spec.md`
-- `/Users/bobai/Desktop/Ota.run/Spec/New/ACTIVE_VERSION.md`
+- `/Users/bobai/Desktop/ota.run/Spec/New/10-v5-spec.md`
+- `/Users/bobai/Desktop/ota.run/Spec/New/ACTIVE_VERSION.md`
 - [Policy pack model](../../spec/policy-packs.md)
 - [Conventions and templates](../../spec/conventions-and-templates.md)
 - [Audit and provenance](../../spec/audit-and-provenance.md)
@@ -55,7 +55,7 @@ V5 theme:
 
 ## Priorities
 
-1. Make Ota viable for organizations that need consistent standards across many repos
+1. Make ota viable for organizations that need consistent standards across many repos
 2. Enable platform teams to define and enforce policy once
 3. Provide audit trails that stay useful under review and compliance pressure
 4. Stabilize the editor integration surface for IDE adoption

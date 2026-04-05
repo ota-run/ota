@@ -1,6 +1,6 @@
 # Support Policy
 
-This document defines the current platform support stance for Ota V1.
+This document defines the current platform support stance for ota V1.
 
 ## Current stance
 
@@ -32,4 +32,4 @@ Current lifecycle support is intentionally limited:
 - `persistent` maps to the current shell-native execution model
 - `ephemeral` is accepted, but advisory only in V1
 
-Ota does not yet create isolated temporary environments, temporary workspaces, or automatic cleanup flows for `ephemeral`.
+ota does not yet create isolated temporary environments, temporary workspaces, or automatic cleanup flows for `ephemeral`.

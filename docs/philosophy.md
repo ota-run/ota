@@ -22,9 +22,9 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Philosophy
+# ota Philosophy
 
-Ota is being built as open infrastructure for repo readiness.
+ota is being built as open infrastructure for repo readiness.
 
 It should read like public infrastructure, not a private workflow wrapper. The contract, commands, and trust model need to be legible to maintainers, contributors, CI systems, and agents.
 
@@ -34,7 +34,7 @@ The project is guided by a small set of principles:
 
 A repo should have one explicit readiness contract.
 
-Ota exists to consolidate scattered setup truth into `ota.yaml`, not to create another hidden layer beside the repo.
+ota exists to consolidate scattered setup truth into `ota.yaml`, not to create another hidden layer beside the repo.
 
 ## Determinism before intelligence
 
@@ -56,7 +56,7 @@ That means:
 
 ## Humans and agents should use the same truth
 
-Ota is not meant to create one path for humans and a different hidden path for automation.
+ota is not meant to create one path for humans and a different hidden path for automation.
 
 The same contract should serve:
 
@@ -68,7 +68,7 @@ The same contract should serve:
 
 ## Adoption before elegance
 
-Ota should earn its place on a repo by solving a real problem immediately.
+ota should earn its place on a repo by solving a real problem immediately.
 
 The first value is not abstract standardization.
 
@@ -78,7 +78,7 @@ The first value is helping someone understand why a repo is not ready and what t
 
 Generated configuration is trust-sensitive.
 
-Ota prefers:
+ota prefers:
 
 - reviewable dry-runs
 - explicit write behavior
@@ -90,13 +90,13 @@ It does not try to look smart by writing ambiguous configuration.
 
 ## Open infrastructure, not a closed workflow
 
-Ota is being shaped as an open standard and CLI, not as a vendor-specific control plane.
+ota is being shaped as an open standard and CLI, not as a vendor-specific control plane.
 
 The project should stay legible, portable, and interoperable with the tooling ecosystems that repos already use.
 
 ## Runtime discipline
 
-Ota should stay lightweight and resource-conscious by default.
+ota should stay lightweight and resource-conscious by default.
 
 That means:
 
@@ -121,4 +121,4 @@ The goal is a small set of commands that are dependable on real repositories:
 - `ota up`
 - `ota detect`
 
-If those commands are trustworthy, Ota can become useful infrastructure.
+If those commands are trustworthy, ota can become useful infrastructure.

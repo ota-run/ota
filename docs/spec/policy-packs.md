@@ -24,7 +24,7 @@
 
 # Policy Packs
 
-This document defines the V5 policy-pack target contract for Ota.
+This document defines the V5 policy-pack target contract for ota.
 
 Policy packs are org-scoped rules that apply consistently across multiple repos without changing each repo’s source contract shape.
 
@@ -51,7 +51,7 @@ The canonical policy pack lives at:
 
 ## Policy path and discovery
 
-Today, Ota looks for the org policy pack by walking up from the repo contract path and checking
+Today, ota looks for the org policy pack by walking up from the repo contract path and checking
 for `.ota/org-policy.yaml` in each ancestor directory.
 
 That means:
@@ -61,7 +61,7 @@ That means:
 - the canonical policy pack lives at `.ota/org-policy.yaml`, so shared org rules have one deterministic place to live today
 - `OTA_POLICY`, a single remote policy source, and arbitrary policy file names are future work
 
-If there is no ancestor policy file, Ota simply keeps running with repo-local contract behavior.
+If there is no ancestor policy file, ota simply keeps running with repo-local contract behavior.
 
 ## Future policy-source model
 

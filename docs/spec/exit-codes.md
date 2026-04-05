@@ -1,6 +1,6 @@
-# Ota Exit Codes
+# ota Exit Codes
 
-This document records the current command exit-code contract for the shipped Ota surface.
+This document records the current command exit-code contract for the shipped ota surface.
 
 ## Global registry
 
@@ -107,7 +107,7 @@ This document records the current command exit-code contract for the shipped Ota
 - `0` when persistent execution state is removed
 - `0` when there is no cleanup action to perform
 - `1` on load or validation failure
-- `1` when persistent cleanup fails before Ota can report success
+- `1` when persistent cleanup fails before ota can report success
 
 ## `ota workspace doctor`
 

@@ -4,7 +4,7 @@ This document defines the current V1 shell execution contract.
 
 ## Current execution model
 
-Ota is shell-native in V1.
+ota is shell-native in V1.
 
 Current command execution uses:
 
@@ -33,7 +33,7 @@ Current V1 behavior:
 
 - configured env values are applied to task execution
 - required env values must be present or resolvable from defaults where allowed
-- Ota does not translate shell syntax across platforms
+- ota does not translate shell syntax across platforms
 
 That means shell-specific constructs remain platform-sensitive.
 
@@ -63,4 +63,4 @@ Both still execute through the same platform shell model above.
 
 Repos should write task and service commands with their supported platforms in mind.
 
-Ota guarantees the invocation model. It does not guarantee that shell-specific commands become portable automatically.
+ota guarantees the invocation model. It does not guarantee that shell-specific commands become portable automatically.

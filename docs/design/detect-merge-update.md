@@ -139,7 +139,7 @@ Before any merge write mode ships:
 
 ## Why this boundary
 
-Ota should help a repo adopt the contract faster, but it must not become a surprising config
+ota should help a repo adopt the contract faster, but it must not become a surprising config
 rewriter.
 
 The right sequence is:

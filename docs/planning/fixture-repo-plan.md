@@ -24,7 +24,7 @@
 
 # Fixture Repo Plan
 
-Ota needs real repo shapes to avoid designing in fantasy.
+ota needs real repo shapes to avoid designing in fantasy.
 
 ## Current fixture coverage
 

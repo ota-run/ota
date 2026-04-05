@@ -94,7 +94,7 @@ This slice is the public-adoption hardening pass before `v1.0.0`.
 
 - derive a repo-local `AGENTS.md` from `ota.yaml`
 - keep the export deterministic and reviewable
-- make the export useful without turning Ota into a policy control plane
+- make the export useful without turning ota into a policy control plane
 
 ## Success criteria
 

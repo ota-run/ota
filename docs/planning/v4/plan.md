@@ -27,8 +27,8 @@
 Status: complete (started 2026-03-24, completed 2026-03-24).
 
 Source direction:
-- [09-v4-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/09-v4-spec.md)
-- [ACTIVE_VERSION.md](/Users/bobai/Desktop/Ota.run/Spec/new/ACTIVE_VERSION.md)
+- [09-v4-spec.md](/Users/bobai/Desktop/ota.run/Spec/new/09-v4-spec.md)
+- [ACTIVE_VERSION.md](/Users/bobai/Desktop/ota.run/Spec/new/ACTIVE_VERSION.md)
 
 V4 theme:
 

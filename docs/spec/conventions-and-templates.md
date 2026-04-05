@@ -24,7 +24,7 @@
 
 # Conventions and Templates
 
-This document defines the V5 target for org conventions and templates in Ota.
+This document defines the V5 target for org conventions and templates in ota.
 
 The goal is to make shared repo structure predictable without replacing the repo contract.
 
@@ -94,4 +94,4 @@ They are not for:
 - hidden contract mutation
 - broad workflow orchestration
 - replacing `ota.yaml`
-- turning Ota into a generic project generator
+- turning ota into a generic project generator
