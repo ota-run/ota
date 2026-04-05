@@ -241,6 +241,39 @@ impl ScoopProvisioningBackend {
             }
         }
     }
+
+    fn source_args(action: &ProvisioningAction) -> Vec<String> {
+        let Some(config) = action.source_config.as_ref() else {
+            return Vec::new();
+        };
+        let Some(bucket_name) = config.get("bucket_name").and_then(|value| value.as_str()) else {
+            return Vec::new();
+        };
+        let mut args = vec![
+            String::from("bucket"),
+            String::from("add"),
+            bucket_name.to_string(),
+        ];
+        if let Some(bucket_url) = config.get("bucket_url").and_then(|value| value.as_str()) {
+            args.push(bucket_url.to_string());
+        }
+        args
+    }
+
+    fn source_command(action: &ProvisioningAction) -> Option<String> {
+        let Some(config) = action.source_config.as_ref() else {
+            return None;
+        };
+        let Some(bucket_name) = config.get("bucket_name").and_then(|value| value.as_str()) else {
+            return None;
+        };
+        let mut command = format!("scoop bucket add {bucket_name}");
+        if let Some(bucket_url) = config.get("bucket_url").and_then(|value| value.as_str()) {
+            command.push(' ');
+            command.push_str(bucket_url);
+        }
+        Some(command)
+    }
 }
 
 impl BrewProvisioningBackend {
@@ -250,6 +283,35 @@ impl BrewProvisioningBackend {
                 format!("{}@{}", action.name, action.requested_version)
             }
         }
+    }
+
+    fn source_args(action: &ProvisioningAction) -> Vec<String> {
+        let Some(config) = action.source_config.as_ref() else {
+            return Vec::new();
+        };
+        let Some(tap_name) = config.get("tap_name").and_then(|value| value.as_str()) else {
+            return Vec::new();
+        };
+        let mut args = vec![String::from("tap"), tap_name.to_string()];
+        if let Some(tap_url) = config.get("tap_url").and_then(|value| value.as_str()) {
+            args.push(tap_url.to_string());
+        }
+        args
+    }
+
+    fn source_command(action: &ProvisioningAction) -> Option<String> {
+        let Some(config) = action.source_config.as_ref() else {
+            return None;
+        };
+        let Some(tap_name) = config.get("tap_name").and_then(|value| value.as_str()) else {
+            return None;
+        };
+        let mut command = format!("brew tap {tap_name}");
+        if let Some(tap_url) = config.get("tap_url").and_then(|value| value.as_str()) {
+            command.push(' ');
+            command.push_str(tap_url);
+        }
+        Some(command)
     }
 }
 
@@ -747,9 +809,7 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             ];
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(
-                target, working_dir, "winget", &arg_refs,
-            )?;
+            let output = execute_provisioning_command(target, working_dir, "winget", &arg_refs)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -757,7 +817,10 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: if source_args.is_empty() {
-                        format!("winget install --id {install_target} --version {}", action.requested_version)
+                        format!(
+                            "winget install --id {install_target} --version {}",
+                            action.requested_version
+                        )
                     } else {
                         let source_arg = source_args.join(" ");
                         format!(
@@ -872,6 +935,29 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
+            let source_args = Self::source_args(action);
+            if !source_args.is_empty() {
+                let source_arg_refs = source_args
+                    .iter()
+                    .map(|value| value.as_str())
+                    .collect::<Vec<_>>();
+                let output =
+                    execute_provisioning_command(target, working_dir, "scoop", &source_arg_refs)?;
+
+                stdout.push_str(&output.stdout);
+                stderr.push_str(&output.stderr);
+
+                if output.exit_code != 0 {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: Self::source_command(action)
+                            .unwrap_or_else(|| String::from("scoop bucket add")),
+                        exit_code: output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+
             let install_target = Self::install_target(action);
             let output = execute_provisioning_command(
                 target,
@@ -920,6 +1006,29 @@ impl ProvisioningBackend for BrewProvisioningBackend {
 
             if action.kind != ProvisioningActionKind::SelectSource {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            let source_args = Self::source_args(action);
+            if !source_args.is_empty() {
+                let source_arg_refs = source_args
+                    .iter()
+                    .map(|value| value.as_str())
+                    .collect::<Vec<_>>();
+                let output =
+                    execute_provisioning_command(target, working_dir, "brew", &source_arg_refs)?;
+
+                stdout.push_str(&output.stdout);
+                stderr.push_str(&output.stderr);
+
+                if output.exit_code != 0 {
+                    return Err(ProvisioningBackendError::CommandFailed {
+                        command: Self::source_command(action)
+                            .unwrap_or_else(|| String::from("brew tap")),
+                        exit_code: output.exit_code,
+                        stdout,
+                        stderr,
+                    });
+                }
             }
 
             let install_target = Self::install_target(action);
@@ -2295,6 +2404,60 @@ mod tests {
     }
 
     #[test]
+    fn applies_provisioning_request_with_scoop_bucket_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("scoop.log");
+        make_shim(shim_dir.path(), "scoop", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "git".to_string(),
+                requested_version: "2.46.0".to_string(),
+                source: "scoop".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([
+                    (
+                        String::from("bucket_name"),
+                        Value::String("internal-scoop".to_string()),
+                    ),
+                    (
+                        String::from("bucket_url"),
+                        Value::String("https://mirror.local/scoop".to_string()),
+                    ),
+                ])),
+                approved_version: Some("2.46.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("bucket"));
+        assert!(log_contents.contains("add"));
+        assert!(log_contents.contains("internal-scoop"));
+        assert!(log_contents.contains("https://mirror.local/scoop"));
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("git@2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
     fn bootstraps_choco_source_manager_with_powershell_shim() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let shim_dir = TempDir::new().unwrap();
@@ -2482,6 +2645,59 @@ mod tests {
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("jq@1.7"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_brew_tap_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("brew.log");
+        make_shim(shim_dir.path(), "brew", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "git".to_string(),
+                requested_version: "2.46.0".to_string(),
+                source: "brew".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([
+                    (
+                        String::from("tap_name"),
+                        Value::String("internal/homebrew".to_string()),
+                    ),
+                    (
+                        String::from("tap_url"),
+                        Value::String("https://mirror.local/homebrew".to_string()),
+                    ),
+                ])),
+                approved_version: Some("2.46.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("tap"));
+        assert!(log_contents.contains("internal/homebrew"));
+        assert!(log_contents.contains("https://mirror.local/homebrew"));
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("git@2.46.0"));
 
         unsafe {
             env::set_var("PATH", original_path);
