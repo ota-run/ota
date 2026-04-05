@@ -24,7 +24,7 @@
 
 # Task Variants
 
-This document defines the current post-V1 direction for task variants in shipped Ota behavior.
+This document defines the current post-V1 direction for task variants in shipped ota behavior.
 
 ## Goal
 
@@ -62,10 +62,10 @@ Current shipped selector support is:
 
 ## Resolution rules
 
-- Ota checks variants before the default execution
+- ota checks variants before the default execution
 - the first matching variant for the current OS wins
 - duplicate variants for the same `when.os` are rejected in validation
-- if no variant matches, Ota falls back to the default `run` or `script`
+- if no variant matches, ota falls back to the default `run` or `script`
 - if there is no default and no matching variant, task execution fails clearly
 
 ## Design intent

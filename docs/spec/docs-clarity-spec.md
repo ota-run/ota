@@ -24,7 +24,7 @@
 
 # Docs Clarity Spec
 
-Purpose: define the documentation rules that make Ota easy to understand on first read.
+Purpose: define the documentation rules that make ota easy to understand on first read.
 
 This spec applies to:
 

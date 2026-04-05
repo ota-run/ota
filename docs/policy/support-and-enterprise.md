@@ -24,7 +24,7 @@
 
 # Support and Enterprise
 
-Ota’s open core stays Apache 2.0. Commercial value should come from separate offerings around the
+ota’s open core stays Apache 2.0. Commercial value should come from separate offerings around the
 core rather than from confusing the public contract.
 
 ## Good enterprise candidates

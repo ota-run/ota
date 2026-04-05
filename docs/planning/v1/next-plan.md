@@ -81,7 +81,7 @@ Status: complete
 
 ### Goal
 
-Make the `services` section useful in V1 without turning Ota into an orchestrator.
+Make the `services` section useful in V1 without turning ota into an orchestrator.
 
 ### Scope
 
@@ -129,7 +129,7 @@ Define and implement an honest V1 meaning for `persistent` and `ephemeral`.
 #### Phase 3a: Policy and support matrix
 
 - document current lifecycle semantics clearly
-- define what Ota does and does not promise for `persistent` and `ephemeral`
+- define what ota does and does not promise for `persistent` and `ephemeral`
 
 #### Phase 3b: Validation and output
 
@@ -139,7 +139,7 @@ Define and implement an honest V1 meaning for `persistent` and `ephemeral`.
 #### Phase 3c: Honest limited behavior
 
 - `persistent`: current default model
-- `ephemeral`: supported only where Ota can honor it honestly without pretending full isolation
+- `ephemeral`: supported only where ota can honor it honestly without pretending full isolation
 - if a command cannot honor `ephemeral` meaningfully, it should say so clearly rather than fake support
 
 ### Non-goals
@@ -152,7 +152,7 @@ Define and implement an honest V1 meaning for `persistent` and `ephemeral`.
 ### Exit Criteria
 
 - lifecycle is no longer just parsed metadata
-- users can tell what `persistent` and `ephemeral` mean in current Ota behavior
+- users can tell what `persistent` and `ephemeral` mean in current ota behavior
 - unsupported lifecycle behavior fails or warns explicitly instead of implying false guarantees
 
 ## Track 4: Exit Codes and Debug Mode

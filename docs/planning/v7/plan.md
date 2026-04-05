@@ -28,7 +28,7 @@ Status: active.
 
 Source direction:
 
-- `/Users/bobai/Desktop/Ota.run/Spec/New/22-v7-spec.md`
+- `/Users/bobai/Desktop/ota.run/Spec/New/22-v7-spec.md`
 - [Remote runner and editor surface](../../spec/remote-runner-and-editor-surface.md)
 - [Hosted validation workflow](../../spec/hosted-validation-workflow.md)
 - [JSON output reference](../../spec/json-output-reference.md)
@@ -51,7 +51,7 @@ V7 theme:
 
 ## Priorities
 
-1. Keep Ota signals consumable by editors and CI at scale
+1. Keep ota signals consumable by editors and CI at scale
 2. Preserve command semantics while broadening operational integrations
 3. Keep human/agent symmetry across tooling surfaces
 
@@ -87,5 +87,5 @@ V7 theme:
 
 - at least one editor integration can consume the stable contract successfully
 - hosted validation can gate pull requests deterministically
-- remote runner integrations consume Ota metadata without custom per-repo glue
+- remote runner integrations consume ota metadata without custom per-repo glue
 - semantic diff can explain contract change impact without raw YAML parsing

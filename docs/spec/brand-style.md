@@ -24,7 +24,7 @@
 
 # Brand Style
 
-This document is the canonical visual system for Ota CLI + docs.
+This document is the canonical visual system for ota CLI + docs.
 
 ## Core identity
 
@@ -34,7 +34,7 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## Color tokens
 
-- `ota-accent`: `#0f766e` (primary Ota identity)
+- `ota-accent`: `#0f766e` (primary ota identity)
 - `ota-accent-soft`: `#14b8a6` (secondary accent)
 - `ota-command`: `rgb(214, 161, 95)` (CLI command highlight)
 - `ota-key`: `rgb(102, 217, 255)` (CLI field labels)
@@ -56,7 +56,7 @@ This document is the canonical visual system for Ota CLI + docs.
 
 ## Docs style
 
-- use the Ota accent tokens in the site docs theme
+- use the ota accent tokens in the site docs theme
 - keep the primary logo source in the site docs asset set
 - keep approved logo-size variants in the site docs asset set
 - keep the favicon in the site docs asset set

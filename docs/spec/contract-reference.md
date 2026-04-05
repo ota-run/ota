@@ -22,7 +22,7 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Contract Reference
+# ota Contract Reference
 
 This document describes the current `ota.yaml` contract accepted by the shipped parser and validator.
 
@@ -173,7 +173,7 @@ Fields:
 - `type`: optional string
 
 Use `project` for stable repo identity only. Churn-heavy descriptive fields such as `author`,
-`created_at`, or publishing metadata should live under `metadata` unless Ota grows a dedicated
+`created_at`, or publishing metadata should live under `metadata` unless ota grows a dedicated
 package or distribution contract later.
 
 Readiness note:
@@ -268,7 +268,7 @@ Current validation rule:
 
 - if `preferred` is set and `supported` is not empty, `preferred` must also appear in `supported`
 - `execution.preferred: container` requires `execution.backends.container.image`
-- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, Ota falls back to `docker`
+- `execution.backends.container.engines` can list supported OCI engine CLIs in preference order; when omitted, ota falls back to `docker`
 - `execution.preferred: remote` requires `execution.backends.remote.provider`
 - `execution.preferred: remote` requires `execution.backends.remote.target`
 - remote target guidance by provider:
@@ -356,7 +356,7 @@ Current behavior:
 - required services without a `healthcheck` produce a warning because readiness cannot be verified yet
 - `ota up` starts required services, and required-service dependencies, in declared dependency order before `setup`
 - `ota up` treats each required service healthcheck as a readiness gate before moving on to dependents
-- Ota still does not provide deep service orchestration beyond explicit contract commands
+- ota still does not provide deep service orchestration beyond explicit contract commands
 
 ## `runtimes`
 
@@ -395,7 +395,7 @@ Version syntax examples:
 - `8` is an example of an exact required version
 - `>=8` is an example of accepting any version at or above `8`
 - `^8` is an example of a compatible version range, usually the same major line
-- Ota compares numeric version parts and accepts common prefixes such as `go1.24.2` or `v1.24.2`
+- ota compares numeric version parts and accepts common prefixes such as `go1.24.2` or `v1.24.2`
 - use `>=` when you want to accept newer versions explicitly
 - use `^` when you want to express compatibility rather than a strict floor
 
@@ -597,7 +597,7 @@ Task input semantics:
 
 - `inputs` are declared in `tasks.<name>.inputs`
 - each input name is lowercase snake_case in the contract and becomes `--kebab-case` on the CLI
-- Ota injects resolved values into the task process as `OTA_INPUT_<NAME>`
+- ota injects resolved values into the task process as `OTA_INPUT_<NAME>`
 - `default` supplies a value when the caller omits the input
 - `required: true` makes the input mandatory unless a default is present
 - `allowed` limits the accepted values for that input
@@ -699,8 +699,8 @@ Rules:
 Current execution model:
 
 - `run` and `script` are shell-compatible execution forms
-- task `env` values are applied when Ota runs the task and override repo-level env with the same name
-- when variants are declared, Ota resolves the best matching `when.os` entry first and falls back to the default execution
+- task `env` values are applied when ota runs the task and override repo-level env with the same name
+- when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`
@@ -791,7 +791,7 @@ Optional.
 metadata:
   team: platform
   owner: ota
-  author: Ota Maintainers
+  author: ota Maintainers
   created_at: 2026-03-23
 ```
 

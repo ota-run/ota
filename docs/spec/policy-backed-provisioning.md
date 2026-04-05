@@ -47,10 +47,10 @@ Let an organization say:
 
 - which sources are approved for a runtime or tool
 - which versions are allowed from each source
-- which install or selection path Ota may use
+- which install or selection path ota may use
 - which provenance should be recorded when the source wins
 
-The point is to keep provisioning explicit, reviewable, and policy-controlled without turning Ota
+The point is to keep provisioning explicit, reviewable, and policy-controlled without turning ota
 into a general-purpose package manager.
 
 The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `winget`, `choco`,
@@ -90,7 +90,7 @@ All other sources remain policy-visible and read-only until a matching adapter i
 - no silent installs from unapproved sources
 - no general package-manager replacement
 - no broad control plane for every software installation case
-- adapter bootstrap policy is a separate layer for getting Ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, and `uv-bootstrap`.
+- adapter bootstrap policy is a separate layer for getting ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, and `uv-bootstrap`.
 
 ## Relationship to current contract surfaces
 

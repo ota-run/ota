@@ -26,7 +26,7 @@
 
 Status: `ota diff` and `ota explain` are shipped.
 
-This document defines two proposed read-only surfaces for Ota:
+This document defines two proposed read-only surfaces for ota:
 
 - `ota diff` for semantic contract comparison
 - `ota explain` for remediation guidance from readiness findings
@@ -36,7 +36,7 @@ The goal is to help humans and agents understand contract change impact without 
 
 ## `ota diff`
 
-Compare two Ota contract states semantically.
+Compare two ota contract states semantically.
 
 Current behavior:
 

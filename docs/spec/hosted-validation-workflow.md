@@ -24,7 +24,7 @@
 
 # Hosted Validation Workflow
 
-This document defines the V7 hosted-validation shape for using Ota in CI and pull-request
+This document defines the V7 hosted-validation shape for using ota in CI and pull-request
 gating without mutating repo state.
 
 The goal is to keep validation deterministic, non-mutating, and easy to consume by hosted
@@ -57,10 +57,10 @@ gives an ordered plan without mutating state.
 
 ## Infrastructure boundary
 
-Ota does not replace the CI runner or its service provisioning layer.
+ota does not replace the CI runner or its service provisioning layer.
 
 For example, if your GitHub Actions job uses a Postgres service container, GitHub Actions still
-starts that container. Ota removes the repo-specific duplication above it:
+starts that container. ota removes the repo-specific duplication above it:
 
 - contract validation
 - readiness diagnosis
@@ -109,7 +109,7 @@ ota workspace explain --json | tee .ota-workspace-explain.json
 
 ## Example with a Postgres service container
 
-GitHub Actions still provisions the database container; Ota removes the duplicate repo setup
+GitHub Actions still provisions the database container; ota removes the duplicate repo setup
 above it.
 
 ```yaml
@@ -140,7 +140,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ota
+      - name: Install ota
         run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
@@ -154,7 +154,7 @@ jobs:
         run: ota run test
 ```
 
-## Example with Ota-provisioned Postgres
+## Example with ota-provisioned Postgres
 
 In this shape, the repo contract owns the database service and the CI job stays thin.
 
@@ -199,7 +199,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ota
+      - name: Install ota
         run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
@@ -211,7 +211,7 @@ jobs:
         run: ota run test
 ```
 
-In this model, Ota starts and validates the service declared in `ota.yaml`; the runner does not
+In this model, ota starts and validates the service declared in `ota.yaml`; the runner does not
 duplicate the Postgres setup.
 
 Example PR policy:
@@ -241,7 +241,7 @@ editor integrations.
 
 Portable adapter:
 
-`ota annotations` is the canonical JSON-to-CI adapter. It turns Ota JSON into either plain CI log
+`ota annotations` is the canonical JSON-to-CI adapter. It turns ota JSON into either plain CI log
 lines or GitHub Actions annotations. Use `--format plain` when you want a provider-neutral output
 stream, or `--format github` when the CI platform understands annotation syntax.
 

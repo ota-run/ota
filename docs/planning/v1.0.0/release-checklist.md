@@ -28,7 +28,7 @@ Status: active.
 
 This checklist defines the minimum work that should be complete before the first major public release.
 
-`v1.0.0` is the boundary where Ota becomes a stable public promise for repo readiness. It should not ship until the public story, docs, and core UX are aligned.
+`v1.0.0` is the boundary where ota becomes a stable public promise for repo readiness. It should not ship until the public story, docs, and core UX are aligned.
 
 ## Release intent
 

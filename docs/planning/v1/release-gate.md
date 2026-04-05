@@ -26,7 +26,7 @@
 
 Status: satisfied and frozen as the V1 release record.
 
-This document is the binding release bar for calling Ota V1 done.
+This document is the binding release bar for calling ota V1 done.
 
 V1 is not complete because a feature list looks good. V1 is complete when the shipped contract and command surface hold against the real-fixture matrix below.
 

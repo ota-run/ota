@@ -1,8 +1,8 @@
 # Security Posture
 
-Ota executes repo-declared commands. That makes trust boundaries explicit and important.
+ota executes repo-declared commands. That makes trust boundaries explicit and important.
 
-## Ota will not do silently
+## ota will not do silently
 
 - overwrite an existing `ota.yaml`
 - mutate repo config without an explicit command path

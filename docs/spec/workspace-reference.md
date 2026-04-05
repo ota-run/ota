@@ -22,7 +22,7 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Workspace Reference
+# ota Workspace Reference
 
 This document describes the current `ota.workspace.yaml` contract accepted by the shipped workspace validator.
 
@@ -112,7 +112,7 @@ Current validation behavior:
 - repo `path` must be non-empty
 - repo `path` must exist and point to a directory unless `source` is declared
 - `contract` must be non-empty when present
-- if `contract` is omitted, Ota expects `<repo path>/ota.yaml`
+- if `contract` is omitted, ota expects `<repo path>/ota.yaml`
 - `source` must declare exactly one of `git` or `repo`
 - `source.repo` requires `workspace.git_base`
 - `depends_on` references must resolve to known workspace repos
@@ -173,7 +173,7 @@ Current workspace prepare behavior:
 Current execution policy:
 
 - workspace repo execution defaults to sequential because `--jobs` defaults to `1`
-- Ota only parallelizes repos whose dependencies are already satisfied
+- ota only parallelizes repos whose dependencies are already satisfied
 - final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 - `--stream` is currently text-only and requires `--jobs 1` so raw child logs do not interleave
@@ -210,7 +210,7 @@ Current workspace refresh behavior:
 Current execution policy:
 
 - workspace repo execution defaults to sequential because `--jobs` defaults to `1`
-- Ota only parallelizes repos whose dependencies are already satisfied
+- ota only parallelizes repos whose dependencies are already satisfied
 - final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 - `--stream` is currently text-only and requires `--jobs 1` so raw child logs do not interleave
@@ -257,7 +257,7 @@ Current workspace status behavior:
 Current execution policy:
 
 - workspace repo execution defaults to sequential because `--jobs` defaults to `1`
-- Ota only parallelizes repos whose dependencies are already satisfied
+- ota only parallelizes repos whose dependencies are already satisfied
 - final reporting remains in deterministic repo order even when execution is concurrent
 - required repos must not depend on optional repos, because required readiness cannot rest on optional guarantees
 

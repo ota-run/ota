@@ -28,7 +28,7 @@ This document defines the current implementation boundary for extensions during 
 
 ## Current boundary (shipped)
 
-- Ota core commands do not execute extension providers at runtime.
+- ota core commands do not execute extension providers at runtime.
 - Top-level `extensions` in `ota.yaml` is parsed for discovery and inspection.
 - Supported kinds today are `check_provider`, `export_provider`, and `backend_provider`.
 - `ota extensions --run <name>` can execute one explicitly named `check_provider` descriptor with

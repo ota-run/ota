@@ -26,7 +26,7 @@
 
 Status: spec candidate.
 
-This document defines the planned env resolution layer for Ota.
+This document defines the planned env resolution layer for ota.
 
 This spec adds the next layer: policy-controlled env resolution and injection.
 
@@ -59,7 +59,7 @@ see the same chosen values as native runs.
 
 ## Goal
 
-Ota should help determine:
+ota should help determine:
 
 - which env values are required
 - which values may be provided by policy-controlled sources

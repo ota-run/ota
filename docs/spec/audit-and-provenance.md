@@ -24,7 +24,7 @@
 
 # Audit and Provenance
 
-This document defines the V5 target for audit-friendly machine output and provenance semantics in Ota.
+This document defines the V5 target for audit-friendly machine output and provenance semantics in ota.
 
 The goal is to make org policy, templates, and repo readiness explainable after the fact without guessing where the result came from.
 

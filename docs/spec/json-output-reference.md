@@ -1,6 +1,6 @@
-# Ota JSON Output Reference
+# ota JSON Output Reference
 
-This document records the current machine-readable output shapes for Ota commands that support `--json`.
+This document records the current machine-readable output shapes for ota commands that support `--json`.
 
 `docs/spec` is the canonical source of truth. This page is part of that spec
 corpus and the public reference pages are derived from it with examples and
@@ -35,7 +35,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 
 - success output is printed to stdout
 - command failures may still use stderr when the command cannot produce its normal JSON result
-- some JSON failures include an optional `next` string when Ota can point to one safe follow-up command
+- some JSON failures include an optional `next` string when ota can point to one safe follow-up command
 - `ok: true` does not always mean zero findings; warning-only diagnosis can still be `ok: true`
 - `path` refers to the resolved contract path as rendered by current CLI path compaction (often cwd-relative such as `./ota.yaml`)
 
@@ -814,7 +814,7 @@ Failure example:
   "ok": false,
   "path": "./ota.yaml",
   "written": false,
-  "error": "`./ota.yaml` already exists; ota init is only for repos without an Ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  compare detected repo signals with `ota detect --merge --dry-run`\n▸  apply detected add-only high-confidence fields now with `ota detect --merge`",
+  "error": "`./ota.yaml` already exists; ota init is only for repos without an ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  compare detected repo signals with `ota detect --merge --dry-run`\n▸  apply detected add-only high-confidence fields now with `ota detect --merge`",
   "next": "ota detect --merge --dry-run"
 }
 ```
@@ -945,7 +945,7 @@ Example contract-validation failure (before `up` execution starts):
 ```
 
 In conservative mixed-repo or legacy-repo cases, `comparison.changes` can still include `add`
-entries while `written` remains `false`. That means Ota found possible additions, but none were
+entries while `written` remains `false`. That means ota found possible additions, but none were
 eligible for automatic merge under the current high-confidence-only rule.
 
 Failure example:

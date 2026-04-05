@@ -33,9 +33,9 @@ V2.1 is the bridge after V2:
 
 The point of V2.1 is not more breadth for its own sake.
 
-The point of V2.1 is to increase Ota's leverage as infrastructure around the now-trusted core.
+The point of V2.1 is to increase ota's leverage as infrastructure around the now-trusted core.
 
-V2.1 makes Ota:
+V2.1 makes ota:
 
 - easier to integrate into existing toolchains without creating parallel truth
 - more useful for teams coordinating across many repos
@@ -65,7 +65,7 @@ V2.1 makes Ota:
 
 - pick at most one derived output first
 - only ship it if it clearly removes duplicated truth
-- keep Ota canonical and the output disposable/regenerable
+- keep ota canonical and the output disposable/regenerable
 
 Likely first candidate:
 
@@ -90,7 +90,7 @@ Likely first candidate:
 
 ## Non-goals
 
-- replacing Ota with a generator-first system
+- replacing ota with a generator-first system
 - broad export matrices
 - hidden workstation or host provisioning
 - provider-specific platform integrations
@@ -101,7 +101,7 @@ Likely first candidate:
 
 V2.1 is complete only when:
 
-- machine-readable command surfaces are documented and backed by canonical schemas where Ota publishes them
+- machine-readable command surfaces are documented and backed by canonical schemas where ota publishes them
 - workspace JSON and orchestration behavior are covered through the real CLI path, not only unit tests
 - top-level docs and planning state were aligned while closing V2.1
 - V3 should not start until the above is true

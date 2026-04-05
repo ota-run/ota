@@ -24,7 +24,7 @@
 
 # Execution and Dockerfiles
 
-A Dockerfile builds a runnable image. An Ota contract tells ota what the repo needs, what is safe, and how readiness is checked.
+A Dockerfile builds a runnable image. An ota contract tells ota what the repo needs, what is safe, and how readiness is checked.
 
 Use both when they fit:
 
@@ -47,7 +47,7 @@ ota run/up  -> executes against the declared environment
 What each one is good at:
 
 - Dockerfile: OS packages, runtimes, and reproducible image setup
-- Ota contract: tasks, checks, safe AI-agent guidance, provisioning policy, and execution mode
+- ota contract: tasks, checks, safe AI-agent guidance, provisioning policy, and execution mode
 - container mode: a repeatable runtime boundary for `ota run` and `ota up`
 - `doctor`: the command that explains whether the repo is ready inside that boundary
 
@@ -84,7 +84,7 @@ execution:
 Rule of thumb:
 
 - use the Dockerfile to make the image runnable
-- use the Ota contract to make the repo explainable, diagnosable, and safe
+- use the ota contract to make the repo explainable, diagnosable, and safe
 - use container mode when you want ota to run against the image instead of the host
 - use `ota up` when you want ota to prepare the repo inside that image before running tasks
 - do not replace the contract with the Dockerfile, because the Dockerfile does not tell ota what is safe to run or what should be provisioned

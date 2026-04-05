@@ -22,7 +22,7 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota V1 Phases
+# ota V1 Phases
 
 Status: completed and frozen.
 

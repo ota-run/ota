@@ -26,7 +26,7 @@
 
 Status: completed (2026-03-24).
 
-Source direction: [08-v3-spec.md](/Users/bobai/Desktop/Ota.run/Spec/new/08-v3-spec.md)
+Source direction: [08-v3-spec.md](/Users/bobai/Desktop/ota.run/Spec/new/08-v3-spec.md)
 
 V3 theme:
 
@@ -107,7 +107,7 @@ Implemented so far:
 V3 closure:
 
 - all required V3 scope items in this plan are implemented
-- broader provider-specific remote semantics remain intentionally deferred per [12-v3-gap-closure-and-deferred.md](/Users/bobai/Desktop/Ota.run/Spec/new/12-v3-gap-closure-and-deferred.md)
+- broader provider-specific remote semantics remain intentionally deferred per [12-v3-gap-closure-and-deferred.md](/Users/bobai/Desktop/ota.run/Spec/new/12-v3-gap-closure-and-deferred.md)
 
 ## Workspace model direction
 
@@ -144,7 +144,7 @@ execution:
 
 V3 succeeds when:
 
-- a monorepo with 3 or more members can be fully described and run via Ota
+- a monorepo with 3 or more members can be fully described and run via ota
 - task execution can target one member cleanly
 - container execution is a real code path, not just declared metadata
 - remote sandbox execution works end to end for coding-agent workflows

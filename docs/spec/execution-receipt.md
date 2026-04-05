@@ -26,16 +26,16 @@
 
 Status: shipped.
 
-This document defines the execution receipt for Ota mutation and execution commands.
+This document defines the execution receipt for ota mutation and execution commands.
 
-The goal is to produce a deterministic, machine-readable record of what Ota believed,
+The goal is to produce a deterministic, machine-readable record of what ota believed,
 what it did, and what happened during execution.
 
 ## Purpose
 
 The receipt is meant to answer:
 
-- what scope Ota used
+- what scope ota used
 - what contract version or hash it acted on
 - what backend and lifecycle were chosen
 - what was reused or acquired

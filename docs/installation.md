@@ -22,11 +22,11 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Ota Installation
+# ota Installation
 
-Ota ships prebuilt release binaries for macOS/Linux and Windows.
-Use source install only when developing Ota from a cloned checkout.
-The installers include a branded otter banner and a compact success receipt so the install path feels intentionally Ota-native.
+ota ships prebuilt release binaries for macOS/Linux and Windows.
+Use source install only when developing ota from a cloned checkout.
+The installers include a branded otter banner and a compact success receipt so the install path feels intentionally ota-native.
 The hosted install scripts are intentionally stable root URLs:
 [`install.sh`](https://dist.ota.run/install.sh) and [`install.ps1`](https://dist.ota.run/install.ps1).
 
@@ -44,7 +44,7 @@ Pin a release:
 OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
-From a cloned Ota repository:
+From a cloned ota repository:
 
 ```bash
 ./scripts/install.sh --from-source
@@ -67,7 +67,7 @@ $env:OTA_VERSION = "vX.Y.Z"
 iwr https://dist.ota.run/install.ps1 | iex
 ```
 
-From a cloned Ota repository:
+From a cloned ota repository:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource

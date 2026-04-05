@@ -24,7 +24,7 @@
 
 # Mutation Controls and Caching
 
-This document defines the V5 target for explicit mutation boundaries and durable caching rules in Ota.
+This document defines the V5 target for explicit mutation boundaries and durable caching rules in ota.
 
 The goal is to keep every write path honest, reviewable, and predictable while allowing small caches that improve performance without weakening trust.
 
@@ -48,7 +48,7 @@ Mutation controls and caching support:
 
 ## Current shipped controls
 
-Ota already exposes the core mutation boundaries through existing commands:
+ota already exposes the core mutation boundaries through existing commands:
 
 - `ota detect --dry-run` is review-only
 - `ota detect --merge` applies additive high-confidence updates
