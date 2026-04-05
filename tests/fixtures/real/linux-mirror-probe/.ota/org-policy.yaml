@@ -1,0 +1,23 @@
+policies:
+  provisioning:
+    java:
+      source: dnf
+      source_config:
+        baseurl: https://mirror.local/fedora/40/x86_64
+        repo_id: internal-fedora
+      approved_versions:
+        - "21"
+    curl:
+      source: apt
+      source_config:
+        sources_list:
+          - deb http://mirror.local/debian bookworm main
+      approved_versions:
+        - "8.7.1"
+    git:
+      source: apt
+      source_config:
+        sources_list:
+          - deb http://mirror.local/debian bookworm main
+      approved_versions:
+        - "2.46.0"

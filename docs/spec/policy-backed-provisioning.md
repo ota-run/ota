@@ -227,6 +227,12 @@ It should not encode raw download scripts or ad hoc shell commands.
 For Chocolatey, `source_config.feed` can name an approved internal feed or mirror so the feed
 selection stays reviewable in policy.
 
+For `apt`, `source_config.sources_list` can hold approved `deb ...` entries for an internal
+mirror or custom repository so the selected package source stays reviewable in policy.
+
+For `dnf`, `source_config.baseurl` and `repo_id` can point at an approved repo mirror so the
+temporary repo label and package source stay reviewable in policy.
+
 ## Expected behavior
 
 When this layer exists, ota should be able to:
