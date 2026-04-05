@@ -4401,7 +4401,7 @@ tasks:
             std::env::set_var("OTA_TSH_LOG", &log_path);
         }
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--receipt", fixture.path()]);
 
         match original_path {
             Some(path) => unsafe {
@@ -5941,6 +5941,10 @@ policies:
             .expect("provisioning request should be present");
         assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 2);
         assert_eq!(provisioning_request["actions"][0]["kind"], "select_source");
+        assert_eq!(
+            provisioning_request["actions"][0]["source_config"]["feed"],
+            "internal-jdk"
+        );
         let adapter_bootstrap = json["adapter_bootstrap"]
             .as_object()
             .expect("adapter bootstrap payload should be present");
