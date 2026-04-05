@@ -87,6 +87,7 @@ All other sources remain policy-visible and read-only until a matching adapter i
 - no silent installs from unapproved sources
 - no general package-manager replacement
 - no broad control plane for every software installation case
+- adapter bootstrap policy is a separate layer for getting Ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md)
 
 ## Relationship to current contract surfaces
 

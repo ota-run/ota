@@ -167,6 +167,7 @@ It constrains and interprets it at the org layer.
 - the policy pack cannot be read or parsed
 - required sections declared by the policy pack are missing from the repo contract
 - required files declared by the policy pack are missing from the repo root
+- `policies.adapter_bootstrap` is malformed
 
 The current implementation is read-only. It does not mutate repo contracts or apply policy remediation automatically.
 

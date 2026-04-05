@@ -101,3 +101,4 @@ The least surprising rollout order is:
 - not a promise that every planned installer family is shipped today
 - not a hidden workstation manager
 - not a replacement for repo contracts, env policy, or checks
+- adapter bootstrap policy is a separate layer; see [`adapter-bootstrap.md`](adapter-bootstrap.md)

@@ -88,6 +88,12 @@ pub struct ProvisioningDiagnostics {
     pub request: ProvisioningBackendRequest,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdapterBootstrapDiagnostics {
+    pub plan: crate::policy_pack::AdapterBootstrapPlan,
+    pub request: crate::policy_pack::ProvisioningBackendRequest,
+}
+
 impl Finding {
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
         match self.summary.as_str() {
@@ -112,6 +118,13 @@ impl Finding {
             "Policy-backed provisioning sources are declared" => Some(PolicyFindingContext {
                 outcome: "policy_surface_available",
                 reason: "policy_backed_provisioning_declared",
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            }),
+            "Adapter bootstrap sources are declared" => Some(PolicyFindingContext {
+                outcome: "policy_surface_available",
+                reason: "policy_backed_adapter_bootstrap_declared",
                 source: "org",
                 install_scope: "repo_local",
                 mutation_allowed: false,
@@ -155,6 +168,7 @@ impl Finding {
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
+            "Adapter bootstrap sources are declared" => "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED",
             s if s.starts_with("Check failed: ") => "OTA_CHECK_FAILED",
             s if s.starts_with("Check timed out: ") => "OTA_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
@@ -325,6 +339,13 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => (
+                "the org policy pack declares approved adapter bootstrap sources".to_string(),
+                "the org policy pack has no adapter bootstrap sources declared".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_CHECK_FAILED" => (
                 "the configured check failed".to_string(),
                 "the configured check succeeds".to_string(),
@@ -429,6 +450,8 @@ pub struct DoctorReport {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<ProvisioningDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter_bootstrap: Option<AdapterBootstrapDiagnostics>,
     pub findings: Vec<Finding>,
 }
 
@@ -463,6 +486,7 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
         provisioning: None,
+        adapter_bootstrap: None,
         findings,
     }
 }
@@ -482,6 +506,7 @@ fn diagnose_contract_with_scope(
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
+    let mut adapter_bootstrap = None;
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
@@ -490,6 +515,7 @@ fn diagnose_contract_with_scope(
         diagnose_runtimes(contract, &mut findings);
         diagnose_tools(contract, &mut findings);
         provisioning = diagnose_org_policy(contract, contract_path, &mut findings);
+        adapter_bootstrap = diagnose_adapter_bootstrap(contract, contract_path, &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
@@ -508,6 +534,7 @@ fn diagnose_contract_with_scope(
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error),
         provisioning,
+        adapter_bootstrap,
         findings,
     }
 }
@@ -903,27 +930,27 @@ fn diagnose_org_policy(
                 })
                 .collect();
 
-            findings.push(Finding {
-                severity: FindingSeverity::Info,
-                summary: String::from("Policy-backed provisioning sources are declared"),
-                why: if matched_targets.is_empty() {
-                    format!(
-                        "`{}` declares approved provisioning sources: {}",
-                        compact_display_path(&policy_path),
-                        sources.join(", ")
-                    )
-                } else {
-                    format!(
-                        "`{}` declares approved provisioning sources: {}. This repo's declared prerequisites can be provisioned through: {}",
-                        compact_display_path(&policy_path),
-                        sources.join(", "),
-                        matched_targets.join(", ")
-                    )
-                },
-                next: String::from(
-                    "use this policy surface when provisioning support for declared runtimes or tools lands",
-                ),
-            });
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Adapter bootstrap sources are declared"),
+            why: if matched_targets.is_empty() {
+                format!(
+                    "`{}` declares approved adapter bootstrap sources: {}",
+                    compact_display_path(&policy_path),
+                    sources.join(", ")
+                )
+            } else {
+                format!(
+                    "`{}` declares approved adapter bootstrap sources: {}. This repo's declared prerequisites can be provisioned through: {}",
+                    compact_display_path(&policy_path),
+                    sources.join(", "),
+                    matched_targets.join(", ")
+                )
+            },
+            next: String::from(
+                "use this policy surface when a missing adapter binary needs an approved source",
+            ),
+        });
         }
 
         return Some(ProvisioningDiagnostics {
@@ -958,6 +985,50 @@ fn diagnose_org_policy(
     });
 
     None
+}
+
+fn diagnose_adapter_bootstrap(
+    _contract: &Contract,
+    contract_path: &Path,
+    findings: &mut Vec<Finding>,
+) -> Option<AdapterBootstrapDiagnostics> {
+    let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
+        Ok(Some(policy_pack)) => policy_pack,
+        Ok(None) => return None,
+        Err(_) => return None,
+    };
+
+    let adapter_names = policy_pack
+        .policies
+        .adapter_bootstrap
+        .keys()
+        .map(|name| name.as_str())
+        .collect::<Vec<_>>();
+    let plan = policy_pack.adapter_bootstrap_plan(&adapter_names);
+    let request = policy_pack.adapter_bootstrap_backend_request(&adapter_names);
+
+    if !request.actions.is_empty() {
+        let sources: Vec<String> = request
+            .actions
+            .iter()
+            .map(|action| format!("{} via {}", action.name, action.source))
+            .collect();
+
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Adapter bootstrap sources are declared"),
+            why: format!(
+                "`{}` can bootstrap missing adapter binaries through: {}",
+                compact_display_path(&policy_path),
+                sources.join(", ")
+            ),
+            next: String::from(
+                "use this policy surface when adapter bootstrap needs to be approved or audited",
+            ),
+        });
+    }
+
+    Some(AdapterBootstrapDiagnostics { plan, request })
 }
 
 fn policy_error_finding(err: LoadPolicyPackError) -> Finding {

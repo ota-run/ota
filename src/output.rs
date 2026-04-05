@@ -24,7 +24,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
-use crate::doctor::{Finding, FindingSeverity};
+use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::policy_env_values;
 use crate::schema::{
@@ -63,6 +63,8 @@ pub struct DoctorSuccess<'a> {
     pub provisioning: Option<&'a ProvisioningPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter_bootstrap: Option<&'a AdapterBootstrapDiagnostics>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: &'a BTreeMap<String, ExtensionSpec>,
     pub findings: &'a [Finding],
