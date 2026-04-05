@@ -94,6 +94,12 @@ the temporary repo label ota should enable for that install.
 For `winget`, `source_config.source_name` can point at an approved Windows source name so the
 adapter installs from the configured source instead of the default one.
 
+For `scoop`, `source_config.bucket_name` can name an approved Windows bucket, and
+`source_config.bucket_url` can point at the bucket repository when a custom bucket is needed.
+
+For `brew`, `source_config.tap_name` can name an approved Homebrew tap, and `source_config.tap_url`
+can point at the tap repository when a custom tap is needed.
+
 Example:
 
 ```yaml

@@ -31,6 +31,8 @@
 - added `apt` `source_config.sources_list` support so approved Debian or Ubuntu mirrors can stay in policy.
 - added `winget-bootstrap` so ota can bootstrap winget as another Windows source-manager path.
 - added `winget` `source_config.source_name` support so approved Windows sources can stay in policy.
+- added `scoop` `source_config.bucket_name` and `bucket_url` support so approved Windows buckets can stay in policy.
+- added `brew` `source_config.tap_name` and `tap_url` support so approved Homebrew taps can stay in policy.
 - added policy-backed Chocolatey feed selection via `source_config.feed` so internal package feeds stay reviewable in policy.
 
 ## 1.0.4

@@ -236,6 +236,12 @@ temporary repo label and package source stay reviewable in policy.
 For `winget`, `source_config.source_name` can name an approved Windows source so installs stay
 reviewable in policy while still using the shipped `winget` adapter.
 
+For `scoop`, `source_config.bucket_name` and `bucket_url` can name an approved Windows bucket so
+Scoop installs stay reviewable in policy while still using the shipped `scoop` adapter.
+
+For `brew`, `source_config.tap_name` and `tap_url` can name an approved Homebrew tap so installs
+stay reviewable in policy while still using the shipped `brew` adapter.
+
 ## Expected behavior
 
 When this layer exists, ota should be able to:
