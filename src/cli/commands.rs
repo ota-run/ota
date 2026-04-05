@@ -328,6 +328,10 @@ fn split_summary_block(message: &str) -> (Option<String>, String) {
 
 fn append_summary_block(out: &mut String, summary_block: Option<&String>) {
     if let Some(summary_block) = summary_block {
+        let trailing_newlines = out.chars().rev().take_while(|ch| *ch == '\n').count();
+        for _ in trailing_newlines..2 {
+            out.push('\n');
+        }
         out.push_str(summary_block.trim_start_matches('\n'));
     }
 }
@@ -9265,7 +9269,7 @@ tasks:
         assert!(rendered.contains("RUN SUMMARY"));
         assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
         assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
-        assert!(rendered.contains("\n🦦  RUN SUMMARY\n\nScope:"));
+        assert!(rendered.contains("\n\n🦦  RUN SUMMARY\n\nScope:"));
     }
 
     #[test]
