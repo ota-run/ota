@@ -103,6 +103,18 @@ pub struct PolicyProvisioningRule {
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     #[serde(default)]
     pub approved_versions: Vec<String>,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, PolicyPlatformProvisioningRule>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyPlatformProvisioningRule {
+    pub source: String,
+    #[serde(default)]
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
+    #[serde(default)]
+    pub approved_versions: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -232,6 +244,10 @@ impl OrgPolicyPack {
             &self.policies.provisioning,
             "policy-backed provisioning source",
         )?;
+        validate_platform_rules(
+            &self.policies.provisioning,
+            "policy-backed provisioning platform source",
+        )?;
         validate_source_rules(
             &self.policies.adapter_bootstrap,
             "policy-backed adapter bootstrap source",
@@ -246,26 +262,38 @@ impl OrgPolicyPack {
         name: &str,
         requested_version: &str,
     ) -> Result<Option<ProvisioningDecision>, String> {
+        self.resolve_provisioning_for_os(current_os(), kind, name, requested_version)
+    }
+
+    pub fn resolve_provisioning_for_os(
+        &self,
+        os: &str,
+        kind: ProvisioningTargetKind,
+        name: &str,
+        requested_version: &str,
+    ) -> Result<Option<ProvisioningDecision>, String> {
         let Some(rule) = self.policies.provisioning.get(name) else {
             return Ok(None);
         };
 
-        if rule.source.trim().is_empty() {
+        let rule = effective_provisioning_rule(rule, os);
+
+        if rule.source().trim().is_empty() {
             return Err(format!(
                 "policy-backed provisioning source `{name}` must not be empty"
             ));
         }
 
-        if !rule.approved_versions.is_empty()
+        if !rule.approved_versions().is_empty()
             && !rule
-                .approved_versions
+                .approved_versions()
                 .iter()
                 .any(|version| version == requested_version)
         {
             return Err(format!(
                 "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
                 kind.as_str(),
-                rule.approved_versions.join(", ")
+                rule.approved_versions().join(", ")
             ));
         }
 
@@ -273,10 +301,10 @@ impl OrgPolicyPack {
             kind,
             name: name.to_string(),
             requested_version: requested_version.to_string(),
-            source: rule.source.clone(),
-            source_config: rule.source_config.clone(),
+            source: rule.source().to_string(),
+            source_config: rule.source_config().cloned(),
             approved_version: rule
-                .approved_versions
+                .approved_versions()
                 .iter()
                 .find(|version| version.as_str() == requested_version)
                 .cloned(),
@@ -361,6 +389,14 @@ impl OrgPolicyPack {
     }
 
     pub fn provisioning_plan(&self, contract: &crate::schema::Contract) -> ProvisioningPlan {
+        self.provisioning_plan_for_os(current_os(), contract)
+    }
+
+    pub fn provisioning_plan_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+    ) -> ProvisioningPlan {
         let mut plan = ProvisioningPlan::default();
 
         for (name, requirement) in &contract.runtimes {
@@ -369,7 +405,8 @@ impl OrgPolicyPack {
                 ProvisioningTargetKind::Runtime,
                 name,
                 requirement.version(),
-                self.resolve_provisioning(
+                self.resolve_provisioning_for_os(
+                    os,
                     ProvisioningTargetKind::Runtime,
                     name,
                     requirement.version(),
@@ -383,7 +420,8 @@ impl OrgPolicyPack {
                 ProvisioningTargetKind::Tool,
                 name,
                 requirement.version(),
-                self.resolve_provisioning(
+                self.resolve_provisioning_for_os(
+                    os,
                     ProvisioningTargetKind::Tool,
                     name,
                     requirement.version(),
@@ -414,7 +452,15 @@ impl OrgPolicyPack {
         &self,
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningDecision> {
-        self.selected_provisioning_actions(contract)
+        self.selected_provisioning_sources_for_os(current_os(), contract)
+    }
+
+    pub fn selected_provisioning_sources_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+    ) -> Vec<ProvisioningDecision> {
+        self.selected_provisioning_actions_for_os(os, contract)
             .into_iter()
             .map(|action| ProvisioningDecision {
                 kind: action.target_kind,
@@ -431,15 +477,31 @@ impl OrgPolicyPack {
         &self,
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningAction> {
-        self.provisioning_plan(contract).actions
+        self.selected_provisioning_actions_for_os(current_os(), contract)
+    }
+
+    pub fn selected_provisioning_actions_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+    ) -> Vec<ProvisioningAction> {
+        self.provisioning_plan_for_os(os, contract).actions
     }
 
     pub fn provisioning_backend_request(
         &self,
         contract: &crate::schema::Contract,
     ) -> ProvisioningBackendRequest {
+        self.provisioning_backend_request_for_os(current_os(), contract)
+    }
+
+    pub fn provisioning_backend_request_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+    ) -> ProvisioningBackendRequest {
         ProvisioningBackendRequest {
-            actions: self.selected_provisioning_actions(contract),
+            actions: self.selected_provisioning_actions_for_os(os, contract),
         }
     }
 
@@ -507,6 +569,62 @@ where
     Ok(())
 }
 
+fn validate_platform_rules(
+    rules: &BTreeMap<String, PolicyProvisioningRule>,
+    label: &str,
+) -> Result<(), String> {
+    for (name, rule) in rules {
+        for (platform, platform_rule) in &rule.platforms {
+            if !matches!(platform.as_str(), "linux" | "macos" | "windows") {
+                return Err(format!(
+                    "{label} `{name}` has unsupported platform `{platform}`; expected one of: linux, macos, windows"
+                ));
+            }
+            if platform_rule.source.trim().is_empty() {
+                return Err(format!(
+                    "{label} `{name}` platform `{platform}` must not be empty"
+                ));
+            }
+            if platform_rule
+                .approved_versions
+                .iter()
+                .any(|version| version.trim().is_empty())
+            {
+                return Err(format!(
+                    "{label} `{name}` platform `{platform}` must not contain empty approved versions"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn effective_provisioning_rule<'a>(
+    rule: &'a PolicyProvisioningRule,
+    os: &str,
+) -> &'a dyn ProvisioningSourceRule {
+    rule.platforms
+        .get(os)
+        .map(|platform| platform as &dyn ProvisioningSourceRule)
+        .unwrap_or(rule)
+}
+
+#[cfg(target_os = "windows")]
+fn current_os() -> &'static str {
+    "windows"
+}
+
+#[cfg(target_os = "macos")]
+fn current_os() -> &'static str {
+    "macos"
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn current_os() -> &'static str {
+    "linux"
+}
+
 trait SourceRule {
     fn source(&self) -> &str;
     fn approved_versions(&self) -> &[String];
@@ -519,6 +637,32 @@ impl SourceRule for PolicyProvisioningRule {
 
     fn approved_versions(&self) -> &[String] {
         &self.approved_versions
+    }
+}
+
+impl SourceRule for PolicyPlatformProvisioningRule {
+    fn source(&self) -> &str {
+        &self.source
+    }
+
+    fn approved_versions(&self) -> &[String] {
+        &self.approved_versions
+    }
+}
+
+trait ProvisioningSourceRule: SourceRule {
+    fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>>;
+}
+
+impl ProvisioningSourceRule for PolicyProvisioningRule {
+    fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>> {
+        self.source_config.as_ref()
+    }
+}
+
+impl ProvisioningSourceRule for PolicyPlatformProvisioningRule {
+    fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>> {
+        self.source_config.as_ref()
     }
 }
 
@@ -839,6 +983,47 @@ policies:
     }
 
     #[test]
+    fn resolves_platform_specific_policy_provisioning_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+      platforms:
+        linux:
+          source: apt
+          approved_versions:
+            - "22"
+        windows:
+          source: choco
+          approved_versions:
+            - "22"
+"#,
+        )
+        .unwrap();
+
+        let macos = policy
+            .resolve_provisioning_for_os("macos", ProvisioningTargetKind::Tool, "node", "22")
+            .unwrap()
+            .unwrap();
+        let linux = policy
+            .resolve_provisioning_for_os("linux", ProvisioningTargetKind::Tool, "node", "22")
+            .unwrap()
+            .unwrap();
+        let windows = policy
+            .resolve_provisioning_for_os("windows", ProvisioningTargetKind::Tool, "node", "22")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(macos.source, "brew");
+        assert_eq!(linux.source, "apt");
+        assert_eq!(windows.source, "choco");
+    }
+
+    #[test]
     fn resolves_approved_policy_provisioning_choco_feed() {
         let policy: OrgPolicyPack = serde_yaml::from_str(
             r#"
@@ -868,6 +1053,29 @@ policies:
                 .and_then(|value| value.as_str()),
             Some("internal-choco")
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_policy_provisioning_platform() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+      platforms:
+        mac:
+          source: choco
+          approved_versions:
+            - "22"
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("unsupported platform"));
     }
 
     #[test]
