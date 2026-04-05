@@ -463,6 +463,44 @@ Fields:
 - `prepend`: optional list of path entries to add before the resolved value when the env key is `PATH`; these take priority
 - `append`: optional list of path entries to add after the resolved value when the env key is `PATH`; these act as fallback locations
 
+`PATH` is a standard search-path env var, so it is the one env key that supports structured
+composition. Most env vars are simple single values instead.
+
+Use `PATH` when the repo needs to control executable search order. Use ordinary env values like
+`JAVA_HOME` when the repo needs one explicit location.
+
+Examples:
+
+```yaml
+env:
+  PATH:
+    prepend:
+      - ./node_modules/.bin
+      - /usr/local/cargo/bin
+```
+
+If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value becomes
+`./node_modules/.bin:/usr/local/cargo/bin:/usr/local/bin:/usr/bin:/bin`.
+
+```yaml
+env:
+  JAVA_HOME:
+    required: true
+    default: /opt/jdk-22
+```
+
+This sets one explicit Java location. It does not merge with other values.
+
+```yaml
+tasks:
+  test:
+    env:
+      CI: "true"
+      NODE_ENV: test
+```
+
+This sets ordinary task-scoped env values directly.
+
 Example:
 
 ```yaml

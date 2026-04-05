@@ -54,6 +54,9 @@ See [`policy-packs.md`](policy-packs.md) for the future policy-source precedence
 declared env values are injected into backend execution after resolution so container-backed runs
 see the same chosen values as native runs.
 
+`PATH` is special because it is an ordered executable search path. Ordinary env vars such as
+`JAVA_HOME` should stay as single explicit values unless a separate feature gives them structure.
+
 ## Goal
 
 Ota should help determine:
@@ -102,6 +105,12 @@ Runtime and tool resolution follow the same inheritance principle:
 - policy may provide approved defaults or provisioning hints
 - provenance must record which layer supplied the final value
 - `PATH` may use `prepend` and `append` entries to build the final search path from the resolved base
+
+`PATH` vs ordinary env values:
+
+- use `PATH` when order matters and you need repo-local or toolchain bin directories to win
+- use a plain env value like `JAVA_HOME` when you want one explicit location
+- use normal task env overrides when a single task needs a fixed value such as `CI=true`
 
 ## Contract shape
 
