@@ -713,6 +713,7 @@ Current behavior:
 - runs inherited or overridden setup in the effective member directory
 - runs blocking precondition checks
 - when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
+- when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
