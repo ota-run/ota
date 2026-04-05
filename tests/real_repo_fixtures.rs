@@ -572,6 +572,21 @@ fn provisioning_fixture_resolves_brew_request_on_real_command_path() {
 
 #[cfg(unix)]
 #[test]
+fn up_uses_container_provisioning_target_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("container-provisioning-app");
+
+    let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "stderr was: {stderr}");
+    assert!(stdout.contains("➤ NOT READY"));
+    assert!(stdout.contains("Backend: container"));
+    assert!(stdout.contains("Phase: preconditions"));
+}
+
+#[cfg(unix)]
+#[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {
     let fixture = real_fixture_path("task-variant-app");
     let nested = fixture.join("apps").join("web");
