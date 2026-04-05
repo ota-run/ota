@@ -168,7 +168,9 @@ impl Finding {
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
-            "Adapter bootstrap sources are declared" => "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED",
+            "Adapter bootstrap sources are declared" => {
+                "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
+            }
             s if s.starts_with("Check failed: ") => "OTA_CHECK_FAILED",
             s if s.starts_with("Check timed out: ") => "OTA_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
@@ -930,7 +932,7 @@ fn diagnose_org_policy(
                 })
                 .collect();
 
-        findings.push(Finding {
+            findings.push(Finding {
             severity: FindingSeverity::Info,
             summary: String::from("Adapter bootstrap sources are declared"),
             why: if matched_targets.is_empty() {

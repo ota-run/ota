@@ -28,6 +28,13 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.0.3
+
+- tightened adapter bootstrap fallback notes so `ota up` says which missing adapter, approved source, and backend failure blocked the bootstrap attempt.
+- surfaced adapter bootstrap diagnostics in `ota doctor --json` and `ota workspace doctor --json` so the approved bootstrap path is visible per repo.
+- kept container-local provisioning and real fixture coverage aligned so the container target and adapter bootstrap paths stay testable.
+- aligned the public docs and starter-contract wording around AI-agent-safe task hints, shared policy discovery, and the current adapter support matrix.
+
 ## 1.0.2
 
 - clarified policy pack discovery so shared org rules live in `.ota/org-policy.yaml` and workspace trees can inherit them deterministically.

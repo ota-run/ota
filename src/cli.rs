@@ -5911,24 +5911,27 @@ policies:
         let adapter_bootstrap = json["adapter_bootstrap"]
             .as_object()
             .expect("adapter bootstrap payload should be present");
-        assert_eq!(adapter_bootstrap["plan"]["allowed"].as_array().unwrap().len(), 1);
         assert_eq!(
-            adapter_bootstrap["request"]["actions"].as_array().unwrap().len(),
+            adapter_bootstrap["plan"]["allowed"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            adapter_bootstrap["request"]["actions"][0]["source"],
-            "brew"
+            adapter_bootstrap["request"]["actions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
+        assert_eq!(adapter_bootstrap["request"]["actions"][0]["source"], "brew");
         let findings = json["findings"].as_array().unwrap();
         let finding = findings
             .iter()
             .find(|finding| finding["summary"] == "Adapter bootstrap sources are declared")
             .expect("adapter bootstrap finding should be present");
-        assert_eq!(
-            finding["summary"],
-            "Adapter bootstrap sources are declared"
-        );
+        assert_eq!(finding["summary"], "Adapter bootstrap sources are declared");
         assert_eq!(finding["severity"], "info");
         assert_eq!(finding["policy_outcome"], "policy_surface_available");
         assert_eq!(
@@ -11885,15 +11888,21 @@ policies:
         let adapter_bootstrap = json["repos"][0]["adapter_bootstrap"]
             .as_object()
             .expect("workspace adapter bootstrap should be present");
-        assert_eq!(adapter_bootstrap["plan"]["allowed"].as_array().unwrap().len(), 1);
         assert_eq!(
-            adapter_bootstrap["request"]["actions"].as_array().unwrap().len(),
+            adapter_bootstrap["plan"]["allowed"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            adapter_bootstrap["request"]["actions"][0]["source"],
-            "brew"
+            adapter_bootstrap["request"]["actions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
         );
+        assert_eq!(adapter_bootstrap["request"]["actions"][0]["source"], "brew");
     }
 
     #[test]
