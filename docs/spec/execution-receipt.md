@@ -75,8 +75,9 @@ The receipt includes:
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
 `lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota run`, `ota up`, and
-workspace execution flows. The summary is shown in the normal text output, and the
-receipt keeps the structured summary data for JSON and optional receipt output.
+workspace execution flows. On failure, the normal text output keeps `Why` and `Next`
+before the trailing summary block. The receipt keeps the structured summary data for
+JSON and optional receipt output.
 
 Future policy-backed provisioning receipts should additionally be able to record:
 
@@ -90,7 +91,7 @@ Future policy-backed provisioning receipts should additionally be able to record
 
 - deterministic ordering
 - machine-readable first
-- human-readable summary in the normal execution output
+- human-readable summary in the normal execution output, with failure output keeping `Why` and `Next` ahead of the trailing summary block
 - explicit source of truth for decisions
 - no hidden auto-fix behavior
 - provenance for policy-backed provisioning when that layer exists

@@ -459,7 +459,8 @@ Current behavior:
 - `allowed` limits the accepted values for that input
 - task inputs only apply to the task you invoked, not its dependencies
 - if every declared input has a default, you can omit all input flags
-- text output includes a compact `RUN SUMMARY` block with the selected mode, target, and task on success or failure
+- on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, target, and task
+- on success, text output includes the compact `RUN SUMMARY` block with the selected mode, target, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
 Example:
