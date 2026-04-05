@@ -4556,6 +4556,10 @@ tasks:
         }
 
         assert_eq!(output.exit_code, 7);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("RUN SUMMARY"));
+        assert!(stderr.contains("Mode:"));
+        assert!(stderr.contains("remote"));
     }
 
     #[test]
