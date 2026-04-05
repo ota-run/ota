@@ -472,10 +472,7 @@ impl OrgPolicyPack {
     }
 }
 
-fn validate_source_rules<T>(
-    rules: &BTreeMap<String, T>,
-    label: &str,
-) -> Result<(), String>
+fn validate_source_rules<T>(rules: &BTreeMap<String, T>, label: &str) -> Result<(), String>
 where
     T: SourceRule,
 {
@@ -721,10 +718,7 @@ policies:
         )
         .unwrap();
 
-        let decision = policy
-            .resolve_adapter_bootstrap("mise")
-            .unwrap()
-            .unwrap();
+        let decision = policy.resolve_adapter_bootstrap("mise").unwrap().unwrap();
 
         assert_eq!(decision.name, "mise");
         assert_eq!(decision.source, "approved-manager");
@@ -781,10 +775,7 @@ policies:
             request.actions[0].kind,
             ProvisioningActionKind::SelectSource
         );
-        assert_eq!(
-            request.actions[0].target_kind,
-            ProvisioningTargetKind::Tool
-        );
+        assert_eq!(request.actions[0].target_kind, ProvisioningTargetKind::Tool);
         assert_eq!(request.actions[0].name, "mise");
         assert_eq!(request.actions[0].source, "approved-manager");
     }

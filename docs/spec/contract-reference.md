@@ -47,7 +47,7 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 - `checks`: explicit preconditions and health checks that should pass.
 - `tasks`: named commands humans and agents can run deterministically.
 - `execution`: where tasks run, such as native, container, or remote backends.
-- `agent`: agent-safe task hints and writable-path guidance.
+- `agent`: AI-agent task hints and writable-path boundaries.
 - `exports`: downstream generation preferences and export metadata.
 - `policies`: repo-local policy overlays and guardrails.
 - `workspace`: monorepo root/member mapping for multi-repo orchestration.
@@ -706,21 +706,22 @@ Current validation rules:
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 
-Starter contracts commonly use a minimal default agent block when the detector has enough
-confidence to write one. That default usually includes `setup` as the entrypoint when present,
-`test` as the verification task when present, `test` in `verify_after_changes` when present,
-`ota.yaml` in `protected_paths`, and a short note pointing at the matching `ota run <task>`
-command.
+Starter contracts commonly use a minimal default AI-agent block when the detector has enough
+confidence to write one. The block is stored under `agent`, and it gives an AI agent the safe
+paths and tasks it should use first. That default usually includes `setup` as the entrypoint when
+present, `test` as the verification task when present, `test` in `verify_after_changes` when
+present, `ota.yaml` in `protected_paths`, and a short note pointing at the matching
+`ota run <task>` command.
 
 Agent semantics:
 
-- `entrypoint` is the first task an agent should use to get oriented in the repo
+- `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
-- `safe_tasks` are the tasks an agent can run without broad risk
-- `verify_after_changes` are the tasks an agent should rerun after modifying files
-- `writable_paths` are the paths an agent may edit
-- `protected_paths` are the paths an agent should avoid editing casually
-- `notes` is free-form repo guidance for humans and agents
+- `safe_tasks` are the tasks an AI agent can run without broad risk
+- `verify_after_changes` are the tasks an AI agent should rerun after modifying files
+- `writable_paths` are the paths an AI agent may edit
+- `protected_paths` are the paths an AI agent should avoid editing casually
+- `notes` is free-form repo guidance for humans and AI agents
 - `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
 
 ## `metadata`

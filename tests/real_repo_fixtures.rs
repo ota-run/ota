@@ -587,6 +587,60 @@ fn up_uses_container_provisioning_target_on_real_command_path() {
 
 #[cfg(unix)]
 #[test]
+fn up_reports_missing_adapter_bootstrap_source_on_real_command_path() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    fs::create_dir_all(fixture.path().join(".ota")).expect("policy directory should be created");
+    write_contract(
+        fixture.path(),
+        r#"
+version: 1
+project:
+  name: bootstrap-note-app
+runtimes:
+  java: "22"
+checks:
+  - name: java-installed
+    kind: precondition
+    severity: error
+    run: missing-ota-provision-tool --version
+"#,
+    );
+    fs::write(
+        fixture.path().join(".ota/org-policy.yaml"),
+        r#"
+policies:
+  provisioning:
+    java:
+      source: mise
+      approved_versions:
+        - "22"
+  adapter_bootstrap:
+    mise:
+      source: brew
+"#,
+    )
+    .expect("policy should be written");
+
+    let output = run_ota_with_env_in_dir(
+        &["up", fixture.path().to_str().unwrap()],
+        [("PATH", "")],
+        fixture.path(),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(!output.status.success(), "stderr was: {stderr}");
+    assert!(stdout.contains("➤ NOT READY"));
+    assert!(stdout.contains("Phase: preconditions"));
+    assert!(
+        stdout.contains("adapter bootstrap for missing adapter `mise` via approved source `brew`")
+    );
+    assert!(stdout.contains("backend `brew` is unavailable"));
+    assert!(stdout.contains("falling back to repo setup"));
+}
+
+#[cfg(unix)]
+#[test]
 fn validate_discovers_contract_from_current_directory_real_fixture() {
     let fixture = real_fixture_path("task-variant-app");
     let nested = fixture.join("apps").join("web");

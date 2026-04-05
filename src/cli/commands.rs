@@ -1433,10 +1433,7 @@ pub fn doctor(
                                 .provisioning
                                 .as_ref()
                                 .map(|value| &value.request),
-                            adapter_bootstrap: report
-                                .adapter_bootstrap
-                                .as_ref()
-                                .map(|value| value),
+                            adapter_bootstrap: report.adapter_bootstrap.as_ref().map(|value| value),
                             extensions: &empty_extensions,
                             findings: &report.findings,
                         }),
@@ -8976,6 +8973,27 @@ fn compact_contract_file_path_relative_to(
     absolute.display().to_string()
 }
 
+fn describe_adapter_bootstrap_request(
+    request: &crate::policy_pack::ProvisioningBackendRequest,
+) -> String {
+    let entries: Vec<String> = request
+        .actions
+        .iter()
+        .map(|action| {
+            format!(
+                "missing adapter `{}` via approved source `{}`",
+                action.name, action.source
+            )
+        })
+        .collect();
+
+    match entries.as_slice() {
+        [] => String::from("adapter bootstrap"),
+        [entry] => format!("adapter bootstrap for {entry}"),
+        _ => format!("adapter bootstrap for {}", entries.join(", ")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::env;
@@ -8983,9 +9001,9 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        compact_contract_file_path_relative_to, compact_path_relative_to,
+        RepoExecutionMode, compact_contract_file_path_relative_to, compact_path_relative_to,
         execute_repo_up, render_execution_receipt_text, run_execution_receipt,
-        workspace_refresh_command, RepoExecutionMode,
+        workspace_refresh_command,
     };
     use crate::parser::parse_contract_str;
     use crate::runner::ExecutionOverrides;
@@ -9191,15 +9209,21 @@ policies:
 
         assert!(result.ok);
         assert_eq!(result.status, "READY");
-        assert!(fs::read_to_string(shim_dir.path().join("brew.log"))
-            .unwrap()
-            .contains("mise@4.4"));
-        assert!(fs::read_to_string(shim_dir.path().join("mise.log"))
-            .unwrap()
-            .contains("java@22"));
-        assert!(fs::read_to_string(shim_dir.path().join("java.log"))
-            .unwrap()
-            .contains("--version"));
+        assert!(
+            fs::read_to_string(shim_dir.path().join("brew.log"))
+                .unwrap()
+                .contains("mise@4.4")
+        );
+        assert!(
+            fs::read_to_string(shim_dir.path().join("mise.log"))
+                .unwrap()
+                .contains("java@22")
+        );
+        assert!(
+            fs::read_to_string(shim_dir.path().join("java.log"))
+                .unwrap()
+                .contains("--version")
+        );
 
         unsafe {
             env::set_var("PATH", original_path);
@@ -12142,6 +12166,8 @@ fn execute_repo_up(
                         let bootstrap_request =
                             policy_pack.adapter_bootstrap_backend_request(&[command.as_str()]);
                         if !bootstrap_request.actions.is_empty() {
+                            let bootstrap_note =
+                                describe_adapter_bootstrap_request(&bootstrap_request);
                             match apply_provisioning_request_with_target(
                                 &bootstrap_request,
                                 execution_dir,
@@ -12188,19 +12214,19 @@ fn execute_repo_up(
                                 }
                                 Err(ProvisioningBackendError::MissingCommand { command }) => {
                                     stderr.push_str(&format!(
-                                        "adapter bootstrap backend `{command}` is unavailable; falling back to repo setup\n"
+                                        "{bootstrap_note} could not run because backend `{command}` is unavailable; falling back to repo setup\n"
                                     ));
                                 }
                                 Err(ProvisioningBackendError::UnsupportedSource {
                                     provisioning_source: source,
                                 }) => {
                                     stderr.push_str(&format!(
-                                        "adapter bootstrap source `{source}` is not supported by the built-in backend; falling back to repo setup\n"
+                                        "{bootstrap_note} cannot use built-in source `{source}`; falling back to repo setup\n"
                                     ));
                                 }
                                 Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
                                     stderr.push_str(&format!(
-                                        "adapter bootstrap action kind `{:?}` is not supported by the built-in backend; falling back to repo setup\n",
+                                        "{bootstrap_note} requested unsupported action kind `{:?}`; falling back to repo setup\n",
                                         kind
                                     ));
                                 }
@@ -12209,7 +12235,7 @@ fn execute_repo_up(
                                     target_kind,
                                 }) => {
                                     stderr.push_str(&format!(
-                                        "adapter bootstrap target kind `{target_kind}` is not supported by the built-in backend `{backend}`; falling back to repo setup\n"
+                                        "{bootstrap_note} cannot target `{target_kind}` with built-in backend `{backend}`; falling back to repo setup\n"
                                     ));
                                 }
                             }
