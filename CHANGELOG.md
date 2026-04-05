@@ -27,6 +27,7 @@
 ## Unreleased
 
 - Future changes will be tracked here before the next version bump.
+- added policy-backed Chocolatey feed selection via `source_config.feed` so internal package feeds stay reviewable in policy.
 
 ## 1.0.4
 
