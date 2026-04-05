@@ -933,26 +933,73 @@ fn diagnose_org_policy(
                 .collect();
 
             findings.push(Finding {
-            severity: FindingSeverity::Info,
-            summary: String::from("Adapter bootstrap sources are declared"),
-            why: if matched_targets.is_empty() {
-                format!(
-                    "`{}` declares approved adapter bootstrap sources: {}",
-                    compact_display_path(&policy_path),
-                    sources.join(", ")
-                )
-            } else {
-                format!(
-                    "`{}` declares approved adapter bootstrap sources: {}. This repo's declared prerequisites can be provisioned through: {}",
-                    compact_display_path(&policy_path),
-                    sources.join(", "),
-                    matched_targets.join(", ")
-                )
-            },
-            next: String::from(
-                "use this policy surface when a missing adapter binary needs an approved source",
-            ),
-        });
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: if matched_targets.is_empty() {
+                    format!(
+                        "`{}` declares approved provisioning sources: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", ")
+                    )
+                } else {
+                    format!(
+                        "`{}` declares approved provisioning sources: {}. This repo's declared prerequisites can be provisioned through: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", "),
+                        matched_targets.join(", ")
+                    )
+                },
+                next: String::from(
+                    "use this policy surface when repo prerequisites need an approved source",
+                ),
+            });
+        }
+
+        if !policy_pack.policies.adapter_bootstrap.is_empty() {
+            let adapter_names = policy_pack
+                .policies
+                .adapter_bootstrap
+                .keys()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>();
+            let mut sources = Vec::new();
+            for (name, rule) in &policy_pack.policies.adapter_bootstrap {
+                let versions = if rule.approved_versions.is_empty() {
+                    String::from("any approved version")
+                } else {
+                    format!("versions {}", rule.approved_versions.join(", "))
+                };
+                sources.push(format!("{name} via {} ({versions})", rule.source));
+            }
+
+            let matched_targets: Vec<String> = policy_pack
+                .adapter_bootstrap_backend_request(&adapter_names)
+                .actions
+                .into_iter()
+                .map(|action| format!("{} via {}", action.name, action.source))
+                .collect();
+
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Adapter bootstrap sources are declared"),
+                why: if matched_targets.is_empty() {
+                    format!(
+                        "`{}` declares approved adapter bootstrap sources: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", ")
+                    )
+                } else {
+                    format!(
+                        "`{}` declares approved adapter bootstrap sources: {}. This repo's declared prerequisites can be provisioned through: {}",
+                        compact_display_path(&policy_path),
+                        sources.join(", "),
+                        matched_targets.join(", ")
+                    )
+                },
+                next: String::from(
+                    "use this policy surface when a missing adapter binary needs an approved source",
+                ),
+            });
         }
 
         return Some(ProvisioningDiagnostics {
