@@ -30,6 +30,7 @@
 - added `dnf` `source_config.baseurl` plus `repo_id` support so approved Fedora and RHEL mirror sources can stay in policy.
 - added `apt` `source_config.sources_list` support so approved Debian or Ubuntu mirrors can stay in policy.
 - added `winget-bootstrap` so ota can bootstrap winget as another Windows source-manager path.
+- added `winget` `source_config.source_name` support so approved Windows sources can stay in policy.
 - added policy-backed Chocolatey feed selection via `source_config.feed` so internal package feeds stay reviewable in policy.
 
 ## 1.0.4

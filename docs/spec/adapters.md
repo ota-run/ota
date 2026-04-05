@@ -91,6 +91,9 @@ adapter family.
 For `dnf`, `source_config.baseurl` can point at an approved repo mirror, and `repo_id` can name
 the temporary repo label ota should enable for that install.
 
+For `winget`, `source_config.source_name` can point at an approved Windows source name so the
+adapter installs from the configured source instead of the default one.
+
 Example:
 
 ```yaml
