@@ -11854,6 +11854,11 @@ policies:
       source: approved-manager
       approved_versions:
         - "3.9"
+  adapter_bootstrap:
+    mise:
+      source: brew
+      approved_versions:
+        - "4.4"
 "#,
         )
         .unwrap();
@@ -11877,6 +11882,18 @@ policies:
             .expect("workspace provisioning request should be present");
         assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 2);
         assert_eq!(provisioning_request["actions"][0]["kind"], "select_source");
+        let adapter_bootstrap = json["repos"][0]["adapter_bootstrap"]
+            .as_object()
+            .expect("workspace adapter bootstrap should be present");
+        assert_eq!(adapter_bootstrap["plan"]["allowed"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            adapter_bootstrap["request"]["actions"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(
+            adapter_bootstrap["request"]["actions"][0]["source"],
+            "brew"
+        );
     }
 
     #[test]

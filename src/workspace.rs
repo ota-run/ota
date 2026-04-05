@@ -30,7 +30,8 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 use crate::doctor::{
-    DoctorReport, Finding, FindingSeverity, ProvisioningDiagnostics, diagnose_contract,
+    AdapterBootstrapDiagnostics, DoctorReport, Finding, FindingSeverity, ProvisioningDiagnostics,
+    diagnose_contract,
 };
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
@@ -242,6 +243,8 @@ pub struct WorkspaceRepoDoctorReport {
     pub execution: Option<WorkspaceExecutionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning: Option<ProvisioningDiagnostics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter_bootstrap: Option<AdapterBootstrapDiagnostics>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: BTreeMap<String, ExtensionSpec>,
     pub findings: Vec<Finding>,
@@ -687,6 +690,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             provisioning: None,
+            adapter_bootstrap: None,
             extensions: BTreeMap::new(),
             findings,
         };
@@ -696,6 +700,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
     let mut extensions = BTreeMap::new();
     let mut agent_verdict = DoctorVerdict::NotReady;
     let mut provisioning = None;
+    let mut adapter_bootstrap = None;
     let findings = match load_contract(&repo.contract_path) {
         Ok(contract) => match validate_contract(&contract) {
             Ok(()) => {
@@ -710,6 +715,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
                     repo.required,
                 );
                 provisioning = report.provisioning;
+                adapter_bootstrap = report.adapter_bootstrap;
                 report.findings
             }
             Err(error) => error
@@ -775,6 +781,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
         agent_verdict,
         execution,
         provisioning,
+        adapter_bootstrap,
         extensions,
         findings,
     }

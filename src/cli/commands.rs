@@ -14952,6 +14952,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             provisioning: None,
+            adapter_bootstrap: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
@@ -14998,6 +14999,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                         Some(&repo.policy_env),
                     ),
                     provisioning: None,
+                    adapter_bootstrap: None,
                     extensions: contract.extensions.clone(),
                     findings: error
                         .errors()
@@ -15039,6 +15041,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     Some(&repo.policy_env),
                 ),
                 provisioning: None,
+                adapter_bootstrap: None,
                 extensions: contract.extensions.clone(),
                 findings,
             }
@@ -15052,6 +15055,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
             agent_verdict: DoctorVerdict::NotReady,
             execution: None,
             provisioning: None,
+            adapter_bootstrap: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
                 severity: if repo.required {
