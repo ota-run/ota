@@ -72,9 +72,11 @@ not how the package manager itself works.
 ## Custom source configuration
 
 Some organizations use an existing manager with a custom feed or mirror.
-That is still the same adapter family, not a new ota source, and ota can carry the approved
-feed in policy when the adapter supports it. The `source_config` bag is backend-specific, so
-Chocolatey reads `feed` today while other backends can ignore or interpret their own keys.
+A custom feed or mirror for an existing package manager, for example, Chocolatey, remains within
+the same adapter family and does not create a new ota source.
+
+ota can provide an approved feed through policy where the adapter supports that behavior, while
+other adapters may specify equivalent source details through their own `source_config` keys.
 
 For example, an internal Chocolatey feed is modeled as:
 
@@ -101,6 +103,7 @@ policies:
 In that example:
 
 - ota uses the shipped `choco` adapter
+- Chocolatey is the example, not the only supported shape
 - the company feed is part of the approved provisioning policy
 - the feed name or URL stays reviewable in policy instead of hiding in a script
 

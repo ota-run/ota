@@ -147,10 +147,13 @@ static DNF_BACKEND: DnfProvisioningBackend = DnfProvisioningBackend;
 static BREW_BOOTSTRAP_BACKEND: BrewBootstrapProvisioningBackend = BrewBootstrapProvisioningBackend;
 static ASDF_BOOTSTRAP_BACKEND: AsdfBootstrapProvisioningBackend = AsdfBootstrapProvisioningBackend;
 static MISE_BOOTSTRAP_BACKEND: MiseBootstrapProvisioningBackend = MiseBootstrapProvisioningBackend;
-static SDKMAN_BOOTSTRAP_BACKEND: SdkmanBootstrapProvisioningBackend = SdkmanBootstrapProvisioningBackend;
+static SDKMAN_BOOTSTRAP_BACKEND: SdkmanBootstrapProvisioningBackend =
+    SdkmanBootstrapProvisioningBackend;
 static UV_BOOTSTRAP_BACKEND: UvBootstrapProvisioningBackend = UvBootstrapProvisioningBackend;
-static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend = ChocoBootstrapProvisioningBackend;
-static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend = ScoopBootstrapProvisioningBackend;
+static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend =
+    ChocoBootstrapProvisioningBackend;
+static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend =
+    ScoopBootstrapProvisioningBackend;
 
 impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
@@ -394,7 +397,10 @@ fn ensure_bootstrap_source_version(
         });
     };
 
-    if approved_versions.iter().any(|approved| version.contains(approved)) {
+    if approved_versions
+        .iter()
+        .any(|approved| version.contains(approved))
+    {
         return Ok(());
     }
 
@@ -722,12 +728,7 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             ];
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(
-                target,
-                working_dir,
-                "choco",
-                &arg_refs,
-            )?;
+            let output = execute_provisioning_command(target, working_dir, "choco", &arg_refs)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -735,8 +736,10 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: {
-                        let mut command =
-                            format!("choco install {install_target} --version {}", action.requested_version);
+                        let mut command = format!(
+                            "choco install {install_target} --version {}",
+                            action.requested_version
+                        );
                         if let Some(feed) = action
                             .source_config
                             .as_ref()
@@ -1062,9 +1065,10 @@ impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
                 working_dir,
                 "brew",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1121,9 +1125,10 @@ impl ProvisioningBackend for AsdfBootstrapProvisioningBackend {
                 working_dir,
                 "asdf",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1180,9 +1185,10 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 working_dir,
                 "mise",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1239,9 +1245,10 @@ impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
                 working_dir,
                 "sdk",
                 &["version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1298,9 +1305,10 @@ impl ProvisioningBackend for UvBootstrapProvisioningBackend {
                 working_dir,
                 "uv",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1368,9 +1376,10 @@ impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
                 working_dir,
                 "choco",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 
@@ -1438,9 +1447,10 @@ impl ProvisioningBackend for ScoopBootstrapProvisioningBackend {
                 working_dir,
                 "scoop",
                 &["--version"],
-                action.approved_version.as_ref().map_or(&[], |value| {
-                    std::slice::from_ref(value)
-                }),
+                action
+                    .approved_version
+                    .as_ref()
+                    .map_or(&[], |value| std::slice::from_ref(value)),
             )?;
         }
 

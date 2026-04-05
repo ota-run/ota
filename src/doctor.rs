@@ -918,7 +918,15 @@ fn diagnose_org_policy(
                 } else {
                     format!("versions {}", rule.approved_versions.join(", "))
                 };
-                sources.push(format!("{name} via {} ({versions})", rule.source));
+                let source_config = format_source_config_summary(rule.source_config.as_ref());
+                if source_config.is_empty() {
+                    sources.push(format!("{name} via {} ({versions})", rule.source));
+                } else {
+                    sources.push(format!(
+                        "{name} via {} ({versions}; source_config: {source_config})",
+                        rule.source
+                    ));
+                }
             }
 
             let matched_targets: Vec<String> = policy_pack
@@ -1034,6 +1042,30 @@ fn diagnose_org_policy(
     });
 
     None
+}
+
+fn format_source_config_summary(
+    source_config: Option<&std::collections::BTreeMap<String, serde_yaml::Value>>,
+) -> String {
+    let Some(source_config) = source_config else {
+        return String::new();
+    };
+
+    source_config
+        .iter()
+        .map(|(key, value)| {
+            let rendered = match value {
+                serde_yaml::Value::Bool(value) => value.to_string(),
+                serde_yaml::Value::Number(value) => value.to_string(),
+                serde_yaml::Value::String(value) => value.clone(),
+                other => serde_yaml::to_string(other)
+                    .map(|value| value.trim().to_string())
+                    .unwrap_or_else(|_| String::from("<unrenderable>")),
+            };
+            format!("{key}={rendered}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn diagnose_adapter_bootstrap(
