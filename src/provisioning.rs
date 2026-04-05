@@ -28,11 +28,23 @@ use thiserror::Error;
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
 };
+use crate::runner::persistent_container_name;
+use crate::schema::Lifecycle;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProvisioningBackendOutput {
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvisioningExecutionTarget {
+    Native,
+    Container {
+        image: String,
+        engine: String,
+        lifecycle: Lifecycle,
+    },
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -47,7 +59,7 @@ pub enum ProvisioningBackendError {
     #[error("unsupported provisioning action kind `{:?}`", kind)]
     UnsupportedActionKind { kind: ProvisioningActionKind },
     #[error("provisioning backend command `{command}` is not available")]
-    MissingCommand { command: &'static str },
+    MissingCommand { command: String },
     #[error("provisioning backend command `{command}` exited with status {exit_code}")]
     CommandFailed {
         command: String,
@@ -63,6 +75,7 @@ pub trait ProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError>;
 }
 
@@ -220,6 +233,7 @@ impl ProvisioningBackend for MiseProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -236,20 +250,20 @@ impl ProvisioningBackend for MiseProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("mise")
-                .arg("install")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "mise" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "mise",
+                &["install", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("mise install {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -269,6 +283,7 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -285,21 +300,20 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("asdf")
-                .arg("install")
-                .arg(&install_target)
-                .arg(&action.requested_version)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "asdf" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "asdf",
+                &["install", &install_target, &action.requested_version],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("asdf install {install_target} {}", action.requested_version),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -319,6 +333,7 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -342,21 +357,20 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("sdk")
-                .arg("install")
-                .arg(&install_target)
-                .arg(&action.requested_version)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "sdk" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "sdk",
+                &["install", &install_target, &action.requested_version],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("sdk install {install_target} {}", action.requested_version),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -376,6 +390,7 @@ impl ProvisioningBackend for UvProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -399,21 +414,20 @@ impl ProvisioningBackend for UvProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("uv")
-                .arg("python")
-                .arg("install")
-                .arg(&action.requested_version)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "uv" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "uv",
+                &["python", "install", &action.requested_version],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("uv python install {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -433,6 +447,7 @@ impl ProvisioningBackend for WingetProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -449,29 +464,32 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("winget")
-                .arg("install")
-                .arg("--id")
-                .arg(&install_target)
-                .arg("--version")
-                .arg(&action.requested_version)
-                .arg("--exact")
-                .arg("--accept-source-agreements")
-                .arg("--accept-package-agreements")
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "winget" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "winget",
+                &[
+                    "install",
+                    "--id",
+                    &install_target,
+                    "--version",
+                    &action.requested_version,
+                    "--exact",
+                    "--accept-source-agreements",
+                    "--accept-package-agreements",
+                ],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!(
                         "winget install --id {install_target} --version {}",
                         action.requested_version
                     ),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -491,6 +509,7 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -507,27 +526,30 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("choco")
-                .arg("install")
-                .arg(&install_target)
-                .arg("--version")
-                .arg(&action.requested_version)
-                .arg("-y")
-                .arg("--no-progress")
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "choco" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "choco",
+                &[
+                    "install",
+                    &install_target,
+                    "--version",
+                    &action.requested_version,
+                    "-y",
+                    "--no-progress",
+                ],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!(
                         "choco install {install_target} --version {}",
                         action.requested_version
                     ),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -547,6 +569,7 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -563,20 +586,20 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("scoop")
-                .arg("install")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "scoop" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "scoop",
+                &["install", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("scoop install {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -596,6 +619,7 @@ impl ProvisioningBackend for BrewProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -612,20 +636,20 @@ impl ProvisioningBackend for BrewProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("brew")
-                .arg("install")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "brew" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "brew",
+                &["install", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("brew install {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -645,6 +669,7 @@ impl ProvisioningBackend for PacmanProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -661,21 +686,20 @@ impl ProvisioningBackend for PacmanProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("pacman")
-                .arg("-S")
-                .arg("--noconfirm")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "pacman" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "pacman",
+                &["-S", "--noconfirm", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("pacman -S --noconfirm {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -695,6 +719,7 @@ impl ProvisioningBackend for AptProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -711,21 +736,20 @@ impl ProvisioningBackend for AptProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("apt-get")
-                .arg("install")
-                .arg("-y")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "apt-get" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "apt-get",
+                &["install", "-y", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("apt-get install -y {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -745,6 +769,7 @@ impl ProvisioningBackend for DnfProvisioningBackend {
         &self,
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -761,21 +786,20 @@ impl ProvisioningBackend for DnfProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = Command::new("dnf")
-                .arg("install")
-                .arg("-y")
-                .arg(&install_target)
-                .current_dir(working_dir)
-                .output()
-                .map_err(|_| ProvisioningBackendError::MissingCommand { command: "dnf" })?;
+            let output = execute_provisioning_command(
+                target,
+                working_dir,
+                "dnf",
+                &["install", "-y", &install_target],
+            )?;
 
-            stdout.push_str(&String::from_utf8_lossy(&output.stdout));
-            stderr.push_str(&String::from_utf8_lossy(&output.stderr));
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
 
-            if !output.status.success() {
+            if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: format!("dnf install -y {install_target}"),
-                    exit_code: output.status.code().unwrap_or(1),
+                    exit_code: output.exit_code,
                     stdout,
                     stderr,
                 });
@@ -807,6 +831,18 @@ pub fn apply_provisioning_request(
     request: &ProvisioningBackendRequest,
     working_dir: &Path,
 ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+    apply_provisioning_request_with_target(
+        request,
+        working_dir,
+        &ProvisioningExecutionTarget::Native,
+    )
+}
+
+pub fn apply_provisioning_request_with_target(
+    request: &ProvisioningBackendRequest,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -819,12 +855,149 @@ pub fn apply_provisioning_request(
         let single_action_request = ProvisioningBackendRequest {
             actions: vec![action.clone()],
         };
-        let result = backend.apply(&single_action_request, working_dir)?;
+        let result = backend.apply(&single_action_request, working_dir, target)?;
         stdout.push_str(&result.stdout);
         stderr.push_str(&result.stderr);
     }
 
     Ok(ProvisioningBackendOutput { stdout, stderr })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProvisioningCommandOutput {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn shell_command(command: &str, args: &[&str]) -> String {
+    let mut script = String::new();
+    script.push_str(&shell_quote(command));
+    for arg in args {
+        script.push(' ');
+        script.push_str(&shell_quote(arg));
+    }
+    script
+}
+
+fn command_output(
+    command: &str,
+    args: &[&str],
+    working_dir: &Path,
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    let output = Command::new(command)
+        .args(args)
+        .current_dir(working_dir)
+        .output()
+        .map_err(|_| ProvisioningBackendError::MissingCommand {
+            command: command.to_string(),
+        })?;
+
+    Ok(ProvisioningCommandOutput {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn container_command_output(
+    engine: &str,
+    args: &[&str],
+    working_dir: &Path,
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    command_output(engine, args, working_dir)
+}
+
+fn run_container_command(
+    engine: &str,
+    image: &str,
+    lifecycle: Lifecycle,
+    working_dir: &Path,
+    command: &str,
+    args: &[&str],
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    let shell = shell_command(command, args);
+    let workspace = format!("{}:/workspace", working_dir.display());
+
+    match lifecycle {
+        Lifecycle::Ephemeral => container_command_output(
+            engine,
+            &[
+                "run",
+                "--rm",
+                "-i",
+                "-v",
+                &workspace,
+                "-w",
+                "/workspace",
+                image,
+                "sh",
+                "-lc",
+                &shell,
+            ],
+            working_dir,
+        ),
+        Lifecycle::Persistent => {
+            let container_name = persistent_container_name(working_dir, image, engine);
+            let inspect =
+                container_command_output(engine, &["inspect", &container_name], working_dir)?;
+            if inspect.exit_code != 0 {
+                let status = container_command_output(
+                    engine,
+                    &[
+                        "run",
+                        "-d",
+                        "--name",
+                        &container_name,
+                        "-v",
+                        &workspace,
+                        "-w",
+                        "/workspace",
+                        image,
+                        "sh",
+                        "-lc",
+                        "while true; do sleep 3600; done",
+                    ],
+                    working_dir,
+                )?;
+                if status.exit_code != 0 {
+                    return Ok(status);
+                }
+            } else {
+                let status =
+                    container_command_output(engine, &["start", &container_name], working_dir)?;
+                if status.exit_code != 0 {
+                    return Ok(status);
+                }
+            }
+
+            container_command_output(
+                engine,
+                &["exec", "-i", &container_name, "sh", "-lc", &shell],
+                working_dir,
+            )
+        }
+    }
+}
+
+fn execute_provisioning_command(
+    target: &ProvisioningExecutionTarget,
+    working_dir: &Path,
+    command: &str,
+    args: &[&str],
+) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+    match target {
+        ProvisioningExecutionTarget::Native => command_output(command, args, working_dir),
+        ProvisioningExecutionTarget::Container {
+            image,
+            engine,
+            lifecycle,
+        } => run_container_command(engine, image, *lifecycle, working_dir, command, args),
+    }
 }
 
 #[cfg(test)]
@@ -884,6 +1057,55 @@ mod tests {
         assert!(result.stdout.is_empty());
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("java@22"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_in_container_with_engine_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("docker.log");
+        make_shim(shim_dir.path(), "docker", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Runtime,
+                name: "java".to_string(),
+                requested_version: "22".to_string(),
+                source: "mise".to_string(),
+                approved_version: Some("22".to_string()),
+            }],
+        };
+
+        let target = ProvisioningExecutionTarget::Container {
+            image: "ghcr.io/ota/test:latest".to_string(),
+            engine: "docker".to_string(),
+            lifecycle: Lifecycle::Ephemeral,
+        };
+
+        let result =
+            apply_provisioning_request_with_target(&request, Path::new("."), &target).unwrap();
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("run"));
+        assert!(log_contents.contains("sh"));
+        assert!(log_contents.contains("mise"));
         assert!(log_contents.contains("java@22"));
 
         unsafe {

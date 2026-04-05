@@ -45,6 +45,7 @@ use crate::doctor::{
     diagnose_checks_only, diagnose_contract, diagnose_preconditions, diagnose_service,
     diagnose_services_only,
 };
+use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CommandOutput, DetectComparison,
@@ -67,14 +68,16 @@ use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
     parse_contract_str,
 };
-use crate::provisioning::{ProvisioningBackendError, apply_provisioning_request};
+use crate::provisioning::{
+    ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
+};
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
     effective_execution, resolve_task_env_details, resolve_task_env_details_with_policy,
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{AgentConfig, Contract, ExtensionSpec, TaskSpec};
+use crate::schema::{AgentConfig, Backend, Contract, ExtensionSpec, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -11907,6 +11910,39 @@ fn run_git_command(
     }
 }
 
+fn provisioning_execution_target(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+) -> ProvisioningExecutionTarget {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    if !matches!(backend, Backend::Container) {
+        return ProvisioningExecutionTarget::Native;
+    }
+
+    let Some(container) = contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.backends.as_ref())
+        .and_then(|backends| backends.container.as_ref())
+    else {
+        return ProvisioningExecutionTarget::Native;
+    };
+
+    let Some(engine) = selected_container_engine(contract) else {
+        return ProvisioningExecutionTarget::Native;
+    };
+
+    let Some(lifecycle) = lifecycle else {
+        return ProvisioningExecutionTarget::Native;
+    };
+
+    ProvisioningExecutionTarget::Container {
+        image: container.image.clone(),
+        engine,
+        lifecycle,
+    }
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -11917,10 +11953,15 @@ fn execute_repo_up(
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut provisioned_setup = false;
+    let provisioning_target = provisioning_execution_target(contract, overrides);
     let mut preflight = diagnose_preconditions(contract, resolved_path);
     if !preflight.ok {
         if let Some(provisioning) = preflight.provisioning.as_ref() {
-            match apply_provisioning_request(&provisioning.request, resolved_path) {
+            match apply_provisioning_request_with_target(
+                &provisioning.request,
+                resolved_path,
+                &provisioning_target,
+            ) {
                 Ok(outcome) => {
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);

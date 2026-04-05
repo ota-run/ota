@@ -218,6 +218,7 @@ provisioning from approved sources exists.
 The command should:
 
 - preserve normal readiness checks
+- run approved provisioning inside the selected execution backend when the repo is configured for container execution
 - only provision declared prerequisites
 - support dry-run
 - show the source and version that would be used
