@@ -84,6 +84,13 @@ For example, an internal Chocolatey feed is modeled as:
 - Chocolatey configured to point at the company feed
 - `choco-bootstrap` only if Chocolatey itself is missing
 
+For `apt`, `source_config.sources_list` can provide approved `deb ...` entries for an internal
+mirror or custom repository, while the package install itself still stays in the existing `apt`
+adapter family.
+
+For `dnf`, `source_config.baseurl` can point at an approved repo mirror, and `repo_id` can name
+the temporary repo label ota should enable for that install.
+
 Example:
 
 ```yaml
@@ -104,6 +111,8 @@ In that example:
 
 - ota uses the shipped `choco` adapter
 - Chocolatey is the example, not the only supported shape
+- `apt` can use `source_config.sources_list` for an approved mirror or custom repository
+- `dnf` can use `source_config.baseurl` plus `repo_id` for an approved repo mirror
 - the company feed is part of the approved provisioning policy
 - the feed name or URL stays reviewable in policy instead of hiding in a script
 

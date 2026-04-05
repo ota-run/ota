@@ -1,0 +1,8 @@
+version: 1
+project:
+  name: linux-mirror-probe
+runtimes:
+  java: "21"
+tools:
+  curl: "8.7.1"
+  git: "2.46.0"

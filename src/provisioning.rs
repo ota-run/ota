@@ -23,6 +23,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use serde_yaml::Value;
 use thiserror::Error;
 
 use crate::policy_pack::{
@@ -259,26 +260,61 @@ impl AptProvisioningBackend {
         }
     }
 
+    fn source_lines(action: &ProvisioningAction) -> Vec<String> {
+        action
+            .source_config
+            .as_ref()
+            .and_then(|config| config.get("sources_list"))
+            .and_then(Value::as_sequence)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
     fn install_command(
         target: &ProvisioningExecutionTarget,
         install_target: &str,
-    ) -> (String, Vec<String>) {
+        source_lines: &[String],
+    ) -> (String, Vec<String>, String) {
+        if source_lines.is_empty() {
+            return match target {
+                ProvisioningExecutionTarget::Native => (
+                    String::from("apt-get"),
+                    vec![
+                        String::from("install"),
+                        String::from("-y"),
+                        install_target.to_string(),
+                    ],
+                    format!("apt-get install -y {install_target}"),
+                ),
+                ProvisioningExecutionTarget::Container { .. } => (
+                    String::from("sh"),
+                    vec![
+                        String::from("-lc"),
+                        format!("apt-get update >/dev/null && apt-get install -y {install_target}"),
+                    ],
+                    format!("apt-get update && apt-get install -y {install_target}"),
+                ),
+            };
+        }
+
+        let sources_list = source_lines.join("\n");
+        let shell_script = format!(
+            "set -e; tmpdir=$(mktemp -d); cat > \"$tmpdir/sources.list\" <<'EOF'\n{sources_list}\nEOF\napt-get -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" update >/dev/null && apt-get -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" install -y {install_target}"
+        );
         match target {
-            ProvisioningExecutionTarget::Native => (
-                String::from("apt-get"),
-                vec![
-                    String::from("install"),
-                    String::from("-y"),
-                    install_target.to_string(),
-                ],
-            ),
-            ProvisioningExecutionTarget::Container { .. } => (
-                String::from("sh"),
-                vec![
-                    String::from("-lc"),
-                    format!("apt-get update >/dev/null && apt-get install -y {install_target}"),
-                ],
-            ),
+            ProvisioningExecutionTarget::Native | ProvisioningExecutionTarget::Container { .. } => {
+                (
+                    String::from("sh"),
+                    vec![String::from("-lc"), shell_script],
+                    format!("apt-get install -y {install_target} using source_config.sources_list"),
+                )
+            }
         }
     }
 }
@@ -290,6 +326,25 @@ impl DnfProvisioningBackend {
                 format!("{}-{}", action.name, action.requested_version)
             }
         }
+    }
+
+    fn source_args(action: &ProvisioningAction) -> Vec<String> {
+        let Some(config) = action.source_config.as_ref() else {
+            return Vec::new();
+        };
+        let Some(baseurl) = config.get("baseurl").and_then(|value| value.as_str()) else {
+            return Vec::new();
+        };
+        let repo_id = config
+            .get("repo_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or(action.name.as_str());
+        vec![
+            String::from("--repofrompath"),
+            format!("{repo_id},{baseurl}"),
+            String::from("--enablerepo"),
+            repo_id.to_string(),
+        ]
     }
 }
 
@@ -952,7 +1007,9 @@ impl ProvisioningBackend for AptProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let (command, args) = Self::install_command(target, &install_target);
+            let source_lines = Self::source_lines(action);
+            let (command, args, command_display) =
+                Self::install_command(target, &install_target, &source_lines);
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
             let output = execute_provisioning_command(target, working_dir, &command, &arg_refs)?;
 
@@ -961,14 +1018,7 @@ impl ProvisioningBackend for AptProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: match target {
-                        ProvisioningExecutionTarget::Native => {
-                            format!("apt-get install -y {install_target}")
-                        }
-                        ProvisioningExecutionTarget::Container { .. } => {
-                            format!("apt-get update && apt-get install -y {install_target}")
-                        }
-                    },
+                    command: command_display,
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -1006,19 +1056,25 @@ impl ProvisioningBackend for DnfProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
-            let output = execute_provisioning_command(
-                target,
-                working_dir,
-                "dnf",
-                &["install", "-y", &install_target],
-            )?;
+            let source_args = Self::source_args(action);
+            let mut args = source_args.clone();
+            args.push(String::from("install"));
+            args.push(String::from("-y"));
+            args.push(install_target.clone());
+            let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+            let output = execute_provisioning_command(target, working_dir, "dnf", &arg_refs)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("dnf install -y {install_target}"),
+                    command: if source_args.is_empty() {
+                        format!("dnf install -y {install_target}")
+                    } else {
+                        let repo_args = source_args.join(" ");
+                        format!("dnf {repo_args} install -y {install_target}")
+                    },
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -2283,6 +2339,54 @@ mod tests {
     }
 
     #[test]
+    fn applies_provisioning_request_with_apt_sources_list_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("apt-get.log");
+        make_shim(shim_dir.path(), "apt-get", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "curl".to_string(),
+                requested_version: "8.7.1".to_string(),
+                source: "apt".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([(
+                    String::from("sources_list"),
+                    Value::Sequence(vec![Value::String(
+                        "deb http://mirror.local/debian bookworm main".to_string(),
+                    )]),
+                )])),
+                approved_version: Some("8.7.1".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("-o"));
+        assert!(log_contents.contains("sources.list"));
+        assert!(log_contents.contains("curl=8.7.1"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
     fn applies_provisioning_request_with_brew_shim() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let shim_dir = TempDir::new().unwrap();
@@ -2442,6 +2546,59 @@ mod tests {
         let log_contents = fs::read_to_string(log).unwrap();
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("-y"));
+        assert!(log_contents.contains("git-2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_dnf_baseurl_shim() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("dnf.log");
+        make_shim(shim_dir.path(), "dnf", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "git".to_string(),
+                requested_version: "2.46.0".to_string(),
+                source: "dnf".to_string(),
+                source_config: Some(std::collections::BTreeMap::from([
+                    (
+                        String::from("repo_id"),
+                        Value::String("internal-fedora".to_string()),
+                    ),
+                    (
+                        String::from("baseurl"),
+                        Value::String("https://mirror.local/fedora/40/x86_64".to_string()),
+                    ),
+                ])),
+                approved_version: Some("2.46.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("--repofrompath"));
+        assert!(log_contents.contains("internal-fedora"));
+        assert!(log_contents.contains("https://mirror.local/fedora/40/x86_64"));
+        assert!(log_contents.contains("--enablerepo"));
         assert!(log_contents.contains("git-2.46.0"));
 
         unsafe {

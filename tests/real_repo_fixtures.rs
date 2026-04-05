@@ -103,6 +103,22 @@ fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> S
     format!("ota-{:x}", hasher.finish())
 }
 
+fn make_shim(dir: &Path, name: &str, log: &Path) {
+    let shim = dir.join(name);
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"{}\"\nexit 0\n",
+        log.display()
+    );
+    fs::write(&shim, script).expect("shim should be written");
+    let mut perms = fs::metadata(&shim).expect("shim metadata").permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+    }
+    fs::set_permissions(&shim, perms).expect("shim should be executable");
+}
+
 #[cfg(unix)]
 fn install_fake_container_engine(path: &Path) {
     fs::write(
@@ -780,6 +796,60 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
     let prepared = fs::read_to_string(fixture.path().join("prepared.txt")).expect("prepared file");
     assert!(prepared.contains("pv 1.6.20 - Copyright 2015 Andrew Wood <andrew.wood@ivarch.com>"));
     assert!(prepared.contains("Artistic License 2.0"));
+}
+
+#[cfg(unix)]
+#[test]
+fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
+    let fixture = copy_fixture_to_temp("linux-mirror-probe");
+    let contract_path = fixture.path().join("ota.yaml");
+    let contract = load_contract(&contract_path).expect("contract should parse");
+    validate_contract(&contract).expect("contract should validate");
+    let (policy_pack, _policy_path) = load_org_policy_pack_auto(&contract_path)
+        .expect("policy pack should load")
+        .expect("policy pack should exist");
+    let request = policy_pack.provisioning_backend_request(&contract);
+    assert_eq!(request.actions.len(), 3);
+
+    let original_path = std::env::var("PATH").unwrap_or_default();
+    let shim_dir = TempDir::new().expect("temp dir should be created");
+    let apt_log = shim_dir.path().join("apt-get.log");
+    let dnf_log = shim_dir.path().join("dnf.log");
+    make_shim(shim_dir.path(), "apt-get", &apt_log);
+    make_shim(shim_dir.path(), "dnf", &dnf_log);
+
+    let mut new_path = shim_dir.path().display().to_string();
+    if !original_path.is_empty() {
+        new_path.push(':');
+        new_path.push_str(&original_path);
+    }
+    unsafe {
+        std::env::set_var("PATH", new_path);
+    }
+
+    let outcome = apply_provisioning_request_with_target(
+        &request,
+        fixture.path(),
+        &ProvisioningExecutionTarget::Native,
+    )
+    .expect("provisioning request should apply");
+    assert!(outcome.stderr.is_empty());
+    assert!(outcome.stdout.is_empty());
+
+    let apt_log_contents = fs::read_to_string(apt_log).unwrap();
+    assert!(apt_log_contents.contains("sources.list"));
+    assert!(apt_log_contents.contains("curl=8.7.1"));
+    assert!(apt_log_contents.contains("git=2.46.0"));
+
+    let dnf_log_contents = fs::read_to_string(dnf_log).unwrap();
+    assert!(dnf_log_contents.contains("--repofrompath"));
+    assert!(dnf_log_contents.contains("internal-fedora"));
+    assert!(dnf_log_contents.contains("https://mirror.local/fedora/40/x86_64"));
+    assert!(dnf_log_contents.contains("java-21"));
+
+    unsafe {
+        std::env::set_var("PATH", original_path);
+    }
 }
 
 #[cfg(unix)]
