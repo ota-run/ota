@@ -54,6 +54,14 @@ fn run_ota_with_env<const N: usize>(args: &[&str], envs: [(&str, &str); N]) -> O
     run_ota_with_env_in_dir(args, envs, Path::new("."))
 }
 
+fn docker_available() -> bool {
+    Command::new("docker")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn run_ota_with_env_in_dir<const N: usize>(
     args: &[&str],
     envs: [(&str, &str); N],
@@ -718,6 +726,11 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
 #[cfg(unix)]
 #[test]
 fn provisioning_request_installs_real_tool_inside_container_on_real_command_path() {
+    if !docker_available() {
+        eprintln!("skipping real container provisioning test: docker unavailable");
+        return;
+    }
+
     let fixture = copy_fixture_to_temp("container-apt-probe");
 
     let contract_path = fixture.path().join("ota.yaml");
