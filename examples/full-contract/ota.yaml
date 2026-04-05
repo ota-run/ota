@@ -29,6 +29,9 @@ env:
       - debug
       - info
       - warn
+  PATH:
+    prepend:
+      - ./node_modules/.bin
 tasks:
   setup:
     description: Install project dependencies

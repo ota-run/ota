@@ -447,6 +447,10 @@ env:
     allowed:
       - local
       - ci
+  PATH:
+    prepend:
+      - ./node_modules/.bin
+      - /opt/ota/bin
 ```
 
 Fields:
@@ -456,6 +460,21 @@ Fields:
   passed through remote shell wrappers
 - `default`: optional string
 - `allowed`: optional list of allowed values
+- `prepend`: optional list of path entries to add before the resolved value when the env key is `PATH`; these take priority
+- `append`: optional list of path entries to add after the resolved value when the env key is `PATH`; these act as fallback locations
+
+Example:
+
+```yaml
+env:
+  PATH:
+    prepend:
+      - ./node_modules/.bin
+      - /opt/ota/bin
+```
+
+If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value becomes
+`./node_modules/.bin:/opt/ota/bin:/usr/local/bin:/usr/bin:/bin`.
 
 Policy-aware source selection and workspace inheritance are described in
 [env-resolution-and-policy.md](env-resolution-and-policy.md).
@@ -463,12 +482,14 @@ Policy-aware source selection and workspace inheritance are described in
 Current behavior:
 
 - `run` prefers approved policy env values, then process environment, then `default`
+- declared env values are injected into backend execution after resolution, so container and remote backends see the same chosen value
 - `run` rejects disallowed values
 - `doctor` reports missing required vars and invalid values
 - `secret: true` may not be combined with a default value
 - secret env values are redacted in execution receipts
 - remote task execution rejects secret env values instead of inlining them into remote shell
   command strings
+- `PATH` can be composed from `prepend` entries, the resolved base value, and `append` entries
 
 Resolution and provenance:
 
