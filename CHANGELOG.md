@@ -27,6 +27,8 @@
 ## Unreleased
 
 - Future changes will be tracked here before the next version bump.
+- aligned `ota run` failure output so `Why` and `Next` appear before the trailing `RUN SUMMARY` block.
+- kept the user-facing execution override flag on `--mode`, with `--backend` remaining as a compatibility alias.
 
 ## 1.0.3
 
