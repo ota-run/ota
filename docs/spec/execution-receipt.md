@@ -40,6 +40,7 @@ The receipt is meant to answer:
 - what backend and lifecycle were chosen
 - what was reused or acquired
 - what env or policy affected the decision
+- what policy-backed provisioning sources were selected
 - what tasks, checks, or services ran
 - what failed or was blocked
 - what the safe next step is
@@ -75,7 +76,9 @@ The receipt includes:
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
 `lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota run`, `ota up`, and
-workspace execution flows. On failure, the normal text output keeps `Why` and `Next`
+workspace execution flows. Repo receipts now also include a `Policy:` section when
+policy-backed provisioning is present, listing the selected source and any backend-
+specific source config. On failure, the normal text output keeps `Why` and `Next`
 before the trailing summary block. The receipt keeps the structured summary data for
 JSON and optional receipt output.
 
@@ -86,6 +89,7 @@ Future policy-backed provisioning receipts should additionally be able to record
 - the version or distribution that was selected
 - whether the action was install, select, or verify-only
 - whether policy allowed mutation for that decision
+- backend-specific source config in structured and text output
 
 ## Behavior
 

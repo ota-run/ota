@@ -10409,6 +10409,54 @@ fn receipt_env_source(resolved: &ResolvedEnvValue) -> String {
     }
 }
 
+fn source_config_summary(
+    source_config: Option<&BTreeMap<String, serde_yaml::Value>>,
+) -> Option<String> {
+    let source_config = source_config?;
+    if source_config.is_empty() {
+        return None;
+    }
+
+    Some(
+        source_config
+            .iter()
+            .map(|(key, value)| {
+                let rendered = match value {
+                    serde_yaml::Value::Bool(value) => value.to_string(),
+                    serde_yaml::Value::Number(value) => value.to_string(),
+                    serde_yaml::Value::String(value) => value.clone(),
+                    other => serde_yaml::to_string(other)
+                        .map(|value| value.trim().to_string())
+                        .unwrap_or_else(|_| String::from("<unrenderable>")),
+                };
+                format!("{key}={rendered}")
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn execution_policy_lines(contract: &Contract, contract_path: &Path) -> Vec<String> {
+    let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
+        return Vec::new();
+    };
+
+    policy_pack
+        .selected_provisioning_actions(contract)
+        .into_iter()
+        .map(|action| {
+            let mut line = format!(
+                "{} {} {} via {}",
+                action.target_kind, action.name, action.requested_version, action.source
+            );
+            if let Some(source_config) = source_config_summary(action.source_config.as_ref()) {
+                line.push_str(&format!(" (source_config: {source_config})"));
+            }
+            line
+        })
+        .collect()
+}
+
 fn run_execution_receipt(
     contract: &Contract,
     contract_path: &Path,
@@ -10468,7 +10516,7 @@ fn run_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
-        policy: Vec::new(),
+        policy: execution_policy_lines(contract, contract_path),
         steps,
         blocked: Vec::new(),
         summary: ExecutionReceiptSummary {
@@ -10793,6 +10841,13 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 source.value,
                 source.source
             ));
+        }
+    }
+
+    if !receipt.policy.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Policy:")));
+        for line in &receipt.policy {
+            stdout.push_str(&format!("\n{}", line));
         }
     }
 
@@ -11957,7 +12012,7 @@ fn repo_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
-        policy: Vec::new(),
+        policy: execution_policy_lines(contract, path),
         steps,
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
