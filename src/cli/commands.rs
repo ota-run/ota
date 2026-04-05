@@ -190,7 +190,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
 
     if let Some(summary_block) = summary_block.as_ref() {
         if body_message.trim().is_empty() {
-            out.push_str("\n\n");
+            out.push('\n');
             out.push_str(&summary_block);
             return out;
         }
@@ -328,8 +328,7 @@ fn split_summary_block(message: &str) -> (Option<String>, String) {
 
 fn append_summary_block(out: &mut String, summary_block: Option<&String>) {
     if let Some(summary_block) = summary_block {
-        out.push_str("\n\n");
-        out.push_str(summary_block);
+        out.push_str(summary_block.trim_start_matches('\n'));
     }
 }
 
