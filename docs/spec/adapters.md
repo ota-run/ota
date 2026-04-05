@@ -69,44 +69,18 @@ Useful source families include:
 These are policy targets, not installer implementations. They tell ota which origin is allowed,
 not how the package manager itself works.
 
-## Custom source configuration
+## Custom source configuration by adapter family
 
-Some organizations use an existing manager with a custom feed or mirror.
-A custom feed or mirror for an existing package manager, for example, Chocolatey, remains within
-the same adapter family and does not create a new ota source.
+Some organizations use an existing manager with a custom feed or mirror. The adapter family stays
+the same; only the approved source details change. That keeps feeds, taps, buckets, and mirrors
+visible in policy instead of hiding them in scripts.
 
-ota can provide an approved feed through policy where the adapter supports that behavior, while
-other adapters may specify equivalent source details through their own `source_config` keys.
+### Chocolatey feed
 
-For example, an internal Chocolatey feed is modeled as:
-
-- `choco` as the manager
-- Chocolatey configured to point at the company feed
-- `choco-bootstrap` only if Chocolatey itself is missing
-
-For `apt`, `source_config.sources_list` can provide approved `deb ...` entries for an internal
-mirror or custom repository, while the package install itself still stays in the existing `apt`
-adapter family.
-
-For `dnf`, `source_config.baseurl` can point at an approved repo mirror, and `repo_id` can name
-the temporary repo label ota should enable for that install.
-
-For `winget`, `source_config.source_name` can point at an approved Windows source name so the
-adapter installs from the configured source instead of the default one.
-
-For `scoop`, `source_config.bucket_name` can name an approved Windows bucket, and
-`source_config.bucket_url` can point at the bucket repository when a custom bucket is needed.
-
-For `brew`, `source_config.tap_name` can name an approved Homebrew tap, and `source_config.tap_url`
-can point at the tap repository when a custom tap is needed.
-
-Example:
+Use `source_config.feed` when Chocolatey should point at an approved internal feed or mirror.
 
 ```yaml
 policies:
-  adapter_bootstrap:
-    choco:
-      source: choco-bootstrap
   provisioning:
     node:
       source: choco
@@ -116,14 +90,84 @@ policies:
         - "22"
 ```
 
-In that example:
+### Winget source
 
-- ota uses the shipped `choco` adapter
-- Chocolatey is the example, not the only supported shape
-- `apt` can use `source_config.sources_list` for an approved mirror or custom repository
-- `dnf` can use `source_config.baseurl` plus `repo_id` for an approved repo mirror
-- the company feed is part of the approved provisioning policy
-- the feed name or URL stays reviewable in policy instead of hiding in a script
+Use `source_config.source_name` when an approved Windows source should back installs.
+
+```yaml
+policies:
+  provisioning:
+    dotnet:
+      source: winget
+      source_config:
+        source_name: internal-winget
+      approved_versions:
+        - "8.0.4"
+```
+
+### Scoop bucket
+
+Use `source_config.bucket_name` and `bucket_url` when an approved Scoop bucket should back installs.
+
+```yaml
+policies:
+  provisioning:
+    git:
+      source: scoop
+      source_config:
+        bucket_name: internal-scoop
+        bucket_url: https://mirror.local/scoop
+      approved_versions:
+        - "2.46.0"
+```
+
+### apt mirror
+
+Use `source_config.sources_list` when you need approved Debian or Ubuntu `deb` entries.
+
+```yaml
+policies:
+  provisioning:
+    curl:
+      source: apt
+      source_config:
+        sources_list:
+          - deb http://mirror.local/debian bookworm main
+      approved_versions:
+        - "8.7.1"
+```
+
+### dnf mirror
+
+Use `source_config.baseurl` and `repo_id` when you want an approved Fedora or RHEL mirror.
+
+```yaml
+policies:
+  provisioning:
+    git:
+      source: dnf
+      source_config:
+        repo_id: internal-fedora
+        baseurl: https://mirror.local/fedora/40/x86_64
+      approved_versions:
+        - "2.46.0"
+```
+
+### Homebrew tap
+
+Use `source_config.tap_name` and `tap_url` when an approved Homebrew tap should back installs.
+
+```yaml
+policies:
+  provisioning:
+    git:
+      source: brew
+      source_config:
+        tap_name: internal/homebrew
+        tap_url: https://mirror.local/homebrew
+      approved_versions:
+        - "2.46.0"
+```
 
 ## Sample policy
 

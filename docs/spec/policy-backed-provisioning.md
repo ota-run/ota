@@ -60,6 +60,9 @@ declared runtime and tool entries where the adapter supports them.
 A custom feed or mirror for an existing package manager, for example, Chocolatey, remains within
 the same adapter family and does not create a new ota source.
 
+Chocolatey is the first concrete example, not the only one. The same `source_config` pattern also
+works for `winget`, `scoop`, `apt`, `dnf`, and `brew`.
+
 ota can provide an approved feed through policy where the adapter supports that behavior, while
 other adapters may specify equivalent source details through their own `source_config` keys.
 
@@ -224,23 +227,20 @@ With that shape:
 
 It should not encode raw download scripts or ad hoc shell commands.
 
-For Chocolatey, `source_config.feed` can name an approved internal feed or mirror so the feed
-selection stays reviewable in policy.
+### Windows
 
-For `apt`, `source_config.sources_list` can hold approved `deb ...` entries for an internal
-mirror or custom repository so the selected package source stays reviewable in policy.
+- `choco` can use `source_config.feed` for an approved internal feed or mirror
+- `winget` can use `source_config.source_name` for an approved Windows source
+- `scoop` can use `source_config.bucket_name` and `bucket_url` for an approved Windows bucket
 
-For `dnf`, `source_config.baseurl` and `repo_id` can point at an approved repo mirror so the
-temporary repo label and package source stay reviewable in policy.
+### Linux
 
-For `winget`, `source_config.source_name` can name an approved Windows source so installs stay
-reviewable in policy while still using the shipped `winget` adapter.
+- `apt` can use `source_config.sources_list` for approved `deb ...` entries
+- `dnf` can use `source_config.baseurl` and `repo_id` for an approved repo mirror
 
-For `scoop`, `source_config.bucket_name` and `bucket_url` can name an approved Windows bucket so
-Scoop installs stay reviewable in policy while still using the shipped `scoop` adapter.
+### macOS
 
-For `brew`, `source_config.tap_name` and `tap_url` can name an approved Homebrew tap so installs
-stay reviewable in policy while still using the shipped `brew` adapter.
+- `brew` can use `source_config.tap_name` and `tap_url` for an approved Homebrew tap
 
 ## Expected behavior
 
