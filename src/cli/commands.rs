@@ -1365,10 +1365,18 @@ pub fn run_command(
             },
             Err(error) => CommandOutput {
                 stdout: String::new(),
-                stderr: Some(match error.receipt {
-                    Some(receipt) if error.message.is_empty() => receipt,
-                    Some(receipt) => format!("{}\n{}", error.message, receipt),
-                    None => error.message,
+                stderr: Some(match (error.summary, error.receipt) {
+                    (Some(summary), Some(receipt)) if error.message.is_empty() => {
+                        format!("{summary}\n{receipt}")
+                    }
+                    (Some(summary), Some(receipt)) => {
+                        format!("{summary}\n\n{}\n{}", error.message, receipt)
+                    }
+                    (Some(summary), None) if error.message.is_empty() => summary,
+                    (Some(summary), None) => format!("{summary}\n\n{}", error.message),
+                    (None, Some(receipt)) if error.message.is_empty() => receipt,
+                    (None, Some(receipt)) => format!("{}\n{}", error.message, receipt),
+                    (None, None) => error.message,
                 }),
                 exit_code: error.exit_code,
             },
@@ -10093,6 +10101,28 @@ fn run_single_contract_target(
                 "task `{task_name}` failed with exit code {}",
                 outcome.exit_code,
             ),
+            summary: Some(render_execution_receipt_summary_block(
+                &run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &outcome.executed_tasks,
+                    outcome.exit_code,
+                    false,
+                    outcome.target.clone(),
+                    Some(format!(
+                        "{}; {}",
+                        format!(
+                            "inspect task `{task_name}` output and rerun `ota run {task_name}`"
+                        ),
+                        details_footer
+                    )),
+                ),
+                Some(task_name),
+                "RUN SUMMARY",
+            )),
             exit_code: outcome.exit_code,
             receipt: show_receipt.then(|| {
                 render_execution_receipt_text(&run_execution_receipt(
@@ -10117,6 +10147,26 @@ fn run_single_contract_target(
         }),
         Err(error) => Err(RunCommandFailure {
             message: render_run_error(error),
+            summary: Some(render_execution_receipt_summary_block(
+                &run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &[],
+                    1,
+                    false,
+                    None,
+                    Some(format!(
+                        "{}; {}",
+                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                        details_footer
+                    )),
+                ),
+                Some(task_name),
+                "RUN SUMMARY",
+            )),
             exit_code: 1,
             receipt: show_receipt.then(|| {
                 render_execution_receipt_text(&run_execution_receipt(
@@ -10241,6 +10291,7 @@ fn run_execution_receipt(
 
 struct RunCommandFailure {
     message: String,
+    summary: Option<String>,
     exit_code: i32,
     receipt: Option<String>,
 }
@@ -10248,6 +10299,7 @@ struct RunCommandFailure {
 fn render_contract_problem_failure(error: ContractProblem) -> RunCommandFailure {
     RunCommandFailure {
         message: render_contract_problem(&error),
+        summary: None,
         exit_code: 1,
         receipt: None,
     }
