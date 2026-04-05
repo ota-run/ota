@@ -22,6 +22,8 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -31,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::execution::{container_engine_candidates, selected_container_engine};
-use crate::schema::{Backend, Contract, ExtensionKind, Lifecycle, TaskSpec};
+use crate::schema::{Backend, Contract, EnvRequirement, ExtensionKind, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -67,6 +69,12 @@ pub enum RunError {
         "task `{task}` requires one of the supported container execution backend CLIs to be available on PATH: {engines}"
     )]
     MissingContainerBackendCli { task: String, engines: String },
+    #[error("could not compose environment variable `{name}` as a PATH: {source}")]
+    InvalidPathComposition {
+        name: String,
+        #[source]
+        source: std::env::JoinPathsError,
+    },
     #[error("task `{task}` requires `execution.backends.remote.provider` for remote execution")]
     MissingRemoteProvider { task: String },
     #[error(
@@ -270,6 +278,12 @@ pub fn resolve_task_env_details_with_policy(
 
         match resolved {
             Some((value, source)) => {
+                let value = if name == "PATH" {
+                    compose_path_value(name, &value, requirement)?
+                } else {
+                    value
+                };
+
                 if !requirement.allowed.is_empty()
                     && !requirement.allowed.iter().any(|v| v == &value)
                 {
@@ -321,6 +335,36 @@ pub fn resolve_task_env_details_with_policy(
     Ok(resolved_values)
 }
 
+fn compose_path_value(
+    name: &str,
+    base: &str,
+    requirement: &EnvRequirement,
+) -> Result<String, RunError> {
+    if requirement.prepend.is_empty() && requirement.append.is_empty() {
+        return Ok(base.to_string());
+    }
+
+    let mut entries = Vec::with_capacity(1 + requirement.prepend.len() + requirement.append.len());
+    entries.extend(requirement.prepend.iter().map(OsString::from));
+    entries.extend(env::split_paths(base).map(|path| path.into_os_string()));
+    entries.extend(requirement.append.iter().map(OsString::from));
+
+    env::join_paths(entries)
+        .map(|joined| joined.to_string_lossy().into_owned())
+        .map_err(|source| RunError::InvalidPathComposition {
+            name: name.to_string(),
+            source,
+        })
+}
+
+fn command_with_path_export(command: &str, env_overrides: &BTreeMap<String, String>) -> String {
+    let Some(path) = env_overrides.get("PATH") else {
+        return command.to_string();
+    };
+
+    format!("export PATH={}; {command}", shell_quote(path))
+}
+
 pub fn policy_env_values(contract: &Contract) -> BTreeMap<String, String> {
     let Some(policy_env) = contract.policies.get("env") else {
         return BTreeMap::new();
@@ -344,12 +388,7 @@ pub fn resolve_task_env_with_policy(
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
-        if matches!(resolved.source, EnvResolutionSource::Default)
-            || matches!(resolved.source, EnvResolutionSource::Policy)
-            || matches!(resolved.source, EnvResolutionSource::Task)
-        {
-            overrides.insert(name, resolved.value);
-        }
+        overrides.insert(name, resolved.value);
     }
 
     Ok(overrides)
@@ -1645,7 +1684,11 @@ fn execute_ephemeral_container_task_command(
             container.arg("--env").arg(format!("{name}={value}"));
         }
     }
-    container.arg(image).arg("sh").arg("-lc").arg(command);
+    container
+        .arg(image)
+        .arg("sh")
+        .arg("-lc")
+        .arg(command_with_path_export(command, env_overrides));
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -1756,7 +1799,7 @@ fn execute_persistent_container_task_command(
         .arg(&container_name)
         .arg("sh")
         .arg("-lc")
-        .arg(command);
+        .arg(command_with_path_export(command, env_overrides));
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -2022,6 +2065,45 @@ tasks:
         match original_default {
             Some(value) => unsafe { env::set_var("OTA_TEST_DEFAULT", value) },
             None => unsafe { env::remove_var("OTA_TEST_DEFAULT") },
+        }
+    }
+
+    #[test]
+    fn composes_path_from_process_env_and_contract_entries() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  PATH:
+    prepend:
+      - /opt/ota/bin
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "/usr/bin");
+        }
+
+        let resolved = resolve_task_env_details(&contract, None).unwrap();
+        let overrides = super::resolve_task_env_with_policy(&contract, None, None).unwrap();
+
+        assert_eq!(resolved["PATH"].source, EnvResolutionSource::Process);
+        assert!(resolved["PATH"].value.starts_with("/opt/ota/bin:"));
+        assert!(resolved["PATH"].value.contains("/usr/bin"));
+        assert_eq!(overrides["PATH"], resolved["PATH"].value);
+
+        match original {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
         }
     }
 
@@ -2640,6 +2722,68 @@ tasks:
                 .unwrap()
                 .contains("run-ephemeral")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn composes_path_and_injects_process_env_into_container_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+env:
+  PATH:
+    prepend:
+      - /opt/ota/bin
+tasks:
+  setup:
+    script: |
+      printf "$PATH" > path.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone(), "/usr/bin".into()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let resolved_path = fs::read_to_string(fixture.dir.path().join("path.txt")).unwrap();
+        assert!(resolved_path.contains("/opt/ota/bin"));
+        assert!(resolved_path.contains("/usr/bin"));
     }
 
     #[cfg(unix)]

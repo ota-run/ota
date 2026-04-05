@@ -50,6 +50,9 @@ Org policy packs are discovered from `.ota/org-policy.yaml` by walking ancestor 
 the contract path; a single policy pack can therefore apply to a whole workspace tree.
 `OTA_POLICY`, a single remote policy source, and alternate policy file names are not implemented yet.
 See [`policy-packs.md`](policy-packs.md) for the future policy-source precedence model.
+`PATH` can be composed explicitly in the contract with `prepend` and `append` entries, and
+declared env values are injected into backend execution after resolution so container-backed runs
+see the same chosen values as native runs.
 
 ## Goal
 
@@ -71,6 +74,7 @@ It should support:
 - resolving env from approved sources under org policy
 - reporting provenance for resolved env values
 - keeping workspace and repo inheritance deterministic
+- composing `PATH` in the contract instead of shell scripts or task-local wrappers
 
 ## Resolution model
 
@@ -97,6 +101,7 @@ Runtime and tool resolution follow the same inheritance principle:
 - workspace overlays may tighten or specialize member expectations
 - policy may provide approved defaults or provisioning hints
 - provenance must record which layer supplied the final value
+- `PATH` may use `prepend` and `append` entries to build the final search path from the resolved base
 
 ## Contract shape
 

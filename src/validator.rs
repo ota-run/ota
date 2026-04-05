@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AgentConfig, Contract, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
+    AgentConfig, Contract, EnvRequirement, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +83,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_named_versions("tool", &contract.tools, &mut errors, |value| {
         value.version()
     });
+    validate_env(&contract.env, &mut errors);
     validate_services(&contract.services, &mut errors);
     validate_tasks(&contract.tasks, &mut errors);
     validate_checks(contract, &mut errors);
@@ -378,6 +379,36 @@ fn validate_runtime_details(
         {
             errors.push(ValidationError::new(format!(
                 "runtime `{name}` must not declare an empty `distribution`"
+            )));
+        }
+    }
+}
+
+fn validate_env(env: &BTreeMap<String, EnvRequirement>, errors: &mut Vec<ValidationError>) {
+    for (name, requirement) in env {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new("env keys must not be empty"));
+        }
+
+        for value in &requirement.prepend {
+            if value.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "env `{name}` must not declare an empty path in `prepend`"
+                )));
+            }
+        }
+
+        for value in &requirement.append {
+            if value.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "env `{name}` must not declare an empty path in `append`"
+                )));
+            }
+        }
+
+        if name != "PATH" && (!requirement.prepend.is_empty() || !requirement.append.is_empty()) {
+            errors.push(ValidationError::new(format!(
+                "env `{name}` may only use `prepend` and `append` on `PATH`"
             )));
         }
     }
@@ -800,6 +831,57 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_path_prepend_and_append_for_path_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  PATH:
+    prepend:
+      - /opt/ota/bin
+    append:
+      - /opt/ota/sbin
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_path_composition_on_non_path_env_vars() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_PATH:
+    prepend:
+      - /opt/ota/bin
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("may only use `prepend` and `append` on `PATH`")
+        }));
     }
 
     #[test]

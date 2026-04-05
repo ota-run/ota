@@ -237,6 +237,10 @@ pub struct EnvRequirement {
     pub default: Option<String>,
     #[serde(default)]
     pub allowed: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prepend: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub append: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
