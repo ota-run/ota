@@ -440,9 +440,9 @@ Run a validated task.
 ota run <task> [PATH]
 ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
-ota run <task> --backend native [PATH]
-ota run <task> --backend container --lifecycle ephemeral [PATH]
-ota run <task> --backend remote [PATH]
+ota run <task> --mode native [PATH]
+ota run <task> --mode container --lifecycle ephemeral [PATH]
+ota run <task> --mode remote [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
 
@@ -451,7 +451,7 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
-- `--backend` and `--lifecycle` can override the contract for one invocation
+- `--mode` and `--lifecycle` can override the contract for one invocation
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
 - `default` values are applied when the caller omits an input
@@ -699,7 +699,7 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
-ota up --backend container --lifecycle ephemeral [PATH]
+ota up --mode container --lifecycle ephemeral [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ```
@@ -719,7 +719,7 @@ Current behavior:
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
-- can override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
+- can override execution mode and lifecycle for the `setup` phase with `--mode` and `--lifecycle`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
 - re-runs readiness diagnosis

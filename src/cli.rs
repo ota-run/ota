@@ -120,8 +120,8 @@ enum Commands {
         /// Task name to execute.
         #[arg(index = 1)]
         task: String,
-        /// Override the execution backend for this invocation.
-        #[arg(long, value_enum)]
+        /// Override the execution mode for this invocation.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
@@ -249,8 +249,8 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Override the execution backend for this invocation.
-        #[arg(long, value_enum)]
+        /// Override the execution mode for this invocation.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
@@ -831,14 +831,14 @@ fn locate_task_command(args: &[OsString]) -> Option<(usize, usize)> {
 fn run_command_value_span(flag: &str) -> Option<usize> {
     if let Some((name, _)) = flag.split_once('=') {
         return match name {
-            "--backend" | "--lifecycle" | "--member" | "--jobs" => Some(1),
+            "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(1),
             "--receipt" | "--json" | "--stream" => Some(1),
             _ => None,
         };
     }
 
     match flag {
-        "--backend" | "--lifecycle" | "--member" | "--jobs" => Some(2),
+        "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(2),
         "--receipt" | "--json" | "--stream" => Some(1),
         _ => None,
     }
@@ -4126,7 +4126,7 @@ tasks:
         let output = run_with([
             "ota",
             "up",
-            "--backend",
+            "--mode",
             "container",
             "--lifecycle",
             "ephemeral",
@@ -7487,7 +7487,7 @@ tasks:
 "#,
         );
 
-        let output = run_with(["ota", "run", "setup", "--backend", "native", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--mode", "native", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
         assert!(fixture.dir.path().join("prepared.txt").exists());

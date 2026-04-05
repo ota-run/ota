@@ -297,8 +297,8 @@ Current command behavior:
 
 - `ota doctor` warns when `ephemeral` is declared, and clarifies that container-backed isolation currently applies to `ota run` and the `setup` task inside `ota up`, but not the full repo lifecycle
 - `ota run` prints a lifecycle note on stderr and can execute via the configured container backend
-- `ota run` can also override backend and lifecycle for one invocation with `--backend` and `--lifecycle`
-- `ota up` can also override backend and lifecycle for the `setup` phase with `--backend` and `--lifecycle`
+- `ota run` can also override execution mode and lifecycle for one invocation with `--mode` and `--lifecycle`
+- `ota up` can also override execution mode and lifecycle for the `setup` phase with `--mode` and `--lifecycle`
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `NO CLEANUP NEEDED` today

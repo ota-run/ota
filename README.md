@@ -32,6 +32,25 @@ ota is open infrastructure for repo readiness, not another task runner or packag
 
 Doctor first, contract second.
 
+## What problem ota solves
+
+Most repos fail the same way:
+
+- setup lives in README prose, shell scripts, and tribal knowledge instead of one contract
+- new contributors guess which tools, versions, and paths they need
+- CI and local setup drift apart
+- diagnosis happens too late, after the repo already feels broken
+
+ota fixes that by making readiness explicit and machine-readable:
+
+- `ota doctor` tells you what is missing and why
+- `ota detect` turns repo signals into a contract you can review
+- `ota init` writes a starter contract when the repo needs one
+- `ota up` prepares the repo from the contract instead of from guesswork
+- `ota run` executes tasks through the same declared contract
+
+The result is a repo that is easier to trust, easier to onboard, and easier to keep consistent across humans, AI agents, CI, and containers.
+
 ## Installation
 
 Install the latest release binary:
@@ -361,20 +380,20 @@ These commands do not run repo tasks and therefore do not use the execution back
 
 ### Override syntax
 
-Use `--backend` to force one invocation to use a specific backend:
+Use `--mode` to force one invocation to use a specific execution mode:
 
 ```bash
-ota run test --backend native
-ota run test --backend container
-ota up --backend native
-ota up --backend container
+ota run test --mode native
+ota run test --mode container
+ota up --mode native
+ota up --mode container
 ```
 
 Use `--lifecycle` when you need to override container reuse for one invocation:
 
 ```bash
-ota run test --backend container --lifecycle persistent
-ota run test --backend container --lifecycle ephemeral
+ota run test --mode container --lifecycle persistent
+ota run test --mode container --lifecycle ephemeral
 ```
 
 Use `ota tasks --use` to see the exact runnable task commands for the current contract:
