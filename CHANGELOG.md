@@ -28,6 +28,10 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.1.1
+
+- documented `ota policy` and `ota uninstall` in the command reference and aligned the policy command output with the standard ota header style.
+
 ## 1.1.0
 
 - added platform-specific provisioning overrides so a single policy entry can choose brew, apt, or choco by OS.
