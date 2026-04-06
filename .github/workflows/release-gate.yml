@@ -254,7 +254,7 @@ jobs:
 
       - name: Publish install scripts
         run: |
-          for file in scripts/install.sh scripts/install.ps1; do
+          for file in scripts/install.sh scripts/install.ps1 scripts/bootstrap.ps1; do
             filename="$(basename "${file}")"
             npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/${filename}" \
               --file "${file}" \
