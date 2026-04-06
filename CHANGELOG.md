@@ -28,6 +28,11 @@
 
 - Future changes will be tracked here before the next version bump.
 
+## 1.1.2
+
+- added an explicit `install-from-source` repo task for source-based reinstalls.
+- tightened glossary guidance so documentation links point at the most specific useful section instead of page roots.
+
 ## 1.1.1
 
 - documented `ota policy` and `ota uninstall` in the command reference and aligned the policy command output with the standard ota header style.
