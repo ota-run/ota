@@ -554,6 +554,7 @@ Documentation quality rule for OSS adoption:
 - command docs must explain **when to use**, **why it exists**, and at least one concrete **use-case**
 - avoid "list-only" command pages that only enumerate commands without operator guidance
 - optimize docs for fast first success by humans and agents, not just completeness
+- glossary entries should deep-link to the most specific useful section; if no specific anchor adds value, do not link the card at all
 
 CLI output style checklist:
 - keep key command headers in `🦦 <COMMAND> <target>` form in rich mode
