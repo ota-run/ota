@@ -181,6 +181,18 @@ tasks:
         run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
     depends_on:
       - ci
+  install-from-source:
+    description: Reinstall ota from the local workspace source
+    notes: |
+      Use this when you want a task name that makes the source-based reinstall path explicit.
+    category: dev
+    run: ./scripts/install.sh --from-source
+    variants:
+      - when:
+          os: windows
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
+    depends_on:
+      - ci
 
 agent:
   entrypoint: setup
