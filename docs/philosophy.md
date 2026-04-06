@@ -40,7 +40,7 @@ ota exists to consolidate scattered setup truth into `ota.yaml`, not to create a
 
 Core commands should be deterministic, inspectable, and safe without any model dependency.
 
-Inference is useful, but it is downstream of the contract, not a replacement for it.
+ota can detect likely values from repo signals and suggest a contract, but those suggestions are helpers, not the source of truth.
 
 ## Trust is the product
 
