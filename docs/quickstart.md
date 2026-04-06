@@ -28,34 +28,35 @@ Install ota first: [installation.md](installation.md)
 
 ## Start Here
 
-Doctor first, contract second:
+Doctor first, contract second.
+
+One practical path:
 
 ```bash
 ota doctor
-ota explain
+ota validate
+ota up
+ota run test
 ```
 
-Preview before you write:
+What this gives you:
+
+- `ota doctor` tells you what is broken and what to do next
+- `ota validate` confirms the contract is sound before anyone relies on it
+- `ota up` prepares the repo from the contract instead of from guesswork
+- `ota run test` executes a declared task through the same contract
+
+If the repo does not yet have a contract, use the authoring path:
 
 ```bash
+ota doctor
 ota init --dry-run
 ota detect --dry-run .
-```
-
-Write only when the preview looks right:
-
-```bash
 ota init
 ota detect --write .
 ```
 
-Then prepare the repo:
-
-```bash
-ota up
-```
-
-`ota validate`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+`ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
 ## Validate A Workspace
 

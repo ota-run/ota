@@ -2500,6 +2500,7 @@ tasks:
 
     #[test]
     fn reports_invalid_org_policy_pack() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -2537,6 +2538,7 @@ unexpected: true
 
     #[test]
     fn reports_policy_backed_provisioning_sources_as_info() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -2595,6 +2597,7 @@ policies:
 
     #[test]
     fn reports_missing_policy_required_sections() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -2634,6 +2637,7 @@ policies:
 
     #[test]
     fn reports_missing_policy_required_files() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),

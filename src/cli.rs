@@ -2606,6 +2606,7 @@ project:
 
     #[test]
     fn explain_json_reports_policy_provenance_for_policy_findings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
         fs::write(
@@ -2644,6 +2645,7 @@ policies:
 
     #[test]
     fn workspace_explain_reports_policy_provenance_for_policy_findings() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         let api_dir = fixture.path().join("api");
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
@@ -5842,6 +5844,7 @@ tasks:
 
     #[test]
     fn doctor_json_includes_policy_provenance() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -5886,6 +5889,7 @@ policies:
 
     #[test]
     fn doctor_json_includes_policy_backed_provisioning_sources() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -11806,6 +11810,7 @@ env:
 
     #[test]
     fn workspace_doctor_json_includes_policy_provenance() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
@@ -11866,6 +11871,7 @@ policies:
 
     #[test]
     fn workspace_doctor_json_includes_provisioning_request() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),

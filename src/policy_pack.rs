@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -679,10 +680,21 @@ impl SourceRule for PolicyAdapterBootstrapRule {
 pub fn load_org_policy_pack_auto(
     contract_path: &Path,
 ) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
+    if let Some(policy_path) = env::var_os("OTA_POLICY") {
+        let policy_path = PathBuf::from(policy_path);
+        return load_org_policy_pack_from_path(policy_path);
+    }
+
     let Some(policy_path) = find_org_policy_pack_path(contract_path) else {
         return Ok(None);
     };
 
+    load_org_policy_pack_from_path(policy_path)
+}
+
+fn load_org_policy_pack_from_path(
+    policy_path: PathBuf,
+) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
     let contents =
         fs::read_to_string(&policy_path).map_err(|source| LoadPolicyPackError::Read {
             path: policy_path.display().to_string(),
@@ -739,9 +751,11 @@ fn section_present(contract: &crate::schema::Contract, section: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{env, fs};
 
     use tempfile::TempDir;
+
+    use crate::test_support::ENV_MUTEX;
 
     use super::{
         OrgPolicyPack, ProvisioningActionKind, ProvisioningTargetKind, load_org_policy_pack_auto,
@@ -776,6 +790,66 @@ policies:
         let loaded = load_org_policy_pack_auto(&fixture.path().join("ota.yaml")).unwrap();
 
         assert!(loaded.is_some());
+    }
+
+    #[test]
+    fn loads_policy_pack_from_ota_policy_env_override_before_ancestor() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        write_contract(
+            &fixture,
+            r#"
+version: 1
+project:
+  name: app
+"#,
+        );
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let override_dir = TempDir::new().unwrap();
+        let override_path = override_dir.path().join("custom-policy.yaml");
+        fs::write(
+            &override_path,
+            r#"
+policies:
+  required_sections:
+    - checks
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("OTA_POLICY");
+        unsafe {
+            env::set_var("OTA_POLICY", &override_path);
+        }
+
+        let loaded = load_org_policy_pack_auto(&fixture.path().join("ota.yaml")).unwrap();
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var("OTA_POLICY", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_POLICY");
+            },
+        }
+
+        let (pack, loaded_path) = loaded.expect("policy override should load");
+
+        assert_eq!(loaded_path, override_path);
+        assert_eq!(
+            pack.policies.required_sections,
+            vec![String::from("checks")]
+        );
     }
 
     #[test]

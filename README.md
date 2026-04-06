@@ -44,10 +44,10 @@ Most repos fail the same way:
 ota fixes that by making readiness explicit and machine-readable:
 
 - `ota doctor` tells you what is missing and why
-- `ota detect` turns repo signals into a contract you can review
 - `ota init` writes a starter contract when the repo needs one
 - `ota up` prepares the repo from the contract instead of from guesswork
 - `ota run` executes tasks through the same declared contract
+- `ota detect` turns repo signals into a contract you can review when you are authoring or refining the file
 
 The result is a repo that is easier to trust, easier to onboard, and easier to keep consistent across humans, AI agents, CI, and containers.
 
@@ -108,37 +108,25 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 Doctor first, contract second.
 
-Use `ota` the same way a serious repo should be read:
-
-### Existing repo
+If you are using ota on an existing repo, start with the read path:
 
 ```bash
 ota doctor
-ota explain
 ota validate
 ota up
+ota run <task>
 ```
 
-That path tells you what is wrong, what to fix, and how to prepare the repo without guessing.
+That path tells you what is wrong, whether the contract is valid, how to prepare the repo, and how to run a declared task without guessing.
 
-### New repo or missing contract
+If you are writing or refining a contract, use the authoring path:
 
 ```bash
 ota doctor
 ota init --dry-run
 ota detect --dry-run .
-```
-
-If the contract looks right, write the first version explicitly:
-
-```bash
 ota init
 ota detect --write .
-```
-
-If you already have a contract and want to improve it conservatively:
-
-```bash
 ota detect --merge --dry-run .
 ota detect --merge .
 ```
@@ -190,43 +178,8 @@ The goal is not hidden automation. The goal is deterministic, inspectable repo r
 
 ## What ota does today
 
-Current commands:
-
-```bash
-ota doctor
-ota explain
-ota up
-ota run <task>
-ota init
-ota detect --dry-run
-ota detect --write
-ota detect --merge --dry-run
-ota detect --merge
-ota validate
-ota tasks
-ota services
-ota diff
-ota annotations
-ota agents
-ota check
-ota clean
-ota extensions
-ota self-update
-ota workspace validate
-ota workspace tasks
-ota workspace doctor
-ota workspace explain
-ota workspace up
-ota workspace refresh
-ota workspace diff
-ota workspace status
-ota workspace receipt
-ota workspace run <task>
-ota workspace check
-ota run version:bump --version minor
-ota run version:bump --version major
-ota run version:bump --version 2.4.0
-```
+The public command surface is in [docs/spec/command-reference.md](docs/spec/command-reference.md).
+Start with `ota doctor`, then `ota validate`, `ota up`, and `ota run <task>`.
 
 Near-term policy and provisioning direction:
 
