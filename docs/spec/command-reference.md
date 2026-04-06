@@ -791,7 +791,7 @@ JSON output:
 
 - `ok`
 - `path`
-- `source`
+- `policy_source` and `source`
 - `policy_path`
 - `policy`
 - failure responses include `error`

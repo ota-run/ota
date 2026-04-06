@@ -1490,17 +1490,29 @@ fn policy_reference_path(path: Option<&Path>, file_override: Option<&Path>) -> P
         .join(DEFAULT_CONTRACT_FILE)
 }
 
+fn compact_policy_path_relative_to_contract(contract_path: &Path, policy_path: &Path) -> String {
+    let Some(repo_root) = contract_path.parent() else {
+        return policy_path.display().to_string();
+    };
+
+    compact_path_relative_to(policy_path, "org-policy.yaml", Some(repo_root))
+}
+
 fn render_policy_text(
     policy_path: &Path,
     source: &str,
     loaded: Option<&LoadedOrgPolicyPack>,
 ) -> String {
     let mut output = String::new();
-    output.push_str(&format_command_header(
-        "policy",
-        &compact_contract_path(policy_path),
-    ));
-    output.push('\n');
+    let policy_display_path = loaded
+        .as_ref()
+        .map(|loaded| compact_policy_path_relative_to_contract(policy_path, &loaded.path))
+        .unwrap_or_else(|| String::from("none"));
+    if plain_mode() {
+        output.push_str("POLICY\n\n");
+    } else {
+        output.push_str(&format!("🦦  {}\n\n", paint("POLICY", "1;36")));
+    }
     output.push_str(&format!(
         "{} {}\n",
         paint_key("Path:"),
@@ -1508,7 +1520,7 @@ fn render_policy_text(
     ));
     output.push_str(&format!(
         "{} {}\n",
-        paint_key("Source:"),
+        paint_key("Policy source:"),
         paint_code(source)
     ));
 
@@ -1516,7 +1528,7 @@ fn render_policy_text(
         output.push_str(&format!(
             "{} {}\n\n",
             paint_key("Policy path:"),
-            paint_code(&loaded.path.display().to_string())
+            paint_code(&policy_display_path)
         ));
         let yaml =
             serde_yaml::to_string(&loaded.pack).unwrap_or_else(|_| String::from("policies: {}"));
@@ -1605,7 +1617,8 @@ pub fn policy(
             "path": compact_contract_path(&policy_path),
             "loaded": loaded.is_some(),
             "source": source,
-            "policy_path": loaded.as_ref().map(|loaded| loaded.path.display().to_string()),
+            "policy_source": source,
+            "policy_path": loaded.as_ref().map(|loaded| compact_policy_path_relative_to_contract(&policy_path, &loaded.path)),
             "policy": loaded.as_ref().map(|loaded| &loaded.pack),
         }))),
     };
@@ -9272,7 +9285,8 @@ mod tests {
 
     use super::{
         RepoExecutionMode, compact_contract_file_path_relative_to, compact_path_relative_to,
-        execute_repo_up, render_execution_receipt_summary_block, render_execution_receipt_text,
+        compact_policy_path_relative_to_contract, execute_repo_up,
+        render_execution_receipt_summary_block, render_execution_receipt_text,
         run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
     };
     use crate::parser::parse_contract_str;
@@ -9379,6 +9393,55 @@ mod tests {
             compact_contract_file_path_relative_to(&contract_path, "ota.yaml", Some(outer.path())),
             outer_contract.display().to_string()
         );
+    }
+
+    #[test]
+    fn compacts_policy_files_relative_to_contract_repo_root_when_inside_repo() {
+        let outer = tempfile::tempdir().expect("outer tempdir");
+        let repo = outer.path().join("repo");
+        let policy_dir = repo.join(".ota");
+        std::fs::create_dir_all(&policy_dir).expect("create policy dir");
+        let contract_path = repo.join("ota.yaml");
+        let policy_path = policy_dir.join("org-policy.yaml");
+        std::fs::write(&contract_path, "version: 1\n").expect("write contract");
+        std::fs::write(&policy_path, "policies: {}\n").expect("write policy");
+
+        assert_eq!(
+            compact_policy_path_relative_to_contract(&contract_path, &policy_path),
+            "./.ota/org-policy.yaml"
+        );
+
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let outside_policy = outside.path().join("org-policy.yaml");
+        std::fs::write(&outside_policy, "policies: {}\n").expect("write outside policy");
+
+        assert_eq!(
+            compact_policy_path_relative_to_contract(&contract_path, &outside_policy),
+            std::fs::canonicalize(&outside_policy)
+                .expect("canonical policy")
+                .display()
+                .to_string()
+        );
+    }
+
+    #[test]
+    fn policy_text_uses_standalone_header_and_gap() {
+        let contract = Path::new("/workspace/repo/ota.yaml");
+        let policy = Path::new("/workspace/repo/.ota/org-policy.yaml");
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: crate::policy_pack::OrgPolicyPack::default(),
+            path: policy.to_path_buf(),
+            source: crate::policy_pack::PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_text(
+            contract,
+            "repo policy",
+            Some(&loaded),
+        ));
+        assert!(text.starts_with("🦦  POLICY\n\nPath: ./ota.yaml\n"));
+        assert!(text.contains("Policy source: repo policy\n"));
+        assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n"));
     }
 
     #[test]
