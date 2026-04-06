@@ -57,14 +57,14 @@ The shell installer also supports `OTA_RELEASE_BASE` if you host the release ass
 Install the latest release binary:
 
 ```powershell
-iwr https://dist.ota.run/install.ps1 | iex
+irm https://dist.ota.run/install.ps1 | iex
 ```
 
 Pin a release:
 
 ```powershell
 $env:OTA_VERSION = "vX.Y.Z"
-iwr https://dist.ota.run/install.ps1 | iex
+irm https://dist.ota.run/install.ps1 | iex
 ```
 
 From a cloned ota repository:

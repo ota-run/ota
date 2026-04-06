@@ -62,7 +62,7 @@ curl -fsSL https://dist.ota.run/install.sh | sh
 Windows PowerShell:
 
 ```powershell
-iwr https://dist.ota.run/install.ps1 | iex
+irm https://dist.ota.run/install.ps1 | iex
 ```
 
 Windows Git Bash, MSYS, MinGW, or Cygwin:
@@ -81,7 +81,7 @@ Windows PowerShell:
 
 ```powershell
 $env:OTA_VERSION = "vX.Y.Z"
-iwr https://dist.ota.run/install.ps1 | iex
+irm https://dist.ota.run/install.ps1 | iex
 ```
 
 Update an existing install:

@@ -67,6 +67,21 @@ function Write-OtaError {
     Write-Host $Message -ForegroundColor Red
 }
 
+function Normalize-VersionOutput {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    $text = [System.String]::Format("{0}", $Value)
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return ""
+    }
+
+    return $text.Trim()
+}
+
 function Get-OtaTarget {
     $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     switch ($arch) {
@@ -255,28 +270,29 @@ if ($installFromSource) {
 
 if (Get-Command ota -ErrorAction SilentlyContinue) {
     $binaryPath = (Get-Command ota).Source
-    $versionOutput = (& ota --version 2>$null | Out-String).Trim()
+    $versionOutput = Normalize-VersionOutput (& ota --version 2>$null | Out-String)
 } elseif ($env:OTA_BIN_DIR -and (Test-Path (Join-Path $env:OTA_BIN_DIR "ota.exe"))) {
     $binaryPath = Join-Path $env:OTA_BIN_DIR "ota.exe"
-    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+    $versionOutput = Normalize-VersionOutput (& $binaryPath --version 2>$null | Out-String)
 } elseif (Test-Path (Join-Path (Get-OtaBinDir) "ota.exe")) {
     $binaryPath = Join-Path (Get-OtaBinDir) "ota.exe"
-    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+    $versionOutput = Normalize-VersionOutput (& $binaryPath --version 2>$null | Out-String)
 } elseif (Test-Path (Join-Path $HOME ".local/bin/ota.exe")) {
     $binaryPath = Join-Path $HOME ".local/bin/ota.exe"
-    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+    $versionOutput = Normalize-VersionOutput (& $binaryPath --version 2>$null | Out-String)
 } elseif (Test-Path (Join-Path $HOME ".cargo/bin/ota.exe")) {
     $binaryPath = Join-Path $HOME ".cargo/bin/ota.exe"
-    $versionOutput = (& $binaryPath --version 2>$null | Out-String).Trim()
+    $versionOutput = Normalize-VersionOutput (& $binaryPath --version 2>$null | Out-String)
 } else {
     Write-OtaError "install completed but 'ota' is not on PATH yet"
     exit 1
 }
 
-if ($versionOutput.StartsWith("ota ")) {
-    $versionOutput = $versionOutput.Substring(4)
-} elseif ($versionOutput.StartsWith("🦦 ")) {
-    $versionOutput = $versionOutput.Substring(3)
+if ([string]::IsNullOrWhiteSpace($versionOutput)) {
+    $versionOutput = "unknown"
+} else {
+    $versionOutput = $versionOutput -replace '^ota\s+', ''
+    $versionOutput = $versionOutput -replace '^🦦\s+', ''
 }
 
 $duplicatePaths = @()
