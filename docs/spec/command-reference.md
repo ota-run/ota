@@ -763,7 +763,7 @@ Current behavior:
 
 ## `ota policy`
 
-Show the active policy pack and where ota loaded it from.
+Show the active policy pack, its source, and the resolved path.
 
 ```bash
 ota policy [PATH]
@@ -784,7 +784,8 @@ Current behavior:
 Text output:
 
 - header: `POLICY <path>`
-- source and resolved policy path or URL
+- `Policy source:` shows where ota loaded the policy from
+- `Policy path:` shows the resolved policy file path or URL
 - effective policy content when one is loaded
 
 JSON output:
