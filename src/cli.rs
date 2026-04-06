@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
+    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota policy\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -273,6 +273,18 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 18)]
+    /// Show the active policy pack and where ota loaded it from.
+    Policy {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    #[command(display_order = 19)]
+    /// Remove ota from this laptop.
+    Uninstall,
     #[command(display_order = 16)]
     /// Update the installed Ota binary.
     #[command(alias = "upgrade")]
@@ -1066,6 +1078,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Init { json: true, .. }
             | Commands::Agents { json: true, .. }
             | Commands::Detect { json: true, .. }
+            | Commands::Policy { json: true, .. }
     ));
     let debug = cli.debug;
     let file = cli.file;
@@ -1189,6 +1202,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Clean { member, path } => {
             commands::clean(path.as_deref(), file.as_deref(), &member, debug)
         }
+        Commands::Policy { json, path } => commands::policy(
+            path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Uninstall => commands::uninstall(debug),
         Commands::SelfUpdate { version, channel } => commands::self_update(
             version.as_deref(),
             channel.as_ref().map(UpdateChannel::as_str),
@@ -1588,6 +1608,8 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Check { .. } => "run `ota check` to review readiness",
         Commands::Up { .. } => "run `ota doctor` to review readiness before `ota up`",
         Commands::Clean { .. } => "ota clean --help",
+        Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
+        Commands::Uninstall => "run `ota uninstall --help` to inspect uninstall options",
         Commands::SelfUpdate { .. } => "run `ota self-update --help` to inspect update options",
         Commands::Detect { .. } => {
             if stderr.contains("failed to parse contract")
@@ -1708,7 +1730,8 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Agents { json, .. }
         | Commands::Check { json, .. }
         | Commands::Up { json, .. }
-        | Commands::Detect { json, .. } => *json,
+        | Commands::Detect { json, .. }
+        | Commands::Policy { json, .. } => *json,
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { json, .. }
             | WorkspaceCommands::Detect { json, .. }
@@ -1727,6 +1750,7 @@ fn command_requests_json(command: &Commands) -> bool {
         },
         Commands::Run { .. }
         | Commands::Clean { .. }
+        | Commands::Uninstall
         | Commands::SelfUpdate { .. }
         | Commands::Annotations { .. } => false,
     }
@@ -1748,6 +1772,8 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
+        Commands::Policy { .. } => "ota policy",
+        Commands::Uninstall => "ota uninstall",
         Commands::SelfUpdate { .. } => "ota self-update",
         Commands::Detect { .. } => "ota detect",
         Commands::Workspace { command } => match command {

@@ -62,13 +62,13 @@ impl LoadPolicyPackError {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OrgPolicyPack {
     pub policies: PolicyRules,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyRules {
     #[serde(default)]
@@ -87,7 +87,7 @@ pub struct PolicyRules {
     pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyAgentRules {
     #[serde(default)]
@@ -96,14 +96,14 @@ pub struct PolicyAgentRules {
     pub require_writable_paths: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyExportsRules {
     #[serde(default)]
     pub require_agents_md: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyProvisioningRule {
     pub source: String,
@@ -115,7 +115,7 @@ pub struct PolicyProvisioningRule {
     pub platforms: BTreeMap<String, PolicyPlatformProvisioningRule>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyPlatformProvisioningRule {
     pub source: String,
@@ -125,12 +125,36 @@ pub struct PolicyPlatformProvisioningRule {
     pub approved_versions: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyAdapterBootstrapRule {
     pub source: String,
     #[serde(default)]
     pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyPackSource {
+    EnvOverride,
+    RepoPolicy,
+    WorkspacePolicy,
+}
+
+impl PolicyPackSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EnvOverride => "OTA_POLICY",
+            Self::RepoPolicy => "repo policy",
+            Self::WorkspacePolicy => "workspace policy",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LoadedOrgPolicyPack {
+    pub pack: OrgPolicyPack,
+    pub path: PathBuf,
+    pub source: PolicyPackSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -687,22 +711,40 @@ impl SourceRule for PolicyAdapterBootstrapRule {
 pub fn load_org_policy_pack_auto(
     contract_path: &Path,
 ) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
+    load_org_policy_pack_auto_details(contract_path)
+        .map(|loaded| loaded.map(|loaded| (loaded.pack, loaded.path)))
+}
+
+pub fn load_org_policy_pack_auto_details(
+    contract_path: &Path,
+) -> Result<Option<LoadedOrgPolicyPack>, LoadPolicyPackError> {
+    fn map_loaded(
+        loaded: Option<(OrgPolicyPack, PathBuf)>,
+        source: PolicyPackSource,
+    ) -> Option<LoadedOrgPolicyPack> {
+        loaded.map(|(pack, path)| LoadedOrgPolicyPack { pack, path, source })
+    }
+
     if let Some(policy_path) = env::var_os("OTA_POLICY") {
         let policy_path_lossy = policy_path.to_string_lossy().to_string();
         if is_remote_policy_source(&policy_path_lossy) {
-            return load_org_policy_pack_from_url(policy_path_lossy);
+            return load_org_policy_pack_from_url(policy_path_lossy)
+                .map(|loaded| map_loaded(loaded, PolicyPackSource::EnvOverride));
         }
 
         let policy_path = PathBuf::from(policy_path);
-        return load_org_policy_pack_from_path(policy_path);
+        return load_org_policy_pack_from_path(policy_path)
+            .map(|loaded| map_loaded(loaded, PolicyPackSource::EnvOverride));
     }
 
     if let Some(policy_path) = find_org_policy_pack_path(contract_path) {
-        return load_org_policy_pack_from_path(policy_path);
+        return load_org_policy_pack_from_path(policy_path)
+            .map(|loaded| map_loaded(loaded, PolicyPackSource::RepoPolicy));
     }
 
     if let Some(policy_location) = find_workspace_policy_pack_location(contract_path)? {
-        return load_org_policy_pack_from_location(policy_location);
+        return load_org_policy_pack_from_location(policy_location)
+            .map(|loaded| map_loaded(loaded, PolicyPackSource::WorkspacePolicy));
     }
 
     Ok(None)
@@ -932,7 +974,8 @@ mod tests {
     use crate::test_support::ENV_MUTEX;
 
     use super::{
-        OrgPolicyPack, ProvisioningActionKind, ProvisioningTargetKind, load_org_policy_pack_auto,
+        OrgPolicyPack, PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
+        load_org_policy_pack_auto, load_org_policy_pack_auto_details,
     };
 
     fn write_contract(dir: &TempDir, body: &str) {
@@ -1024,6 +1067,63 @@ policies:
             pack.policies.required_sections,
             vec![String::from("checks")]
         );
+    }
+
+    #[test]
+    fn reports_policy_pack_source_for_ota_policy_env_override() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        write_contract(
+            &fixture,
+            r#"
+version: 1
+project:
+  name: app
+"#,
+        );
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let override_dir = TempDir::new().unwrap();
+        let override_path = override_dir.path().join("custom-policy.yaml");
+        fs::write(
+            &override_path,
+            r#"
+policies:
+  required_sections:
+    - checks
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("OTA_POLICY");
+        unsafe {
+            env::set_var("OTA_POLICY", &override_path);
+        }
+
+        let loaded = load_org_policy_pack_auto_details(&fixture.path().join("ota.yaml")).unwrap();
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var("OTA_POLICY", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_POLICY");
+            },
+        }
+
+        let loaded = loaded.expect("policy override should load");
+
+        assert_eq!(loaded.source, PolicyPackSource::EnvOverride);
+        assert_eq!(loaded.path, override_path);
     }
 
     #[test]
@@ -1124,7 +1224,7 @@ policies:
         )
         .unwrap();
 
-        let loaded = load_org_policy_pack_auto(
+        let loaded = load_org_policy_pack_auto_details(
             &fixture
                 .path()
                 .join("workspace")
@@ -1132,13 +1232,17 @@ policies:
                 .join("ota.yaml"),
         );
 
-        let (pack, loaded_path) = loaded.unwrap().expect("workspace policy should load");
+        let loaded = loaded.unwrap().expect("workspace policy should load");
 
+        assert_eq!(loaded.source, PolicyPackSource::WorkspacePolicy);
         assert_eq!(
-            loaded_path,
+            loaded.path,
             fixture.path().join("policy").join("org-policy.yaml")
         );
-        assert_eq!(pack.policies.required_sections, vec![String::from("tasks")]);
+        assert_eq!(
+            loaded.pack.policies.required_sections,
+            vec![String::from("tasks")]
+        );
     }
 
     #[test]

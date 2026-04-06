@@ -84,6 +84,8 @@ ota currently ships these commands:
 - `ota agents`
 - `ota clean`
 - `ota extensions`
+- `ota policy`
+- `ota uninstall`
 - `ota self-update` / `ota upgrade`
 - `ota workspace init`
 - `ota workspace detect`
@@ -758,6 +760,65 @@ Current behavior:
 - `latest` resolves the newest release entry, including prereleases if present
 - `--version` overrides the channel when both are set
 - when the chosen target matches the installed binary, the command exits successfully and prints the up-to-date banner instead of reinstalling
+
+## `ota policy`
+
+Show the active policy pack and where ota loaded it from.
+
+```bash
+ota policy [PATH]
+ota policy --json [PATH]
+ota policy --file /path/to/ota.yaml
+ota policy --file /path/to/ota.yaml --json
+```
+
+Current behavior:
+
+- resolves the policy pack using the same precedence ota uses for repo commands
+- shows the effective policy content and where it came from
+- accepts `OTA_POLICY` as a local file path or `http(s)://` URL override
+- falls back to the nearest ancestor `.ota/org-policy.yaml`
+- falls back again to the nearest ancestor `ota.workspace.yaml` `workspace.policy` when present
+- remains read-only
+
+Text output:
+
+- header: `POLICY <path>`
+- source and resolved policy path or URL
+- effective policy content when one is loaded
+
+JSON output:
+
+- `ok`
+- `path`
+- `source`
+- `policy_path`
+- `policy`
+- failure responses include `error`
+
+Use this when you need to confirm which org policy ota actually applied before a run or diagnosis.
+
+## `ota uninstall`
+
+Remove ota from this laptop.
+
+```bash
+ota uninstall
+```
+
+Current behavior:
+
+- removes the installed ota binary from the current machine
+- on Windows, schedules removal of the running executable after the current process exits
+- on Unix-like systems, removes the current executable directly when possible
+- does not touch repo state, contracts, or workspace state
+
+Text output:
+
+- success: `removed ota from <path>` or `scheduled ota removal from <path>`
+- already removed: `ota was already removed from <path>`
+
+Use this when you want to remove ota from the machine itself, not when you want to clean a repo.
 - on success, the command runs the installer for the chosen release target
 
 Use this when:

@@ -22,10 +22,11 @@
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
@@ -68,7 +69,9 @@ use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
     parse_contract_str,
 };
-use crate::policy_pack::load_org_policy_pack_auto;
+use crate::policy_pack::{
+    LoadedOrgPolicyPack, load_org_policy_pack_auto, load_org_policy_pack_auto_details,
+};
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
 };
@@ -1467,6 +1470,190 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) ->
         debug,
         vec![String::from("DEBUG command=self-update")],
     )
+}
+
+fn policy_reference_path(path: Option<&Path>, file_override: Option<&Path>) -> PathBuf {
+    if let Some(file_override) = file_override {
+        return file_override.to_path_buf();
+    }
+
+    if let Some(path) = path {
+        return if path.is_dir() {
+            path.join(DEFAULT_CONTRACT_FILE)
+        } else {
+            path.to_path_buf()
+        };
+    }
+
+    env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(DEFAULT_CONTRACT_FILE)
+}
+
+fn render_policy_text(
+    policy_path: &Path,
+    source: &str,
+    loaded: Option<&LoadedOrgPolicyPack>,
+) -> String {
+    let mut output = String::new();
+    output.push_str(&format_command_header(
+        "policy",
+        &compact_contract_path(policy_path),
+    ));
+    output.push('\n');
+    output.push_str(&format!(
+        "{} {}\n",
+        paint_key("Path:"),
+        paint_code(&compact_contract_path(policy_path))
+    ));
+    output.push_str(&format!(
+        "{} {}\n",
+        paint_key("Source:"),
+        paint_code(source)
+    ));
+
+    if let Some(loaded) = loaded {
+        output.push_str(&format!(
+            "{} {}\n\n",
+            paint_key("Policy path:"),
+            paint_code(&loaded.path.display().to_string())
+        ));
+        let yaml =
+            serde_yaml::to_string(&loaded.pack).unwrap_or_else(|_| String::from("policies: {}"));
+        output.push_str(yaml.trim_end());
+    } else {
+        output.push_str("No policy pack found.");
+    }
+
+    output
+}
+
+fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
+    let target = path.display().to_string().replace('\'', "''");
+    let script = format!(
+        "$pid = {}; $target = '{}'; while (Get-Process -Id $pid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; if (Test-Path -LiteralPath $target) {{ Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue }}",
+        std::process::id(),
+        target
+    );
+
+    let launch = |program: &str| {
+        let mut command = Command::new(program);
+        command
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command.spawn()
+    };
+
+    match launch("pwsh") {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => match launch("powershell") {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        },
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub fn policy(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let policy_path = policy_reference_path(path, file_override);
+    let debug_lines = vec![
+        String::from("DEBUG command=policy"),
+        format!("DEBUG policy_path={}", policy_path.display()),
+    ];
+
+    let loaded = match load_org_policy_pack_auto_details(&policy_path) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            let message = format!("{error}");
+            let output = match format {
+                OutputFormat::Text => CommandOutput::failure(message.clone()),
+                OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                    "ok": false,
+                    "path": compact_contract_path(&policy_path),
+                    "error": message,
+                }))),
+            };
+            return finalize_debug(output, debug, debug_lines);
+        }
+    };
+
+    let source = loaded
+        .as_ref()
+        .map(|loaded| loaded.source.as_str())
+        .unwrap_or("none");
+
+    let output = match format {
+        OutputFormat::Text => {
+            CommandOutput::success(render_policy_text(&policy_path, source, loaded.as_ref()))
+        }
+        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+            "ok": true,
+            "path": compact_contract_path(&policy_path),
+            "loaded": loaded.is_some(),
+            "source": source,
+            "policy_path": loaded.as_ref().map(|loaded| loaded.path.display().to_string()),
+            "policy": loaded.as_ref().map(|loaded| &loaded.pack),
+        }))),
+    };
+
+    finalize_debug(output, debug, debug_lines)
+}
+
+pub fn uninstall(debug: bool) -> CommandOutput {
+    let binary = match env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(format!("failed to resolve ota binary path: {error}")),
+                debug,
+                vec![String::from("DEBUG command=uninstall")],
+            );
+        }
+    };
+
+    let debug_lines = vec![
+        String::from("DEBUG command=uninstall"),
+        format!("DEBUG binary_path={}", binary.display()),
+    ];
+
+    let output = if cfg!(windows) {
+        match spawn_windows_uninstall(&binary) {
+            Ok(()) => {
+                CommandOutput::success(format!("scheduled ota removal from {}", binary.display()))
+            }
+            Err(error) => CommandOutput::failure(format!(
+                "failed to schedule ota removal from {}: {error}",
+                binary.display()
+            )),
+        }
+    } else {
+        match fs::remove_file(&binary) {
+            Ok(()) => CommandOutput::success(format!("removed ota from {}", binary.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                CommandOutput::success(format!("ota was already removed from {}", binary.display()))
+            }
+            Err(error) => CommandOutput::failure(format!(
+                "failed to remove ota from {}: {error}",
+                binary.display()
+            )),
+        }
+    };
+
+    finalize_debug(output, debug, debug_lines)
 }
 
 pub fn doctor(
