@@ -48,8 +48,9 @@ Today that contract surface is a flat `NAME: VALUE` map; provenance labels such 
 documentation and output vocabulary, not YAML fields.
 Org policy packs are discovered from `.ota/org-policy.yaml` by walking ancestor directories from
 the contract path; a single policy pack can therefore apply to a whole workspace tree.
-`OTA_POLICY`, a single remote policy source, and alternate policy file names are not implemented yet.
-See [`policy-packs.md`](policy-packs.md) for the future policy-source precedence model.
+`OTA_POLICY` is implemented as an explicit file-path override.
+See [`policy-packs.md`](policy-packs.md) for the current policy-source precedence model and the
+remaining future policy-source options.
 `PATH` can be composed explicitly in the contract with `prepend` and `append` entries, and
 declared env values are injected into backend execution after resolution so container-backed runs
 see the same chosen values as native runs.

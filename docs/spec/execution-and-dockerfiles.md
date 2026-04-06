@@ -32,6 +32,12 @@ Use both when they fit:
 - `ota.yaml` = readiness and execution contract
 - `ota run` / `ota up` = the command path that uses the contract
 
+Boundary note:
+
+- Docker is optional, not a universal prerequisite for ota
+- ota can use container mode when the repo or org already allows it
+- host bootstrap for Docker is a separate concern and should not be assumed by default
+
 When a repo uses `execution.preferred: container`, ota runs the task inside the configured image. If that
 image comes from a Dockerfile, the Dockerfile is what made the environment runnable; ota is what
 points at it, diagnoses readiness, and keeps the repo contract explicit.
@@ -88,3 +94,4 @@ Rule of thumb:
 - use container mode when you want ota to run against the image instead of the host
 - use `ota up` when you want ota to prepare the repo inside that image before running tasks
 - do not replace the contract with the Dockerfile, because the Dockerfile does not tell ota what is safe to run or what should be provisioned
+- do not make Docker the default adoption requirement unless the repo or org already uses it

@@ -51,24 +51,25 @@ The canonical policy pack lives at:
 
 ## Policy path and discovery
 
-Today, ota looks for the org policy pack by walking up from the repo contract path and checking
-for `.ota/org-policy.yaml` in each ancestor directory.
+Today, ota resolves the org policy pack in this order:
+
+1. the explicit `OTA_POLICY` path override, when set
+2. `.ota/org-policy.yaml` in the nearest ancestor directory of the repo contract path
 
 That means:
 
 - a single policy pack can apply to multiple repos inside one workspace tree
 - a repo can inherit an org policy from a parent directory
-- the canonical policy pack lives at `.ota/org-policy.yaml`, so shared org rules have one deterministic place to live today
-- `OTA_POLICY`, a single remote policy source, and arbitrary policy file names are future work
+- `OTA_POLICY` gives operators an explicit override when they need a different file path
+- the canonical policy pack still lives at `.ota/org-policy.yaml`, so shared org rules have one deterministic place to live today
+- a single remote policy source and arbitrary policy file names are future work
 
 If there is no ancestor policy file, ota simply keeps running with repo-local contract behavior.
 
 ## Future policy-source model
 
-The current implementation is file-based only. A later policy-source model could support:
+The current implementation supports a local file path and an explicit `OTA_POLICY` override. A later policy-source model could still support:
 
-- a local file path
-- an environment override such as `OTA_POLICY`
 - a workspace-root policy file that applies to multiple repos
 - one remote URL or hosted policy source, intended as an enterprise feature
 
@@ -162,7 +163,8 @@ It constrains and interprets it at the org layer.
 
 ## Current implementation
 
-`ota doctor` reads `.ota/org-policy.yaml` from the nearest ancestor when it exists, validates the file shape, and reports a finding if:
+`ota doctor` reads the explicit `OTA_POLICY` file path when set, otherwise it reads `.ota/org-policy.yaml`
+from the nearest ancestor when it exists, validates the file shape, and reports a finding if:
 
 - the policy pack cannot be read or parsed
 - required sections declared by the policy pack are missing from the repo contract
