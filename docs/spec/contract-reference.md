@@ -514,8 +514,8 @@ env:
 If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value becomes
 `./node_modules/.bin:/opt/ota/bin:/usr/local/bin:/usr/bin:/bin`.
 
-Policy-aware source selection and workspace inheritance are described in
-[env-resolution-and-policy.md](env-resolution-and-policy.md).
+Policy-aware env selection and workspace inheritance are described in
+[Environment variables](env-resolution-and-policy.md).
 
 Current behavior:
 

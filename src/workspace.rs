@@ -70,6 +70,8 @@ pub struct WorkspaceInfo {
     pub description: Option<String>,
     #[serde(default)]
     pub git_base: Option<String>,
+    #[serde(default)]
+    pub policy: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -460,6 +462,17 @@ pub fn validate_workspace_shape(
     if contract.workspace.name.trim().is_empty() {
         errors.push(WorkspaceValidationError::new(
             "workspace name must not be empty",
+        ));
+    }
+
+    if contract
+        .workspace
+        .policy
+        .as_ref()
+        .is_some_and(|policy| policy.trim().is_empty())
+    {
+        errors.push(WorkspaceValidationError::new(
+            "workspace policy must not be empty",
         ));
     }
 

@@ -41,7 +41,7 @@ They are intended to support:
 - audit-friendly machine output
 - mutation controls for sensitive operations
 
-## Target location
+## Target Location
 
 The canonical policy pack lives at:
 
@@ -49,41 +49,62 @@ The canonical policy pack lives at:
 .ota/org-policy.yaml
 ```
 
-## Policy path and discovery
+## Policy Path and Discovery
 
 Today, ota resolves the org policy pack in this order:
 
-1. the explicit `OTA_POLICY` path override, when set
+1. the explicit `OTA_POLICY` file path or HTTP(S) URL override, when set
 2. `.ota/org-policy.yaml` in the nearest ancestor directory of the repo contract path
+3. the `workspace.policy` path declared in the nearest ancestor `ota.workspace.yaml`, when set
 
 That means:
 
 - a single policy pack can apply to multiple repos inside one workspace tree
 - a repo can inherit an org policy from a parent directory
-- `OTA_POLICY` gives operators an explicit override when they need a different file path
+- `OTA_POLICY` gives operators an explicit override when they need a different file path or hosted URL
 - the canonical policy pack still lives at `.ota/org-policy.yaml`, so shared org rules have one deterministic place to live today
-- a single remote policy source and arbitrary policy file names are future work
+- `workspace.policy` gives a workspace an explicit shared policy file or hosted URL when the workspace wants one
 
-If there is no ancestor policy file, ota simply keeps running with repo-local contract behavior.
+If there is no matching `OTA_POLICY`, ancestor policy file, or workspace policy source, ota simply
+keeps running with repo-local contract behavior.
 
-## Future policy-source model
+Example override:
 
-The current implementation supports a local file path and an explicit `OTA_POLICY` override. A later policy-source model could still support:
+```bash
+OTA_POLICY=/path/to/custom-org-policy.yaml ota doctor
+```
 
-- a workspace-root policy file that applies to multiple repos
-- one remote URL or hosted policy source, intended as an enterprise feature
+```bash
+OTA_POLICY=https://config.example.com/custom-org-policy.yaml ota doctor
+```
 
-The intended precedence for that future model should be:
+Use this when you want ota to read an explicit policy file path or hosted URL instead of the
+nearest ancestor `.ota/org-policy.yaml` or workspace policy source.
+
+## Current Policy-Source Model
+
+The current implementation supports:
+
+- an explicit `OTA_POLICY` override that can be a local file path or an HTTP(S) URL
+- the nearest ancestor `.ota/org-policy.yaml`
+- a workspace policy source declared in `ota.workspace.yaml`
+
+The precedence is:
 
 1. explicit environment override
 2. nearest ancestor `.ota/org-policy.yaml`
-3. workspace-root policy file, if the workspace declares one
-4. one explicitly configured remote policy source, if present
+3. workspace policy source, if the workspace declares one
 
-That order keeps the most explicit source first and leaves the current file-based behavior intact
-until the model is implemented.
+If none of those sources exist, ota continues without org policy.
 
-## Target shape
+That order keeps the most local repo policy first while still letting a workspace declare one shared
+policy source when it needs to.
+
+## Future Policy-Source Model
+
+One separately configured remote policy source remains future work.
+
+## Target Shape
 
 ```yaml
 policies:
@@ -101,7 +122,7 @@ policies:
     require_agents_md: true
 ```
 
-## Adoption walk-through
+## Adoption Walk-Through
 
 For a team that wants a quick rollout, the practical path is:
 
@@ -148,7 +169,7 @@ That makes the value visible immediately:
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
 - `exports.require_agents_md` requires repo-side agent guidance to be present when the policy pack says so.
 
-## Enforcement model
+## Enforcement Model
 
 Policy packs are intended to be:
 
@@ -161,9 +182,9 @@ Policy packs are intended to be:
 The policy pack does not replace `ota.yaml`.
 It constrains and interprets it at the org layer.
 
-## Current implementation
+## Current Implementation
 
-`ota doctor` reads the explicit `OTA_POLICY` file path when set, otherwise it reads `.ota/org-policy.yaml`
+`ota doctor` reads the explicit `OTA_POLICY` file path or HTTP(S) URL when set, otherwise it reads `.ota/org-policy.yaml`
 from the nearest ancestor when it exists, validates the file shape, and reports a finding if:
 
 - the policy pack cannot be read or parsed

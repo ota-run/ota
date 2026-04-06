@@ -22,9 +22,10 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Execution and Dockerfiles
+# Container Execution
 
-A Dockerfile builds a runnable image. An ota contract tells ota what the repo needs, what is safe, and how readiness is checked.
+A Dockerfile builds a runnable image. An ota contract tells ota what the repo needs, what is safe,
+and how readiness is checked.
 
 Use both when they fit:
 

@@ -22,12 +22,11 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Policy-Backed Provisioning Sources
+# Provisioning Sources
 
 Status: spec candidate.
 
-This document defines ota's policy surface for approved provisioning sources for declared
-runtimes and tools.
+This document explains how ota chooses approved sources for declared runtimes and tools.
 
 For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapters.md).
 
@@ -39,7 +38,8 @@ directories from the repo contract path; one ancestor policy file can therefore 
 tree.
 See [`policy-packs.md`](policy-packs.md) for the current file-based behavior and the future
 policy-source precedence model.
-The future remote policy source is intended as an enterprise feature, not a repo-local default.
+`OTA_POLICY` can already point at a local file path or an HTTP(S) URL; a separately declared
+remote policy source remains a future enterprise feature, not a repo-local default.
 
 ## Goal
 
@@ -66,7 +66,7 @@ works for `winget`, `scoop`, `apt`, `dnf`, and `brew`.
 ota can provide an approved feed through policy where the adapter supports that behavior, while
 other adapters may specify equivalent source details through their own `source_config` keys.
 
-## Supported today
+## Supported Today
 
 The built-in mutating adapters currently support:
 
@@ -88,7 +88,7 @@ meant to flow through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
 
-## Platform-specific provisioning
+## Platform-Specific Provisioning
 
 Use `platforms` when the same runtime or tool should resolve to different sources on macOS,
 Linux, and Windows. The root rule acts as the default, and platform entries override it when the
@@ -126,7 +126,7 @@ policies:
 This lets ota keep one contract for the repo while still choosing the approved source that
 matches the OS it is running on.
 
-## Non-goals
+## Non-Goals
 
 - no hidden workstation management
 - no arbitrary download URLs in repo contracts
@@ -135,7 +135,7 @@ matches the OS it is running on.
 - no broad control plane for every software installation case
 - adapter bootstrap policy is a separate layer for getting ota's adapter binaries onto the host or into the container; see [`adapter-bootstrap.md`](adapter-bootstrap.md). The shipped bootstrap backends are named separately from repo provisioning backends, for example `brew-bootstrap`, `mise-bootstrap`, `sdkman-bootstrap`, `asdf-bootstrap`, `uv-bootstrap`, `winget-bootstrap`, `choco-bootstrap`, and `scoop-bootstrap`.
 
-## Relationship to current contract surfaces
+## Relationship to Current Contract Surfaces
 
 - `runtimes` declares the version or distribution a repo needs
 - `tools` declares supporting CLI dependencies
@@ -144,7 +144,7 @@ matches the OS it is running on.
 - `policies.env` supplies approved env values today
 - this future policy layer would supply approved source selection for provisioning
 
-## Proposed policy shape
+## Proposed Policy Shape
 
 The first useful shape should stay small and declarative:
 
@@ -187,7 +187,7 @@ The exact field names may change, but the shape should remain:
   entries from policy, with `sdkman` and `uv` intended for runtime-oriented entries
 - provenance is recorded in doctor, receipts, and execution summaries
 
-## Concrete flow
+## Concrete Flow
 
 ```mermaid
 flowchart LR
@@ -253,7 +253,7 @@ With that shape:
 - the provisioning layer can use the default policy rule for every declared runtime or tool, then override Java 22 from the internal mirror, Maven 3.9 from the approved manager, and Node 22 from the approved Chocolatey feed
 - receipts can show the source that won
 
-## Source meaning
+## Source Meaning
 
 `source` should identify the approved provisioning origin, such as:
 
@@ -280,7 +280,7 @@ It should not encode raw download scripts or ad hoc shell commands.
 
 - `brew` can use `source_config.tap_name` and `tap_url` for an approved Homebrew tap
 
-## Expected behavior
+## Expected Behavior
 
 When this layer exists, ota should be able to:
 
@@ -290,7 +290,7 @@ When this layer exists, ota should be able to:
 - record the chosen source in receipts and diagnostics
 - keep the decision deterministic and reviewable
 
-## Command relationship
+## Command Relationship
 
 This layer would be consumed by repo-preparation commands, most likely `ota up`, once
 provisioning from approved sources exists.
@@ -313,7 +313,7 @@ When a policy-approved source wins, ota should explain:
 - the version or distribution that was resolved
 - whether the action was install, select, or verify-only
 
-## Why this is separate from env policy
+## Why This Is Separate from Env Policy
 
 Env policy answers:
 
@@ -325,7 +325,7 @@ Provisioning policy answers:
 
 That separation keeps policy readable and keeps the shipped `env` layer honest.
 
-## Exit criteria
+## Exit Criteria
 
 This spec becomes implementation-bound when ota can:
 

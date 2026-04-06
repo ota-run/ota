@@ -183,7 +183,7 @@ Start with `ota doctor`, then `ota validate`, `ota up`, and `ota run <task>`.
 
 Near-term policy and provisioning direction:
 
-- [Env resolution and policy](docs/spec/env-resolution-and-policy.md)
+- [Environment variables](docs/spec/env-resolution-and-policy.md)
 - [Policy-backed provisioning sources](docs/spec/policy-backed-provisioning.md)
 
 Global flag:

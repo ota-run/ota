@@ -22,157 +22,114 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Env Resolution and Policy
+# Environment Variables
 
 Status: spec candidate.
 
-This document defines the planned env resolution layer for ota.
+This document explains how ota chooses and prioritizes environment variables when a task runs.
 
-This spec adds the next layer: policy-controlled env resolution and injection.
+The named examples in this page, like `DATABASE_URL`, `JAVA_HOME`, `AWS_PROFILE`, and `PATH`, are
+examples only. The rules apply to any env variable the contract declares.
 
-## Current baseline
+## Current Baseline
 
 The shipped contract already supports:
 
 - required values
 - defaults
 - allowed values
+- task env overrides
+- policy-provided env values
 - validation in `doctor`
 - default application in `run`
+- `PATH` `prepend` and `append`
 
-The policy layer described here should extend, not replace, that baseline.
-
-Current implementation recognizes `policies.env` as the approved env source hook for additive
-policy-controlled values.
-Today that contract surface is a flat `NAME: VALUE` map; provenance labels such as `source` are
-documentation and output vocabulary, not YAML fields.
-Org policy packs are discovered from `.ota/org-policy.yaml` by walking ancestor directories from
-the contract path; a single policy pack can therefore apply to a whole workspace tree.
-`OTA_POLICY` is implemented as an explicit file-path override.
-See [`policy-packs.md`](policy-packs.md) for the current policy-source precedence model and the
-remaining future policy-source options.
-`PATH` can be composed explicitly in the contract with `prepend` and `append` entries, and
-declared env values are injected into backend execution after resolution so container-backed runs
-see the same chosen values as native runs.
+`policies.env` today is a flat `NAME: VALUE` map. Provenance labels such as `source` are output
+vocabulary, not YAML fields. See [`policy-packs.md`](policy-packs.md) for how ota finds the policy
+pack itself.
 
 `PATH` is special because it is an ordered executable search path. Ordinary env vars such as
-`JAVA_HOME` should stay as single explicit values unless a separate feature gives them structure.
+`JAVA_HOME` should stay as single explicit values.
 
-## Goal
+## How Ota Picks a Value
 
-ota should help determine:
+When a repo declares an env name in `env`, ota resolves it in this order:
 
-- which env values are required
-- which values may be provided by policy-controlled sources
-- which values must remain explicit in the shell or repo contract
-- which values should be injected into execution commands
+1. `tasks.<name>.env` for the task that declares it
+2. `policies.env`
+3. the shell process environment
+4. the contract default
 
-## Scope
+If none of those provide a value and the env is required, validation or execution fails.
 
-This surface should remain narrow and operability-focused.
+## What to Put Where
 
-It should support:
+- use `env` in `ota.yaml` to say which values the repo needs
+- use `required: true` when a value must exist
+- use `default` when the repo has a safe fallback
+- use `allowed` when the value must stay within a fixed set
+- use `tasks.<name>.env` when one task needs a different value
+- use `policies.env` when the organization wants an approved shared value
+- use `prepend` and `append` only on `PATH`
 
-- validating presence, non-empty state, and allowed values
-- injecting env into `ota run` and `ota up`
-- resolving env from approved sources under org policy
-- reporting provenance for resolved env values
-- keeping workspace and repo inheritance deterministic
-- composing `PATH` in the contract instead of shell scripts or task-local wrappers
+## Examples
 
-## Resolution model
+```yaml
+env:
+  DATABASE_URL:
+    required: true
+  JAVA_HOME:
+    default: /opt/jdk-21
+  PATH:
+    prepend:
+      - ./node_modules/.bin
+tasks:
+  test:
+    env:
+      CI: "true"
+    run: pnpm test
+```
 
-Resolution should be deterministic and layer-aware.
+```yaml
+policies:
+  env:
+    JAVA_HOME: /opt/jdk-22
+    AWS_PROFILE: ota-prod
+```
 
-For task execution, the recommended precedence is:
+If the process `PATH` is:
 
-1. task-scoped overrides
-2. member contract values
-3. workspace contract values
-4. repo contract values
-5. org policy values
-6. shell process environment
-7. declared defaults
+```text
+/usr/local/bin:/usr/bin:/bin
+```
 
-The policy layer must not silently rewrite repo-declared truth. It may only supply
-approved values, explain why they won, and leave a provenance trail.
+and the contract says:
 
-Task-scoped `env` overrides repo-level `env` for that task only.
+```yaml
+env:
+  PATH:
+    prepend:
+      - ./node_modules/.bin
+```
 
-Runtime and tool resolution follow the same inheritance principle:
+then the final `PATH` is:
 
-- repo declarations remain canonical for required versions and tool names
-- workspace overlays may tighten or specialize member expectations
-- policy may provide approved defaults or provisioning hints
-- provenance must record which layer supplied the final value
-- `PATH` may use `prepend` and `append` entries to build the final search path from the resolved base
+```text
+./node_modules/.bin:/usr/local/bin:/usr/bin:/bin
+```
 
-`PATH` vs ordinary env values:
-
-- use `PATH` when order matters and you need repo-local or toolchain bin directories to win
-- use a plain env value like `JAVA_HOME` when you want one explicit location
-- use normal task env overrides when a single task needs a fixed value such as `CI=true`
-
-## Contract shape
-
-The `env` section should continue to describe requirements, while policy may add
-resolution metadata.
-
-Examples of requirement fields:
-
-- `required`
-- `secret`
-- `default`
-- `allowed`
-
-Policy-controlled resolution may add approved source references, injection hints,
-and optional fallback rules, but the shipped contract still uses a flat `policies.env`
-map today. For source selection and install provenance, see
-[policy-backed-provisioning.md](policy-backed-provisioning.md).
-
-Workspace-level policy should remain additive. It can describe shared defaults or approved
-sources for member repos, but it should not become a second repo contract.
-
-## Provenance
-
-Resolution output should identify the winning source for each value using the existing
-audit/provenance vocabulary:
-
-- repo-declared
-- policy-derived
-- template-derived
-- detector-inferred
-- user-mutated
-
-For env resolution, `doctor`, `detect`, and execution receipts should explain:
-
-- which value won
-- which layer supplied it
-- why lower-priority candidates lost
-- whether the result is safe to reuse or only safe to run
-
-## Use cases
-
-- a repo needs `JAVA_HOME` or `DATABASE_URL` to run correctly
-- an org wants `AWS_PROFILE` or `GOOGLE_APPLICATION_CREDENTIALS` sourced from an approved policy
-- a workspace wants consistent env injection across repos without hardcoding secrets into each repo
-- `ota run` and `ota up` need to explain exactly where env came from
-
-## Non-goals
-
-- replacing `.env` as a general application config system
-- owning all app settings or secrets management
-- silently mutating env values
-- resolving from unapproved sources
-- hosted control plane policy workflows
-- waiver or approval orchestration
-- fleet reporting or retention policy
-
-## Relationship to other surfaces
+## Where It Shows Up
 
 - `doctor` diagnoses missing or invalid env
-- `run` and `up` consume env
-- `diff` should show env requirement impact
+- `run` and `up` consume env values during execution
+- receipts should show which value won
 - `explain` should turn env failures into a fix plan
-- receipts should record which env source won
-- `workspace doctor` should preserve root/member provenance instead of flattening it
+
+## What Policy Is Not
+
+- not a replacement for `.env`
+- not a general application config system
+- not silent env mutation
+- not hosted control-plane workflow logic
+- not waiver or approval orchestration
+- not fleet reporting or retention policy
