@@ -185,6 +185,8 @@ Near-term policy and provisioning direction:
 
 - [Environment variables](docs/spec/env-resolution-and-policy.md)
 - [Policy-backed provisioning sources](docs/spec/policy-backed-provisioning.md)
+- [Policy inspection](docs/spec/command-reference.md#ota-policy)
+- [Uninstall](docs/spec/command-reference.md#ota-uninstall)
 
 Global flag:
 
