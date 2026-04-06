@@ -1509,15 +1509,17 @@ fn render_policy_text(
         .map(|loaded| compact_policy_path_relative_to_contract(policy_path, &loaded.path))
         .unwrap_or_else(|| String::from("none"));
     if plain_mode() {
-        output.push_str("POLICY\n\n");
+        output.push_str(&format!(
+            "POLICY {}\n\n",
+            compact_contract_path(policy_path)
+        ));
     } else {
-        output.push_str(&format!("🦦  {}\n\n", paint("POLICY", "1;36")));
+        output.push_str(&format!(
+            "🦦 {} {}\n\n",
+            paint("POLICY", "1;36"),
+            paint_code(&compact_contract_path(policy_path))
+        ));
     }
-    output.push_str(&format!(
-        "{} {}\n",
-        paint_key("Path:"),
-        paint_code(&compact_contract_path(policy_path))
-    ));
     output.push_str(&format!(
         "{} {}\n",
         paint_key("Policy source:"),
@@ -9291,8 +9293,8 @@ mod tests {
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
-        ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest,
-        ProvisioningTargetKind,
+        OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
+        ProvisioningBackendRequest, ProvisioningTargetKind,
     };
     use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
@@ -9426,20 +9428,31 @@ mod tests {
 
     #[test]
     fn policy_text_uses_standalone_header_and_gap() {
-        let contract = Path::new("/workspace/repo/ota.yaml");
-        let policy = Path::new("/workspace/repo/.ota/org-policy.yaml");
+        let cwd = env::current_dir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let contract = repo.path().join("ota.yaml");
+        let policy = repo.path().join(".ota").join("org-policy.yaml");
+        fs::create_dir_all(policy.parent().unwrap()).unwrap();
+        fs::write(&contract, "version: 1\n").unwrap();
+        fs::write(&policy, "policies: {}\n").unwrap();
         let loaded = super::LoadedOrgPolicyPack {
-            pack: crate::policy_pack::OrgPolicyPack::default(),
-            path: policy.to_path_buf(),
-            source: crate::policy_pack::PolicyPackSource::RepoPolicy,
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: policy.clone(),
+            source: PolicyPackSource::RepoPolicy,
         };
 
+        env::set_current_dir(repo.path()).unwrap();
         let text = strip_ansi_codes(&super::render_policy_text(
-            contract,
+            &contract,
             "repo policy",
             Some(&loaded),
         ));
-        assert!(text.starts_with("🦦  POLICY\n\nPath: ./ota.yaml\n"));
+
+        env::set_current_dir(cwd).unwrap();
+
+        assert!(text.starts_with("🦦 POLICY ./ota.yaml\n\n"));
         assert!(text.contains("Policy source: repo policy\n"));
         assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n"));
     }
