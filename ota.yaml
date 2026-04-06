@@ -181,6 +181,7 @@ tasks:
         run: powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -FromSource
     depends_on:
       - ci
+
 agent:
   entrypoint: setup
   default_task: ci
