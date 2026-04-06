@@ -58,6 +58,7 @@ repos:
 workspace:
   name: ota-dev
   description: Local multi-repo development workspace
+  policy: .ota/org-policy.yaml
 ```
 
 Fields:
@@ -65,6 +66,7 @@ Fields:
 - `name`: required, non-empty string
 - `description`: optional string
 - `git_base`: optional clone base used by `repos.<name>.source.repo`
+- `policy`: optional policy pack path or HTTP(S) URL resolved from the workspace root
 
 ## `repos`
 

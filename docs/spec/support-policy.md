@@ -1,6 +1,7 @@
-# Support Policy
+# Platform support
 
-This document defines the current platform support stance for ota V1.
+This document explains which platforms ota supports best today and where the boundary is
+narrower.
 
 ## Current stance
 

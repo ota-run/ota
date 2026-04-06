@@ -23,9 +23,13 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+
+use crate::workspace::DEFAULT_WORKSPACE_FILE;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LoadPolicyPackError {
@@ -43,14 +47,17 @@ pub enum LoadPolicyPackError {
     },
     #[error("failed to validate policy pack `{path}`: {message}")]
     Validate { path: String, message: String },
+    #[error("failed to fetch policy pack `{path}`: {message}")]
+    Fetch { path: String, message: String },
 }
 
 impl LoadPolicyPackError {
     pub fn path(&self) -> &str {
         match self {
-            Self::Read { path, .. } | Self::Parse { path, .. } | Self::Validate { path, .. } => {
-                path
-            }
+            Self::Read { path, .. }
+            | Self::Parse { path, .. }
+            | Self::Validate { path, .. }
+            | Self::Fetch { path, .. } => path,
         }
     }
 }
@@ -681,15 +688,24 @@ pub fn load_org_policy_pack_auto(
     contract_path: &Path,
 ) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
     if let Some(policy_path) = env::var_os("OTA_POLICY") {
+        let policy_path_lossy = policy_path.to_string_lossy().to_string();
+        if is_remote_policy_source(&policy_path_lossy) {
+            return load_org_policy_pack_from_url(policy_path_lossy);
+        }
+
         let policy_path = PathBuf::from(policy_path);
         return load_org_policy_pack_from_path(policy_path);
     }
 
-    let Some(policy_path) = find_org_policy_pack_path(contract_path) else {
-        return Ok(None);
-    };
+    if let Some(policy_path) = find_org_policy_pack_path(contract_path) {
+        return load_org_policy_pack_from_path(policy_path);
+    }
 
-    load_org_policy_pack_from_path(policy_path)
+    if let Some(policy_location) = find_workspace_policy_pack_location(contract_path)? {
+        return load_org_policy_pack_from_location(policy_location);
+    }
+
+    Ok(None)
 }
 
 fn load_org_policy_pack_from_path(
@@ -713,6 +729,160 @@ fn load_org_policy_pack_from_path(
         })?;
 
     Ok(Some((pack, policy_path)))
+}
+
+fn load_org_policy_pack_from_location(
+    policy_location: String,
+) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
+    if is_remote_policy_source(&policy_location) {
+        return load_org_policy_pack_from_url(policy_location);
+    }
+
+    load_org_policy_pack_from_path(PathBuf::from(policy_location))
+}
+
+fn load_org_policy_pack_from_url(
+    policy_url: String,
+) -> Result<Option<(OrgPolicyPack, PathBuf)>, LoadPolicyPackError> {
+    let contents =
+        fetch_policy_pack_contents(&policy_url).map_err(|message| LoadPolicyPackError::Fetch {
+            path: policy_url.clone(),
+            message,
+        })?;
+
+    let pack: OrgPolicyPack =
+        serde_yaml::from_str(&contents).map_err(|source| LoadPolicyPackError::Parse {
+            path: policy_url.clone(),
+            source,
+        })?;
+    pack.validate()
+        .map_err(|message| LoadPolicyPackError::Validate {
+            path: policy_url.clone(),
+            message,
+        })?;
+
+    Ok(Some((pack, PathBuf::from(policy_url))))
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspacePolicySourceContract {
+    #[serde(default)]
+    workspace: Option<WorkspacePolicySourceWorkspace>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkspacePolicySourceWorkspace {
+    #[serde(default)]
+    policy: Option<String>,
+}
+
+fn find_workspace_policy_pack_location(
+    contract_path: &Path,
+) -> Result<Option<String>, LoadPolicyPackError> {
+    let mut current = Some(contract_path.parent().unwrap_or_else(|| Path::new(".")));
+
+    while let Some(dir) = current {
+        let candidate = dir.join(DEFAULT_WORKSPACE_FILE);
+        if candidate.is_file() {
+            let contents =
+                fs::read_to_string(&candidate).map_err(|source| LoadPolicyPackError::Read {
+                    path: candidate.display().to_string(),
+                    source,
+                })?;
+            let workspace: WorkspacePolicySourceContract = serde_yaml::from_str(&contents)
+                .map_err(|source| LoadPolicyPackError::Parse {
+                    path: candidate.display().to_string(),
+                    source,
+                })?;
+
+            if let Some(policy) = workspace.workspace.and_then(|workspace| workspace.policy) {
+                let policy = policy.trim();
+                if policy.is_empty() {
+                    return Err(LoadPolicyPackError::Validate {
+                        path: candidate.display().to_string(),
+                        message: String::from("workspace policy path must not be empty"),
+                    });
+                }
+
+                return Ok(Some(if is_remote_policy_source(policy) {
+                    policy.to_string()
+                } else {
+                    dir.join(policy).display().to_string()
+                }));
+            }
+        }
+        current = dir.parent();
+    }
+
+    Ok(None)
+}
+
+fn fetch_policy_pack_contents(url: &str) -> Result<String, String> {
+    if cfg!(windows) {
+        let script = format!(
+            "(Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri '{}').Content",
+            powershell_escape_single_quotes(url)
+        );
+
+        let mut pwsh = Command::new("pwsh");
+        pwsh.args(["-NoLogo", "-NoProfile", "-Command", &script]);
+        match pwsh.output() {
+            Ok(output) => return command_output_to_string(output),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let mut powershell = Command::new("powershell");
+                powershell.args(["-NoLogo", "-NoProfile", "-Command", &script]);
+                return command_output_to_string(
+                    powershell.output().map_err(|error| error.to_string())?,
+                );
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    let mut curl = Command::new("curl");
+    curl.args(["-fsSL", "--max-time", "5", url]);
+    match curl.output() {
+        Ok(output) => {
+            if output.status.success() {
+                return command_output_to_string(output);
+            }
+            return command_output_to_string(output);
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let mut wget = Command::new("wget");
+            wget.args(["-qO-", "--timeout=5", "--tries=1", url]);
+            return command_output_to_string(wget.output().map_err(|error| error.to_string())?);
+        }
+        Err(error) => return Err(error.to_string()),
+    }
+}
+
+fn command_output_to_string(output: std::process::Output) -> Result<String, String> {
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if stdout.is_empty() {
+            return Err(String::from("response body was empty"));
+        }
+        return Ok(stdout);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err(format!(
+            "command exited with status {}",
+            output.status.code().unwrap_or(1)
+        ))
+    } else {
+        Err(stderr)
+    }
+}
+
+fn powershell_escape_single_quotes(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn is_remote_policy_source(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 fn find_org_policy_pack_path(contract_path: &Path) -> Option<PathBuf> {
@@ -751,6 +921,10 @@ fn section_present(contract: &crate::schema::Contract, section: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::thread;
     use std::{env, fs};
 
     use tempfile::TempDir;
@@ -850,6 +1024,121 @@ policies:
             pack.policies.required_sections,
             vec![String::from("checks")]
         );
+    }
+
+    #[test]
+    fn loads_policy_pack_from_ota_policy_url_override_before_ancestor() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        write_contract(
+            &fixture,
+            r#"
+version: 1
+project:
+  name: app
+"#,
+        );
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            let body = r#"
+policies:
+  required_sections:
+    - checks
+"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let override_url = format!("http://127.0.0.1:{}/org-policy.yaml", addr.port());
+        let original = env::var_os("OTA_POLICY");
+        unsafe {
+            env::set_var("OTA_POLICY", &override_url);
+        }
+
+        let loaded = load_org_policy_pack_auto(&fixture.path().join("ota.yaml")).unwrap();
+
+        match original {
+            Some(value) => unsafe {
+                env::set_var("OTA_POLICY", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_POLICY");
+            },
+        }
+
+        handle.join().unwrap();
+
+        let (pack, loaded_path) = loaded.expect("policy URL override should load");
+        assert_eq!(loaded_path, PathBuf::from(&override_url));
+        assert_eq!(
+            pack.policies.required_sections,
+            vec![String::from("checks")]
+        );
+    }
+
+    #[test]
+    fn loads_policy_pack_from_workspace_policy_fallback() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("workspace").join("repo")).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: workspace
+  policy: policy/org-policy.yaml
+repos:
+  app:
+    path: workspace/repo
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join("policy")).unwrap();
+        fs::write(
+            fixture.path().join("policy").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let loaded = load_org_policy_pack_auto(
+            &fixture
+                .path()
+                .join("workspace")
+                .join("repo")
+                .join("ota.yaml"),
+        );
+
+        let (pack, loaded_path) = loaded.unwrap().expect("workspace policy should load");
+
+        assert_eq!(
+            loaded_path,
+            fixture.path().join("policy").join("org-policy.yaml")
+        );
+        assert_eq!(pack.policies.required_sections, vec![String::from("tasks")]);
     }
 
     #[test]

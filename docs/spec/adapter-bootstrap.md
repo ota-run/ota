@@ -22,12 +22,12 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Adapter Bootstrap Policy
+# Adapter Bootstrap
 
 Status: implemented.
 
-This document defines the policy layer for how ota should obtain its own provisioning
-adapters when the host or container does not already have them installed.
+This document explains how ota gets its own adapter binaries when the host or container does
+not already have them installed.
 
 This is intentionally separate from repo provisioning:
 
@@ -36,7 +36,7 @@ This is intentionally separate from repo provisioning:
 
 That separation keeps repository readiness honest and keeps adapter installation policy-controlled.
 
-## Why this exists
+## Why This Exists
 
 The current built-in provisioning adapters are useful only when the selected execution target
 already has the adapter command available. If a repo wants `brew`, `mise`, `asdf`, `sdkman`,
@@ -46,7 +46,7 @@ adapter binary or package manager on the machine or in the container image.
 An adapter bootstrap policy would let an organization declare how ota may install missing
 adapter binaries without turning ota into a hidden workstation manager.
 
-## Non-goals
+## Non-Goals
 
 - no silent installs
 - no arbitrary shell fragments as policy
@@ -54,13 +54,13 @@ adapter binaries without turning ota into a hidden workstation manager.
 - no general package-manager replacement
 - no hidden mutation during `doctor`
 
-## Relationship to current policy surfaces
+## Relationship to Current Policy Surfaces
 
 - `policies.provisioning` says where repo prerequisites may come from
 - `policies.adapter_bootstrap` says where ota may obtain the adapter binary that performs that work
 - `policies.env` remains the shipped env-value resolver
 
-## Proposed shape
+## Proposed Shape
 
 The policy should stay explicit and backend-oriented:
 
@@ -83,7 +83,7 @@ In that example:
 - `source` names the bootstrap backend ota should use for that adapter
 - `approved_versions` limits which adapter versions are allowed after bootstrap
 
-## Current implementation
+## Current Implementation
 
 ota now validates `policies.adapter_bootstrap`, can resolve a plan for missing adapters,
 and will bootstrap an approved source-manager backend before retrying repo provisioning.
@@ -102,7 +102,7 @@ The shipped bootstrap backends are named separately from the repo provisioning b
 Those bootstrap backends install the missing adapter binary first, then ota retries repo
 provisioning with the now-available manager.
 
-## Expected behavior
+## Expected Behavior
 
 When this layer is used, ota should be able to:
 
@@ -112,7 +112,7 @@ When this layer is used, ota should be able to:
 - keep adapter bootstrap separate from repo provisioning
 - record the selected bootstrap source in diagnostics and receipts
 
-## Source bootstrap in practice
+## Source Bootstrap in Practice
 
 When the source manager itself is missing, policy can approve a bootstrap backend first and then
 let repo provisioning use the newly available manager.
@@ -143,7 +143,7 @@ In that example:
 - `sdkman-bootstrap` installs `sdkman` first when it is missing
 - repo provisioning then uses the approved source managers to install the declared tools and runtimes
 
-## Scope boundaries
+## Scope Boundaries
 
 Adapter bootstrap policy should apply to:
 
@@ -156,7 +156,7 @@ It should not:
 - replace the provisioning policy
 - invent new install commands per repo
 
-## Exit criteria
+## Exit Criteria
 
 This spec becomes implementation-bound when ota can:
 
@@ -165,7 +165,7 @@ This spec becomes implementation-bound when ota can:
 - bootstrap the adapter in the selected execution target
 - keep repo provisioning behavior unchanged
 
-## Implementation notes
+## Implementation Notes
 
 The runtime path is intentionally narrow:
 

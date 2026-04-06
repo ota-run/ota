@@ -28,7 +28,7 @@ Status: complete.
 
 Source direction:
 
-- [Env resolution and policy](../../spec/env-resolution-and-policy.md)
+- [Environment variables](../../spec/env-resolution-and-policy.md)
 - [Policy-backed provisioning sources](../../spec/policy-backed-provisioning.md)
 
 V9 theme:
