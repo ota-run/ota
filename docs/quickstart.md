@@ -34,7 +34,7 @@ One practical path:
 
 ```bash
 ota doctor
-ota validate
+ota explain
 ota up
 ota run test
 ```
@@ -42,7 +42,7 @@ ota run test
 What this gives you:
 
 - `ota doctor` tells you what is broken and what to do next
-- `ota validate` confirms the contract is sound before anyone relies on it
+- `ota explain` turns the current findings into an ordered fix plan
 - `ota up` prepares the repo from the contract instead of from guesswork
 - `ota run test` executes a declared task through the same contract
 
@@ -50,10 +50,21 @@ If the repo does not yet have a contract, use the authoring path:
 
 ```bash
 ota doctor
-ota init --dry-run
+ota explain
 ota detect --dry-run .
+ota init --dry-run
+# if the repo does not yet have ota.yaml, choose one explicit write path:
 ota init
+# or:
 ota detect --write .
+```
+
+If the repo already has `ota.yaml`, review the delta first:
+
+```bash
+ota detect --merge --dry-run .
+ota detect --rewrite --dry-run .
+ota validate
 ```
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
@@ -63,12 +74,13 @@ ota detect --write .
 From a directory with `ota.workspace.yaml`:
 
 ```bash
+ota workspace doctor
+ota workspace explain
+ota workspace up
 ota workspace validate
 ota workspace tasks
 ota workspace run setup
 ota workspace check
-ota workspace doctor
-ota workspace up
 ota workspace refresh
 ota workspace diff
 ota workspace status

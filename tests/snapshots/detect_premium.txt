@@ -1,0 +1,66 @@
+🦦 DETECT PREVIEW .
+
+❖ Mode: dry-run (no write)
+
+Existing contract comparison:
+✦  project.name: would update `existing` -> `ota-web`
+✦  runtimes.node: would add `22`
+✦  tools.pnpm: would add `10.1.0`
+✦  tasks.dev.run: would add `pnpm dev`
+
+Existing contract drift:
+Impact:
+  • 1 task affected
+  • 1 command removal
+  • 1 tool removal
+
+◉ WARN  Review task command drift (1 removal across 1 task)
+Why: Current repo signals no longer support the commands below in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries.
+
+✦  Task `build`
+  » remove command `cargo build`
+
+◉ WARN  Review tool drift (1 removal across 1 tool)
+Why: Current repo signals no longer support the tool entries below in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries.
+
+✦  Tool `cargo`
+  » remove `1.78`
+
+Contract:
+version: 1
+project:
+  name: ota-web
+runtimes:
+  node: '22'
+tools:
+  pnpm: 10.1.0
+tasks:
+  dev:
+    run: pnpm dev
+    notes: |
+      Run `ota run dev` to execute this task.
+
+Annotations:
+✦ Field: project.name
+  Value: ota-web
+  Source: package.json#name
+  Confidence: high
+
+✦ Field: runtimes.node
+  Value: 22
+  Source: .nvmrc
+  Confidence: high
+
+✦ Field: tasks.dev.run
+  Value: pnpm dev
+  Source: package.json#scripts.dev
+  Confidence: high
+
+✦ Field: tools.pnpm
+  Value: 10.1.0
+  Source: package.json#packageManager
+  Confidence: high
+
+Next:
+▸  run `ota detect --merge --dry-run .` to review add-only changes
+▸  run `ota detect --rewrite --dry-run .` to review a full replacement contract

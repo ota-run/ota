@@ -35,8 +35,10 @@ use serde::ser::{SerializeStruct, Serializer};
 
 use crate::execution::container_engine_candidates;
 use crate::policy_pack::{
-    LoadPolicyPackError, ProvisioningBackendRequest, ProvisioningPlan, load_org_policy_pack_auto,
+    LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
+    ProvisioningPlan, ProvisioningTargetKind, load_org_policy_pack_auto_details,
 };
+use crate::provisioning::render_provisioning_action_command;
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
 };
@@ -509,15 +511,45 @@ fn diagnose_contract_with_scope(
     let mut findings = Vec::new();
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
+    let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
+        match load_org_policy_pack_auto_details(contract_path) {
+            Ok(policy) => policy,
+            Err(err) => {
+                findings.push(policy_error_finding(err));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let provisioning_actions = loaded_policy
+        .as_ref()
+        .map(|loaded| loaded.pack.selected_provisioning_actions(contract))
+        .unwrap_or_default();
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         diagnose_execution_backend(contract, &mut findings);
         diagnose_env(contract, &mut findings);
-        diagnose_runtimes(contract, &mut findings);
-        diagnose_tools(contract, &mut findings);
-        provisioning = diagnose_org_policy(contract, contract_path, &mut findings);
-        adapter_bootstrap = diagnose_adapter_bootstrap(contract, contract_path, &mut findings);
+        diagnose_runtimes(
+            contract,
+            contract_path,
+            &provisioning_actions,
+            &mut findings,
+        );
+        diagnose_tools(
+            contract,
+            contract_path,
+            &provisioning_actions,
+            &mut findings,
+        );
+        provisioning = diagnose_org_policy(
+            contract,
+            contract_path,
+            loaded_policy.as_ref(),
+            &mut findings,
+        );
+        adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy.as_ref(), &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
@@ -864,13 +896,32 @@ fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
     }
 }
 
-fn diagnose_runtimes(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_runtimes(
+    contract: &Contract,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+    findings: &mut Vec<Finding>,
+) {
     for (name, requirement) in &contract.runtimes {
-        diagnose_command_version("runtime", name, name, requirement.version(), true, findings);
+        diagnose_command_version(
+            "runtime",
+            name,
+            name,
+            requirement.version(),
+            true,
+            contract_path,
+            provisioning_actions,
+            findings,
+        );
     }
 }
 
-fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_tools(
+    contract: &Contract,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+    findings: &mut Vec<Finding>,
+) {
     for (name, requirement) in &contract.tools {
         let required = match requirement {
             crate::schema::ToolRequirement::Simple(_) => true,
@@ -883,6 +934,8 @@ fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
             tool_executable_name(name),
             requirement.version(),
             required,
+            contract_path,
+            provisioning_actions,
             findings,
         );
     }
@@ -891,16 +944,14 @@ fn diagnose_tools(contract: &Contract, findings: &mut Vec<Finding>) {
 fn diagnose_org_policy(
     contract: &Contract,
     contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
-    let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
-        Ok(Some(policy_pack)) => policy_pack,
-        Ok(None) => return None,
-        Err(err) => {
-            findings.push(policy_error_finding(err));
-            return None;
-        }
+    let Some(loaded_policy) = loaded_policy else {
+        return None;
     };
+    let policy_pack = &loaded_policy.pack;
+    let policy_path = &loaded_policy.path;
 
     let contract_root = contract_working_dir(contract_path);
 
@@ -959,53 +1010,6 @@ fn diagnose_org_policy(
                 },
                 next: String::from(
                     "use this policy surface when repo prerequisites need an approved source",
-                ),
-            });
-        }
-
-        if !policy_pack.policies.adapter_bootstrap.is_empty() {
-            let adapter_names = policy_pack
-                .policies
-                .adapter_bootstrap
-                .keys()
-                .map(|name| name.as_str())
-                .collect::<Vec<_>>();
-            let mut sources = Vec::new();
-            for (name, rule) in &policy_pack.policies.adapter_bootstrap {
-                let versions = if rule.approved_versions.is_empty() {
-                    String::from("any approved version")
-                } else {
-                    format!("versions {}", rule.approved_versions.join(", "))
-                };
-                sources.push(format!("{name} via {} ({versions})", rule.source));
-            }
-
-            let matched_targets: Vec<String> = policy_pack
-                .adapter_bootstrap_backend_request(&adapter_names)
-                .actions
-                .into_iter()
-                .map(|action| format!("{} via {}", action.name, action.source))
-                .collect();
-
-            findings.push(Finding {
-                severity: FindingSeverity::Info,
-                summary: String::from("Adapter bootstrap sources are declared"),
-                why: if matched_targets.is_empty() {
-                    format!(
-                        "`{}` declares approved adapter bootstrap sources: {}",
-                        compact_display_path(&policy_path),
-                        sources.join(", ")
-                    )
-                } else {
-                    format!(
-                        "`{}` declares approved adapter bootstrap sources: {}. This repo's declared prerequisites can be provisioned through: {}",
-                        compact_display_path(&policy_path),
-                        sources.join(", "),
-                        matched_targets.join(", ")
-                    )
-                },
-                next: String::from(
-                    "use this policy surface when a missing adapter binary needs an approved source",
                 ),
             });
         }
@@ -1069,15 +1073,14 @@ fn format_source_config_summary(
 }
 
 fn diagnose_adapter_bootstrap(
-    _contract: &Contract,
-    contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
     findings: &mut Vec<Finding>,
 ) -> Option<AdapterBootstrapDiagnostics> {
-    let (policy_pack, policy_path) = match load_org_policy_pack_auto(contract_path) {
-        Ok(Some(policy_pack)) => policy_pack,
-        Ok(None) => return None,
-        Err(_) => return None,
+    let Some(loaded_policy) = loaded_policy else {
+        return None;
     };
+    let policy_pack = &loaded_policy.pack;
+    let policy_path = &loaded_policy.path;
 
     let adapter_names = policy_pack
         .policies
@@ -1124,14 +1127,177 @@ fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolVersionsManager {
+    Asdf,
+    Mise,
+}
+
+fn exact_tooling_remediation(
+    target_kind: ProvisioningTargetKind,
+    name: &str,
+    requirement: &str,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+) -> Option<String> {
+    if let Some(action) = provisioning_actions
+        .iter()
+        .find(|action| action.target_kind == target_kind && action.name == name)
+        && let Some(command) = render_provisioning_action_command(action)
+    {
+        return Some(command);
+    }
+
+    let contract_root = contract_working_dir(contract_path);
+
+    match (target_kind, name) {
+        (ProvisioningTargetKind::Runtime, "node") => {
+            if contract_root.join(".nvmrc").is_file()
+                || contract_root.join(".node-version").is_file()
+            {
+                return Some(format!(
+                    "nvm install {requirement} && nvm use {requirement}"
+                ));
+            }
+            tool_versions_remediation(&contract_root, &["nodejs", "node"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "python") => {
+            if contract_root.join(".python-version").is_file()
+                || contract_root.join("uv.lock").is_file()
+            {
+                return Some(format!("uv python install {requirement}"));
+            }
+            tool_versions_remediation(&contract_root, &["python"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "java") => {
+            if let Some(version) = sdkman_java_version(&contract_root) {
+                return Some(format!("sdk install java {version}"));
+            }
+            tool_versions_remediation(&contract_root, &["java"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "go") => {
+            tool_versions_remediation(&contract_root, &["go", "golang"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "rust") => {
+            tool_versions_remediation(&contract_root, &["rust"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "ruby") => {
+            tool_versions_remediation(&contract_root, &["ruby"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "php") => {
+            tool_versions_remediation(&contract_root, &["php"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "dotnet") => {
+            tool_versions_remediation(&contract_root, &["dotnet"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, "elixir") => {
+            tool_versions_remediation(&contract_root, &["elixir"], requirement)
+        }
+        (ProvisioningTargetKind::Runtime, _) => None,
+        (ProvisioningTargetKind::Tool, "node") => {
+            tool_versions_remediation(&contract_root, &["nodejs", "node"], requirement)
+        }
+        (ProvisioningTargetKind::Tool, name) => {
+            tool_versions_remediation(&contract_root, &[name], requirement)
+        }
+    }
+}
+
+fn tool_versions_remediation(
+    contract_root: &Path,
+    candidate_names: &[&str],
+    requirement: &str,
+) -> Option<String> {
+    let tool_name = tool_versions_entry(contract_root, candidate_names)?;
+    match tool_versions_manager(contract_root)? {
+        ToolVersionsManager::Asdf => Some(format!("asdf install {tool_name} {requirement}")),
+        ToolVersionsManager::Mise => Some(format!("mise install {tool_name}@{requirement}")),
+    }
+}
+
+fn tool_versions_entry(contract_root: &Path, candidate_names: &[&str]) -> Option<String> {
+    let path = contract_root.join(".tool-versions");
+    let contents = std::fs::read_to_string(path).ok()?;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let Some(tool_name) = parts.next() else {
+            continue;
+        };
+        if candidate_names
+            .iter()
+            .any(|candidate| candidate == &tool_name)
+        {
+            return Some(tool_name.to_string());
+        }
+    }
+
+    None
+}
+
+fn tool_versions_manager(contract_root: &Path) -> Option<ToolVersionsManager> {
+    if contract_root.join("mise.toml").is_file() || contract_root.join("mise.local.toml").is_file()
+    {
+        return Some(ToolVersionsManager::Mise);
+    }
+
+    let asdf_available = command_available("asdf");
+    let mise_available = command_available("mise");
+
+    match (asdf_available, mise_available) {
+        (true, false) => Some(ToolVersionsManager::Asdf),
+        (false, true) => Some(ToolVersionsManager::Mise),
+        _ => None,
+    }
+}
+
+fn sdkman_java_version(contract_root: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(contract_root.join(".sdkmanrc")).ok()?;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "java" {
+            continue;
+        }
+        let version = value.trim().trim_start_matches('v');
+        if !version.is_empty() {
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
 fn diagnose_command_version(
     kind: &str,
     display_name: &str,
     executable_name: &str,
     requirement: &str,
     required: bool,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) {
+    let target_kind = match kind {
+        "runtime" => ProvisioningTargetKind::Runtime,
+        _ => ProvisioningTargetKind::Tool,
+    };
+    let exact_remediation = exact_tooling_remediation(
+        target_kind,
+        display_name,
+        requirement,
+        contract_path,
+        provisioning_actions,
+    );
+
     let Some(actual) = command_version(executable_name) else {
         findings.push(Finding {
             severity: if required {
@@ -1141,9 +1307,13 @@ fn diagnose_command_version(
             },
             summary: format!("Missing {kind}: {display_name}"),
             why: format!("{display_name} is declared in the contract but is not available on PATH"),
-            next: format!(
-                "install {display_name} and make it available on PATH, then rerun `ota doctor`"
-            ),
+            next: exact_remediation
+                .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "install {display_name} and make it available on PATH, then rerun `ota doctor`"
+                    )
+                }),
         });
         return;
     };
@@ -1162,9 +1332,13 @@ fn diagnose_command_version(
         why: format!(
             "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
         ),
-        next: format!(
-            "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
-        ),
+        next: exact_remediation
+            .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+            .unwrap_or_else(|| {
+                format!(
+                    "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
+                )
+            }),
     });
 }
 

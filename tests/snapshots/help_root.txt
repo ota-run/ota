@@ -1,0 +1,49 @@
+🦦 ota v1.1.3
+Diagnose, prepare, and run repos from one explicit contract.
+Doctor first, contract second.
+
+Usage:
+  ota [OPTIONS] <COMMAND>
+
+Commands:
+  doctor       Diagnose repo readiness from an Ota contract
+  explain      Explain readiness findings as an ordered remediation plan
+  up           Prepare the repo for use with minimal prior knowledge
+  run          Run a validated task from an Ota contract
+  init         Create a starter Ota contract for a repo that does not yet have one
+  detect       Infer a starting contract from repo state
+  validate     Validate an Ota contract
+  tasks        List validated tasks from an Ota contract
+  services     List declared services from an Ota contract
+  diff         Compare two Ota contracts semantically
+  check        Run configured checks from an Ota contract
+  annotations  Render Ota JSON findings as CI annotations or log lines
+  agents       Generate or sync AGENTS.md from an Ota contract
+  clean        Clean persistent execution state for a repo
+  extensions   List staged extension descriptors from an Ota contract
+  self-update  Update the installed Ota binary
+  workspace    Work with Ota workspace contracts
+  policy       Show the active policy pack and where ota loaded it from
+  uninstall    Remove ota from this laptop
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+      --debug        Emit command-phase debug tracing to stderr
+      --plain        Emit plain text output (no icons, no ANSI styling, ASCII list markers)
+      --concise      Reduce non-essential spacing in text output
+      --verbose      Keep full text output detail (default behavior)
+      --file <FILE>  Use an explicit ota.yaml file instead of path discovery
+  -h, --help         Print help
+
+
+Start here:
+  inspect an existing repo   ota doctor
+  explain blockers          ota explain
+  preview a first contract  ota detect --dry-run .
+  review a starter contract ota init --dry-run
+  prepare the repo          ota up
+  run a task                ota run ci
+
+Workspace:
+  inspect readiness         ota workspace doctor .
+  prepare the workspace     ota workspace up

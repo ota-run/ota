@@ -194,15 +194,6 @@ impl SdkmanProvisioningBackend {
     }
 }
 
-impl UvProvisioningBackend {
-    fn install_target(action: &ProvisioningAction) -> String {
-        match action.target_kind {
-            ProvisioningTargetKind::Runtime => action.name.clone(),
-            ProvisioningTargetKind::Tool => action.name.clone(),
-        }
-    }
-}
-
 impl WingetProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
@@ -424,6 +415,94 @@ impl DnfProvisioningBackend {
             repo_id.to_string(),
         ]
     }
+}
+
+pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) -> Option<String> {
+    let command = match action.source.as_str() {
+        "mise" => format!(
+            "mise install {}",
+            MiseProvisioningBackend::install_target(action)
+        ),
+        "asdf" => format!(
+            "asdf install {} {}",
+            AsdfProvisioningBackend::install_target(action),
+            action.requested_version
+        ),
+        "sdkman" => format!(
+            "sdk install {} {}",
+            SdkmanProvisioningBackend::install_target(action),
+            action.requested_version
+        ),
+        "uv" => format!("uv python install {}", action.requested_version),
+        "winget" => {
+            let install_target = WingetProvisioningBackend::install_target(action);
+            let source_args = WingetProvisioningBackend::source_args(action);
+            if source_args.is_empty() {
+                format!(
+                    "winget install --id {install_target} --version {} --exact --accept-source-agreements --accept-package-agreements",
+                    action.requested_version
+                )
+            } else {
+                format!(
+                    "winget install --id {install_target} --version {} --exact --accept-source-agreements --accept-package-agreements {}",
+                    action.requested_version,
+                    source_args.join(" ")
+                )
+            }
+        }
+        "choco" => {
+            let install_target = ChocoProvisioningBackend::install_target(action);
+            let source_args = ChocoProvisioningBackend::source_args(action);
+            if source_args.is_empty() {
+                format!(
+                    "choco install {install_target} --version {} -y --no-progress",
+                    action.requested_version
+                )
+            } else {
+                format!(
+                    "choco install {install_target} --version {} -y --no-progress {}",
+                    action.requested_version,
+                    source_args.join(" ")
+                )
+            }
+        }
+        "scoop" => {
+            let install_target = ScoopProvisioningBackend::install_target(action);
+            if let Some(source_command) = ScoopProvisioningBackend::source_command(action) {
+                format!("{source_command} && scoop install {install_target}")
+            } else {
+                format!("scoop install {install_target}")
+            }
+        }
+        "brew" => {
+            let install_target = BrewProvisioningBackend::install_target(action);
+            if let Some(source_command) = BrewProvisioningBackend::source_command(action) {
+                format!("{source_command} && brew install {install_target}")
+            } else {
+                format!("brew install {install_target}")
+            }
+        }
+        "pacman" => format!(
+            "pacman -S --noconfirm {}",
+            PacmanProvisioningBackend::install_target(action)
+        ),
+        "apt" => {
+            let install_target = AptProvisioningBackend::install_target(action);
+            let source_lines = AptProvisioningBackend::source_lines(action);
+            if source_lines.is_empty() {
+                format!("apt-get install -y {install_target}")
+            } else {
+                return None;
+            }
+        }
+        "dnf" => format!(
+            "dnf install -y {}",
+            DnfProvisioningBackend::install_target(action)
+        ),
+        _ => return None,
+    };
+
+    Some(command)
 }
 
 impl BrewBootstrapProvisioningBackend {
@@ -754,7 +833,6 @@ impl ProvisioningBackend for UvProvisioningBackend {
                 });
             }
 
-            let install_target = Self::install_target(action);
             let output = execute_provisioning_command(
                 target,
                 working_dir,
@@ -767,7 +845,7 @@ impl ProvisioningBackend for UvProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("uv python install {install_target}"),
+                    command: format!("uv python install {}", action.requested_version),
                     exit_code: output.exit_code,
                     stdout,
                     stderr,

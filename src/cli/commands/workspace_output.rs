@@ -32,7 +32,7 @@ pub(crate) fn render_workspace_up(
         OutputFormat::Text => {
             let workspace_root = Path::new(path).parent();
             let mut stdout = format!(
-                "\n{}\n\n{}",
+                "{}\n\n{}",
                 format_command_header("WORKSPACE UP", path),
                 render_readiness_status(report.ok)
             );
@@ -146,13 +146,13 @@ pub(crate) fn render_workspace_refresh(
             let workspace_root = Path::new(path).parent();
             let mut stdout = if report.dry_run {
                 format!(
-                    "\n{}\n\n{}",
+                    "{}\n\n{}",
                     format_command_header("WORKSPACE REFRESH PREVIEW", path),
                     format_mode_line("dry-run (no write)")
                 )
             } else {
                 format!(
-                    "\n{}\n\n{}",
+                    "{}\n\n{}",
                     format_command_header("WORKSPACE REFRESH", path),
                     render_readiness_status(report.ok)
                 )

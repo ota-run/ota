@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up\n  ota run ci",
+    after_help = "\nStart here:\n  inspect an existing repo   ota doctor\n  explain blockers          ota explain\n  preview a first contract  ota detect --dry-run .\n  review a starter contract ota init --dry-run\n  prepare the repo          ota up\n  run a task                ota run ci\n\nWorkspace:\n  inspect readiness         ota workspace doctor .\n  prepare the workspace     ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -1824,10 +1824,11 @@ fn command_where_label(command: &Commands) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::fs;
     #[cfg(unix)]
     use std::hash::{Hash, Hasher};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     #[cfg(unix)]
     use std::process::Command;
     use std::sync::mpsc;
@@ -1858,6 +1859,34 @@ mod tests {
     impl Drop for CurrentDirGuard {
         fn drop(&mut self) {
             let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
+
+    struct EnvVarGuard {
+        name: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(name: &'static str, value: OsString) -> Self {
+            let original = std::env::var_os(name);
+            unsafe {
+                std::env::set_var(name, value);
+            }
+            Self { name, original }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(value) => unsafe {
+                    std::env::set_var(self.name, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.name);
+                },
+            }
         }
     }
 
@@ -2189,28 +2218,59 @@ exec /bin/sh -lc "$1"
 
     fn strip_ansi(value: &str) -> String {
         let mut out = String::with_capacity(value.len());
-        let bytes = value.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            if bytes[i] == 0x1b {
-                i += 1;
-                if i < bytes.len() && bytes[i] == b'[' {
-                    i += 1;
-                    while i < bytes.len() {
-                        let b = bytes[i];
-                        if b.is_ascii_alphabetic() {
-                            i += 1;
-                            break;
-                        }
-                        i += 1;
+        let mut chars = value.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+                let _ = chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
                     }
-                    continue;
                 }
+                continue;
             }
-            out.push(bytes[i] as char);
-            i += 1;
+            out.push(ch);
         }
         out
+    }
+
+    fn normalize_snapshot_text(value: &str) -> String {
+        value.replace("\r\n", "\n").trim_end().to_string()
+    }
+
+    fn snapshot_file(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("snapshots")
+            .join(name)
+    }
+
+    fn prepend_path(bin_dir: &Path) -> OsString {
+        let mut entries = vec![bin_dir.to_path_buf()];
+        if let Some(value) = std::env::var_os("PATH") {
+            entries.extend(std::env::split_paths(&value));
+        }
+        std::env::join_paths(entries).expect("join PATH")
+    }
+
+    fn assert_text_snapshot(name: &str, actual: &str) {
+        let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
+        assert_eq!(
+            normalize_snapshot_text(actual),
+            normalize_snapshot_text(&expected)
+        );
+    }
+
+    fn assert_text_snapshot_for_dir(name: &str, actual: &str, dir: &std::path::Path) {
+        let raw_dir = dir.display().to_string();
+        let canonical_dir = fs::canonicalize(dir)
+            .map(|value| value.display().to_string())
+            .unwrap_or_else(|_| raw_dir.clone());
+        let normalized = normalize_snapshot_text(actual)
+            .replace(&canonical_dir, "<TMP>")
+            .replace(&raw_dir, "<TMP>");
+        let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
+        assert_eq!(normalized, normalize_snapshot_text(&expected));
     }
 
     #[test]
@@ -6170,7 +6230,7 @@ policies:
             finding["why"]
                 .as_str()
                 .unwrap()
-                .contains("adapter bootstrap sources")
+                .contains("bootstrap missing adapter binaries")
         );
         assert_eq!(provisioning["allowed"][0]["name"], "java");
         assert_eq!(provisioning["allowed"][1]["name"], "maven");
@@ -9919,6 +9979,261 @@ edition = "2024"
     }
 
     #[test]
+    fn root_help_text_snapshot_is_stable() {
+        let output = run_with(["ota", "--help"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot(
+            "help_root.txt",
+            output
+                .stderr
+                .as_deref()
+                .expect("help text should be present"),
+        );
+    }
+
+    #[test]
+    fn doctor_text_snapshot_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-demo
+execution:
+  lifecycle: ephemeral
+tasks:
+  ci:
+    run: echo ci
+agent:
+  entrypoint: ci
+  default_task: ci
+  safe_tasks: [ci]
+  verify_after_changes: [ci]
+  writable_paths: [src, docs]
+  protected_paths: [ota.yaml, Cargo.lock]
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "premium-demo"
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_text_snapshot("doctor_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn doctor_uses_uv_python_remediation_when_repo_signals_uv() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: uv-demo
+runtimes:
+  python: "3.12.4"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".python-version", "3.12.4\n");
+        fixture.write("uv.lock", "version = 1\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.13.2\r\n"
+        } else {
+            "#!/bin/sh\necho 'Python 3.13.2'\n"
+        };
+        write_fake_command(&bin_dir, "python", python_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `uv python install 3.12.4` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_sdkman_java_remediation_when_repo_signals_sdkman() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: java-demo
+runtimes:
+  java: "21.0.2-tem"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".sdkmanrc", "java=21.0.2-tem\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let java_body = if cfg!(windows) {
+            "@echo off\r\necho java version \"25.0.2\"\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'java version \"25.0.2\"\\n'\n"
+        };
+        write_fake_command(&bin_dir, "java", java_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `sdk install java 21.0.2-tem` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_asdf_tool_remediation_when_repo_signals_tool_versions() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: asdf-demo
+tools:
+  maven: "3.9.9"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".tool-versions", "maven 3.9.9\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let mvn_body = if cfg!(windows) {
+            "@echo off\r\necho Apache Maven 3.9.14\r\n"
+        } else {
+            "#!/bin/sh\necho 'Apache Maven 3.9.14'\n"
+        };
+        let asdf_body = if cfg!(windows) {
+            "@echo off\r\necho asdf\r\n"
+        } else {
+            "#!/bin/sh\necho 'asdf'\n"
+        };
+        write_fake_command(&bin_dir, "mvn", mvn_body);
+        write_fake_command(&bin_dir, "asdf", asdf_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `asdf install maven 3.9.9` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn detect_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "detect", "--dry-run", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot("detect_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn up_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-up
+execution:
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: python3 -c "from pathlib import Path; Path('prepared.txt').write_text('ready')"
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "up", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot("up_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn run_failure_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-run
+tasks:
+  install-from-source:
+    run: python3 -c "import sys; print('build log'); sys.stderr.write('trace line\n'); sys.exit(7)"
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "install-from-source", "."]);
+
+        assert_eq!(output.exit_code, 7);
+        assert_text_snapshot(
+            "run_premium_error.txt",
+            &strip_ansi(output.stderr.as_deref().expect("run failure stderr")),
+        );
+    }
+
+    #[test]
     fn doctor_not_ready_text_status_contract_is_stable() {
         let fixture = ContractFixture::new(
             r#"
@@ -9939,6 +10254,201 @@ project:
         assert!(stdout.contains("Primary Blocker"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
+    }
+
+    #[test]
+    fn workspace_validate_text_snapshot_is_stable() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: premium-workspace
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        let output = run_with(["ota", "workspace", "validate", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot(
+            "workspace_validate_premium.txt",
+            &strip_ansi(&output.stdout),
+        );
+    }
+
+    #[test]
+    fn workspace_doctor_text_snapshot_is_stable() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: premium-workspace
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        let output = run_with(["ota", "workspace", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_text_snapshot("workspace_doctor_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn workspace_explain_text_snapshot_is_stable() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: premium-workspace
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        let output = run_with(["ota", "workspace", "explain", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_text_snapshot("workspace_explain_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn workspace_up_text_snapshot_is_stable() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: premium-workspace
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        let output = run_with(["ota", "workspace", "up", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot_for_dir(
+            "workspace_up_premium.txt",
+            &strip_ansi(&output.stdout),
+            fixture.path(),
+        );
+    }
+
+    #[test]
+    fn workspace_run_text_snapshot_is_stable() {
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: premium-workspace
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.path());
+        let output = run_with(["ota", "workspace", "run", "setup", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot_for_dir(
+            "workspace_run_premium.txt",
+            &strip_ansi(&output.stdout),
+            fixture.path(),
+        );
     }
 
     #[cfg(unix)]
@@ -11137,8 +11647,7 @@ tasks:
         assert!(text_body.contains("Status: READY"));
         assert!(text_body.contains("api [required] (ACQUIRED)"));
         assert!(text_body.contains("Execution"));
-        assert!(text_body.contains("Remote Provider: ssh"));
-        assert!(text_body.contains("Remote Target: user@host"));
+        assert!(text_body.contains("Remote: provider `ssh` target `user@host`"));
 
         let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
         assert_eq!(json.exit_code, 0);
@@ -11889,10 +12398,9 @@ tasks:
         assert!(stdout.contains("»"));
         assert!(stdout.contains("Repos: 2"));
         assert!(stdout.contains("Ready: 2"));
-        assert!(stdout.contains("Preferred: remote"));
-        assert!(stdout.contains("Remote Provider: ssh"));
-        assert!(stdout.contains("Remote Target: user@host"));
-        assert!(stdout.rfind("Overview") > stdout.rfind("Preferred: remote"));
+        assert!(stdout.contains("Preferred: `remote`"));
+        assert!(stdout.contains("Remote: provider `ssh` target `user@host`"));
+        assert!(stdout.rfind("Overview") > stdout.rfind("Preferred: `remote`"));
     }
 
     #[test]
@@ -13230,8 +13738,12 @@ tasks:
 
         let text = run_with(["ota", "workspace", "list", fixture.path()]);
         assert_eq!(text.exit_code, 0);
-        assert!(text.stdout.contains("Env sources:"));
-        assert!(text.stdout.contains("Source: workspace policy"));
+        assert!(text.stdout.contains("Execution"));
+        assert!(text.stdout.contains("Env precedence:"));
+        assert!(
+            text.stdout
+                .contains("Env: `OTA_TEST_SHARED` (workspace policy, required)")
+        );
 
         let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
         assert_eq!(json.exit_code, 0);

@@ -1,0 +1,19 @@
+🦦 UP ./ota.yaml
+
+➤ READY
+Phase: post-setup diagnosis
+Backend: native
+
+◉ WARN  Ephemeral lifecycle is advisory only in V1
+Why: the contract requests `execution.lifecycle: ephemeral`, but current Ota execution remains shell-native and does not create isolated temporary environments
+Next: treat `ephemeral` as a portability hint for now; do not rely on isolation or automatic cleanup in V1
+
+🦦  UP SUMMARY
+
+Scope:      repo
+Path:       .
+Contract:   ./ota.yaml
+Lifecycle:  ephemeral
+Mode:       native
+Task:       post-setup diagnosis
+Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1

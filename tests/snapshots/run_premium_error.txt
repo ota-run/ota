@@ -1,0 +1,19 @@
+◉ ERROR  Operation failed
+Where: ./ota.yaml
+Why: task `install-from-source` failed with exit code 7
+Task output:
+  » build log
+  » trace line
+
+Next:
+▸  rerun `ota run install-from-source --stream` for live task output if the excerpt is insufficient
+▸  run `ota tasks --use` to inspect runnable task usage
+
+🦦  RUN SUMMARY
+
+Scope:      repo
+Path:       .
+Contract:   ./ota.yaml
+Mode:       native
+Task:       install-from-source
+Note:       running on the host environment
