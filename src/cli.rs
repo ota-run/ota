@@ -308,6 +308,9 @@ enum Commands {
         /// Print inferred fields without writing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
+        /// Preview the exact starter ota.yaml contract without annotations.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "dry_run", "merge", "rewrite", "json"])]
+        contract: bool,
         /// Preview how detected fields would merge into an existing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue)]
         merge: bool,
@@ -1254,6 +1257,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             write,
             dry_run,
+            contract,
             merge,
             apply,
             apply_all,
@@ -1273,6 +1277,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 path.as_deref(),
                 write,
                 dry_run,
+                contract,
                 merge,
                 &apply,
                 apply_all,
@@ -9702,6 +9707,13 @@ edition = "2024"
         assert!(detect_stdout.contains("Next:"));
         assert!(detect_stdout.find("Annotations:").unwrap() < detect_stdout.find("Next:").unwrap());
         assert!(!detect_stdout.contains("\n---\n"));
+
+        let detect_contract = run_with(["ota", "detect", "--contract", detect_fixture.path()]);
+        let detect_contract_stdout = strip_ansi(&detect_contract.stdout);
+        assert_eq!(detect_contract.exit_code, 0);
+        assert!(detect_contract_stdout.contains("DETECT CONTRACT PREVIEW"));
+        assert!(!detect_contract_stdout.contains("Annotations:"));
+        assert!(!detect_contract_stdout.contains("Next:"));
     }
 
     #[test]

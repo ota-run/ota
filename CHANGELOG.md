@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.1.3
+
 - grouped repeated remediation findings across doctor-style text outputs so `doctor`, `check`,
   `up`, and workspace variants collapse obvious repeated actions with shared Ota styling.
 - normalized `finding_groups.action_key` around remediation classes instead of literal `Next:`
@@ -36,6 +38,12 @@
   actionable task changes instead of a raw dotted-path diff dump.
 - retuned the rich-mode `»` child-action accent to a brighter cyan so grouped drift/action items
   stand apart more clearly from their parent bullets.
+- highlighted detect task names in grouped drift blocks with a dedicated yellow code accent so the
+  task being discussed reads as the primary unit of change.
+- added `ota detect --contract` so ota can preview the exact starter contract init would write
+  without annotations or comparison noise.
+- moved detect preview `Next:` guidance to the end of the preview so the contract readout comes
+  first.
 
 ## 1.1.2
 
