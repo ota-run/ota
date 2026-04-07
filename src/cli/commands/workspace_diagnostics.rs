@@ -95,6 +95,7 @@ pub(crate) fn render_workspace_doctor_text(
             ),
             &primary_blocker.why,
             &primary_blocker.next,
+            None,
         ));
     }
     if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {
@@ -220,23 +221,26 @@ pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
     ));
     stdout.push_str("\n\n");
     stdout.push_str(&format!("{}\n", paint_section_title("Overview")));
-    stdout.push_str(&format!(
-        "{} {} {}",
-        summary_bullet(),
-        paint("Errors:", "1;31"),
-        paint(&summary.error_count.to_string(), "1;31")
+    stdout.push_str(&section_list_row(
+        &summary_bullet(),
+        &paint("Errors:", "1;31"),
+        &paint(&summary.error_count.to_string(), "1;31"),
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Warnings:", "1;33"),
-        paint(&summary.warn_count.to_string(), "1;33")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Warnings:", "1;33"),
+            &paint(&summary.warn_count.to_string(), "1;33"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Info:", "1;36"),
-        paint(&summary.info_count.to_string(), "1;36")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Info:", "1;36"),
+            &paint(&summary.info_count.to_string(), "1;36"),
+        )
     ));
     stdout
 }
@@ -258,41 +262,50 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     ));
     stdout.push_str("\n\n");
     stdout.push_str(&format!("{}\n", paint_section_title("Overview")));
-    stdout.push_str(&format!(
-        "{} {} {}",
-        summary_bullet(),
-        paint("Repos:", "1;38;2;102;217;255"),
-        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+    stdout.push_str(&section_list_row(
+        &summary_bullet(),
+        &paint("Repos:", "1;38;2;102;217;255"),
+        &paint(&summary.repo_count.to_string(), "1;38;2;255;255;255"),
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Ready:", "1;38;2;0;255;120"),
-        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Ready:", "1;38;2;0;255;120"),
+            &paint(&summary.ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Not Ready:", "1;38;2;255;235;59"),
-        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Not Ready:", "1;38;2;255;235;59"),
+            &paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Errors:", "1;31"),
-        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Errors:", "1;31"),
+            &paint(&summary.error_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Warnings:", "1;33"),
-        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Warnings:", "1;33"),
+            &paint(&summary.warn_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Info:", "1;36"),
-        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Info:", "1;36"),
+            &paint(&summary.info_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout
 }
@@ -304,46 +317,60 @@ fn render_workspace_explain_summary_text(
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Repos:", "1;38;2;102;217;255"),
-        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Repos:", "1;38;2;102;217;255"),
+            &paint(&summary.repo_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Ready:", "1;38;2;0;255;120"),
-        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Ready:", "1;38;2;0;255;120"),
+            &paint(&summary.ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Not Ready:", "1;38;2;255;235;59"),
-        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Not Ready:", "1;38;2;255;235;59"),
+            &paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Actions:", "1;38;2;102;217;255"),
-        paint(&action_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Actions:", "1;38;2;102;217;255"),
+            &paint(&action_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Errors:", "1;31"),
-        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Errors:", "1;31"),
+            &paint(&summary.error_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Warnings:", "1;33"),
-        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Warnings:", "1;33"),
+            &paint(&summary.warn_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Info:", "1;36"),
-        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Info:", "1;36"),
+            &paint(&summary.info_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout
 }
@@ -371,6 +398,7 @@ pub(crate) fn render_workspace_check_text(
             ),
             &primary_blocker.why,
             &primary_blocker.next,
+            None,
         ));
     }
     if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {

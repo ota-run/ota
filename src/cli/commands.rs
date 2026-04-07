@@ -253,11 +253,16 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         }
         if !next_steps.is_empty() {
             if next_steps.len() == 1 {
-                out.push_str(&format!(
-                    "\n{} {}",
-                    error_next_key("Next:"),
-                    stylize_inline_text(&next_steps[0])
-                ));
+                append_wrapped_labeled_text(
+                    &mut out,
+                    "Next:",
+                    &next_steps[0],
+                    "",
+                    84,
+                    true,
+                    error_next_key,
+                    stylize_inline_text,
+                );
             } else {
                 out.push_str(&format!("\n{}", error_next_key("Next:")));
                 for step in next_steps {
@@ -274,12 +279,30 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
     }
 
     if lines.len() == 1 {
-        out.push_str(&format!("\n{} {}", error_key("Why:"), lines[0]));
+        append_wrapped_labeled_text(
+            &mut out,
+            "Why:",
+            lines[0],
+            "",
+            84,
+            false,
+            error_key,
+            stylize_inline_text,
+        );
         append_summary_block(&mut out, summary_block.as_ref());
         return out;
     }
 
-    out.push_str(&format!("\n{} {}", error_key("Why:"), lines.join(" | ")));
+    append_wrapped_labeled_text(
+        &mut out,
+        "Why:",
+        &lines.join(" | "),
+        "",
+        84,
+        false,
+        error_key,
+        stylize_inline_text,
+    );
     append_summary_block(&mut out, summary_block.as_ref());
     out
 }
@@ -7654,12 +7677,15 @@ fn render_detect_task_drift_concise(stdout: &mut String, task_removals: &[Detect
         .map(DetectTaskDriftSummary::total_removals)
         .sum::<usize>();
     stdout.push_str(&format!(
-        "\n\n{}  Review task drift ({} {} across {} {})",
+        "\n\n{}  Review task drift {}",
         render_severity(FindingSeverity::Warn),
-        removal_count,
-        pluralize(removal_count, "removal"),
-        task_removals.len(),
-        pluralize(task_removals.len(), "task")
+        paint_group_meta(&format!(
+            "({} {} across {} {})",
+            removal_count,
+            pluralize(removal_count, "removal"),
+            task_removals.len(),
+            pluralize(task_removals.len(), "task")
+        ))
     ));
     for task in task_removals {
         stdout.push_str(&format!(
@@ -7691,19 +7717,27 @@ fn render_detect_task_drift_group(
         .map(|task| task.removals_for(kind).len())
         .sum::<usize>();
     stdout.push_str(&format!(
-        "\n\n{}  {} ({} {} across {} {})",
+        "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
         title,
-        removal_count,
-        pluralize(removal_count, "removal"),
-        scoped_tasks.len(),
-        pluralize(scoped_tasks.len(), "task")
+        paint_group_meta(&format!(
+            "({} {} across {} {})",
+            removal_count,
+            pluralize(removal_count, "removal"),
+            scoped_tasks.len(),
+            pluralize(scoped_tasks.len(), "task")
+        ))
     ));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint_key("Why:"),
-        stylize_inline_text(why)
-    ));
+    append_wrapped_labeled_text(
+        stdout,
+        "Why:",
+        why,
+        "",
+        84,
+        false,
+        paint_key,
+        stylize_inline_text,
+    );
 
     for task in scoped_tasks {
         stdout.push_str(&format!(
@@ -7737,19 +7771,27 @@ fn render_detect_named_drift_group(
 
     let removal_count = detect_named_drift_count(entries);
     stdout.push_str(&format!(
-        "\n\n{}  {} ({} {} across {} {})",
+        "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
         title,
-        removal_count,
-        pluralize(removal_count, "removal"),
-        entries.len(),
-        pluralize(entries.len(), kind.scope_singular())
+        paint_group_meta(&format!(
+            "({} {} across {} {})",
+            removal_count,
+            pluralize(removal_count, "removal"),
+            entries.len(),
+            pluralize(entries.len(), kind.scope_singular())
+        ))
     ));
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint_key("Why:"),
-        stylize_inline_text(why)
-    ));
+    append_wrapped_labeled_text(
+        stdout,
+        "Why:",
+        why,
+        "",
+        84,
+        false,
+        paint_key,
+        stylize_inline_text,
+    );
 
     for entry in entries {
         stdout.push_str(&format!(
@@ -7775,13 +7817,16 @@ fn render_detect_named_drift_concise_group(
 
     let removal_count = detect_named_drift_count(entries);
     stdout.push_str(&format!(
-        "\n\n{}  {} ({} {} across {} {})",
+        "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
         title,
-        removal_count,
-        pluralize(removal_count, "removal"),
-        entries.len(),
-        pluralize(entries.len(), kind.scope_singular())
+        paint_group_meta(&format!(
+            "({} {} across {} {})",
+            removal_count,
+            pluralize(removal_count, "removal"),
+            entries.len(),
+            pluralize(entries.len(), kind.scope_singular())
+        ))
     ));
     for entry in entries {
         stdout.push_str(&format!(
@@ -7817,12 +7862,21 @@ fn render_detect_command_removal(command: &str) -> String {
 }
 
 fn render_detect_field_removal(action: &str, value: &str) -> String {
-    format!(
-        "\n  {} {} {}",
-        summary_bullet(),
-        paint_muted_action(action),
-        paint_backticked_code(value)
-    )
+    let wrapped = wrap_display_tokens_for_terminal(value, 72, 22);
+    if wrapped.len() <= 1 {
+        return format!(
+            "\n  {} {} {}",
+            summary_bullet(),
+            paint_muted_action(action),
+            paint_backticked_code(value)
+        );
+    }
+
+    let mut out = format!("\n  {} {}", summary_bullet(), paint_muted_action(action));
+    for line in wrapped {
+        out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
+    }
+    out
 }
 
 fn detect_task_removal_entries(
@@ -8115,7 +8169,7 @@ fn detect_task_sort_key(task_name: &str) -> (usize, String) {
 }
 
 fn wrap_display_tokens(value: &str, max_width: usize) -> Vec<String> {
-    let tokens = value.split_whitespace().collect::<Vec<_>>();
+    let tokens = display_wrap_tokens(value);
     if tokens.is_empty() {
         return vec![String::new()];
     }
@@ -8124,21 +8178,50 @@ fn wrap_display_tokens(value: &str, max_width: usize) -> Vec<String> {
     let mut current = String::new();
     for token in tokens {
         if current.is_empty() {
-            current.push_str(token);
+            current.push_str(&token);
             continue;
         }
         if current.len() + 1 + token.len() <= max_width {
             current.push(' ');
-            current.push_str(token);
+            current.push_str(&token);
         } else {
             lines.push(current);
-            current = token.to_string();
+            current = token;
         }
     }
     if !current.is_empty() {
         lines.push(current);
     }
     lines
+}
+
+fn display_wrap_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_backticks = false;
+
+    for ch in value.chars() {
+        if ch == '`' {
+            current.push(ch);
+            in_backticks = !in_backticks;
+            continue;
+        }
+
+        if ch.is_whitespace() && !in_backticks {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 fn wrap_display_tokens_for_terminal(
@@ -8157,6 +8240,43 @@ fn display_wrap_width(fallback_max_width: usize, reserve: usize) -> usize {
         .map(|value| value.saturating_sub(reserve))
         .unwrap_or(fallback_max_width);
     terminal_width.clamp(24, fallback_max_width)
+}
+
+fn append_wrapped_labeled_text<F, K>(
+    output: &mut String,
+    label: &str,
+    value: &str,
+    indent: &str,
+    fallback_max_width: usize,
+    block_when_wrapped: bool,
+    render_key: K,
+    render_value: F,
+) where
+    F: Fn(&str) -> String,
+    K: Fn(&str) -> String,
+{
+    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 18);
+    if wrapped.is_empty() {
+        output.push_str(&format!("\n{indent}{} -", render_key(label)));
+        return;
+    }
+
+    if block_when_wrapped && wrapped.len() > 1 {
+        output.push_str(&format!("\n{indent}{}", render_key(label)));
+        for line in &wrapped {
+            output.push_str(&format!("\n{indent}  {}", render_value(line)));
+        }
+        return;
+    }
+
+    output.push_str(&format!(
+        "\n{indent}{} {}",
+        render_key(label),
+        render_value(&wrapped[0])
+    ));
+    for line in wrapped.iter().skip(1) {
+        output.push_str(&format!("\n{indent}  {}", render_value(line)));
+    }
 }
 
 fn append_wrapped_detail<F>(
@@ -8183,6 +8303,84 @@ fn append_wrapped_detail<F>(
     for line in wrapped.iter().skip(1) {
         output.push_str(&format!("\n{indent}  {}", render_value(line)));
     }
+}
+
+fn append_wrapped_bullet_text<F>(
+    output: &mut String,
+    bullet: String,
+    value: &str,
+    indent: &str,
+    fallback_max_width: usize,
+    render_value: F,
+) where
+    F: Fn(&str) -> String,
+{
+    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 6);
+    if wrapped.is_empty() {
+        output.push_str(&format!("\n{indent}{bullet} -"));
+        return;
+    }
+
+    output.push_str(&format!("\n{indent}{bullet} {}", render_value(&wrapped[0])));
+    for line in wrapped.iter().skip(1) {
+        output.push_str(&format!("\n{indent}  {}", render_value(line)));
+    }
+}
+
+pub(crate) fn section_list_row(bullet: &str, label: &str, value: &str) -> String {
+    format!(" {}  {} {}", bullet, label, value)
+}
+
+fn append_explain_next_text(
+    output: &mut String,
+    value: &str,
+    indent: &str,
+    fallback_max_width: usize,
+    contract_path: &Path,
+) {
+    let compact = compact_backticked_paths(value);
+    if let Some(lines) = explain_next_lines(&compact, indent, fallback_max_width) {
+        output.push_str(&format!("\n{indent}{}", explain_next_key()));
+        for line in lines {
+            output.push_str(&format!(
+                "\n{indent}  {}",
+                render_backticked_text(&line, Some(contract_path))
+            ));
+        }
+        return;
+    }
+
+    append_wrapped_labeled_text(
+        output,
+        "Next:",
+        &compact,
+        indent,
+        fallback_max_width,
+        true,
+        |_| explain_next_key(),
+        |rendered| render_backticked_text(rendered, Some(contract_path)),
+    );
+}
+
+fn explain_next_lines(value: &str, indent: &str, fallback_max_width: usize) -> Option<Vec<String>> {
+    let command = explicit_run_command(value)?;
+    let prefix = format!("run `{command}`");
+    if !value.starts_with(&prefix) {
+        return None;
+    }
+
+    let remainder = value[prefix.len()..].trim();
+    if remainder.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![prefix];
+    lines.extend(wrap_display_tokens_for_terminal(
+        remainder,
+        fallback_max_width,
+        indent.len() + 8,
+    ));
+    Some(lines)
 }
 
 fn render_detect_change_section(
@@ -9683,7 +9881,8 @@ fn render_report_section(
             primary_blocker.severity,
             &primary_blocker.summary,
             &primary_blocker.why,
-            &render_backticked_text(&primary_blocker.next, contract_path),
+            &primary_blocker.next,
+            contract_path,
         ));
     }
     if command == "DOCTOR" && report.ok && report.findings.is_empty() {
@@ -9724,7 +9923,6 @@ fn render_report_section(
     for group in grouped_findings {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
-            let next = render_backticked_text(&finding.next, contract_path);
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -9739,26 +9937,49 @@ fn render_report_section(
             if concise_mode() {
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
-                    "{}  {}{}\n{} {}",
+                    "{}  {}{}",
                     render_severity(finding.severity),
                     render_finding_summary(finding.severity, &finding.summary),
                     source_block,
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
                 ));
+                append_wrapped_labeled_text(
+                    &mut stdout,
+                    "Next:",
+                    &finding.next,
+                    "",
+                    84,
+                    true,
+                    |key| finding_detail_key(finding.severity, key),
+                    |value| render_backticked_text(value, contract_path),
+                );
             } else {
-                let why = render_backticked_text(&finding.why, contract_path);
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
-                    "{}  {}\n{} {}{}\n{} {}",
+                    "{}  {}{}",
                     render_severity(finding.severity),
                     render_finding_summary(finding.severity, &finding.summary),
-                    finding_detail_key(finding.severity, "Why:"),
-                    why,
                     source_block,
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
                 ));
+                append_wrapped_labeled_text(
+                    &mut stdout,
+                    "Why:",
+                    &finding.why,
+                    "",
+                    84,
+                    false,
+                    |key| finding_detail_key(finding.severity, key),
+                    |value| render_backticked_text(value, contract_path),
+                );
+                append_wrapped_labeled_text(
+                    &mut stdout,
+                    "Next:",
+                    &finding.next,
+                    "",
+                    84,
+                    true,
+                    |key| finding_detail_key(finding.severity, key),
+                    |value| render_backticked_text(value, contract_path),
+                );
             }
             continue;
         }
@@ -9817,6 +10038,7 @@ fn render_primary_finding_text(
     summary: &str,
     why: &str,
     next: &str,
+    contract_path: Option<&Path>,
 ) -> String {
     let mut stdout = String::new();
     let (marker, title_color, title) = match severity {
@@ -9840,17 +10062,27 @@ fn render_primary_finding_text(
     stdout.push('\n');
     stdout.push_str(&paint(summary, "1"));
     if !concise_mode() {
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Why:"),
-            compact_backticked_paths(why)
-        ));
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Why:",
+            why,
+            "",
+            84,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, contract_path),
+        );
     }
-    stdout.push_str(&format!(
-        "\n{} {}",
-        paint_key("Next:"),
-        compact_backticked_paths(next)
-    ));
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Next:",
+        next,
+        "",
+        84,
+        true,
+        paint_key,
+        |value| render_backticked_text(value, contract_path),
+    );
     stdout
 }
 
@@ -10089,20 +10321,27 @@ fn render_grouped_doctor_findings(
     let display_items = doctor_finding_group_display_items(group);
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!(
-        "{}  {} ({})",
+        "{}  {} {}",
         render_severity(group.severity),
         doctor_finding_group_title(&group.kind, &group.findings),
-        display_items.len()
+        paint_group_meta(&format!("({})", display_items.len()))
     ));
     if !concise_mode() {
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Why:"),
-            doctor_finding_group_why(&group.kind, &group.findings)
-        ));
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Why:",
+            &doctor_finding_group_why(&group.kind, &group.findings),
+            "",
+            84,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, contract_path),
+        );
     }
     for item in display_items {
-        stdout.push_str(&format!("\n  {} {}", summary_bullet(), item));
+        append_wrapped_bullet_text(&mut stdout, summary_bullet(), &item, "  ", 84, |value| {
+            render_backticked_text(value, contract_path)
+        });
     }
     if let Some(source) = group
         .findings
@@ -10115,14 +10354,16 @@ fn render_grouped_doctor_findings(
             source
         ));
     }
-    stdout.push_str(&format!(
-        "\n{} {}",
-        finding_detail_key(group.severity, "Next:"),
-        render_backticked_text(
-            &doctor_finding_group_next(&group.kind, &group.findings),
-            contract_path
-        )
-    ));
+    append_wrapped_labeled_text(
+        &mut stdout,
+        "Next:",
+        &doctor_finding_group_next(&group.kind, &group.findings),
+        "",
+        84,
+        true,
+        |key| finding_detail_key(group.severity, key),
+        |value| render_backticked_text(value, contract_path),
+    );
     stdout
 }
 
@@ -10378,43 +10619,46 @@ fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> Stri
             stdout.push('\n');
         }
         stdout.push_str(&format!(
-            " {}. {} ({})",
+            " {}. {} {}",
             index + 1,
             render_finding_summary(group.severity, &explain_group_title(group)),
-            finding_count
+            paint_group_meta(&format!("({finding_count})"))
         ));
         if !concise_mode() {
-            stdout.push_str(&format!(
-                "\n  {} {}",
-                explain_why_key(),
-                render_backticked_text(&explain_group_why(group), Some(contract_path))
-            ));
+            append_wrapped_labeled_text(
+                &mut stdout,
+                "Why:",
+                &explain_group_why(group),
+                "  ",
+                84,
+                false,
+                |_| explain_why_key(),
+                |value| render_backticked_text(value, Some(contract_path)),
+            );
         }
         if render_items {
             for finding in &group.findings {
-                stdout.push_str(&format!(
-                    "\n  {} {}",
+                append_wrapped_bullet_text(
+                    &mut stdout,
                     summary_bullet(),
-                    explain_group_item_text(group, finding)
-                ));
+                    &explain_group_item_text(group, finding),
+                    "  ",
+                    84,
+                    |value| render_backticked_text(value, Some(contract_path)),
+                );
                 if per_finding_next {
-                    stdout.push_str(&format!(
-                        "\n    {} {}",
-                        explain_next_key(),
-                        render_backticked_text(
-                            &compact_backticked_paths(&finding.next),
-                            Some(contract_path)
-                        )
-                    ));
+                    append_explain_next_text(&mut stdout, &finding.next, "    ", 84, contract_path);
                 }
             }
         }
         if !per_finding_next {
-            stdout.push_str(&format!(
-                "\n  {} {}",
-                explain_next_key(),
-                render_backticked_text(&explain_group_next(group), Some(contract_path))
-            ));
+            append_explain_next_text(
+                &mut stdout,
+                &explain_group_next(group),
+                "  ",
+                84,
+                contract_path,
+            );
         }
     }
 
@@ -10425,34 +10669,44 @@ fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) ->
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Findings:", "1;38;2;102;217;255"),
-        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Findings:", "1;38;2;102;217;255"),
+            &paint(&summary.step_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Actions:", "1;38;2;102;217;255"),
-        paint(&action_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Actions:", "1;38;2;102;217;255"),
+            &paint(&action_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Errors:", "1;31"),
-        paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Errors:", "1;31"),
+            &paint(&summary.error_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Warnings:", "1;33"),
-        paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Warnings:", "1;33"),
+            &paint(&summary.warn_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Info:", "1;36"),
-        paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Info:", "1;36"),
+            &paint(&summary.info_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout
 }
@@ -10659,36 +10913,32 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
 fn render_doctor_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     let mut lines = vec![paint_section_title("Execution")];
     if let Some(preferred) = execution.preferred {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Preferred:"),
-            paint_backticked_code(preferred)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Preferred:"),
+            &paint_backticked_code(preferred),
         ));
     }
     if !execution.supported.is_empty() {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Supported:"),
-            render_inline_code_list(&execution.supported)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Supported:"),
+            &render_inline_code_list(&execution.supported),
         ));
     }
     if let Some(lifecycle) = execution.lifecycle {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Lifecycle:"),
-            paint_backticked_code(lifecycle)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Lifecycle:"),
+            &paint_backticked_code(lifecycle),
         ));
     }
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
-            lines.push(format!(
-                " {}  {} {}",
-                summary_bullet(),
-                paint_key("Container:"),
-                paint_backticked_code(container.image)
+            lines.push(section_list_row(
+                &summary_bullet(),
+                &paint_key("Container:"),
+                &paint_backticked_code(container.image),
             ));
         }
         if let Some(remote) = backends.remote.as_ref() {
@@ -10711,19 +10961,18 @@ fn render_doctor_execution_summary_text(execution: &ExecutionSummary<'_>) -> Str
                     paint_backticked_code(cwd)
                 ));
             }
-            lines.push(format!(
-                " {}  {} {}",
-                summary_bullet(),
-                paint_key("Remote:"),
-                details.join(" ")
+            lines.push(section_list_row(
+                &summary_bullet(),
+                &paint_key("Remote:"),
+                &details.join(" "),
             ));
         }
     }
     if !execution.env.is_empty() {
-        lines.push(format!(
-            " {}  {} policy > process > contract default > required missing",
-            summary_bullet(),
-            paint_key("Env precedence:")
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Env precedence:"),
+            "policy > process > contract default > required missing",
         ));
         for item in &execution.env {
             let mut details = Vec::new();
@@ -10746,12 +10995,14 @@ fn render_doctor_execution_summary_text(execution: &ExecutionSummary<'_>) -> Str
             if !item.allowed.is_empty() {
                 details.push(format!("allowed={}", item.allowed.join(", ")));
             }
-            lines.push(format!(
-                " {}  {} {} ({})",
-                summary_bullet(),
-                paint_key("Env:"),
-                paint_backticked_code(item.name),
-                details.join(", ")
+            lines.push(section_list_row(
+                &summary_bullet(),
+                &paint_key("Env:"),
+                &format!(
+                    "{} ({})",
+                    paint_backticked_code(item.name),
+                    details.join(", ")
+                ),
             ));
         }
     }
@@ -10770,51 +11021,45 @@ fn render_doctor_agent_summary_text(
     let mut lines = Vec::new();
     lines.push(paint_section_title("Agent"));
     if let Some(entrypoint) = agent.entrypoint {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Entrypoint:"),
-            paint_backticked_code(entrypoint)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Entrypoint:"),
+            &paint_backticked_code(entrypoint),
         ));
     }
     if let Some(default_task) = agent.default_task {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Default task:"),
-            paint_backticked_code(default_task)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Default task:"),
+            &paint_backticked_code(default_task),
         ));
     }
     if !agent.safe_tasks.is_empty() {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Safe tasks:"),
-            render_inline_code_list(agent.safe_tasks)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Safe tasks:"),
+            &render_inline_code_list(agent.safe_tasks),
         ));
     }
     if !agent.verify_after_changes.is_empty() {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Verify after changes:"),
-            render_inline_code_list(agent.verify_after_changes)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Verify after changes:"),
+            &render_inline_code_list(agent.verify_after_changes),
         ));
     }
     if !agent.writable_paths.is_empty() {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Writable paths:"),
-            render_inline_code_list(agent.writable_paths)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Writable paths:"),
+            &render_inline_code_list(agent.writable_paths),
         ));
     }
     if !agent.protected_paths.is_empty() {
-        lines.push(format!(
-            " {}  {} {}",
-            summary_bullet(),
-            paint_key("Protected paths:"),
-            render_inline_code_list(agent.protected_paths)
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Protected paths:"),
+            &render_inline_code_list(agent.protected_paths),
         ));
     }
     if agent
@@ -10823,10 +11068,10 @@ fn render_doctor_agent_summary_text(
         .and_then(|bootstrap| bootstrap.ota.as_ref())
         .is_some()
     {
-        lines.push(format!(
-            " {}  {} ota install commands available",
-            summary_bullet(),
-            paint_key("Bootstrap:")
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Bootstrap:"),
+            "ota install commands available",
         ));
     }
     if include_notes && let Some(notes) = agent.notes {
@@ -11576,11 +11821,11 @@ mod tests {
         ));
         assert!(text.contains("Review task command drift (6 removals across 4 tasks)"));
         assert!(text.contains("Review task agent-safety drift (2 removals across 2 tasks)"));
+        assert!(text.contains("Why: Current repo signals no longer support the commands below."));
+        assert!(text.contains("ota detect --merge"));
+        assert!(text.contains("stale entries"));
         assert!(text.contains(
-            "Why: Current repo signals no longer support the commands below. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
-        ));
-        assert!(text.contains(
-            "Why: Current repo signals no longer support the `safe_for_agent` entries below. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
+            "Why: Current repo signals no longer support the `safe_for_agent` entries below."
         ));
         assert!(text.contains("Review runtime drift (1 removal across 1 runtime)"));
         assert!(text.contains("Review tool drift (1 removal across 1 tool)"));
@@ -11680,8 +11925,10 @@ mod tests {
         let text = strip_ansi_codes(&stdout);
 
         assert!(text.contains(
-            "Why: Current repo signals no longer support the commands below in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries."
+            "Why: Current repo signals no longer support the commands below in the existing contract."
         ));
+        assert!(text.contains("ota detect --merge"));
+        assert!(text.contains("review rewrite"));
         assert!(text.contains("no additive changes detected against the existing contract"));
         assert!(!text.contains("Applying detect merge would remove"));
     }
@@ -11741,13 +11988,19 @@ mod tests {
         assert!(text.contains("Plan"));
         assert!(text.contains("1. Fix version mismatches (2)"));
         assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
-        assert!(text.contains("Next: run `sdk install java 21` and rerun `ota doctor`"));
+        assert!(
+            text.contains("Next:\n      run `sdk install java 21`\n      and rerun `ota doctor`")
+        );
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
-        assert!(text.contains("Next: run `brew install node@22` and rerun `ota doctor`"));
+        assert!(
+            text.contains("Next:\n      run `brew install node@22`\n      and rerun `ota doctor`")
+        );
         assert!(text.contains("2. Review contract drift (2)"));
         assert!(text.contains("» `tools.node` is no longer detected"));
-        assert!(text.contains("Next: run `ota detect --merge --dry-run"));
-        assert!(text.contains("then `ota detect --merge"));
+        assert!(text.contains("Next:"));
+        assert!(text.contains("ota detect --merge --dry-run"));
+        assert!(text.contains("to review the comparison, then"));
+        assert!(text.contains("ota detect --merge"));
         assert!(text.contains("3. Review approved policy surfaces (1)"));
         assert!(!text.contains("Code:"));
         assert!(!text.contains("Provenance:"));
@@ -15137,7 +15390,7 @@ fn paint_why_key() -> String {
     if plain_mode() {
         return String::from("Why:");
     }
-    paint("Why:", "38;2;137;164;179")
+    paint("Why:", "1;38;2;164;188;201")
 }
 
 fn paint_next_key() -> String {
@@ -15271,6 +15524,13 @@ fn paint_muted_action(value: &str) -> String {
     paint(value, "38;2;164;176;190")
 }
 
+fn paint_group_meta(value: &str) -> String {
+    if plain_mode() {
+        return value.to_string();
+    }
+    paint(value, "38;2;132;148;160")
+}
+
 fn paint_ota_command_code(value: &str) -> String {
     let mut out = Vec::new();
     let mut command_zone = true;
@@ -15316,7 +15576,7 @@ fn next_bullet() -> String {
 }
 
 fn paint_section_title(value: &str) -> String {
-    paint(value, "1;34")
+    paint(value, "1;38;2;94;168;214")
 }
 
 fn summary_bullet() -> String {
