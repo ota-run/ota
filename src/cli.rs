@@ -132,6 +132,9 @@ enum Commands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
+        /// Stream raw child process output live instead of buffering it into the final report.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -1126,6 +1129,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             lifecycle,
             ephemeral,
             receipt,
+            stream,
             member,
             path,
             inputs,
@@ -1145,6 +1149,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             &inputs,
             debug,
             receipt,
+            stream,
         ),
         Commands::Doctor { json, member, path } => commands::doctor(
             path.as_deref(),
@@ -2615,8 +2620,8 @@ project:
         assert!(output.stderr.is_none());
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("EXPLAIN"));
-        assert!(stdout.contains("SUMMARY"));
-        assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Plan"));
         assert!(stdout.contains("Code:"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(stdout.contains("Why:"));
@@ -4912,6 +4917,68 @@ tasks:
     }
 
     #[test]
+    fn run_non_interactive_failure_shows_output_excerpt_and_stream_hint() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fail:
+    script: |
+      i=1
+      while [ "$i" -le 24 ]; do
+        printf 'line-%02d\n' "$i"
+        i=$((i + 1))
+      done
+      exit 7
+"#,
+        );
+
+        let output = run_with(["ota", "run", "fail", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task output:"));
+        assert!(stderr.contains("showing last 20 of 24 lines"));
+        assert!(stderr.contains("line-24"));
+        assert!(!stderr.contains("line-01"));
+        assert!(stderr.contains("ota run fail --stream"));
+        assert!(stderr.contains("run `ota tasks --use` to inspect runnable task usage"));
+        assert!(stderr.contains("RUN SUMMARY"));
+    }
+
+    #[test]
+    fn run_non_interactive_success_shows_captured_output_excerpt() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    script: |
+      i=1
+      while [ "$i" -le 15 ]; do
+        printf 'line-%02d\n' "$i"
+        i=$((i + 1))
+      done
+"#,
+        );
+
+        let output = run_with(["ota", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task output:"));
+        assert!(stderr.contains("showing last 12 of 15 lines"));
+        assert!(stderr.contains("line-15"));
+        assert!(!stderr.contains("line-01"));
+        assert!(stderr.contains("ota run setup --stream"));
+        assert!(stderr.contains("RUN SUMMARY"));
+    }
+
+    #[test]
     fn collapse_blank_lines_reduces_consecutive_empty_lines() {
         let input = "a\n\n\nb\n\n\n\nc\n";
         let output = collapse_blank_lines(input.to_string());
@@ -5071,6 +5138,8 @@ project:
         assert!(stdout.contains("VALIDATE"));
         assert!(stdout.contains("VALID"));
         assert!(stdout.contains("VALIDATE ./ota.yaml"));
+        assert!(stdout.contains("run `ota doctor` to inspect readiness"));
+        assert!(stdout.contains("run `ota tasks --use` to inspect runnable task usage"));
     }
 
     #[test]
@@ -5901,11 +5970,14 @@ agent:
         let output = run_with(["ota", "tasks", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(
-            output.stdout.contains(
-                "AGENT:\n  entrypoint: setup\n  safe_tasks: setup\n  writable_paths: src"
-            )
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Agent"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Safe tasks: `setup`"));
+        assert!(stdout.contains("Writable paths: `src`"));
+        assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Tasks: 1"));
+        assert!(stdout.contains("Agent-safe: 0"));
     }
 
     #[test]
@@ -6481,11 +6553,10 @@ agent:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(
-            output
-                .stdout
-                .contains("AGENT:\n  entrypoint: setup\n  safe_tasks: setup")
-        );
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Agent"));
+        assert!(stdout.contains("Entrypoint: `setup`"));
+        assert!(stdout.contains("Safe tasks: `setup`"));
     }
 
     #[test]
@@ -6520,8 +6591,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution"));
-        assert!(stdout.contains("Preferred: remote"));
-        assert!(stdout.contains("Remote Provider: ssh"));
+        assert!(stdout.contains("Preferred: `remote`"));
+        assert!(stdout.contains("Remote:"));
+        assert!(stdout.contains("provider `ssh`"));
         assert!(stdout.contains("Extensions:"));
         assert!(stdout.contains("demo"));
         assert!(stdout.contains("Kind: backend_provider"));
@@ -6566,11 +6638,12 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Env precedence:"));
-        assert!(stdout.contains("policy env > process env > contract default > required missing"));
-        assert!(stdout.contains("Env:"));
+        assert!(stdout.contains(
+            "Env: `OTA_TEST_BASE_URL` (policy, required, default=http://localhost:8080)"
+        ));
+        assert!(stdout.contains("policy > process > contract default > required missing"));
         assert!(stdout.contains("OTA_TEST_BASE_URL"));
         assert!(stdout.contains("required, default=http://localhost:8080"));
-        assert!(stdout.contains("Source: policy"));
     }
 
     #[test]
@@ -7689,7 +7762,8 @@ tasks:
         let output = run_with(["ota", "doctor", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("READY"));
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
     }
 
     #[test]
@@ -7830,6 +7904,43 @@ tasks:
         assert!(stdout.contains("CHECK"));
         assert!(stdout.contains("WARN  Check failed: health-check"));
         assert!(!stdout.contains("Missing environment variable"));
+    }
+
+    #[test]
+    fn check_ready_text_surfaces_next_actions_and_compact_execution_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  supported:
+    - native
+    - container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("CHECK"));
+        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota up"));
+        assert!(stdout.contains("ota tasks --use"));
+        assert!(stdout.contains("Preferred: `container`"));
+        assert!(stdout.contains("Supported: `native`, `container`"));
+        assert!(stdout.contains("Lifecycle: `ephemeral`"));
+        assert!(stdout.contains("Container: `rust:1.94-bookworm`"));
     }
 
     #[test]
@@ -8609,8 +8720,13 @@ tasks:
         assert!(stdout.contains("project.name: would update `existing` -> `ota-web`"));
         assert!(stdout.contains("tools.pnpm: would update `9` -> `10.1.0`"));
         assert!(stdout.contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`"));
-        assert!(stdout.contains("ota detect --write"));
-        assert!(stdout.contains("ota detect --write"));
+        assert!(stdout.contains("ota detect --merge --dry-run"));
+        assert!(!stdout.contains("ota detect --write"));
+        let comparison = stdout
+            .find("Existing contract comparison:")
+            .expect("comparison section");
+        let contract = stdout.find("Contract:").expect("contract section");
+        assert!(comparison < contract);
     }
 
     #[test]
@@ -8680,6 +8796,44 @@ tasks:
             "tasks.build.run"
         );
         assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn detect_dry_run_existing_contract_with_drift_points_to_merge_and_rewrite_review() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Existing contract drift:"));
+        assert!(stdout.contains("ota detect --merge --dry-run"));
+        assert!(stdout.contains("ota detect --rewrite --dry-run"));
+        assert!(!stdout.contains("ota detect --write"));
+        let drift = stdout
+            .find("Existing contract drift:")
+            .expect("drift section");
+        let contract = stdout.find("Contract:").expect("contract section");
+        assert!(drift < contract);
     }
 
     #[test]
@@ -8811,6 +8965,36 @@ project:
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("name: existing"));
         assert!(!written.contains("name: ota-web"));
+    }
+
+    #[test]
+    fn detect_merge_dry_run_marks_stale_drift_as_review_only() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0"
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(
+            "`ota detect --merge` is additive-only and will not remove these stale entries"
+        ));
+        assert!(stdout.contains("ota detect --rewrite --dry-run"));
+        assert!(!stdout.contains("Applying detect merge would remove"));
     }
 
     #[test]

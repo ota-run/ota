@@ -1030,10 +1030,11 @@ agent:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(stdout.contains("TASKS"));
-    assert!(stdout.contains("AGENT:"));
-    assert!(stdout.contains("  entrypoint: setup"));
-    assert!(stdout.contains("  safe_tasks: setup"));
-    assert!(stdout.contains("  writable_paths: src"));
+    assert!(stdout.contains("Agent"));
+    assert!(stdout.contains("Entrypoint: `setup`"));
+    assert!(stdout.contains("Safe tasks: `setup`"));
+    assert!(stdout.contains("Writable paths: `src`"));
+    assert!(stdout.contains("Overview"));
 }
 
 #[test]

@@ -348,7 +348,7 @@ Use `--lifecycle` when you need to override container reuse for one invocation:
 
 ```bash
 ota run test --mode container --lifecycle persistent
-ota run test --mode container --lifecycle ephemeral
+ota run test --mode container --ephemeral
 ```
 
 Use `ota tasks --use` to see the exact runnable task commands for the current contract:

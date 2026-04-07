@@ -206,7 +206,7 @@ Current behavior:
 
 Text output:
 
-- success: `VALID <path>`
+- success: `VALID <path>` followed by next-step guidance into `ota doctor` and `ota tasks --use`
 - failure: validation or load error text
 
 JSON output:
@@ -340,15 +340,15 @@ Current behavior:
 - diagnoses the contract first
 - turns each finding into an ordered remediation step
 - stays read-only and deterministic
-- prints a summary with step counts at the end
+- prints a compact overview with step counts at the end
 
 Text output:
 
-- ordered remediation steps
+- `Plan` section with ordered remediation steps
 - stable finding code for each step
 - `Why` and `Next` lines for each step
 - provenance lines when the finding carries policy or drift provenance
-- summary counts at the end
+- `Overview` counts at the end
 
 JSON output:
 
@@ -441,6 +441,7 @@ Run a validated task.
 
 ```bash
 ota run <task> [PATH]
+ota run <task> --stream [PATH]
 ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
 ota run <task> --mode native [PATH]
@@ -462,7 +463,11 @@ Current behavior:
 - `allowed` limits the accepted values for that input
 - task inputs only apply to the task you invoked, not its dependencies
 - if every declared input has a default, you can omit all input flags
+- by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
+- `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, target, and task
+- on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
+- on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
 - on success, text output includes the compact `RUN SUMMARY` block with the selected mode, target, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
@@ -507,8 +512,8 @@ ota run version:bump --version major
 - passes `execution.backends.remote.cwd` to the provider CLI when set
 - runs in the effective target contract directory
 - applies configured environment values, approved policy env values, and task input env variables
-- prints task progress and advisory notes on stderr
-- prints a summary in text output, and emits an execution receipt on stderr after task output
+- prints task progress and advisory notes on stderr when output is streaming
+- prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
 - execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
@@ -943,7 +948,8 @@ Dry-run behavior:
 - prints a candidate `ota.yaml`
 - prints per-field provenance
 - prints per-field confidence
-- when `ota.yaml` already exists, prints a non-destructive comparison preview for detected fields
+- when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
+- when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
 - does not write anything
 
 Contract preview behavior:
@@ -965,6 +971,10 @@ Current merge-preview behavior:
 - it requires an existing `ota.yaml`
 - it does not write
 - it reuses the comparison preview instead of applying changes, including stale contract fields that no longer match repo reality
+- task drift in text output is grouped by task name instead of raw dotted paths
+- when both kinds are present, task drift splits command removals from `safe_for_agent` removals
+- task drift text starts with a compact summary showing affected task count and removal counts by kind
+- with `--concise`, task drift collapses to one line per affected task with removal counts instead of listing every command
 - there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run`, and operator-facing trust/readiness drift stays on `ota doctor`
 
 Current merge-write behavior:
