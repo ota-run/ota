@@ -55,6 +55,8 @@ pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub summary: DoctorSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub finding_groups: Vec<DoctorFindingGroupSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,6 +77,8 @@ pub struct WorkspaceDoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub summary: WorkspaceDoctorSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub finding_groups: Vec<DoctorFindingGroupSummary>,
     pub repos: &'a [WorkspaceRepoDoctorReport],
 }
 
@@ -106,6 +110,14 @@ pub struct DoctorPrimaryBlocker {
     pub summary: String,
     pub why: String,
     pub next: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct DoctorFindingGroupSummary {
+    pub action_key: String,
+    pub action_title: String,
+    pub action_next: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
