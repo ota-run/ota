@@ -254,12 +254,12 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         if !next_steps.is_empty() {
             if next_steps.len() == 1 {
                 out.push_str(&format!(
-                    "\n\n{} {}",
+                    "\n{} {}",
                     error_next_key("Next:"),
                     stylize_inline_text(&next_steps[0])
                 ));
             } else {
-                out.push_str(&format!("\n\n{}", error_next_key("Next:")));
+                out.push_str(&format!("\n{}", error_next_key("Next:")));
                 for step in next_steps {
                     out.push_str(&format!(
                         "\n{}  {}",
@@ -8707,7 +8707,7 @@ enum DoctorFindingGroupKind {
 }
 
 struct DoctorFindingGroup<'a> {
-    group_key: String,
+    action_key: String,
     kind: DoctorFindingGroupKind,
     severity: FindingSeverity,
     findings: Vec<&'a Finding>,
@@ -8721,19 +8721,22 @@ where
 
     for finding in findings {
         let kind = doctor_finding_group_kind(finding);
-        let group_key = compact_backticked_paths(&finding.next);
-        if let Some(group) = groups.iter_mut().find(|group| group.group_key == group_key) {
+        let action_key = doctor_finding_group_key(finding);
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.action_key == action_key)
+        {
             group.severity = group.severity.max(finding.severity);
             if !matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.kind != kind
             {
-                group.kind = DoctorFindingGroupKind::SharedAction(group_key.clone());
+                group.kind = DoctorFindingGroupKind::SharedAction(action_key.clone());
             }
             group.findings.push(finding);
             continue;
         }
 
         groups.push(DoctorFindingGroup {
-            group_key,
+            action_key,
             kind,
             severity: finding.severity,
             findings: vec![finding],
@@ -8749,29 +8752,44 @@ where
 {
     group_doctor_findings(findings)
         .into_iter()
-        .map(|group| DoctorFindingGroupSummary {
-            action_key: doctor_finding_group_summary_key(&group.findings),
-            action_title: doctor_finding_group_title(&group.kind).to_string(),
-            action_next: doctor_finding_group_next(&group.kind, &group.findings),
-            count: group.findings.len(),
+        .map(|group| {
+            let display_items = doctor_finding_group_display_items(&group);
+            DoctorFindingGroupSummary {
+                action_key: group.action_key.clone(),
+                action_title: doctor_finding_group_title(&group.kind, &group.findings),
+                action_next: doctor_finding_group_next(&group.kind, &group.findings),
+                count: display_items.len(),
+            }
         })
         .collect()
 }
 
-fn doctor_finding_group_summary_key(findings: &[&Finding]) -> String {
-    let mut keys: Vec<String> = findings
-        .iter()
-        .map(|finding| {
-            let subject = finding
-                .summary
-                .split_once(": ")
-                .map(|(_, value)| value)
-                .unwrap_or(finding.summary.as_str());
-            doctor_group_slug(&format!("{}-{}", finding.code(), subject))
-        })
-        .collect();
-    keys.sort();
-    keys.join("+")
+fn doctor_finding_group_key(finding: &Finding) -> String {
+    let summary = finding.summary.as_str();
+    match finding.code() {
+        "OTA_RUNTIME_VERSION_MISMATCH"
+        | "OTA_RUNTIME_MISSING"
+        | "OTA_TOOL_VERSION_MISMATCH"
+        | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        "OTA_ENV_MISSING" => String::from("environment-missing"),
+        "OTA_ENV_INVALID" => String::from("environment-invalid"),
+        "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
+        "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+        | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
+        "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
+            String::from("execution-backend")
+        }
+        "OTA_DOCTOR_FINDING_UNKNOWN"
+            if summary == "Policy-backed provisioning sources are declared"
+                || summary == "Adapter bootstrap sources are declared" =>
+        {
+            String::from("policy-surface")
+        }
+        _ => format!(
+            "shared-action-{}",
+            doctor_group_slug(&compact_backticked_paths(&finding.next))
+        ),
+    }
 }
 
 fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
@@ -8823,26 +8841,23 @@ fn doctor_group_slug(value: &str) -> String {
 }
 
 fn render_grouped_doctor_findings(group: &DoctorFindingGroup<'_>) -> String {
+    let display_items = doctor_finding_group_display_items(group);
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!(
         "{}  {} ({})",
         render_severity(group.severity),
-        doctor_finding_group_title(&group.kind),
-        group.findings.len()
+        doctor_finding_group_title(&group.kind, &group.findings),
+        display_items.len()
     ));
     if !concise_mode() {
         stdout.push_str(&format!(
             "\n{} {}",
             paint_key("Why:"),
-            doctor_finding_group_why(&group.kind)
+            doctor_finding_group_why(&group.kind, &group.findings)
         ));
     }
-    for finding in &group.findings {
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            summary_bullet(),
-            doctor_finding_group_item_text(&group.kind, finding)
-        ));
+    for item in display_items {
+        stdout.push_str(&format!("\n  {} {}", summary_bullet(), item));
     }
     if let Some(source) = group
         .findings
@@ -8863,58 +8878,137 @@ fn render_grouped_doctor_findings(group: &DoctorFindingGroup<'_>) -> String {
     stdout
 }
 
-fn doctor_finding_group_title(kind: &DoctorFindingGroupKind) -> &'static str {
+fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
+    let has_missing_tooling = findings
+        .iter()
+        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
+    let has_missing_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_MISSING");
+    let has_invalid_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_INVALID");
     match kind {
-        DoctorFindingGroupKind::ToolingVersion => "Fix runtime and tool versions",
-        DoctorFindingGroupKind::EnvironmentValue => "Fix environment values",
-        DoctorFindingGroupKind::ContractDrift => "Review contract drift",
-        DoctorFindingGroupKind::PolicySurface => "Review approved policy surfaces",
-        DoctorFindingGroupKind::ServiceHealth => "Fix service healthchecks",
-        DoctorFindingGroupKind::CheckFailure => "Review checks",
-        DoctorFindingGroupKind::ExecutionBackend => "Install required execution backend",
-        DoctorFindingGroupKind::SharedAction(_) => "Shared action",
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => {
+            String::from("Install required runtimes and tools")
+        }
+        DoctorFindingGroupKind::ToolingVersion => String::from("Fix version mismatches"),
+        DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
+            String::from("Set missing environment variables")
+        }
+        DoctorFindingGroupKind::EnvironmentValue if has_invalid_env && !has_missing_env => {
+            String::from("Fix invalid environment values")
+        }
+        DoctorFindingGroupKind::EnvironmentValue => String::from("Fix environment values"),
+        DoctorFindingGroupKind::ContractDrift => String::from("Review contract drift"),
+        DoctorFindingGroupKind::PolicySurface => String::from("Review approved policy surfaces"),
+        DoctorFindingGroupKind::ServiceHealth => String::from("Fix service healthchecks"),
+        DoctorFindingGroupKind::CheckFailure => String::from("Review checks"),
+        DoctorFindingGroupKind::ExecutionBackend => {
+            String::from("Install required execution backend")
+        }
+        DoctorFindingGroupKind::SharedAction(_) => String::from("Shared action"),
     }
 }
 
-fn doctor_finding_group_why(kind: &DoctorFindingGroupKind) -> &'static str {
+fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
+    let has_missing_tooling = findings
+        .iter()
+        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
+    let has_missing_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_MISSING");
+    let has_invalid_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_INVALID");
     match kind {
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => String::from(
+            "one or more required runtimes or tools are missing or do not match the contract",
+        ),
         DoctorFindingGroupKind::ToolingVersion => {
-            "one or more runtime or tool entries do not match the contract"
+            String::from("one or more runtime or tool entries do not match the contract")
+        }
+        DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
+            String::from("one or more required environment variables are not set")
+        }
+        DoctorFindingGroupKind::EnvironmentValue if has_invalid_env && !has_missing_env => {
+            String::from("one or more environment values do not satisfy the contract")
         }
         DoctorFindingGroupKind::EnvironmentValue => {
-            "one or more environment values do not match the contract"
+            String::from("one or more environment values do not match the contract")
         }
         DoctorFindingGroupKind::ContractDrift => {
-            "repo signals no longer match the declared contract"
+            String::from("repo signals no longer match the declared contract")
         }
-        DoctorFindingGroupKind::PolicySurface => "approved policy-backed sources are declared",
-        DoctorFindingGroupKind::ServiceHealth => "one or more services failed healthchecks",
-        DoctorFindingGroupKind::CheckFailure => "one or more checks failed",
-        DoctorFindingGroupKind::ExecutionBackend => "a required execution backend CLI is missing",
-        DoctorFindingGroupKind::SharedAction(_) => "multiple findings share the same remediation",
+        DoctorFindingGroupKind::PolicySurface => {
+            String::from("approved provisioning or bootstrap sources are declared")
+        }
+        DoctorFindingGroupKind::ServiceHealth => {
+            String::from("one or more services failed healthchecks")
+        }
+        DoctorFindingGroupKind::CheckFailure => String::from("one or more checks failed"),
+        DoctorFindingGroupKind::ExecutionBackend => {
+            String::from("a required execution backend CLI is missing")
+        }
+        DoctorFindingGroupKind::SharedAction(_) => {
+            String::from("multiple findings share the same remediation")
+        }
     }
 }
 
 fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
+    let has_missing_tooling = findings
+        .iter()
+        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
+    let has_version_mismatch = findings.iter().any(|finding| {
+        matches!(
+            finding.code(),
+            "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH"
+        )
+    });
+    let has_missing_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_MISSING");
+    let has_invalid_env = findings
+        .iter()
+        .any(|finding| finding.code() == "OTA_ENV_INVALID");
+    let has_provisioning_surface = findings
+        .iter()
+        .any(|finding| finding.summary == "Policy-backed provisioning sources are declared");
     match kind {
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling && has_version_mismatch => {
+            String::from("install or align the listed runtimes and tools, then rerun `ota doctor`")
+        }
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => {
+            String::from("install the listed runtimes and tools, then rerun `ota doctor`")
+        }
         DoctorFindingGroupKind::ToolingVersion => String::from(
             "install compatible versions for the listed runtime and tool entries, then rerun `ota doctor`",
         ),
-        DoctorFindingGroupKind::EnvironmentValue => {
+        DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
             String::from("set the listed environment variables, then rerun `ota doctor`")
+        }
+        DoctorFindingGroupKind::EnvironmentValue if has_invalid_env && !has_missing_env => {
+            String::from(
+                "set the listed environment variables to allowed values, then rerun `ota doctor`",
+            )
+        }
+        DoctorFindingGroupKind::EnvironmentValue => {
+            String::from("fix the listed environment values, then rerun `ota doctor`")
         }
         DoctorFindingGroupKind::ContractDrift => String::from(
             "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
         ),
-        DoctorFindingGroupKind::PolicySurface => {
-            String::from("use this policy surface when repo prerequisites need an approved source")
-        }
-        DoctorFindingGroupKind::ServiceHealth => {
-            String::from("fix the listed services, then rerun `ota doctor`")
-        }
-        DoctorFindingGroupKind::CheckFailure => {
-            String::from("fix the listed checks, then rerun `ota doctor`")
-        }
+        DoctorFindingGroupKind::PolicySurface if has_provisioning_surface => String::from(
+            "use this policy surface when provisioning or bootstrap needs an approved source",
+        ),
+        DoctorFindingGroupKind::PolicySurface => String::from(
+            "use this policy surface when adapter bootstrap needs an approved source or audit trail",
+        ),
+        DoctorFindingGroupKind::ServiceHealth | DoctorFindingGroupKind::CheckFailure => findings
+            .first()
+            .map(|finding| compact_backticked_paths(&finding.next))
+            .unwrap_or_default(),
         DoctorFindingGroupKind::ExecutionBackend => {
             String::from("install a supported execution backend CLI, then rerun `ota doctor`")
         }
@@ -8925,6 +9019,17 @@ fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding
     }
 }
 
+fn doctor_finding_group_display_items(group: &DoctorFindingGroup<'_>) -> Vec<String> {
+    let mut items = Vec::new();
+    for finding in &group.findings {
+        let item = doctor_finding_group_item_text(&group.kind, finding);
+        if !items.contains(&item) {
+            items.push(item);
+        }
+    }
+    items
+}
+
 fn doctor_finding_group_item_text(kind: &DoctorFindingGroupKind, finding: &Finding) -> String {
     let subject = finding
         .summary
@@ -8933,15 +9038,23 @@ fn doctor_finding_group_item_text(kind: &DoctorFindingGroupKind, finding: &Findi
         .unwrap_or(&finding.summary);
     match kind {
         DoctorFindingGroupKind::ToolingVersion => {
+            if matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING") {
+                return format!("{subject} is missing");
+            }
             let tokens = backticked_tokens(&finding.why);
             match tokens.as_slice() {
                 [observed, expected, ..] => {
-                    format!("{subject} resolved {observed}, requires {expected}")
+                    format!("{subject} resolved `{observed}`, requires `{expected}`")
                 }
                 _ => subject.to_string(),
             }
         }
-        DoctorFindingGroupKind::ContractDrift => subject.to_string(),
+        DoctorFindingGroupKind::ContractDrift if finding.why.contains("no longer detects it") => {
+            format!("{subject} is no longer detected")
+        }
+        DoctorFindingGroupKind::ContractDrift => {
+            format!("{subject} differs from repo signals")
+        }
         DoctorFindingGroupKind::EnvironmentValue
         | DoctorFindingGroupKind::PolicySurface
         | DoctorFindingGroupKind::ServiceHealth
@@ -9849,6 +9962,16 @@ mod tests {
                         "use this policy surface when repo prerequisites need an approved source",
                     ),
                 },
+                Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Adapter bootstrap sources are declared"),
+                    why: String::from(
+                        "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                    ),
+                    next: String::from(
+                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    ),
+                },
             ],
         };
         let summary = super::DoctorSummary {
@@ -9856,7 +9979,7 @@ mod tests {
             agent_verdict: super::DoctorVerdict::Ready,
             error_count: 0,
             warn_count: 2,
-            info_count: 2,
+            info_count: 3,
             primary_blocker: None,
         };
         let text = strip_ansi_codes(&render_report_section(
@@ -9870,9 +9993,14 @@ mod tests {
 
         assert!(text.contains("Review contract drift (2)"));
         assert!(text.contains("Review approved policy surfaces (2)"));
-        assert!(text.contains("tools.maven"));
-        assert!(text.contains("tools.node"));
+        assert!(text.contains("» `tools.maven` differs from repo signals"));
+        assert!(text.contains("» `tools.node` differs from repo signals"));
+        assert!(text.contains("» Policy-backed provisioning sources are declared"));
+        assert!(text.contains("» Adapter bootstrap sources are declared"));
         assert_eq!(text.matches("Next:").count(), 2);
+        assert!(text.contains(
+            "use this policy surface when provisioning or bootstrap needs an approved source"
+        ));
     }
 
     #[test]
@@ -9922,6 +10050,16 @@ mod tests {
                         "use this policy surface when repo prerequisites need an approved source",
                     ),
                 },
+                Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Adapter bootstrap sources are declared"),
+                    why: String::from(
+                        "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                    ),
+                    next: String::from(
+                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    ),
+                },
             ],
         };
         let text = strip_ansi_codes(&render_up_section_from_parts(
@@ -9941,7 +10079,6 @@ mod tests {
         assert!(text.contains("Review contract drift (2)"));
         assert!(text.contains("Review approved policy surfaces (2)"));
         assert_eq!(text.matches("Next:").count(), 2);
-        assert!(!text.contains("Version mismatch for runtime: java\nWhy:"));
         assert!(text.contains("Task output: sh: 1: sdk: not found"));
     }
 
@@ -9949,44 +10086,36 @@ mod tests {
     fn doctor_json_exports_group_summaries() {
         let findings = vec![
             Finding {
-                severity: FindingSeverity::Warn,
-                summary: String::from("Contract drift: `tools.maven`"),
-                why: String::from(
-                    "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
-                ),
+                severity: FindingSeverity::Error,
+                summary: String::from("Version mismatch for runtime: java"),
+                why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
                 next: String::from(
-                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                    "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
                 ),
             },
             Finding {
-                severity: FindingSeverity::Warn,
-                summary: String::from("Contract drift: `tools.node`"),
-                why: String::from(
-                    "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` now detects `*`",
-                ),
+                severity: FindingSeverity::Error,
+                summary: String::from("Version mismatch for tool: curl"),
+                why: String::from("curl resolved to `8.13.0` but the contract requires `8.7.1`"),
                 next: String::from(
-                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                    "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
                 ),
             },
         ];
-        let finding_refs: Vec<_> = findings.iter().collect();
 
         let groups = super::doctor_finding_group_summaries(findings.iter());
         assert_eq!(groups.len(), 1);
-        assert_eq!(
-            groups[0].action_key,
-            super::doctor_finding_group_summary_key(&finding_refs)
-        );
-        assert_eq!(groups[0].action_title, "Review contract drift");
+        assert_eq!(groups[0].action_key, "tooling-version");
+        assert_eq!(groups[0].action_title, "Fix version mismatches");
         assert_eq!(
             groups[0].action_next,
-            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`"
+            "install compatible versions for the listed runtime and tool entries, then rerun `ota doctor`"
         );
         assert_eq!(groups[0].count, 2);
     }
 
     #[test]
-    fn doctor_text_keeps_distinct_tool_actions_separate() {
+    fn doctor_text_groups_version_mismatches_after_primary_blocker() {
         let report = DoctorReport {
             ok: false,
             provisioning: None,
@@ -10010,15 +10139,30 @@ mod tests {
                         "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
                     ),
                 },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for tool: node"),
+                    why: String::from("node resolved to `24.14.1` but the contract requires `22`"),
+                    next: String::from(
+                        "install a compatible node version that satisfies `22`, then rerun `ota doctor`",
+                    ),
+                },
             ],
         };
         let summary = super::DoctorSummary {
             verdict: super::DoctorVerdict::NotReady,
             agent_verdict: super::DoctorVerdict::Ready,
-            error_count: 2,
+            error_count: 3,
             warn_count: 0,
             info_count: 0,
-            primary_blocker: None,
+            primary_blocker: Some(super::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Version mismatch for runtime: java"),
+                why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
+                next: String::from(
+                    "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
+                ),
+            }),
         };
 
         let text = strip_ansi_codes(&render_report_section(
@@ -10030,10 +10174,11 @@ mod tests {
             Some(&summary),
         ));
 
-        assert!(text.contains("Version mismatch for runtime: java"));
-        assert!(text.contains("Version mismatch for tool: curl"));
+        assert!(text.contains("Primary Blocker"));
+        assert!(text.contains("Fix version mismatches (2)"));
+        assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
+        assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
         assert_eq!(text.matches("Next:").count(), 2);
-        assert!(!text.contains("Fix runtime and tool versions (2)"));
     }
 
     #[test]
@@ -10081,6 +10226,54 @@ mod tests {
         assert!(text.contains("Environment value invalid: JAVA_HOME"));
         assert_eq!(text.matches("Next:").count(), 2);
         assert!(!text.contains("Fix environment values (2)"));
+    }
+
+    #[test]
+    fn up_text_groups_version_mismatches_under_one_action() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for runtime: java"),
+                    why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
+                    next: String::from(
+                        "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for tool: curl"),
+                    why: String::from(
+                        "curl resolved to `8.13.0` but the contract requires `8.7.1`",
+                    ),
+                    next: String::from(
+                        "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                    ),
+                },
+            ],
+        };
+
+        let text = strip_ansi_codes(&render_up_section_from_parts(
+            "./ota.yaml",
+            "PROVISION FAILED",
+            "provisioning",
+            &report,
+            Some("container"),
+            None,
+            None,
+            None,
+            None,
+            Some("bash: line 1: sdk: command not found"),
+            Some(127),
+        ));
+
+        assert!(text.contains("Fix version mismatches (2)"));
+        assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
+        assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
+        assert_eq!(text.matches("Next:").count(), 1);
     }
 
     #[test]
@@ -10159,6 +10352,18 @@ tasks:
         assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
         assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦  RUN SUMMARY\n\nScope:"));
+    }
+
+    #[test]
+    fn stylize_text_failure_keeps_next_immediately_after_why() {
+        let rendered = strip_ansi_codes(&stylize_text_failure(
+            "ota run",
+            "task failed\nWhy: missing tool\nNext: install the missing tool and rerun",
+        ));
+
+        assert!(rendered.contains("Why: task failed | Why: missing tool"));
+        assert!(rendered.contains("\nNext: install the missing tool and rerun"));
+        assert!(!rendered.contains("\n\nNext: install the missing tool and rerun"));
     }
 
     #[test]

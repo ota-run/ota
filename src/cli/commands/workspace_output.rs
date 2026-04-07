@@ -318,10 +318,20 @@ mod tests {
                         severity: FindingSeverity::Info,
                         summary: String::from("Adapter bootstrap sources are declared"),
                         why: String::from(
-                            "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                            "`.ota/org-policy.yaml` declares approved adapter bootstrap sources: brew via brew-bootstrap (any approved version)",
                         ),
                         next: String::from(
                             "use this policy surface when repo prerequisites need an approved source",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Info,
+                        summary: String::from("Adapter bootstrap sources are declared"),
+                        why: String::from(
+                            "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                        ),
+                        next: String::from(
+                            "use this policy surface when adapter bootstrap needs to be approved or audited",
                         ),
                     },
                 ],
@@ -343,9 +353,87 @@ mod tests {
         );
 
         assert!(text.contains("Review contract drift (2)"));
-        assert!(text.contains("Review approved policy surfaces"));
+        assert!(text.contains("Review approved policy surfaces (2)"));
         assert_eq!(text.matches("Next:").count(), 2);
+        assert!(text.contains("» Policy-backed provisioning sources are declared"));
+        assert!(text.contains("» Adapter bootstrap sources are declared"));
         assert!(text.contains("Task output: \n    sh: 1: sdk: not found"));
+    }
+
+    #[test]
+    fn workspace_up_groups_version_mismatches_under_one_action() {
+        let report = WorkspaceUpReport {
+            ok: false,
+            dry_run: false,
+            receipt: ExecutionReceipt {
+                ok: false,
+                path: String::from("./ota.workspace.yaml"),
+                scope: String::from("workspace"),
+                contract: String::from("./ota.workspace.yaml"),
+                workspace: Some(String::from("demo")),
+                backend: None,
+                lifecycle: None,
+                target: None,
+                acquired: Vec::new(),
+                env: BTreeMap::new(),
+                env_sources: Vec::new(),
+                policy: Vec::new(),
+                steps: Vec::new(),
+                blocked: Vec::new(),
+                summary: ExecutionReceiptSummary::default(),
+                next: None,
+            },
+            repos: vec![WorkspaceRepoUpReport {
+                name: String::from("api"),
+                path: String::from("api"),
+                contract_path: String::from("api/ota.yaml"),
+                required: true,
+                ok: false,
+                status: String::from("PROVISION FAILED"),
+                phase: String::from("provisioning"),
+                findings: vec![
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("Version mismatch for runtime: java"),
+                        why: String::from(
+                            "java resolved to `25.0.2` but the contract requires `21`",
+                        ),
+                        next: String::from(
+                            "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("Version mismatch for tool: curl"),
+                        why: String::from(
+                            "curl resolved to `8.13.0` but the contract requires `8.7.1`",
+                        ),
+                        next: String::from(
+                            "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                        ),
+                    },
+                ],
+                source_url: None,
+                source_ref: None,
+                service: None,
+                service_command: None,
+                task: None,
+                task_command: None,
+                exit_code: Some(127),
+                stdout: None,
+                stderr: Some(String::from("sh: 1: sdk: not found")),
+                env_sources: Vec::new(),
+            }],
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_up("./ota.workspace.yaml", &report, OutputFormat::Text, false).stdout,
+        );
+
+        assert!(text.contains("Fix version mismatches (2)"));
+        assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
+        assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
+        assert_eq!(text.matches("Next:").count(), 1);
     }
 }
 

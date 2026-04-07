@@ -26,7 +26,10 @@
 
 ## Unreleased
 
-- Future changes will be tracked here before the next version bump.
+- grouped repeated remediation findings across doctor-style text outputs so `doctor`, `check`,
+  `up`, and workspace variants collapse obvious repeated actions with shared Ota styling.
+- normalized `finding_groups.action_key` around remediation classes instead of literal `Next:`
+  prose so grouped JSON summaries stay stable when copy changes.
 
 ## 1.1.2
 
