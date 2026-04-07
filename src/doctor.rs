@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
+use serde_json::Value as JsonValue;
 
 use crate::execution::container_engine_candidates;
 use crate::policy_pack::{
@@ -1188,7 +1189,7 @@ fn exact_tooling_remediation(
             tool_versions_remediation(&contract_root, &["python"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "java") => {
-            if let Some(version) = sdkman_java_version(&contract_root) {
+            if let Some(version) = sdkman_candidate_version(&contract_root, "java") {
                 return Some(format!("sdk install java {version}"));
             }
             tool_versions_remediation(&contract_root, &["java"], requirement)
@@ -1212,6 +1213,9 @@ fn exact_tooling_remediation(
             tool_versions_remediation(&contract_root, &["php"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "dotnet") => {
+            if let Some(version) = dotnet_global_json_version(&contract_root) {
+                return Some(dotnet_install_command(&version));
+            }
             tool_versions_remediation(&contract_root, &["dotnet"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "elixir") => {
@@ -1220,6 +1224,18 @@ fn exact_tooling_remediation(
         (ProvisioningTargetKind::Runtime, _) => None,
         (ProvisioningTargetKind::Tool, "node") => {
             tool_versions_remediation(&contract_root, &["nodejs", "node"], requirement)
+        }
+        (ProvisioningTargetKind::Tool, "dotnet") => {
+            if let Some(version) = dotnet_global_json_version(&contract_root) {
+                return Some(dotnet_install_command(&version));
+            }
+            tool_versions_remediation(&contract_root, &["dotnet"], requirement)
+        }
+        (ProvisioningTargetKind::Tool, "maven") => {
+            if let Some(version) = sdkman_candidate_version(&contract_root, "maven") {
+                return Some(format!("sdk install maven {version}"));
+            }
+            tool_versions_remediation(&contract_root, &[name], requirement)
         }
         (ProvisioningTargetKind::Tool, name) => {
             tool_versions_remediation(&contract_root, &[name], requirement)
@@ -1352,7 +1368,7 @@ fn tool_versions_manager(contract_root: &Path) -> Option<ToolVersionsManager> {
     }
 }
 
-fn sdkman_java_version(contract_root: &Path) -> Option<String> {
+fn sdkman_candidate_version(contract_root: &Path, candidate: &str) -> Option<String> {
     let contents = std::fs::read_to_string(contract_root.join(".sdkmanrc")).ok()?;
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -1362,7 +1378,7 @@ fn sdkman_java_version(contract_root: &Path) -> Option<String> {
         let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        if key.trim() != "java" {
+        if key.trim() != candidate {
             continue;
         }
         let version = value.trim().trim_start_matches('v');
@@ -1371,6 +1387,33 @@ fn sdkman_java_version(contract_root: &Path) -> Option<String> {
         }
     }
     None
+}
+
+fn dotnet_global_json_version(contract_root: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(contract_root.join("global.json")).ok()?;
+    let json: JsonValue = serde_json::from_str(&contents).ok()?;
+    let version = json
+        .get("sdk")
+        .and_then(|sdk| sdk.get("version"))
+        .and_then(JsonValue::as_str)?
+        .trim();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version.to_string())
+    }
+}
+
+fn dotnet_install_command(version: &str) -> String {
+    if cfg!(windows) {
+        format!(
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Version {version}\""
+        )
+    } else {
+        format!(
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --version {version}"
+        )
+    }
 }
 
 fn diagnose_command_version(

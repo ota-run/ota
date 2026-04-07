@@ -11617,7 +11617,7 @@ mod tests {
     }
 
     #[test]
-    fn compacts_paths_inside_current_dir_and_keeps_full_paths_outside() {
+    fn compacts_paths_inside_current_dir_and_prefers_shorter_relative_outside() {
         let outer = tempfile::tempdir().expect("outer tempdir");
         let inner = tempfile::tempdir().expect("inner tempdir");
         let outer_path = outer.path();
@@ -11633,10 +11633,30 @@ mod tests {
 
         assert_eq!(
             compact_path_relative_to(contract_path.as_path(), "ota.yaml", Some(outer_path)),
-            std::fs::canonicalize(&contract_path)
-                .expect("canonical contract")
-                .display()
-                .to_string()
+            format!(
+                "../{}/ota.yaml",
+                inner_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("inner dir name")
+            )
+        );
+    }
+
+    #[test]
+    fn compacts_paths_to_shorter_relative_sibling_when_outside_current_dir() {
+        let root = tempfile::tempdir().expect("root tempdir");
+        let current_dir = root.path().join("ota");
+        let sibling = root.path().join("ota-site");
+        std::fs::create_dir_all(&current_dir).expect("create current dir");
+        std::fs::create_dir_all(&sibling).expect("create sibling dir");
+        let contract_path = sibling.join("ota.yaml");
+
+        std::fs::write(&contract_path, "version: 1\n").expect("write contract");
+
+        assert_eq!(
+            compact_path_relative_to(contract_path.as_path(), "ota.yaml", Some(&current_dir)),
+            "../ota-site/ota.yaml"
         );
     }
 
@@ -11682,10 +11702,14 @@ mod tests {
 
         assert_eq!(
             compact_policy_path_relative_to_contract(&contract_path, &outside_policy),
-            std::fs::canonicalize(&outside_policy)
-                .expect("canonical policy")
-                .display()
-                .to_string()
+            format!(
+                "../../{}/org-policy.yaml",
+                outside
+                    .path()
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("outside dir name")
+            )
         );
     }
 
@@ -12984,8 +13008,16 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
         }
         return format!("./{}", relative.display());
     }
+    let absolute_display = if absolute.is_absolute() {
+        absolute.display().to_string()
+    } else {
+        String::new()
+    };
+    if let Some(relative) = shorter_relative_path(&current_dir, &absolute, &absolute_display) {
+        return relative;
+    }
     if absolute.is_absolute() {
-        return absolute.display().to_string();
+        return absolute_display;
     }
 
     let tail = path
@@ -12999,6 +13031,58 @@ fn compact_path_relative_to(path: &Path, fallback: &str, current_dir: Option<&Pa
     {
         Some(parent) => format!("./{parent}/{tail}"),
         None => tail.to_string(),
+    }
+}
+
+fn shorter_relative_path(base: &Path, target: &Path, absolute_display: &str) -> Option<String> {
+    let relative = relative_path_from(base, target)?;
+    let rendered = relative.display().to_string();
+    if rendered.is_empty() || rendered.len() >= absolute_display.len() {
+        return None;
+    }
+    Some(rendered)
+}
+
+fn relative_path_from(base: &Path, target: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+
+    if !base.is_absolute() || !target.is_absolute() {
+        return None;
+    }
+
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+
+    let mut shared = 0usize;
+    while shared < base_components.len()
+        && shared < target_components.len()
+        && match (base_components[shared], target_components[shared]) {
+            (Component::Prefix(left), Component::Prefix(right)) => left == right,
+            (left, right) => left == right,
+        }
+    {
+        shared += 1;
+    }
+
+    if shared == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for component in base_components.iter().skip(shared) {
+        if !matches!(component, Component::Normal(_)) {
+            continue;
+        }
+        relative.push("..");
+    }
+    for component in target_components.iter().skip(shared) {
+        relative.push(component.as_os_str());
+    }
+
+    if relative.as_os_str().is_empty() {
+        Some(PathBuf::from("."))
+    } else {
+        Some(relative)
     }
 }
 

@@ -31,6 +31,9 @@
   policy-backed provisioning sources.
 - broadened exact remediation coverage further with stronger manager signals such as `volta`,
   `nodenv`, `pyenv`, `rbenv`, `goenv`, `rustup`, and explicit runtime `provider` hints.
+- broadened exact remediation again for `.sdkmanrc`-backed maven installs and `global.json`-
+  backed `.NET` SDK installs, and tightened rerun paths so nearby external contracts compact to
+  shorter relative targets instead of noisy absolute paths.
 - removed duplicate adapter-bootstrap info findings by loading the policy pack once for doctor
   diagnostics and reusing that source across provisioning and bootstrap surfaces.
 - tightened workspace text parity so `workspace check` now promotes the primary blocker and
@@ -39,6 +42,8 @@
   and workspace entry paths.
 - locked the premium text UX with checked-in golden snapshots for root help, repo `doctor`,
   `detect`, `up`, `run`, and workspace `validate`, `doctor`, `explain`, `up`, and `run`.
+- expanded the UX review loop to snapshot-lock `doctor --plain` and narrow-width `explain`
+  rendering so plain-mode and small-terminal regressions are caught before release.
 - fixed grouped tooling remediation hints so repeated version-mismatch blocks only surface real
   exact commands and never degrade into stray version tokens.
 - made `ota agents` text output more adoption-friendly by pointing preview users at

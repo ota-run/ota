@@ -1,0 +1,30 @@
+DOCTOR ./ota.yaml
+
+NOT READY
+
+Verdict
+ -  Repo: not ready
+ -  Agent: ready
+
+-> Primary Blocker
+Version mismatch for runtime: node
+Why: node resolved to `24.14.1` but the contract requires `22`
+Next: run `nvm install 22 && nvm use 22` and rerun `ota doctor`
+
+Execution
+ -  Lifecycle: `ephemeral`
+
+Agent
+ -  Entrypoint: `ci`
+ -  Default task: `ci`
+ -  Safe tasks: `ci`
+ -  Verify after changes: `ci`
+ -  Writable paths: `src`, `docs`
+ -  Protected paths: `ota.yaml`, `Cargo.lock`
+
+WARN  Ephemeral lifecycle is advisory only in V1
+Why: the contract requests `execution.lifecycle: ephemeral`, but current Ota execution
+  remains shell-native and does not create isolated temporary environments
+Next:
+  treat `ephemeral` as a portability hint for now; do not rely on isolation or
+  automatic cleanup in V1
