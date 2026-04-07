@@ -768,7 +768,8 @@ Optional per-repo fields:
 
 ## `ota workspace check --json`
 
-`ota workspace check --json` uses the same finding shape as `ota workspace doctor --json`:
+`ota workspace check --json` uses the same finding shape as `ota workspace doctor --json`,
+including additive `finding_groups` when present:
 
 ```json
 {

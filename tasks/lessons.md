@@ -26,3 +26,6 @@
 - Pattern: Doctor output can be technically correct but still too repetitive for humans when every finding repeats the same `Next:` action.
 - Correction: Group repeated doctor findings by shared remediation, keep the primary blocker explicit, and keep JSON unchanged.
 - Rule: In human doctor output, group by action/family, not severity alone; collapse identical or equivalent `Next:` lines into one shared remediation block.
+- Pattern: Grouping by literal `Next:` prose is too weak because equivalent operator actions still fan out once tool names or versions change.
+- Correction: Derive grouping from normalized remediation/action classes, then render one shared remediation block with the existing Ota visual language.
+- Rule: For doctor-style grouped output, normalize by operator action first and only fall back to exact remediation text when no stable action class exists.
