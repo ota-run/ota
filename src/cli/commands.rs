@@ -8260,13 +8260,13 @@ fn render_diff_status_word(match_state: bool) -> String {
     if match_state {
         format!(
             "{} {}",
-            primary_marker(),
+            primary_success_marker(),
             paint("MATCH", "1;38;2;0;255;120")
         )
     } else {
         format!(
             "{} {}",
-            primary_marker(),
+            primary_warn_marker(),
             paint("DIFFERENT", "1;38;2;255;235;59")
         )
     }
@@ -9819,20 +9819,24 @@ fn render_primary_finding_text(
     next: &str,
 ) -> String {
     let mut stdout = String::new();
-    let (_arrow_color, title_color, title) = match severity {
-        FindingSeverity::Error => ("1;31", "1;31", "Primary Blocker"),
-        FindingSeverity::Warn => ("1;38;2;255;235;59", "1;38;2;255;235;59", "Primary Finding"),
+    let (marker, title_color, title) = match severity {
+        FindingSeverity::Error => (
+            primary_error_marker(),
+            "1;38;2;255;168;168",
+            "Primary Blocker",
+        ),
+        FindingSeverity::Warn => (
+            primary_warn_marker(),
+            "1;38;2;245;227;179",
+            "Primary Finding",
+        ),
         FindingSeverity::Info => (
-            "1;38;2;102;217;255",
-            "1;38;2;102;217;255",
+            primary_info_marker(),
+            "1;38;2;180;229;235",
             "Primary Finding",
         ),
     };
-    stdout.push_str(&format!(
-        "{} {}",
-        primary_marker(),
-        paint(title, title_color)
-    ));
+    stdout.push_str(&format!("{} {}", marker, paint(title, title_color)));
     stdout.push('\n');
     stdout.push_str(&paint(summary, "1"));
     if !concise_mode() {
@@ -15075,7 +15079,7 @@ fn render_valid_status() -> String {
     } else {
         format!(
             "{} {}",
-            primary_marker(),
+            primary_success_marker(),
             paint("VALID", "1;38;2;0;255;120")
         )
     }
@@ -15088,7 +15092,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                primary_marker(),
+                primary_success_marker(),
                 paint("READY", "1;38;2;0;255;120")
             )
         }
@@ -15098,7 +15102,7 @@ fn render_readiness_status(ready: bool) -> String {
         } else {
             format!(
                 "{} {}",
-                primary_marker(),
+                primary_warn_marker(),
                 paint("NOT READY", "1;38;2;255;235;59")
             )
         }
@@ -15129,22 +15133,34 @@ fn render_status_word(status: &str) -> String {
     }
 }
 
-fn paint_key(key: &str) -> String {
-    paint(key, "38;2;102;217;255")
-}
-
-fn explain_why_key() -> String {
+fn paint_why_key() -> String {
     if plain_mode() {
         return String::from("Why:");
     }
     paint("Why:", "38;2;137;164;179")
 }
 
-fn explain_next_key() -> String {
+fn paint_next_key() -> String {
     if plain_mode() {
         return String::from("Next:");
     }
     paint("Next:", "1;38;2;102;245;255")
+}
+
+fn paint_key(key: &str) -> String {
+    match key {
+        "Why:" => paint_why_key(),
+        "Next:" => paint_next_key(),
+        _ => paint(key, "38;2;102;217;255"),
+    }
+}
+
+fn explain_why_key() -> String {
+    paint_why_key()
+}
+
+fn explain_next_key() -> String {
+    paint_next_key()
 }
 
 fn backup_label() -> String {
@@ -15155,25 +15171,31 @@ fn backup_label() -> String {
 }
 
 fn error_key(key: &str) -> String {
-    paint(key, "1;38;2;255;150;150")
+    match key {
+        "Why:" => paint_why_key(),
+        _ => paint(key, "1;38;2;255;150;150"),
+    }
 }
 
 fn error_next_key(key: &str) -> String {
-    paint(key, "1;38;2;242;209;170")
+    match key {
+        "Next:" => paint_next_key(),
+        _ => paint(key, "1;38;2;242;209;170"),
+    }
 }
 
 fn finding_detail_key(severity: FindingSeverity, key: &str) -> String {
     if plain_mode() {
         return key.to_string();
     }
+    if key == "Why:" {
+        return paint_why_key();
+    }
+    if key == "Next:" {
+        return paint_next_key();
+    }
     match severity {
-        FindingSeverity::Error => {
-            if key == "Next:" {
-                error_next_key(key)
-            } else {
-                error_key(key)
-            }
-        }
+        FindingSeverity::Error => error_key(key),
         _ => paint_key(key),
     }
 }
@@ -15321,12 +15343,28 @@ fn verdict_bullet() -> String {
     }
 }
 
-fn primary_marker() -> String {
+fn primary_marker_with_color(color: &str) -> String {
     if plain_mode() {
         String::from("->")
     } else {
-        paint("➤", "1;38;2;0;255;120")
+        paint("➤", color)
     }
+}
+
+fn primary_success_marker() -> String {
+    primary_marker_with_color("1;38;2;0;255;120")
+}
+
+fn primary_warn_marker() -> String {
+    primary_marker_with_color("1;38;2;255;214;95")
+}
+
+fn primary_error_marker() -> String {
+    primary_marker_with_color("1;38;2;255;122;122")
+}
+
+fn primary_info_marker() -> String {
+    primary_marker_with_color("1;38;2;102;245;255")
 }
 
 fn paint_next_header() -> String {
@@ -17570,7 +17608,7 @@ fn render_failed_status_label(value: &str) -> String {
     if plain_mode() {
         return value.to_string();
     }
-    format!("{} {}", primary_marker(), paint(value, "1;31"))
+    format!("{} {}", primary_error_marker(), paint(value, "1;31"))
 }
 
 fn task_command_preview(task: &TaskSpec) -> Option<String> {
