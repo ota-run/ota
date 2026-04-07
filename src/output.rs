@@ -813,6 +813,69 @@ pub struct ValidateFailure<'a> {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct EnvSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<&'a str>,
+    pub summary: EnvSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<EnvEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EnvFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<&'a str>,
+    pub error: &'a str,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct EnvSummary {
+    pub contract_count: usize,
+    pub task_count: usize,
+    pub resolved_count: usize,
+    pub missing_count: usize,
+    pub invalid_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvEntryKind {
+    Contract,
+    Task,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvEntryStatus {
+    Resolved,
+    Missing,
+    Optional,
+    Invalid,
+    Task,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct EnvEntry {
+    pub name: String,
+    pub kind: EnvEntryKind,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    pub source: String,
+    pub status: EnvEntryStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DiffSummary {
     pub added_count: usize,

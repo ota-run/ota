@@ -75,6 +75,7 @@ ota currently ships these commands:
 - `ota up`
 - `ota run <task>`
 - `ota init`
+- `ota env`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -300,6 +301,41 @@ JSON output:
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 - failure: `ok`, `path`, and either `errors` or `error`
+
+## `ota env`
+
+Inspect resolved environment requirements from a validated contract.
+
+```bash
+ota env [PATH]
+ota env --json [PATH]
+ota env --task test [PATH]
+ota env --member api --task test [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, inspects the merged member contract
+- when `--task` is set, includes task-scoped env alongside the contract env view
+- resolves values in the same precedence order as task execution
+- shows the winning source for each contract env entry
+- reports missing required env and invalid allowed values
+- stays read-only
+
+Text output:
+
+- header: `ENV <path>`
+- includes a readiness status line, a short overview, and separate `Contract env` / `Task env` sections when task-specific env is present
+- each env entry may include `kind`, `required`, `value`, `source`, `status`, `allowed`, `default`, and `Next`
+- missing or invalid contract env entries point to a specific fix rather than guessing
+
+JSON output:
+
+- success: `ok`, `path`, `summary`, `env`
+- success with task scope also includes `task`
+- `summary` includes contract, task, resolved, missing, and invalid counts
+- failure: `ok`, `path`, `task` when relevant, and `error`
 
 ## `ota diff`
 
