@@ -3512,9 +3512,10 @@ pub fn up(
                     if !result.ok {
                         overall_ok = false;
                     }
-                    text_sections.push(render_up_section(
+                    text_sections.push(render_up_section_with_receipt(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         &result,
+                        show_receipt,
                     ));
                     member_results.push(json!({
                         "member": member,
@@ -9049,12 +9050,7 @@ fn doctor_finding_group_item_text(kind: &DoctorFindingGroupKind, finding: &Findi
                 _ => subject.to_string(),
             }
         }
-        DoctorFindingGroupKind::ContractDrift if finding.why.contains("no longer detects it") => {
-            format!("{subject} is no longer detected")
-        }
-        DoctorFindingGroupKind::ContractDrift => {
-            format!("{subject} differs from repo signals")
-        }
+        DoctorFindingGroupKind::ContractDrift => subject.to_string(),
         DoctorFindingGroupKind::EnvironmentValue
         | DoctorFindingGroupKind::PolicySurface
         | DoctorFindingGroupKind::ServiceHealth
@@ -9742,11 +9738,11 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        RepoExecutionMode, compact_contract_file_path_relative_to, compact_path_relative_to,
-        compact_policy_path_relative_to_contract, execute_repo_up,
+        OutputFormat, RepoExecutionMode, RepoUpResult, compact_contract_file_path_relative_to,
+        compact_path_relative_to, compact_policy_path_relative_to_contract, execute_repo_up,
         render_execution_receipt_summary_block, render_execution_receipt_text,
-        render_report_section, render_up_section_from_parts, run_execution_receipt,
-        strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
+        render_report_section, render_up_result, render_up_section_from_parts,
+        run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
     };
     use crate::doctor::{DoctorReport, Finding, FindingSeverity};
     use crate::parser::parse_contract_str;
@@ -9993,8 +9989,8 @@ mod tests {
 
         assert!(text.contains("Review contract drift (2)"));
         assert!(text.contains("Review approved policy surfaces (2)"));
-        assert!(text.contains("» `tools.maven` differs from repo signals"));
-        assert!(text.contains("» `tools.node` differs from repo signals"));
+        assert!(text.contains("» `tools.maven`"));
+        assert!(text.contains("» `tools.node`"));
         assert!(text.contains("» Policy-backed provisioning sources are declared"));
         assert!(text.contains("» Adapter bootstrap sources are declared"));
         assert_eq!(text.matches("Next:").count(), 2);
@@ -10080,6 +10076,67 @@ mod tests {
         assert!(text.contains("Review approved policy surfaces (2)"));
         assert_eq!(text.matches("Next:").count(), 2);
         assert!(text.contains("Task output: sh: 1: sdk: not found"));
+    }
+
+    #[test]
+    fn up_text_includes_up_summary_block() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "build",
+            None,
+            &["build".to_string()],
+            0,
+            true,
+            Some(String::from("container")),
+            None,
+        );
+        let result = RepoUpResult {
+            ok: true,
+            status: "READY",
+            phase: "task",
+            report: DoctorReport {
+                ok: true,
+                provisioning: None,
+                adapter_bootstrap: None,
+                findings: Vec::new(),
+            },
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("build")),
+            task_command: Some(String::from("echo build")),
+            exit_code: Some(0),
+            stdout: String::from("build"),
+            stderr: String::new(),
+        };
+
+        let text = strip_ansi_codes(
+            &render_up_result(
+                "./ota.yaml",
+                "./ota.yaml",
+                result,
+                OutputFormat::Text,
+                false,
+            )
+            .stdout,
+        );
+
+        assert!(text.contains("UP SUMMARY"));
+        assert!(text.contains("Task:       build"));
     }
 
     #[test]
@@ -10364,6 +10421,20 @@ tasks:
         assert!(rendered.contains("Why: task failed | Why: missing tool"));
         assert!(rendered.contains("\nNext: install the missing tool and rerun"));
         assert!(!rendered.contains("\n\nNext: install the missing tool and rerun"));
+    }
+
+    #[test]
+    fn stylize_text_failure_collapses_run_task_usage_footer_spacing() {
+        let rendered = strip_ansi_codes(&stylize_text_failure(
+            "ota run",
+            "task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage",
+        ));
+
+        assert!(rendered.contains("Why: task `install-from-source` failed with exit code 101"));
+        assert!(rendered.contains("\nNext: run `ota tasks --use` to inspect runnable task usage"));
+        assert!(
+            !rendered.contains("\n\nNext: run `ota tasks --use` to inspect runnable task usage")
+        );
     }
 
     #[test]
@@ -11485,8 +11556,14 @@ fn run_single_contract_target(
 
 fn task_use_details_footer(member: Option<&str>) -> String {
     match member {
-        Some(_) => format!("\n\nNext:\n▸  {}", paint_code("ota workspace tasks --use")),
-        None => format!("\n\nNext:\n▸  {}", paint_code("ota tasks --use")),
+        Some(_) => format!(
+            "\nNext: run {} to inspect runnable task usage",
+            paint_code("ota workspace tasks --use")
+        ),
+        None => format!(
+            "\nNext: run {} to inspect runnable task usage",
+            paint_code("ota tasks --use")
+        ),
     }
 }
 
