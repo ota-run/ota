@@ -285,23 +285,13 @@ mod tests {
                 phase: String::from("provisioning"),
                 findings: vec![
                     Finding {
-                        severity: FindingSeverity::Error,
-                        summary: String::from("Version mismatch for runtime: java"),
+                        severity: FindingSeverity::Warn,
+                        summary: String::from("Contract drift: `tools.maven`"),
                         why: String::from(
-                            "java resolved to `25.0.2` but the contract requires `21`",
+                            "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
                         ),
                         next: String::from(
-                            "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
-                        ),
-                    },
-                    Finding {
-                        severity: FindingSeverity::Error,
-                        summary: String::from("Version mismatch for tool: curl"),
-                        why: String::from(
-                            "curl resolved to `8.13.0` but the contract requires `8.7.1`",
-                        ),
-                        next: String::from(
-                            "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
                         ),
                     },
                     Finding {
@@ -315,13 +305,23 @@ mod tests {
                         ),
                     },
                     Finding {
-                        severity: FindingSeverity::Warn,
-                        summary: String::from("Contract drift: `tools.maven`"),
+                        severity: FindingSeverity::Info,
+                        summary: String::from("Policy-backed provisioning sources are declared"),
                         why: String::from(
-                            "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
+                            "`.ota/org-policy.yaml` declares approved provisioning sources: curl via brew (versions 8.7.1)",
                         ),
                         next: String::from(
-                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                            "use this policy surface when repo prerequisites need an approved source",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Info,
+                        summary: String::from("Adapter bootstrap sources are declared"),
+                        why: String::from(
+                            "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                        ),
+                        next: String::from(
+                            "use this policy surface when repo prerequisites need an approved source",
                         ),
                     },
                 ],
@@ -342,8 +342,8 @@ mod tests {
             &render_workspace_up("./ota.workspace.yaml", &report, OutputFormat::Text, false).stdout,
         );
 
-        assert!(text.contains("Fix runtime and tool versions (2)"));
         assert!(text.contains("Review contract drift (2)"));
+        assert!(text.contains("Review approved policy surfaces"));
         assert_eq!(text.matches("Next:").count(), 2);
         assert!(text.contains("Task output: \n    sh: 1: sdk: not found"));
     }

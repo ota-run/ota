@@ -304,8 +304,10 @@ plan, so an installer backend can consume the request without re-deriving policy
 the diagnostic payload.
 
 `ota doctor --json` and `ota workspace doctor --json` may also include a top-level
-`finding_groups` array when the output contains repeated-action groups. The grouped metadata is
-additive only; each `findings[]` entry remains unchanged for machine consumers.
+`finding_groups` array when the output contains repeated-action groups. Each entry includes a
+stable `action_key` derived from the grouped findings, plus the human-facing `action_title`,
+`action_next`, and `count`. The grouped metadata is additive only; each `findings[]` entry remains
+unchanged for machine consumers.
 
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
 additive policy keys may appear there as well. When a repo declares execution metadata, the shared
@@ -766,6 +768,8 @@ Optional per-repo fields:
 
 ## `ota workspace check --json`
 
+`ota workspace check --json` uses the same finding shape as `ota workspace doctor --json`:
+
 ```json
 {
   "ok": false,
@@ -840,8 +844,8 @@ Failure example:
 
 ## `ota check --json`
 
-`ota check --json` uses the same finding shape as `ota doctor --json`, but does not include the
-optional `agent` summary:
+`ota check --json` uses the same finding shape as `ota doctor --json`, including additive
+`finding_groups` when present, but does not include the optional `agent` summary:
 
 ```json
 {

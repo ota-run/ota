@@ -220,6 +220,11 @@ agent:
     - Cargo.lock
     - ota.yaml
     - LICENSE
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
   notes: |
     Treat Ota as the default workflow, the way npm is the default in Node repos.
     Use `ota validate` to verify the contract.
