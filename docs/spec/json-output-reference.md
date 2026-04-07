@@ -75,7 +75,7 @@ Hosted CI can use the same fields as annotations or check-run summaries:
 
 - `summary.primary_blocker` when present, for the headline
 - `findings[]` or per-repo `findings[]` as the annotation stream
-- `finding_groups[]` when present, for grouped human-facing remediation summaries
+- `finding_groups[]` when present, for grouped human-facing remediation summaries only
 - `severity` to decide blocking versus warning annotations
 - `why` for the annotation body
 - `next` for the suggested fix or link target

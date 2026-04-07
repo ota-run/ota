@@ -372,6 +372,7 @@ Current behavior:
 - reads ota JSON from a file or from stdin when `--input -` is used
 - emits one primary blocker line when `summary.primary_blocker` is present
 - emits one line per finding
+- ignores `finding_groups` and stays one-annotation-per-finding by default
 - maps `severity: error` to `::error` or `ERROR` and all other severities to
   `::warning` or `WARNING`
 - scopes workspace findings with the repo name and path so annotations stay actionable
