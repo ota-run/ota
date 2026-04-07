@@ -9921,6 +9921,18 @@ where
         .collect()
 }
 
+fn doctor_finding_subject(finding: &Finding) -> &str {
+    finding
+        .summary
+        .split_once(": ")
+        .map(|(_, value)| value)
+        .unwrap_or(&finding.summary)
+}
+
+fn doctor_code_group_slug(code: &str) -> String {
+    doctor_group_slug(code.trim_start_matches("OTA_"))
+}
+
 fn doctor_finding_group_key(finding: &Finding) -> String {
     let summary = finding.summary.as_str();
     match finding.code() {
@@ -9942,10 +9954,35 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
         {
             String::from("policy-surface")
         }
-        _ => format!(
-            "shared-action-{}",
-            doctor_group_slug(&compact_backticked_paths(&finding.next))
+        "OTA_SERVICE_CHECK_FAILED" => format!(
+            "service-health-failed-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
         ),
+        "OTA_SERVICE_CHECK_TIMED_OUT" => format!(
+            "service-health-timeout-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_SERVICE_UNVERIFIABLE" => format!(
+            "service-health-unverifiable-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_CHECK_FAILED" => format!(
+            "check-failed-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_CHECK_TIMED_OUT" => format!(
+            "check-timeout-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        _ => {
+            let summary_key = doctor_group_slug(&compact_backticked_paths(&finding.summary));
+            let code_key = doctor_code_group_slug(finding.code());
+            if summary_key.is_empty() {
+                code_key
+            } else {
+                format!("{code_key}-{summary_key}")
+            }
+        }
     }
 }
 
@@ -11770,6 +11807,83 @@ tasks:
             "install compatible versions for the listed runtime and tool entries, then rerun `ota doctor`"
         );
         assert_eq!(groups[0].count, 2);
+    }
+
+    #[test]
+    fn doctor_group_summaries_keep_distinct_service_remediations_separate() {
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Service healthcheck failed: postgres"),
+                why: String::from("service `postgres` did not pass its configured healthcheck"),
+                next: String::from("run `docker compose up -d postgres` and re-run `ota doctor`"),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Service healthcheck failed: redis"),
+                why: String::from("service `redis` did not pass its configured healthcheck"),
+                next: String::from("run `docker compose up -d redis` and re-run `ota doctor`"),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Service healthcheck timed out: api"),
+                why: String::from("service `api` did not become ready within 5000ms"),
+                next: String::from(
+                    "make `services.api.healthcheck` complete faster or raise `services.api.timeout`, then rerun `ota doctor`",
+                ),
+            },
+        ];
+
+        let groups = super::doctor_finding_group_summaries(findings.iter());
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].action_key, "service-health-failed-postgres");
+        assert_eq!(groups[1].action_key, "service-health-failed-redis");
+        assert_eq!(groups[2].action_key, "service-health-timeout-api");
+        assert_eq!(
+            groups[0].action_next,
+            "run `docker compose up -d postgres` and re-run `ota doctor`"
+        );
+        assert_eq!(
+            groups[1].action_next,
+            "run `docker compose up -d redis` and re-run `ota doctor`"
+        );
+    }
+
+    #[test]
+    fn doctor_group_summaries_use_stable_keys_for_check_failures() {
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: health-check"),
+                why: String::from("the configured `health-check` check did not succeed"),
+                next: String::from(
+                    "run `cargo check` and fix the reported issue, then rerun `ota doctor`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check timed out: lint"),
+                why: String::from("the configured `lint` check did not finish within 5000ms"),
+                next: String::from(
+                    "make `cargo clippy` complete faster or raise `checks.timeout` for `lint`, then rerun `ota doctor`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Custom advisory"),
+                why: String::from("custom why"),
+                next: String::from("do the custom thing, then rerun `ota doctor`"),
+            },
+        ];
+
+        let groups = super::doctor_finding_group_summaries(findings.iter());
+        assert_eq!(groups.len(), 3);
+        assert_eq!(groups[0].action_key, "check-failed-health-check");
+        assert_eq!(groups[1].action_key, "check-timeout-lint");
+        assert_eq!(
+            groups[2].action_key,
+            "doctor-finding-unknown-custom-advisory"
+        );
     }
 
     #[test]
