@@ -30,7 +30,11 @@ Install ota first: [installation.md](installation.md)
 
 Doctor first, contract second.
 
-Fastest proof of value on a repo that already has `ota.yaml`:
+Choose the path that matches the repo.
+
+## Existing Repo With `ota.yaml`
+
+Fastest proof of value:
 
 ```bash
 ota doctor
@@ -48,26 +52,42 @@ What this gives you:
 - `ota agents` turns the same contract into repo-local agent guidance
 - `ota run <task>` executes a declared task through the same contract
 
-If the repo does not yet have a contract, use the authoring path:
+If you are not sure which task to run next, use:
+
+```bash
+ota tasks --use
+```
+
+## Repo Without `ota.yaml`
+
+Use the authoring path first:
 
 ```bash
 ota doctor
 ota explain
 ota detect --dry-run .
 ota init --dry-run
-# if the repo does not yet have ota.yaml, choose one explicit write path:
+```
+
+Then choose one explicit write path:
+
+```bash
 ota init
 # or:
 ota detect --write .
 ```
 
-If the repo already has `ota.yaml`, review the delta first:
+## Existing Repo With `ota.yaml`, But Contract Drift Is Suspected
+
+Review the delta first:
 
 ```bash
 ota detect --merge --dry-run .
 ota detect --rewrite --dry-run .
 ota validate
 ```
+
+## Agent Guidance From The Same Contract
 
 If you want repo-local agent guidance from the same contract:
 
@@ -77,12 +97,6 @@ ota agents --write
 ```
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
-
-If you are not sure which task to run next, use:
-
-```bash
-ota tasks --use
-```
 
 ## Validate A Workspace
 
@@ -97,7 +111,7 @@ ota workspace tasks
 ota workspace run setup
 ```
 
-Follow-on workspace inspection commands stay available after the first bootstrap path:
+Follow-on workspace commands stay available after the first bootstrap path:
 
 ```bash
 ota workspace check

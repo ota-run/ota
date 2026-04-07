@@ -36,16 +36,17 @@ Options:
   -h, --help         Print help
 
 
-Start here:
-  inspect an existing repo   ota doctor
-  explain blockers          ota explain
-  preview a first contract  ota detect --dry-run .
-  review a starter contract ota init --dry-run
-  prepare the repo          ota up
-  generate agent guidance   ota agents
-  run a task                ota run ci
+Choose a flow:
+  existing repo with ota.yaml  ota doctor
+  turn findings into a plan    ota explain
+  repo without ota.yaml        ota detect --dry-run .
+  review a starter contract    ota init --dry-run
+  prepare the repo             ota up
+  generate agent guidance      ota agents
+  list runnable tasks          ota tasks --use
+  run a declared task          ota run ci
 
 Workspace:
-  inspect readiness         ota workspace doctor .
-  explain blockers          ota workspace explain .
-  prepare the workspace     ota workspace up
+  inspect readiness            ota workspace doctor .
+  explain blockers             ota workspace explain .
+  prepare the workspace        ota workspace up

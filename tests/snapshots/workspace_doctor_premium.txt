@@ -4,8 +4,11 @@
 
 ➤ Primary Blocker
 web [No tasks defined in contract]
-Why: without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents
-Next: add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate
+Why: without at least one task, `ota run <task>` cannot execute a repo entrypoint and the
+  readiness contract is not operational for humans or agents
+Next:
+  add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run
+  `ota detect --dry-run` and `ota detect --write` to regenerate
 
 ✦ web [required] (NOT READY)
 Path: ./apps/web
@@ -20,9 +23,9 @@ Verdict
  ●  Agent: not ready
 
 Overview
-» Repos: 1
-» Ready: 0
-» Not Ready: 1
-» Errors: 1
-» Warnings: 0
-» Info: 0
+ »  Repos: 1
+ »  Ready: 0
+ »  Not Ready: 1
+ »  Errors: 1
+ »  Warnings: 0
+ »  Info: 0

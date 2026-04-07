@@ -920,40 +920,52 @@ fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Summary"));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Repos:", "1;38;2;102;217;255"),
-        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Repos:", "1;38;2;102;217;255"),
+            &paint(&summary.repo_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Match:", "1;38;2;102;217;255"),
-        paint(&summary.match_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Match:", "1;38;2;102;217;255"),
+            &paint(&summary.match_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Different:", "1;38;2;0;180;255"),
-        paint(&summary.different_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Different:", "1;38;2;0;180;255"),
+            &paint(&summary.different_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Dirty:", "1;38;2;0;255;200"),
-        paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Dirty:", "1;38;2;0;255;200"),
+            &paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Missing:", "1;38;2;255;80;80"),
-        paint(&summary.missing_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Missing:", "1;38;2;255;80;80"),
+            &paint(&summary.missing_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Unresolved:", "1;38;2;183;134;255"),
-        paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Unresolved:", "1;38;2;183;134;255"),
+            &paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout
 }
@@ -990,52 +1002,68 @@ fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Summary"));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Repos:", "1;38;2;102;217;255"),
-        paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Repos:", "1;38;2;102;217;255"),
+            &paint(&summary.repo_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Ready:", "1;38;2;0;255;120"),
-        paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Ready:", "1;38;2;0;255;120"),
+            &paint(&summary.ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Not ready:", "1;38;2;255;214;79"),
-        paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Not ready:", "1;38;2;255;214;79"),
+            &paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Match:", "1;38;2;0;255;120"),
-        paint(&summary.match_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Match:", "1;38;2;0;255;120"),
+            &paint(&summary.match_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Different:", "1;38;2;255;235;59"),
-        paint(&summary.different_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Different:", "1;38;2;255;235;59"),
+            &paint(&summary.different_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Dirty:", "1;38;2;61;174;255"),
-        paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Dirty:", "1;38;2;61;174;255"),
+            &paint(&summary.dirty_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Missing:", "1;38;2;255;80;80"),
-        paint(&summary.missing_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Missing:", "1;38;2;255;80;80"),
+            &paint(&summary.missing_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Unresolved:", "1;38;2;183;134;255"),
-        paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255")
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Unresolved:", "1;38;2;183;134;255"),
+            &paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255"),
+        )
     ));
     stdout
 }

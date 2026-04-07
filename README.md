@@ -108,7 +108,11 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 Doctor first, contract second.
 
-If you are using ota on an existing repo, start with the read path:
+Choose the path that matches the repo.
+
+### Existing repo with `ota.yaml`
+
+Start with the read path:
 
 ```bash
 ota doctor
@@ -118,41 +122,51 @@ ota agents
 ota run <task>
 ```
 
-That path tells you what is wrong, turns the findings into an ordered plan, prepares the repo,
+This path tells you what is wrong, turns the findings into an ordered plan, prepares the repo,
 derives repo-local agent guidance from the same contract, and gives you one declared task path
 without guessing.
 
-If you are writing or refining a contract, use the authoring path:
+If you are not sure which task to run after `ota up`, use:
+
+```bash
+ota tasks --use
+```
+
+### Repo without `ota.yaml`
+
+Use the authoring path first:
 
 ```bash
 ota doctor
 ota explain
 ota detect --dry-run .
 ota init --dry-run
-# if the repo does not yet have ota.yaml, choose one explicit write path:
+```
+
+Then choose one explicit write path:
+
+```bash
 ota init
 # or:
 ota detect --write .
 ```
 
-If the repo already has `ota.yaml`, review the delta first:
+### Existing repo with `ota.yaml`, but contract drift is suspected
+
+Review the delta before writing:
 
 ```bash
 ota detect --merge --dry-run .
 ota detect --rewrite --dry-run .
 ```
 
-If you want agent-safe repo guidance from the same contract:
+### Agent guidance from the same contract
+
+If you want repo-local agent guidance from the same contract:
 
 ```bash
 ota agents
 ota agents --write
-```
-
-If you are not sure which task to run after `ota up`, use:
-
-```bash
-ota tasks --use
 ```
 
 ### Workspace bootstrap
