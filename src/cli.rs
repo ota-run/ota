@@ -5701,8 +5701,12 @@ tasks:
             "expected the docker version mismatch to be present"
         );
         assert!(
-            stdout.contains("Contract drift: `tools.docker` is no longer detected"),
-            "expected the tool drift warning"
+            stdout.contains("Review contract drift (2)"),
+            "expected the grouped contract drift warning"
+        );
+        assert!(
+            stdout.contains("tools.docker"),
+            "expected the docker drift detail to be present"
         );
     }
 

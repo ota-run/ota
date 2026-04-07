@@ -91,19 +91,7 @@ pub(crate) fn render_workspace_up(
                 if let Some(exit_code) = repo.exit_code {
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
-                for finding in &repo.findings {
-                    let why = compact_backticked_paths(&finding.why);
-                    let next = compact_backticked_paths(&finding.next);
-                    stdout.push_str(&format!(
-                        "\n\n{}  {}\n{} {}\n{} {}",
-                        render_severity(finding.severity),
-                        render_finding_summary(finding.severity, &finding.summary),
-                        finding_detail_key(finding.severity, "Why:"),
-                        why,
-                        finding_detail_key(finding.severity, "Next:"),
-                        next
-                    ));
-                }
+                stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
                 append_primary_output_block(
                     &mut stdout,
                     workspace_phase_output_label(&repo.phase),
@@ -212,19 +200,7 @@ pub(crate) fn render_workspace_refresh(
                 if let Some(exit_code) = repo.exit_code {
                     stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
                 }
-                for finding in &repo.findings {
-                    let why = compact_backticked_paths(&finding.why);
-                    let next = compact_backticked_paths(&finding.next);
-                    stdout.push_str(&format!(
-                        "\n\n{}  {}\n{} {}\n{} {}",
-                        render_severity(finding.severity),
-                        render_finding_summary(finding.severity, &finding.summary),
-                        finding_detail_key(finding.severity, "Why:"),
-                        why,
-                        finding_detail_key(finding.severity, "Next:"),
-                        next
-                    ));
-                }
+                stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
                 append_primary_output_block(
                     &mut stdout,
                     workspace_phase_output_label(&repo.phase),
@@ -270,6 +246,131 @@ pub(crate) fn render_workspace_refresh(
             exit_code: if report.ok { 0 } else { 1 },
         },
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_up_text_groups_shared_actions_by_remediation() {
+        let report = WorkspaceUpReport {
+            ok: false,
+            dry_run: false,
+            receipt: ExecutionReceipt {
+                ok: false,
+                path: String::from("./ota.workspace.yaml"),
+                scope: String::from("workspace"),
+                contract: String::from("./ota.workspace.yaml"),
+                workspace: Some(String::from("demo")),
+                backend: None,
+                lifecycle: None,
+                target: None,
+                acquired: Vec::new(),
+                env: BTreeMap::new(),
+                env_sources: Vec::new(),
+                policy: Vec::new(),
+                steps: Vec::new(),
+                blocked: Vec::new(),
+                summary: ExecutionReceiptSummary::default(),
+                next: None,
+            },
+            repos: vec![WorkspaceRepoUpReport {
+                name: String::from("api"),
+                path: String::from("api"),
+                contract_path: String::from("api/ota.yaml"),
+                required: true,
+                ok: false,
+                status: String::from("PROVISION FAILED"),
+                phase: String::from("provisioning"),
+                findings: vec![
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("Version mismatch for runtime: java"),
+                        why: String::from(
+                            "java resolved to `25.0.2` but the contract requires `21`",
+                        ),
+                        next: String::from(
+                            "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from("Version mismatch for tool: curl"),
+                        why: String::from(
+                            "curl resolved to `8.13.0` but the contract requires `8.7.1`",
+                        ),
+                        next: String::from(
+                            "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Warn,
+                        summary: String::from("Contract drift: `tools.node`"),
+                        why: String::from(
+                            "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` now detects `*`",
+                        ),
+                        next: String::from(
+                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Warn,
+                        summary: String::from("Contract drift: `tools.maven`"),
+                        why: String::from(
+                            "`ota.yaml` still declares `tools.maven` = `3.9.9`, but repo inspection under `.` now detects `*`",
+                        ),
+                        next: String::from(
+                            "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                        ),
+                    },
+                ],
+                source_url: None,
+                source_ref: None,
+                service: None,
+                service_command: None,
+                task: None,
+                task_command: None,
+                exit_code: Some(127),
+                stdout: None,
+                stderr: Some(String::from("sh: 1: sdk: not found")),
+                env_sources: Vec::new(),
+            }],
+        };
+
+        let text = strip_ansi_codes(
+            &render_workspace_up("./ota.workspace.yaml", &report, OutputFormat::Text, false).stdout,
+        );
+
+        assert!(text.contains("Fix runtime and tool versions (2)"));
+        assert!(text.contains("Review contract drift (2)"));
+        assert_eq!(text.matches("Next:").count(), 2);
+        assert!(text.contains("Task output: \n    sh: 1: sdk: not found"));
+    }
+}
+
+fn render_workspace_repo_findings_text(findings: &[Finding]) -> String {
+    let mut stdout = String::new();
+    for group in group_doctor_findings(findings.iter()) {
+        if group.findings.len() == 1 {
+            let finding = group.findings[0];
+            let why = compact_backticked_paths(&finding.why);
+            let next = compact_backticked_paths(&finding.next);
+            stdout.push_str(&format!(
+                "\n\n{}  {}\n{} {}\n{} {}",
+                render_severity(finding.severity),
+                render_finding_summary(finding.severity, &finding.summary),
+                finding_detail_key(finding.severity, "Why:"),
+                why,
+                finding_detail_key(finding.severity, "Next:"),
+                next
+            ));
+            continue;
+        }
+
+        stdout.push_str(&render_grouped_doctor_findings(&group));
+    }
+    stdout
 }
 
 pub(crate) fn render_workspace_diff(
@@ -650,20 +751,20 @@ fn workspace_status_word(status: &str) -> String {
 
 fn workspace_phase_output_label(phase: &str) -> &'static str {
     match phase {
-        "acquisition" => "Acquire output:",
-        "services" => "Service output:",
-        "setup" => "Setup output:",
-        "refresh" => "Refresh output:",
-        _ => "Task output:",
+        "acquisition" => "Acquire output",
+        "services" => "Service output",
+        "setup" => "Setup output",
+        "refresh" => "Refresh output",
+        _ => "Task output",
     }
 }
 
 fn workspace_run_output_label(repo: &WorkspaceRepoRunReport) -> &'static str {
     if repo.status == "ACQUIRE FAILED" || (repo.source_url.is_some() && repo.task_command.is_none())
     {
-        "Acquire output:"
+        "Acquire output"
     } else {
-        "Task output:"
+        "Task output"
     }
 }
 
