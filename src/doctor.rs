@@ -595,7 +595,7 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
                 "Ephemeral lifecycle is only enforced for backend-backed task execution",
             ),
             why: String::from(
-                "the contract requests `execution.lifecycle: ephemeral`; 🦦 now uses fresh container execution for `ota run` and the `setup` task inside `ota up`, but service commands, healthchecks, diagnosis, and full repo teardown still do not run in isolated temporary environments",
+                "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
             ),
             next: String::from(
                 "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",

@@ -50,20 +50,20 @@ use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CommandOutput, DetectComparison,
-    DetectComparisonChange, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
-    DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
-    DoctorVerdict, ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep,
-    ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess,
-    ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat, ServiceSummary,
-    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
-    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
+    DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker,
+    DoctorSuccess, DoctorSummary, DoctorVerdict, ExecutionReceipt, ExecutionReceiptEnvSource,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3879,22 +3879,6 @@ pub fn detect(
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
                         stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
-                        if merge {
-                            stdout.push_str(&format_next_timeline(&[format!(
-                                "run `ota detect --merge {}` to apply add-only high-confidence fields",
-                                compact_root_display
-                            )]));
-                        } else if rewrite {
-                            stdout.push_str(&format_next_timeline(&[format!(
-                                "run `ota detect --rewrite --yes {}` to replace the existing contract",
-                                compact_root_display
-                            )]));
-                        } else {
-                            stdout.push_str(&format_next_timeline(&[format!(
-                                "run `ota detect --write {}` to write a high-confidence contract",
-                                compact_root_display
-                            )]));
-                        }
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
                         stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                         render_inference_section(
@@ -3903,25 +3887,31 @@ pub fn detect(
                             report.inferences.iter(),
                         );
                         render_detect_comparison_section(&mut stdout, comparison.as_ref());
+                        let next_line = if merge {
+                            format!(
+                                "run `ota detect --merge {}` to apply add-only high-confidence fields",
+                                compact_root_display
+                            )
+                        } else if rewrite {
+                            format!(
+                                "run `ota detect --rewrite --yes {}` to replace the existing contract",
+                                compact_root_display
+                            )
+                        } else {
+                            format!(
+                                "run `ota detect --write {}` to write a high-confidence contract",
+                                compact_root_display
+                            )
+                        };
                         if let Some(comparison) = comparison.as_ref() {
                             if !comparison.changes.is_empty() {
                                 stdout.push_str(&format!("\n\n{}", error_next_key("Next:")));
-                                stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply <field name> {}` to apply selected fields",
-                                    next_bullet(),
-                                    compact_root_display
-                                ));
-                                stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --merge --apply-all {}` to apply all eligible suggestions",
-                                    next_bullet(),
-                                    compact_root_display
-                                ));
-                                stdout.push_str(&format!(
-                                    "\n{}  run `ota detect --rewrite --yes {}` to replace the full detected contract",
-                                    next_bullet(),
-                                    compact_root_display
-                                ));
+                                stdout.push_str(&format!("\n{}  {}", next_bullet(), next_line));
+                            } else {
+                                stdout.push_str(&format_next_timeline(&[next_line]));
                             }
+                        } else {
+                            stdout.push_str(&format_next_timeline(&[next_line]));
                         }
                         CommandOutput::success(stdout)
                     }
@@ -7153,13 +7143,108 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
             "\n\n{}:",
             paint_section_title("Existing contract drift")
         ));
-        for removal in &comparison.removals {
+        render_detect_removals_section(stdout, &comparison.removals);
+    }
+}
+
+fn render_detect_removals_section(stdout: &mut String, removals: &[DetectComparisonRemoval]) {
+    let mut task_removals = BTreeMap::<String, Vec<String>>::new();
+    let mut generic_removals = Vec::new();
+
+    for removal in removals {
+        if let Some((task_name, entries)) = detect_task_removal_entries(removal) {
+            task_removals.entry(task_name).or_default().extend(entries);
+        } else {
+            generic_removals.push(removal);
+        }
+    }
+
+    if !task_removals.is_empty() {
+        let removal_count = removals.len() - generic_removals.len();
+        let task_count = task_removals.len();
+        stdout.push_str(&format!(
+            "\n\n{}  Review task drift ({} {} across {} {})",
+            render_severity(FindingSeverity::Warn),
+            removal_count,
+            pluralize(removal_count, "removal"),
+            task_count,
+            pluralize(task_count, "task")
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Why:"),
+            stylize_inline_text(
+                "current repo signals no longer support some `tasks.*` entries in `ota.yaml`. Applying a detect merge would remove the entries below."
+            )
+        ));
+        for (task_name, entries) in task_removals {
             stdout.push_str(&format!(
-                "\n{}  {}: would remove `{}`",
+                "\n\n{}  {} {}",
                 list_bullet(),
-                paint(&removal.field, "1;38;2;255;214;79"),
-                removal.existing
+                paint("Task", "1"),
+                stylize_inline_text(&format!("`{task_name}`"))
             ));
+            for entry in entries {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    summary_bullet(),
+                    stylize_inline_text(&entry)
+                ));
+            }
+        }
+    }
+
+    for removal in generic_removals {
+        stdout.push_str(&format!(
+            "\n\n{}  {}",
+            list_bullet(),
+            paint(&removal.field, "1;38;2;255;214;79")
+        ));
+        for value in removal.existing.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                summary_bullet(),
+                stylize_inline_text(&format!("remove `{value}`"))
+            ));
+        }
+    }
+}
+
+fn detect_task_removal_entries(removal: &DetectComparisonRemoval) -> Option<(String, Vec<String>)> {
+    let field = removal.field.strip_prefix("tasks.")?;
+    let (task_name, property) = field.rsplit_once('.')?;
+    let entries = match property {
+        "run" => removal
+            .existing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| format!("remove command `{line}`"))
+            .collect::<Vec<_>>(),
+        _ => removal
+            .existing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| format!("remove `{property}: {line}`"))
+            .collect::<Vec<_>>(),
+    };
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    Some((task_name.to_string(), entries))
+}
+
+fn pluralize(count: usize, singular: &str) -> &str {
+    if count == 1 {
+        singular
+    } else {
+        match singular {
+            "removal" => "removals",
+            "task" => "tasks",
+            _ => singular,
         }
     }
 }
@@ -8595,7 +8680,7 @@ fn render_report_section(
     if let Some(primary_blocker) = skip_primary_finding {
         stdout.push_str(&render_primary_finding_text(
             primary_blocker.severity,
-            &render_finding_summary(primary_blocker.severity, &primary_blocker.summary),
+            &primary_blocker.summary,
             &primary_blocker.why,
             &primary_blocker.next,
         ));
@@ -8679,7 +8764,7 @@ fn render_primary_finding_text(
         paint(title, title_color)
     ));
     stdout.push('\n');
-    stdout.push_str(&format!("{} {}", paint_section_title("Summary"), summary));
+    stdout.push_str(&paint(summary, "1"));
     if !concise_mode() {
         stdout.push_str(&format!(
             "\n{} {}",
@@ -9740,11 +9825,13 @@ mod tests {
     use super::{
         OutputFormat, RepoExecutionMode, RepoUpResult, compact_contract_file_path_relative_to,
         compact_path_relative_to, compact_policy_path_relative_to_contract, execute_repo_up,
-        render_execution_receipt_summary_block, render_execution_receipt_text,
-        render_report_section, render_up_result, render_up_section_from_parts,
-        run_execution_receipt, strip_ansi_codes, stylize_text_failure, workspace_refresh_command,
+        render_detect_comparison_section, render_execution_receipt_summary_block,
+        render_execution_receipt_text, render_report_section, render_up_result,
+        render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
+        stylize_text_failure, workspace_refresh_command,
     };
     use crate::doctor::{DoctorReport, Finding, FindingSeverity};
+    use crate::output::{DetectComparison, DetectComparisonRemoval};
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
@@ -9909,6 +9996,46 @@ mod tests {
         assert!(text.starts_with("🦦 POLICY ./ota.yaml\n\n"));
         assert!(text.contains("Policy source: repo policy\n"));
         assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n"));
+    }
+
+    #[test]
+    fn detect_comparison_groups_task_removals_by_task() {
+        let comparison = DetectComparison {
+            existing_contract: true,
+            changes: Vec::new(),
+            removals: vec![
+                DetectComparisonRemoval {
+                    field: String::from("tasks.ci.run"),
+                    existing: String::from(
+                        "cargo fmt --check\ncargo check\ncargo test -- --test-threads=1",
+                    ),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.ci.safe_for_agent"),
+                    existing: String::from("true"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tools.node"),
+                    existing: String::from("22"),
+                },
+            ],
+            error: None,
+        };
+        let mut stdout = String::new();
+        render_detect_comparison_section(&mut stdout, Some(&comparison));
+        let text = strip_ansi_codes(&stdout);
+
+        assert!(text.contains("Existing contract drift:"));
+        assert!(text.contains("Review task drift (2 removals across 1 task)"));
+        assert!(text.contains("Task `ci`"));
+        assert!(text.contains("» remove command `cargo fmt --check`"));
+        assert!(text.contains("» remove command `cargo check`"));
+        assert!(text.contains("» remove command `cargo test -- --test-threads=1`"));
+        assert!(text.contains("» remove `safe_for_agent: true`"));
+        assert!(text.contains("tools.node"));
+        assert!(text.contains("» remove `22`"));
+        assert!(!text.contains("tasks.ci.run"));
+        assert!(!text.contains("would remove:"));
     }
 
     #[test]
@@ -10331,6 +10458,63 @@ tasks:
         assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert_eq!(text.matches("Next:").count(), 1);
+    }
+
+    #[test]
+    fn doctor_text_primary_finding_uses_bold_title_without_summary_label() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from(
+                    "Ephemeral lifecycle is only enforced for backend-backed task execution",
+                ),
+                why: String::from(
+                    "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
+                ),
+                next: String::from(
+                    "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
+                ),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(super::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from(
+                    "Ephemeral lifecycle is only enforced for backend-backed task execution",
+                ),
+                why: String::from(
+                    "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
+                ),
+                next: String::from(
+                    "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
+                ),
+            }),
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains("➤ Primary Blocker"));
+        assert!(
+            text.contains("Ephemeral lifecycle is only enforced for backend-backed task execution")
+        );
+        assert!(!text.contains(
+            "Summary Ephemeral lifecycle is only enforced for backend-backed task execution"
+        ));
     }
 
     #[test]
@@ -12760,7 +12944,7 @@ fn summary_bullet() -> String {
     if plain_mode() {
         String::from("-")
     } else {
-        paint("»", "1;38;2;255;214;79")
+        paint("»", "1;38;2;102;245;255")
     }
 }
 

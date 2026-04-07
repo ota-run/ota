@@ -30,6 +30,12 @@
   `up`, and workspace variants collapse obvious repeated actions with shared Ota styling.
 - normalized `finding_groups.action_key` around remediation classes instead of literal `Next:`
   prose so grouped JSON summaries stay stable when copy changes.
+- tightened `ota run` failure formatting so injected `Next:` guidance now sits immediately under
+  `Why:` and no longer leaves extra blank gaps before `RUN SUMMARY`.
+- regrouped detect contract-drift removals by task in text output so task-related drift reads as
+  actionable task changes instead of a raw dotted-path diff dump.
+- retuned the rich-mode `»` child-action accent to a brighter cyan so grouped drift/action items
+  stand apart more clearly from their parent bullets.
 
 ## 1.1.2
 

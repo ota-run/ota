@@ -29,3 +29,15 @@
 - Pattern: Grouping by literal `Next:` prose is too weak because equivalent operator actions still fan out once tool names or versions change.
 - Correction: Derive grouping from normalized remediation/action classes, then render one shared remediation block with the existing Ota visual language.
 - Rule: For doctor-style grouped output, normalize by operator action first and only fall back to exact remediation text when no stable action class exists.
+- Pattern: CLI-level fallback guidance can reintroduce blank-line noise even when lower-level renderers are already structured correctly.
+- Correction: Trim the boundary between structured error bodies and injected footer guidance before inserting fallback `Next:` lines.
+- Rule: When adding fallback guidance above structured command output, preserve section spacing intentionally and never rely on existing trailing blank lines.
+- Pattern: ANSI-styled separator lines can survive later blank-line collapsing and still show up as visible gaps in rendered output.
+- Correction: Remove unwanted separators at the formatter source instead of relying on downstream blank-line cleanup.
+- Rule: If a rendered spacing bug survives post-processing, tighten the original formatter string first; blank-line collapse is not a reliable fix for ANSI-decorated output.
+- Pattern: Detect drift rendered as raw dotted field paths makes task changes look like schema noise instead of actionable repo updates.
+- Correction: Present task removals by task name with concrete removal actions, and reserve raw field paths for non-task fallback cases.
+- Rule: In human drift output, group by the operator’s unit of change when one exists; prefer `Task <name>` over raw `tasks.<name>.*` paths.
+- Pattern: Child action markers that share the same hue family as parent bullets flatten hierarchy and make grouped output harder to scan.
+- Correction: Give nested action bullets a clearly distinct accent color from their parent group/task markers while preserving the overall palette.
+- Rule: In rich CLI output, use color to reinforce structure; child markers should not visually blend into parent bullets.
