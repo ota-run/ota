@@ -10220,6 +10220,56 @@ runtimes:
     }
 
     #[test]
+    fn doctor_plain_text_snapshot_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-demo
+execution:
+  lifecycle: ephemeral
+tasks:
+  ci:
+    run: echo ci
+agent:
+  entrypoint: ci
+  default_task: ci
+  safe_tasks: [ci]
+  verify_after_changes: [ci]
+  writable_paths: [src, docs]
+  protected_paths: [ota.yaml, Cargo.lock]
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "premium-demo"
+}"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "--plain", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_text_snapshot("doctor_plain_premium.txt", &output.stdout);
+    }
+
+    #[test]
     fn doctor_uses_uv_python_remediation_when_repo_signals_uv() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
@@ -10326,6 +10376,93 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `sdk install java 21.0.2-tem` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_sdkman_maven_remediation_when_repo_signals_sdkman() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: maven-demo
+tools:
+  maven: "3.9.9"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".sdkmanrc", "maven=3.9.9\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let mvn_body = if cfg!(windows) {
+            "@echo off\r\necho Apache Maven 3.9.14\r\n"
+        } else {
+            "#!/bin/sh\necho 'Apache Maven 3.9.14'\n"
+        };
+        write_fake_command(&bin_dir, "mvn", mvn_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `sdk install maven 3.9.9` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_dotnet_install_script_when_repo_signals_global_json() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: dotnet-demo
+runtimes:
+  dotnet: "8.0.203"
+tools:
+  dotnet: "*"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(
+            "global.json",
+            r#"{
+  "sdk": {
+    "version": "8.0.203"
+  }
+}"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let dotnet_body = if cfg!(windows) {
+            "@echo off\r\necho 9.0.100\r\n"
+        } else {
+            "#!/bin/sh\necho '9.0.100'\n"
+        };
+        write_fake_command(&bin_dir, "dotnet", dotnet_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+        let expected_command = if cfg!(windows) {
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Version 8.0.203\""
+        } else {
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --version 8.0.203"
+        };
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains(expected_command));
+        assert!(stdout.contains("rerun `ota doctor`"));
     }
 
     #[test]
@@ -10639,6 +10776,49 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert_text_snapshot("detect_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn explain_narrow_text_snapshot_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: narrow-demo
+tasks:
+  ci:
+    run: echo ci
+runtimes:
+  node: "22"
+tools:
+  npm: "10"
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "narrow-demo"
+}"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("48"));
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "explain", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        assert_text_snapshot("explain_narrow_premium.txt", &strip_ansi(&output.stdout));
     }
 
     #[test]

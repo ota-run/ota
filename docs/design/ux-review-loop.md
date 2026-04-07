@@ -41,7 +41,9 @@ This keeps the snapshot-backed premium CLI surfaces stable:
 
 - root help
 - repo `doctor`
+- repo `doctor --plain`
 - repo `detect`
+- repo `explain` at narrow terminal widths
 - repo `up`
 - repo `run`
 - repo `agents`
@@ -58,7 +60,9 @@ Review these commands in a real terminal before shipping UX-sensitive changes:
 ```bash
 ota --help
 ota doctor .
+ota --plain doctor .
 ota detect --dry-run .
+env COLUMNS=48 ota explain .
 ota up .
 ota agents .
 ota run install-from-source

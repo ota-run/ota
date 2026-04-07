@@ -1,0 +1,38 @@
+🦦 EXPLAIN ./ota.yaml
+
+➤ NOT READY
+
+Plan
+ 1. Install required runtimes and tools (2)
+  Why: one or more required
+    runtimes or tools are
+    missing or do not match the
+    contract
+  » node resolved `24.14.1`, requires `22`
+    Next:
+      install a compatible node
+      version that satisfies
+      `22`, then rerun
+      `ota doctor`
+  » npm is missing
+    Next:
+      install npm and make it
+      available on PATH, then
+      rerun `ota doctor`
+
+ 2. Review contract drift (2)
+  Why: repo signals no longer match
+    the declared contract
+  » `runtimes.node` is no longer detected
+  » `tools.npm` is no longer detected
+  Next:
+    run `ota detect --merge --dry-run`
+    to review the comparison, then
+    `ota detect --merge`
+
+Overview
+ »  Findings: 4
+ »  Actions: 2
+ »  Errors: 2
+ »  Warnings: 2
+ »  Info: 0
