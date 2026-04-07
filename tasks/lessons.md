@@ -59,3 +59,6 @@
 - Pattern: Premium sibling commands drift apart when some still end at a bare status while others close with obvious next steps.
 - Correction: Give successful low-noise commands like `validate` explicit next actions, and reuse the same concise section naming across adjacent commands like `explain`.
 - Rule: Core first-contact commands should not end in dead air; successful output should still point to the next useful Ota action.
+- Pattern: Reusing a shared findings renderer across repo and workspace commands can silently reintroduce verbose `Why:` lines and spacing bugs if the concise/section rules are not carried over too.
+- Correction: When promoting shared CLI renderers, verify concise-mode behavior, primary-blocker spacing, and single-finding formatting on every consumer, not just the original command.
+- Rule: Shared output helpers must preserve the UX contract of every command that adopts them, especially concise-mode omission rules and section separators.
