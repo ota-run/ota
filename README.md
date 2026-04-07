@@ -123,12 +123,20 @@ If you are writing or refining a contract, use the authoring path:
 
 ```bash
 ota doctor
-ota init --dry-run
+ota explain
 ota detect --dry-run .
+ota init --dry-run
+# if the repo does not yet have ota.yaml, choose one explicit write path:
 ota init
+# or:
 ota detect --write .
+```
+
+If the repo already has `ota.yaml`, review the delta first:
+
+```bash
 ota detect --merge --dry-run .
-ota detect --merge .
+ota detect --rewrite --dry-run .
 ```
 
 ### Workspace bootstrap
@@ -136,10 +144,10 @@ ota detect --merge .
 If you are setting up multiple repos together:
 
 ```bash
-ota workspace validate .
 ota workspace doctor .
-ota workspace tasks .
 ota workspace up
+ota workspace tasks .
+ota workspace validate .
 ```
 
 If the contract declares agent guidance, `ota doctor --json` and `ota explain --json` surface the

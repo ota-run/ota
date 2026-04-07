@@ -342,11 +342,27 @@ pub(crate) fn render_workspace_check_text(
     path: &str,
     report: &crate::workspace::WorkspaceDoctorReport,
 ) -> CommandOutput {
+    let summary = workspace_doctor_summary(report);
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("WORKSPACE CHECK", path),
         render_readiness_status(report.ok)
     );
+    if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
+        if !stdout.ends_with("\n\n") {
+            stdout.push_str("\n\n");
+        }
+        stdout.push_str(&render_primary_finding_text(
+            primary_blocker.severity,
+            &format!(
+                "{} [{}]",
+                primary_blocker.repo,
+                render_finding_summary(primary_blocker.severity, &primary_blocker.summary)
+            ),
+            &primary_blocker.why,
+            &primary_blocker.next,
+        ));
+    }
     if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {
         stdout.push_str(&format_next_timeline(&[
             String::from("run `ota workspace up` to prepare the workspace end to end"),
@@ -386,9 +402,7 @@ pub(crate) fn render_workspace_check_text(
         }
         stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
     }
-    stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
-        report,
-    )));
+    stdout.push_str(&render_workspace_summary_text(&summary));
 
     CommandOutput {
         stdout,

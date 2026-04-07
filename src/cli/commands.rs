@@ -4106,6 +4106,7 @@ pub fn workspace_validate(
 fn render_workspace_validate_ready_next() -> String {
     format_next_timeline(&[
         String::from("run `ota workspace doctor` to inspect readiness"),
+        String::from("run `ota workspace up` to prepare the workspace end to end"),
         String::from("run `ota workspace tasks` to inspect runnable task usage"),
     ])
 }
@@ -10044,9 +10045,17 @@ fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding
 }
 
 fn doctor_finding_group_display_items(group: &DoctorFindingGroup<'_>) -> Vec<String> {
+    let include_tooling_commands = matches!(group.kind, DoctorFindingGroupKind::ToolingVersion)
+        && group
+            .findings
+            .iter()
+            .map(|finding| finding.next.as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1;
     let mut items = Vec::new();
     for finding in &group.findings {
-        let item = doctor_finding_group_item_text(&group.kind, finding);
+        let item = doctor_finding_group_item_text(&group.kind, finding, include_tooling_commands);
         if !items.contains(&item) {
             items.push(item);
         }
@@ -10054,7 +10063,11 @@ fn doctor_finding_group_display_items(group: &DoctorFindingGroup<'_>) -> Vec<Str
     items
 }
 
-fn doctor_finding_group_item_text(kind: &DoctorFindingGroupKind, finding: &Finding) -> String {
+fn doctor_finding_group_item_text(
+    kind: &DoctorFindingGroupKind,
+    finding: &Finding,
+    include_command_hint: bool,
+) -> String {
     let subject = finding
         .summary
         .split_once(": ")
@@ -10062,15 +10075,23 @@ fn doctor_finding_group_item_text(kind: &DoctorFindingGroupKind, finding: &Findi
         .unwrap_or(&finding.summary);
     match kind {
         DoctorFindingGroupKind::ToolingVersion => {
+            let command_hint = if include_command_hint {
+                backticked_tokens(&finding.next)
+                    .first()
+                    .map(|command| format!("; run `{command}`"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
             if matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING") {
-                return format!("{subject} is missing");
+                return format!("{subject} is missing{command_hint}");
             }
             let tokens = backticked_tokens(&finding.why);
             match tokens.as_slice() {
                 [observed, expected, ..] => {
-                    format!("{subject} resolved `{observed}`, requires `{expected}`")
+                    format!("{subject} resolved `{observed}`, requires `{expected}`{command_hint}")
                 }
-                _ => subject.to_string(),
+                _ => format!("{subject}{command_hint}"),
             }
         }
         DoctorFindingGroupKind::ContractDrift => subject.to_string(),
@@ -14309,77 +14330,86 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
 }
 
 fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> String {
-    let mut stdout = String::from("\n");
-    stdout.push_str(&format!("\n{}\n", paint_section_title("Execution")));
+    let mut lines = vec![String::new(), paint_section_title("Execution")];
 
     if let Some(preferred) = execution.preferred.as_deref() {
-        stdout.push_str(&format!(
+        lines.push(format!(
             " {}  {} {}",
-            detail_arrow(),
+            summary_bullet(),
             paint_key("Preferred:"),
-            preferred
+            paint_backticked_code(preferred)
         ));
     }
     if !execution.supported.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
             paint_key("Supported:"),
-            execution.supported.join(", ")
+            render_inline_code_list(&execution.supported)
         ));
     }
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
             paint_key("Lifecycle:"),
-            lifecycle
+            paint_backticked_code(lifecycle)
         ));
     }
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
-            stdout.push_str(&format!(
-                "\n {}  {} {}",
-                detail_arrow(),
+            lines.push(format!(
+                " {}  {} {}",
+                summary_bullet(),
                 paint_key("Container:"),
-                container.image
+                paint_backticked_code(&container.image)
             ));
         }
         if let Some(remote) = backends.remote.as_ref() {
-            stdout.push_str(&format!(
-                "\n {}  {} {}",
-                detail_arrow(),
-                paint_key("Remote Provider:"),
-                remote.provider
-            ));
+            let mut details = vec![format!(
+                "{} {}",
+                paint_key("provider"),
+                paint_backticked_code(&remote.provider)
+            )];
             if let Some(target) = remote.target.as_deref() {
-                stdout.push_str(&format!(
-                    "\n {}  {} {}",
-                    detail_arrow(),
-                    paint_key("Remote Target:"),
-                    target
+                details.push(format!(
+                    "{} {}",
+                    paint_key("target"),
+                    paint_backticked_code(target)
                 ));
             }
             if let Some(cwd) = remote.cwd.as_deref() {
-                stdout.push_str(&format!(
-                    "\n {}  {} {}",
-                    detail_arrow(),
-                    paint_key("Remote Cwd:"),
-                    cwd
+                details.push(format!(
+                    "{} {}",
+                    paint_key("cwd"),
+                    paint_backticked_code(cwd)
                 ));
             }
+            lines.push(format!(
+                " {}  {} {}",
+                summary_bullet(),
+                paint_key("Remote:"),
+                details.join(" ")
+            ));
         }
     }
     if !execution.env.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {}",
-            detail_arrow(),
-            paint_key("Env sources:")
+        lines.push(format!(
+            " {}  {} workspace policy > repo policy > contract default > required missing",
+            summary_bullet(),
+            paint_key("Env precedence:")
         ));
         for item in &execution.env {
             let mut details = Vec::new();
+            if let Some(source) = item.source.as_deref() {
+                details.push(source.to_string());
+            } else if item.default.is_some() {
+                details.push(String::from("contract default"));
+            } else {
+                details.push(String::from("missing"));
+            }
             if item.required {
-                details.push("required".to_string());
+                details.push(String::from("required"));
             }
             if let Some(default) = item.default.as_deref() {
                 details.push(format!("default={default}"));
@@ -14387,21 +14417,17 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
             if !item.allowed.is_empty() {
                 details.push(format!("allowed={}", item.allowed.join(", ")));
             }
-            stdout.push_str(&format!(
-                "\n    {} {}",
-                paint_key(&item.name),
+            lines.push(format!(
+                " {}  {} {} ({})",
+                summary_bullet(),
+                paint_key("Env:"),
+                paint_backticked_code(&item.name),
                 details.join(", ")
             ));
-            if let Some(policy) = item.policy.as_deref() {
-                stdout.push_str(&format!("\n      {} {policy}", paint_key("Policy:")));
-            }
-            if let Some(source) = item.source.as_deref() {
-                stdout.push_str(&format!("\n      {} {source}", paint_key("Source:")));
-            }
         }
     }
 
-    stdout
+    lines.join("\n")
 }
 
 fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>) {

@@ -45,9 +45,10 @@ Doctor first, contract second.
 
 1. `ota doctor`
 2. `ota explain`
-3. `ota init --dry-run` or `ota detect --dry-run .`
-4. `ota init` or `ota detect --write .`
-5. `ota up`
+3. if the repo does not yet have `ota.yaml`, preview with `ota init --dry-run` or `ota detect --dry-run .`
+4. choose an explicit first write with `ota init` or `ota detect --write .`
+5. if the repo already has `ota.yaml`, review changes with `ota detect --merge --dry-run .` or `ota detect --rewrite --dry-run .`
+6. `ota up`
 
 ## Global
 
@@ -102,14 +103,22 @@ ota currently ships these commands:
 - `ota workspace status`
 - `ota workspace receipt`
 
-Examples:
+Start here:
 
 ```bash
 ota doctor
 ota explain
-ota init --dry-run
 ota detect --dry-run .
+ota init --dry-run
 ota up
+ota run ci
+```
+
+Workspace:
+
+```bash
+ota workspace doctor .
+ota workspace up
 ```
 
 The command set is intentionally small. V1 is about making the core readiness path trustworthy, inspectable, and stable on real repositories.
@@ -1033,7 +1042,7 @@ Write behavior:
 - `ota detect --write` writes only `high` confidence fields
 - validates the projected contract before writing
 - refuses to overwrite an existing `ota.yaml`
-- when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run`
+- when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run` and `ota detect --rewrite --dry-run`
 - fails if the high-confidence projection is not sufficient
 - JSON failure responses can include `next` when ota can point to one safe follow-up command
 
@@ -1121,7 +1130,7 @@ Current behavior:
 Text output:
 
 - header: `WORKSPACE VALIDATE <path>`
-- success: `VALID` plus next steps into `ota workspace doctor` and `ota workspace tasks`
+- success: `VALID` plus next steps into `ota workspace doctor`, `ota workspace up`, and `ota workspace tasks`
 - failure: validation or load error text
 
 JSON output:

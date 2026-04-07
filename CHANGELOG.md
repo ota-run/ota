@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- made runtime/tool remediation exact and manager-aware when ota has strong signals, including
+  repo-local hints such as `.nvmrc`, `.python-version`, `.sdkmanrc`, `.tool-versions`, and
+  policy-backed provisioning sources.
+- removed duplicate adapter-bootstrap info findings by loading the policy pack once for doctor
+  diagnostics and reusing that source across provisioning and bootstrap surfaces.
+- tightened workspace text parity so `workspace check` now promotes the primary blocker and
+  workspace execution sections use the same compact, highlighted summary style as repo doctor.
+- upgraded the root help and onboarding docs into a clearer doctor-first chooser flow with repo
+  and workspace entry paths.
+- locked the premium text UX with checked-in golden snapshots for root help, repo `doctor`,
+  `detect`, `up`, `run`, and workspace `validate`, `doctor`, `explain`, `up`, and `run`.
+
 ## 1.1.3
 
 - grouped repeated remediation findings across doctor-style text outputs so `doctor`, `check`,
