@@ -649,6 +649,9 @@ JSON output:
 
 Generate or sync a repo-local `AGENTS.md` from the current contract.
 
+Use this after `ota doctor`, `ota explain`, or `ota up` when you want the same repo contract to
+produce reviewable agent guidance for humans and coding agents.
+
 ```bash
 ota agents [PATH]
 ota agents --write [PATH]
@@ -666,6 +669,7 @@ Current behavior:
 - skips the write if the existing file already contains the generated AGENTS content
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 - text preview points directly at `ota agents --write` and `ota doctor` so the guidance can be written and then verified from the same contract
+- pairs naturally with `ota tasks --use` when you want to confirm runnable task shapes before writing the guidance file
 - writes to `AGENTS.md` by default when `--write` is set
 - accepts `--output` to write elsewhere
 - keeps output deterministic and reviewable

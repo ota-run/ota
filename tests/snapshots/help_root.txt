@@ -42,8 +42,10 @@ Start here:
   preview a first contract  ota detect --dry-run .
   review a starter contract ota init --dry-run
   prepare the repo          ota up
+  generate agent guidance   ota agents
   run a task                ota run ci
 
 Workspace:
   inspect readiness         ota workspace doctor .
+  explain blockers          ota workspace explain .
   prepare the workspace     ota workspace up

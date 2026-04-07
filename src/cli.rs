@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nStart here:\n  inspect an existing repo   ota doctor\n  explain blockers          ota explain\n  preview a first contract  ota detect --dry-run .\n  review a starter contract ota init --dry-run\n  prepare the repo          ota up\n  run a task                ota run ci\n\nWorkspace:\n  inspect readiness         ota workspace doctor .\n  prepare the workspace     ota workspace up",
+    after_help = "\nStart here:\n  inspect an existing repo   ota doctor\n  explain blockers          ota explain\n  preview a first contract  ota detect --dry-run .\n  review a starter contract ota init --dry-run\n  prepare the repo          ota up\n  generate agent guidance   ota agents\n  run a task                ota run ci\n\nWorkspace:\n  inspect readiness         ota workspace doctor .\n  explain blockers          ota workspace explain .\n  prepare the workspace     ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -10049,6 +10049,44 @@ edition = "2024"
                 .as_deref()
                 .expect("help text should be present"),
         );
+    }
+
+    #[test]
+    fn agents_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-agents
+  description: Premium AGENTS preview
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    run: echo ci
+agent:
+  entrypoint: setup
+  default_task: ci
+  safe_tasks: [setup, ci]
+  verify_after_changes: [ci]
+  writable_paths: [src, docs]
+  protected_paths: [ota.yaml, Cargo.lock]
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
+  notes: |
+    Use ota doctor first.
+    Keep output calm and exact.
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "agents", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot("agents_premium.txt", &strip_ansi(&output.stdout));
     }
 
     #[test]

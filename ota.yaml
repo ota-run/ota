@@ -156,6 +156,17 @@ tasks:
       - ci
       - compat
     safe_for_agent: true
+  ux-review:
+    description: Run the premium CLI UX review suite
+    notes: |
+      Use this after changing help text, human-readable command output, or docs that promise
+      specific CLI presentation. It keeps the premium snapshot-backed text surfaces honest.
+    category: test
+    script: |
+      cargo test snapshot_is_stable -- --test-threads=1
+    depends_on:
+      - setup
+    safe_for_agent: true
   bump-version:
     description: Bump Cargo.toml to a new release version
     notes: |

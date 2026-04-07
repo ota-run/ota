@@ -46,6 +46,8 @@ V7 is active.
 
 - keep the V1 release gate green
 - keep public docs aligned with shipped behavior
+- keep `ota agents` visible as a first-class derived adoption surface
+- keep the premium UX review loop green when text/help surfaces change
 - hold enterprise-facing scope behind the adoption readiness gate
 - ship the V7 platform workflow slice in narrow, real slices
 - keep the canonical roadmap aligned with the spec repo versioning
