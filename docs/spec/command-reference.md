@@ -444,7 +444,7 @@ ota run <task> [PATH]
 ota run <task> --member api [PATH]
 ota run <task> --member api --member web [PATH]
 ota run <task> --mode native [PATH]
-ota run <task> --mode container --lifecycle ephemeral [PATH]
+ota run <task> --mode container --ephemeral [PATH]
 ota run <task> --mode remote [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
@@ -454,7 +454,7 @@ Current behavior:
 - validates the contract first
 - when `--member` is set, resolves the merged member contract from the monorepo root
 - repeated `--member` values run the task across those members in the provided order
-- `--mode` and `--lifecycle` can override the contract for one invocation
+- `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
 - `default` values are applied when the caller omits an input
@@ -543,7 +543,7 @@ ota doctor --member api --member web --json [PATH]
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
-- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run` and the `setup` phase of `ota up`, not the full repo lifecycle
+- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run`, `ota up`, and the `setup` phase of `ota up`, with `--ephemeral` as the shorthand for the fresh-container path
 - reports contract drift as warning findings when repo signals no longer match the declared
   contract, and still preserves the most important blocker first
 - tags contract-drift findings with repo-contract ownership and provenance so consumers can
@@ -706,7 +706,7 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
-ota up --mode container --lifecycle ephemeral [PATH]
+ota up --mode container --ephemeral [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ```
@@ -726,7 +726,7 @@ Current behavior:
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails
 - runs the `setup` task if one exists, using the configured execution backend when present
-- can override execution mode and lifecycle for the `setup` phase with `--mode` and `--lifecycle`
+- can override execution mode and lifecycle for the `setup` phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
 - the current `setup` backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the `setup` phase uses backend-backed execution
 - re-runs readiness diagnosis

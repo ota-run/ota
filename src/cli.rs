@@ -126,6 +126,9 @@ enum Commands {
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        ephemeral: bool,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
@@ -255,6 +258,9 @@ enum Commands {
         /// Override the execution lifecycle for this invocation.
         #[arg(long, value_enum)]
         lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        ephemeral: bool,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
@@ -1118,6 +1124,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             task,
             backend,
             lifecycle,
+            ephemeral,
             receipt,
             member,
             path,
@@ -1128,7 +1135,11 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             ExecutionOverrides {
                 backend: backend.map(Into::into),
-                lifecycle: lifecycle.map(Into::into),
+                lifecycle: if ephemeral {
+                    Some(crate::schema::Lifecycle::Ephemeral)
+                } else {
+                    lifecycle.map(Into::into)
+                },
             },
             &member,
             &inputs,
@@ -1187,6 +1198,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             backend,
             lifecycle,
+            ephemeral,
             receipt,
             member,
             path,
@@ -1195,7 +1207,11 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             ExecutionOverrides {
                 backend: backend.map(Into::into),
-                lifecycle: lifecycle.map(Into::into),
+                lifecycle: if ephemeral {
+                    Some(crate::schema::Lifecycle::Ephemeral)
+                } else {
+                    lifecycle.map(Into::into)
+                },
             },
             &member,
             format_from_json(json),
@@ -4183,8 +4199,7 @@ tasks:
             "up",
             "--mode",
             "container",
-            "--lifecycle",
-            "ephemeral",
+            "--ephemeral",
             fixture.path(),
         ]);
 
@@ -4520,7 +4535,7 @@ tasks:
             std::env::set_var("OTA_KUBECTL_LOG", &log_path);
         }
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--ephemeral", fixture.path()]);
 
         match original_path {
             Some(path) => unsafe {
@@ -4643,7 +4658,7 @@ tasks:
 "#,
         );
 
-        let output = run_with(["ota", "run", "setup", fixture.path()]);
+        let output = run_with(["ota", "run", "setup", "--ephemeral", fixture.path()]);
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
