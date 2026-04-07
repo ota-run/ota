@@ -28,6 +28,21 @@
               "type": "array",
               "items": { "type": "string" }
             },
+            "bootstrap": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ota": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "note": { "type": "string" },
+                    "sh": { "type": "string" },
+                    "powershell": { "type": "string" }
+                  }
+                }
+              }
+            },
             "notes": { "type": "string" }
           }
         },
@@ -92,6 +107,21 @@
                   "writable_paths": {
                     "type": "array",
                     "items": { "type": "string" }
+                  },
+                  "bootstrap": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "ota": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "note": { "type": "string" },
+                          "sh": { "type": "string" },
+                          "powershell": { "type": "string" }
+                        }
+                      }
+                    }
                   },
                   "notes": { "type": "string" }
                 }

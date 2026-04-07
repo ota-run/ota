@@ -909,6 +909,8 @@ pub struct AgentSummary<'a> {
     #[serde(skip_serializing_if = "slice_is_empty")]
     pub protected_paths: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<AgentBootstrapSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<&'a str>,
 }
 
@@ -921,6 +923,10 @@ impl<'a> AgentSummary<'a> {
             verify_after_changes: &agent.verify_after_changes,
             writable_paths: &agent.writable_paths,
             protected_paths: &agent.protected_paths,
+            bootstrap: agent
+                .bootstrap
+                .as_ref()
+                .and_then(AgentBootstrapSummary::from_config),
             notes: agent.notes.as_deref(),
         };
 
@@ -930,8 +936,48 @@ impl<'a> AgentSummary<'a> {
             || !summary.verify_after_changes.is_empty()
             || !summary.writable_paths.is_empty()
             || !summary.protected_paths.is_empty()
+            || summary.bootstrap.is_some()
             || summary.notes.is_some())
         .then_some(summary)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentBootstrapSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ota: Option<AgentBootstrapTargetSummary<'a>>,
+}
+
+impl<'a> AgentBootstrapSummary<'a> {
+    pub fn from_config(bootstrap: &'a crate::schema::AgentBootstrapConfig) -> Option<Self> {
+        let summary = Self {
+            ota: bootstrap
+                .ota
+                .as_ref()
+                .map(AgentBootstrapTargetSummary::from_config),
+        };
+
+        summary.ota.is_some().then_some(summary)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentBootstrapTargetSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sh: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub powershell: Option<&'a str>,
+}
+
+impl<'a> AgentBootstrapTargetSummary<'a> {
+    pub fn from_config(bootstrap: &'a crate::schema::AgentBootstrapTargetConfig) -> Self {
+        Self {
+            note: bootstrap.note.as_deref(),
+            sh: bootstrap.sh.as_deref(),
+            powershell: bootstrap.powershell.as_deref(),
+        }
     }
 }
 

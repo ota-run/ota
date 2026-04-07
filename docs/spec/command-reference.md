@@ -642,6 +642,7 @@ Current behavior:
 - derives `AGENTS.md` from the repo contract’s `agent` block when one is present
 - falls back to a lightweight scaffold that makes the missing `agent` block explicit when one is not present
 - includes a fallback hint to run `ota tasks` when you want to inspect runnable task commands before generating or editing agent guidance
+- renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
 - preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
 - skips the write if the existing file already contains the generated AGENTS content
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form

@@ -186,6 +186,12 @@ impl SdkmanProvisioningBackend {
             ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
+
+    fn sdkman_command(command: &str, install_target: &str, requested_version: &str) -> String {
+        format!(
+            r#"if ! command -v sdk >/dev/null 2>&1 && [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]; then . "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1; fi; sdk {command} {install_target} {requested_version}"#
+        )
+    }
 }
 
 impl UvProvisioningBackend {
@@ -692,8 +698,11 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
             let output = execute_provisioning_command(
                 target,
                 working_dir,
-                "sdk",
-                &["install", &install_target, &action.requested_version],
+                "bash",
+                &[
+                    "-c",
+                    &Self::sdkman_command("install", &install_target, &action.requested_version),
+                ],
             )?;
 
             stdout.push_str(&output.stdout);
@@ -1438,8 +1447,11 @@ impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
             ensure_bootstrap_source_version(
                 target,
                 working_dir,
-                "sdk",
-                &["version"],
+                "bash",
+                &[
+                    "-c",
+                    r#"if ! command -v sdk >/dev/null 2>&1 && [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]; then . "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1; fi; sdk version"#,
+                ],
                 action
                     .approved_version
                     .as_ref()

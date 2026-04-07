@@ -5123,6 +5123,11 @@ agent:
     - test
   writable_paths:
     - src
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
 "#,
         );
 
@@ -5135,6 +5140,14 @@ agent:
         assert_eq!(json["agent"]["safe_tasks"][0], "test");
         assert_eq!(json["agent"]["verify_after_changes"][0], "test");
         assert_eq!(json["agent"]["writable_paths"][0], "src");
+        assert_eq!(
+            json["agent"]["bootstrap"]["ota"]["sh"],
+            "curl -fsSL https://dist.ota.run/install.sh | sh"
+        );
+        assert_eq!(
+            json["agent"]["bootstrap"]["ota"]["powershell"],
+            "irm https://dist.ota.run/install.ps1 | iex"
+        );
     }
 
     #[test]
@@ -7007,6 +7020,11 @@ agent:
     - docs
   protected_paths:
     - Cargo.lock
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
   notes: |
     Use ota doctor first.
 "#,
@@ -7032,6 +7050,12 @@ agent:
                 "`verify_after_changes`: `fmt` (`ota run fmt`), `check` (`ota run check`)"
             )
         );
+        assert!(agents_md.contains("## Bootstrap"));
+        assert!(
+            agents_md.contains("Only install ota if it is missing and installation is approved.")
+        );
+        assert!(agents_md.contains("- `sh`: `curl -fsSL https://dist.ota.run/install.sh | sh`"));
+        assert!(agents_md.contains("- `powershell`: `irm https://dist.ota.run/install.ps1 | iex`"));
         assert!(agents_md.contains("Use ota doctor first."));
 
         let json_output = run_with(["ota", "agents", "--write", "--json", fixture.path()]);
