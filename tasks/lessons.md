@@ -35,6 +35,12 @@
 - Pattern: ANSI-styled separator lines can survive later blank-line collapsing and still show up as visible gaps in rendered output.
 - Correction: Remove unwanted separators at the formatter source instead of relying on downstream blank-line cleanup.
 - Rule: If a rendered spacing bug survives post-processing, tighten the original formatter string first; blank-line collapse is not a reliable fix for ANSI-decorated output.
+- Pattern: CLI error output can already contain a `Next:` block before command-level fallback guidance runs, which means an early return can preserve visible blank gaps.
+- Correction: Normalize spacing before existing `Next:` / `Try:` lines even on the early-return path; do not assume only newly injected guidance needs tightening.
+- Rule: Guidance-spacing cleanup must run for both existing and injected action lines, especially before `RUN SUMMARY` / `UP SUMMARY`.
+- Pattern: A persistent container backend that still exists by name may no longer be running, and trying to `exec` into it leaks runtime-specific errors to users.
+- Correction: Detect a stopped persistent container before reuse and recreate it rather than treating name existence as sufficient readiness.
+- Rule: For persistent execution backends, verify liveness, not just existence, before reusing a target.
 - Pattern: Detect drift rendered as raw dotted field paths makes task changes look like schema noise instead of actionable repo updates.
 - Correction: Present task removals by task name with concrete removal actions, and reserve raw field paths for non-task fallback cases.
 - Rule: In human drift output, group by the operator’s unit of change when one exists; prefer `Task <name>` over raw `tasks.<name>.*` paths.

@@ -1761,48 +1761,185 @@ fn execute_persistent_container_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     let container_name = persistent_container_name(working_dir, image, engine);
 
-    let inspect = container_command_output(engine, &["inspect", &container_name], None, task_name)?;
-    if inspect.exit_code != 0 {
-        let status = container_command_output(
-            engine,
-            &[
-                "run",
-                "-d",
-                "--name",
-                &container_name,
-                "-v",
-                &format!("{}:/workspace", working_dir.display()),
-                "-w",
-                "/workspace",
-                image,
-                "sh",
-                "-lc",
-                "while true; do sleep 3600; done",
-            ],
-            None,
-            task_name,
-        )?;
-        if status.exit_code != 0 {
-            return Ok(TaskCommandOutput {
-                exit_code: status.exit_code,
-                stdout: status.stdout,
-                stderr: status.stderr,
-                target: Some(container_name.clone()),
-            });
-        }
-    } else {
-        let status =
-            container_command_output(engine, &["start", &container_name], None, task_name)?;
-        if status.exit_code != 0 {
-            return Ok(TaskCommandOutput {
-                exit_code: status.exit_code,
-                stdout: status.stdout,
-                stderr: status.stderr,
-                target: Some(container_name.clone()),
-            });
-        }
+    if let Some(failure) =
+        ensure_persistent_container_ready(task_name, working_dir, image, engine, &container_name)?
+    {
+        return Ok(failure);
     }
 
+    let output = exec_persistent_container_task_command(
+        task_name,
+        command,
+        env_overrides,
+        path_export,
+        secret_env_names,
+        engine,
+        mode,
+        &container_name,
+    )?;
+    if output.exit_code != 0 && persistent_container_exec_hit_stopped_container(&output.stderr) {
+        let remove = remove_persistent_container(engine, &container_name, task_name)?;
+        if remove.exit_code != 0 {
+            return Ok(container_command_failure(remove, container_name.clone()));
+        }
+        let create =
+            create_persistent_container(task_name, working_dir, image, engine, &container_name)?;
+        if create.exit_code != 0 {
+            return Ok(container_command_failure(create, container_name.clone()));
+        }
+        return exec_persistent_container_task_command(
+            task_name,
+            command,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            engine,
+            mode,
+            &container_name,
+        );
+    }
+
+    Ok(output)
+}
+
+fn ensure_persistent_container_ready(
+    task_name: &str,
+    working_dir: &Path,
+    image: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<Option<TaskCommandOutput>, RunError> {
+    let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
+    if inspect.exit_code != 0 {
+        let status =
+            create_persistent_container(task_name, working_dir, image, engine, container_name)?;
+        if status.exit_code != 0 {
+            return Ok(Some(container_command_failure(
+                status,
+                container_name.to_string(),
+            )));
+        }
+        return Ok(None);
+    }
+
+    match persistent_container_running(engine, container_name, task_name)? {
+        Some(true) => return Ok(None),
+        Some(false) => {
+            let remove = remove_persistent_container(engine, container_name, task_name)?;
+            if remove.exit_code != 0 {
+                return Ok(Some(container_command_failure(
+                    remove,
+                    container_name.to_string(),
+                )));
+            }
+            let create =
+                create_persistent_container(task_name, working_dir, image, engine, container_name)?;
+            if create.exit_code != 0 {
+                return Ok(Some(container_command_failure(
+                    create,
+                    container_name.to_string(),
+                )));
+            }
+            return Ok(None);
+        }
+        None => {}
+    }
+
+    let status = container_command_output(engine, &["start", container_name], None, task_name)?;
+    if status.exit_code != 0 {
+        return Ok(Some(container_command_failure(
+            status,
+            container_name.to_string(),
+        )));
+    }
+
+    Ok(None)
+}
+
+fn create_persistent_container(
+    task_name: &str,
+    working_dir: &Path,
+    image: &str,
+    engine: &str,
+    container_name: &str,
+) -> Result<ContainerCommandOutput, RunError> {
+    container_command_output(
+        engine,
+        &[
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-v",
+            &format!("{}:/workspace", working_dir.display()),
+            "-w",
+            "/workspace",
+            image,
+            "sh",
+            "-lc",
+            "while true; do sleep 3600; done",
+        ],
+        None,
+        task_name,
+    )
+}
+
+fn remove_persistent_container(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+) -> Result<ContainerCommandOutput, RunError> {
+    container_command_output(engine, &["rm", "-f", container_name], None, task_name)
+}
+
+fn persistent_container_running(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+) -> Result<Option<bool>, RunError> {
+    let inspect = container_command_output(
+        engine,
+        &["inspect", "-f", "{{.State.Running}}", container_name],
+        None,
+        task_name,
+    )?;
+    if inspect.exit_code != 0 {
+        return Ok(None);
+    }
+
+    match inspect.stdout.trim() {
+        "true" => Ok(Some(true)),
+        "false" => Ok(Some(false)),
+        _ => Ok(None),
+    }
+}
+
+fn persistent_container_exec_hit_stopped_container(stderr: &str) -> bool {
+    stderr.contains("cannot exec in a stopped container")
+}
+
+fn container_command_failure(
+    status: ContainerCommandOutput,
+    container_name: String,
+) -> TaskCommandOutput {
+    TaskCommandOutput {
+        exit_code: status.exit_code,
+        stdout: status.stdout,
+        stderr: status.stderr,
+        target: Some(container_name),
+    }
+}
+
+fn exec_persistent_container_task_command(
+    task_name: &str,
+    command: &str,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    engine: &str,
+    mode: TaskExecutionMode,
+    container_name: &str,
+) -> Result<TaskCommandOutput, RunError> {
     let mut container = Command::new(engine);
     container.arg("exec").arg("-i");
     for (name, value) in env_overrides {
@@ -1835,7 +1972,7 @@ fn execute_persistent_container_task_command(
                 exit_code: status.code().unwrap_or(1),
                 stdout: String::new(),
                 stderr: String::new(),
-                target: Some(container_name.clone()),
+                target: Some(container_name.to_string()),
             })
         }
         TaskExecutionMode::Capture => {
@@ -1854,7 +1991,7 @@ fn execute_persistent_container_task_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                target: Some(container_name),
+                target: Some(container_name.to_string()),
             })
         }
     }
@@ -1970,8 +2107,9 @@ mod tests {
 
     use super::{
         CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
-        plan_task_execution, resolve_task_env, resolve_task_env_details, run_task,
-        run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
+        persistent_container_name, plan_task_execution, resolve_task_env, resolve_task_env_details,
+        run_task, run_task_captured, run_task_with_args, run_task_with_overrides,
+        run_task_with_progress,
     };
 
     #[test]
@@ -3022,6 +3160,83 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn recreates_stopped_persistent_container_before_exec() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  setup:
+    script: |
+      printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        let container_name =
+            persistent_container_name(fixture.dir.path(), "ghcr.io/ota/test:latest", "docker");
+        let state_dir = bin_dir.join("docker-state");
+        assert!(state_dir.join(format!("{container_name}.path")).is_file());
+        let _ = fs::remove_file(state_dir.join(format!("{container_name}.running")));
+        fs::write(
+            state_dir.join(format!("{container_name}.no-start-revive")),
+            "",
+        )
+        .unwrap();
+
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert_eq!(second.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "readyready"
+        );
+        let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
+        assert_eq!(log.matches("run-persistent").count(), 2);
+        assert_eq!(log.matches("rm").count(), 1);
+        assert_eq!(log.matches("exec").count(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn overrides_native_contract_to_use_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -3517,6 +3732,20 @@ case "$command" in
     exit 0
     ;;
   inspect)
+    if [ "$1" = "-f" ]; then
+      format="$2"
+      name="$3"
+      [ -f "$state_dir/$name.path" ] || exit 1
+      if [ "$format" = "{{.State.Running}}" ]; then
+        if [ -f "$state_dir/$name.running" ]; then
+          printf "true\n"
+        else
+          printf "false\n"
+        fi
+        exit 0
+      fi
+      exit 1
+    fi
     name="$1"
     [ -f "$state_dir/$name.path" ]
     exit $?
@@ -3526,6 +3755,9 @@ case "$command" in
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
     printf "start\n" >> "$host_dir/docker-log.txt"
+    if [ ! -f "$state_dir/$name.no-start-revive" ]; then
+      : > "$state_dir/$name.running"
+    fi
     exit 0
     ;;
   exec)
@@ -3546,6 +3778,10 @@ case "$command" in
       esac
     done
     host_dir=$(cat "$state_dir/$name.path")
+    if [ ! -f "$state_dir/$name.running" ]; then
+      printf "OCI runtime exec failed: exec failed: cannot exec in a stopped container\n" >&2
+      exit 128
+    fi
     printf "exec\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
     exec /bin/sh -lc "$3"
@@ -3589,6 +3825,7 @@ case "$command" in
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
+      : > "$state_dir/$name.running"
       printf "run-persistent\n" >> "$host_dir/docker-log.txt"
       exit 0
     fi
@@ -3603,9 +3840,11 @@ case "$command" in
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
     rm -f "$state_dir/$name.path"
+    rm -f "$state_dir/$name.running"
+    rm -f "$state_dir/$name.no-start-revive"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
-    ;;
+  ;;
 esac
 
 exit 1

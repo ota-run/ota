@@ -33,7 +33,12 @@ V3 is complete.
 V4 is complete.
 V5 is complete.
 V6 is complete.
-V7 is active.
+V7 is complete and archived.
+V7.1 is complete and archived.
+V7.2 is complete and archived.
+V8 is complete and archived.
+V9 is complete and archived.
+V9.1 is active.
 
 ## V1 archive
 
@@ -49,7 +54,7 @@ V7 is active.
 - keep `ota agents` visible as a first-class derived adoption surface
 - keep the premium UX review loop green when text/help surfaces change
 - hold enterprise-facing scope behind the adoption readiness gate
-- ship the V7 platform workflow slice in narrow, real slices
+- ship the V9.1 public-adoption hardening slice in narrow, real slices
 - keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
@@ -61,17 +66,17 @@ V7 is active.
 
 - [V6 plan](docs/planning/v6/plan.md)
 
-## Active version
+## V7 archive
 
 - [V7 plan](docs/planning/v7/plan.md)
-
-## Upcoming version
-
+- [V7.1 plan](docs/planning/v7.1/plan.md)
+- [V7.2 plan](docs/planning/v7.2/plan.md)
 - [V8 plan](docs/planning/v8/plan.md)
-
-## Future version
-
 - [V9 plan](docs/planning/v9/plan.md)
+
+## Active version
+
+- [V9.1 plan](docs/planning/v9.1/plan.md)
 
 ## Implemented foundation
 
@@ -82,12 +87,12 @@ V7 is active.
 
 ## Near-term next steps
 
-- keep the V7 contract surfaces stable and reviewable
+- keep the V9.1 public-adoption surfaces stable and reviewable
 - preserve the shipped repo/workspace trust baseline
 - keep docs and active planning aligned with the canonical spec repo
 - keep extension and editor surfaces contract-bound
 - avoid widening into generic plugin-runtime scope
-- stage V8 execution receipts and semantic impact tooling as a separate version
+- stage V10 execution receipts and semantic impact tooling as a separate version
 - stage V9 env resolution and provenance as a separate version
 
 ## Archived V2 shape

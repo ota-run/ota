@@ -66,7 +66,7 @@ pub struct Cli {
         conflicts_with = "concise"
     )]
     verbose: bool,
-    /// Use an explicit ota.yaml file instead of path discovery.
+    /// Use an explicit ota.yaml or ota.workspace.yaml file instead of path discovery.
     #[arg(long, global = true)]
     file: Option<PathBuf>,
     #[command(subcommand)]
@@ -1608,7 +1608,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     const AGENTS_SUGGESTION: &str = "run `ota agents --write` to generate AGENTS.md";
 
     if stderr.contains("Try: ") || stderr.contains("Next:") {
-        return stderr;
+        return tighten_guidance_spacing(stderr);
     }
 
     let suggestion = match command {
@@ -1710,14 +1710,16 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         let trimmed = stderr.trim_end_matches('\n');
         if let Some(idx) = trimmed.rfind(summary_title) {
             let (before_summary, summary_block) = trimmed.split_at(idx);
-            let before_summary = before_summary.trim_end_matches('\n');
-            return commands::stylize_inline_text(&format!(
+            let before_summary = before_summary.trim_end();
+            return tighten_guidance_spacing(commands::stylize_inline_text(&format!(
                 "{before_summary}\n{next_header} {next_value}\n\n{summary_block}"
-            ));
+            )));
         }
     }
 
-    commands::stylize_inline_text(&format!("{stderr}\n\n{next_header} {next_value}"))
+    tighten_guidance_spacing(commands::stylize_inline_text(&format!(
+        "{stderr}\n\n{next_header} {next_value}"
+    )))
 }
 
 fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
@@ -1728,6 +1730,29 @@ fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn tighten_guidance_spacing(text: String) -> String {
+    let ends_with_newline = text.ends_with('\n');
+    let mut lines = Vec::new();
+
+    for line in text.lines() {
+        if line.contains("Next:") || line.contains("Try:") {
+            while lines
+                .last()
+                .is_some_and(|previous: &String| previous.trim().is_empty())
+            {
+                lines.pop();
+            }
+        }
+        lines.push(line.to_string());
+    }
+
+    let mut tightened = lines.join("\n");
+    if ends_with_newline {
+        tightened.push('\n');
+    }
+    tightened
 }
 
 fn collapse_blank_lines(text: String) -> String {
@@ -1841,7 +1866,10 @@ mod tests {
 
     use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
 
-    use super::{collapse_blank_lines, commands, maybe_append_update_notice, run_with};
+    use super::{
+        Commands, append_try_footer, collapse_blank_lines, commands, maybe_append_update_notice,
+        run_with,
+    };
     use crate::output::CommandOutput;
 
     struct CurrentDirGuard {
@@ -5001,6 +5029,33 @@ tasks:
         assert!(!stderr.contains(
             "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
         ));
+    }
+
+    #[test]
+    fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
+        let stderr = "◉ ERROR  Operation failed\nWhere: ./ota.yaml\nWhy: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦  RUN SUMMARY\n\nScope:      repo";
+        let rendered = strip_ansi(&append_try_footer(
+            stderr.to_string(),
+            &Commands::Run {
+                task: String::from("install-from-source"),
+                backend: None,
+                lifecycle: None,
+                ephemeral: false,
+                receipt: false,
+                stream: false,
+                member: Vec::new(),
+                path: None,
+                inputs: Vec::new(),
+            },
+        ));
+
+        assert!(rendered.contains(
+            "Why: task `install-from-source` failed with exit code 101\nNext: run `ota tasks --use` to inspect runnable task usage"
+        ));
+        assert!(
+            !rendered
+                .contains("Why: task `install-from-source` failed with exit code 101\n\nNext:")
+        );
     }
 
     #[test]
@@ -10049,6 +10104,20 @@ edition = "2024"
                 .as_deref()
                 .expect("help text should be present"),
         );
+    }
+
+    #[test]
+    fn workspace_help_describes_file_flag_for_workspace_contracts() {
+        let output = run_with(["ota", "workspace", "--help"]);
+        let stderr = output
+            .stderr
+            .as_deref()
+            .expect("workspace help text should be present");
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stderr.contains(
+            "Use an explicit ota.yaml or ota.workspace.yaml file instead of path discovery"
+        ));
     }
 
     #[test]

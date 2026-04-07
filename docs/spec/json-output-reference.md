@@ -305,7 +305,7 @@ the diagnostic payload.
 
 `ota doctor --json` and `ota workspace doctor --json` may also include a top-level
 `finding_groups` array when the output contains repeated-action groups. Each entry includes a
-stable `action_key` derived from the grouped findings, plus the human-facing `action_title`,
+stable semantic `action_key` derived from the grouped action class, plus the human-facing `action_title`,
 `action_next`, and `count`. The grouped metadata is additive only; each `findings[]` entry remains
 unchanged for machine consumers.
 
