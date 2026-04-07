@@ -8722,10 +8722,7 @@ where
     for finding in findings {
         let kind = doctor_finding_group_kind(finding);
         let group_key = compact_backticked_paths(&finding.next);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| group.group_key == group_key)
-        {
+        if let Some(group) = groups.iter_mut().find(|group| group.group_key == group_key) {
             group.severity = group.severity.max(finding.severity);
             if !matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.kind != kind
             {
@@ -9972,14 +9969,13 @@ mod tests {
                 ),
             },
         ];
+        let finding_refs: Vec<_> = findings.iter().collect();
 
         let groups = super::doctor_finding_group_summaries(findings.iter());
         assert_eq!(groups.len(), 1);
         assert_eq!(
             groups[0].action_key,
-            super::doctor_group_slug(
-                "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`"
-            )
+            super::doctor_finding_group_summary_key(&finding_refs)
         );
         assert_eq!(groups[0].action_title, "Review contract drift");
         assert_eq!(
