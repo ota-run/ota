@@ -23,6 +23,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -52,7 +53,8 @@ use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CommandOutput, DetectComparison,
     DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
     DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, DoctorVerdict, ExecutionReceipt, ExecutionReceiptEnvSource,
+    DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus,
+    EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
     ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
@@ -83,7 +85,7 @@ use crate::runner::{
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, Backend, Contract,
-    ExtensionSpec, TaskSpec,
+    EnvRequirement, ExtensionSpec, TaskSpec,
 };
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
@@ -702,6 +704,431 @@ fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> Str
     };
 
     format_next_timeline(&[doctor, tasks])
+}
+
+struct EnvReport {
+    ok: bool,
+    summary: EnvSummary,
+    env: Vec<EnvEntry>,
+}
+
+pub fn env(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    task: Option<&str>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=env")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=env"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(task) = task {
+        debug_lines.push(format!("DEBUG task={task}"));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => match build_env_report(&target.contract, task) {
+                Ok(report) => match format {
+                    OutputFormat::Text => CommandOutput {
+                        stdout: render_env_text(&text_path_display, task, &report),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&EnvSuccess {
+                            ok: report.ok,
+                            path: &path_display,
+                            task,
+                            summary: report.summary,
+                            env: report.env,
+                        }),
+                        stderr: None,
+                        exit_code: if report.ok { 0 } else { 1 },
+                    },
+                },
+                Err(error) => match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
+                        ok: false,
+                        path: &path_display,
+                        task,
+                        error: &error,
+                    })),
+                },
+            },
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
+                    ok: false,
+                    path: &path_display,
+                    task,
+                    error: &errors.to_string(),
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
+                    ok: false,
+                    path: &path_display,
+                    task,
+                    error: &error.to_string(),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvReport, String> {
+    let task_env = match task_name {
+        Some(task_name) => {
+            let Some(task) = contract.tasks.get(task_name) else {
+                return Err(RunError::UnknownTask {
+                    task: task_name.to_string(),
+                }
+                .to_string());
+            };
+            Some(&task.env)
+        }
+        None => None,
+    };
+
+    let policy_env = crate::runner::policy_env_values(contract);
+    let mut env = Vec::new();
+    let mut contract_resolved_count = 0usize;
+    let mut missing_count = 0usize;
+    let mut invalid_count = 0usize;
+
+    for (name, requirement) in &contract.env {
+        let task_override = task_env.and_then(|task_env| task_env.get(name));
+
+        if let Some(value) = task_override {
+            env.push(build_task_overridden_env_entry(name, requirement, value));
+            contract_resolved_count += 1;
+            continue;
+        }
+
+        let mut resolved = policy_env
+            .get(name)
+            .cloned()
+            .map(|value| ("policy", value))
+            .or_else(|| std::env::var(name).ok().map(|value| ("process", value)))
+            .or_else(|| requirement.default.clone().map(|value| ("default", value)));
+
+        match resolved.as_mut() {
+            Some((source, value)) => {
+                if name == "PATH" {
+                    *value = compose_env_path_value(name, value.as_str(), requirement)?;
+                }
+
+                if !requirement.allowed.is_empty()
+                    && !requirement.allowed.iter().any(|allowed| allowed == value)
+                {
+                    invalid_count += 1;
+                    env.push(EnvEntry {
+                        name: name.clone(),
+                        kind: EnvEntryKind::Contract,
+                        required: requirement.required,
+                        default: requirement.default.clone(),
+                        allowed: requirement.allowed.clone(),
+                        value: Some(display_env_value(value.as_str(), requirement.secret)),
+                        source: (*source).to_string(),
+                        status: EnvEntryStatus::Invalid,
+                        next: Some(env_next_for_invalid(name, &requirement.allowed)),
+                    });
+                } else {
+                    contract_resolved_count += 1;
+                    env.push(EnvEntry {
+                        name: name.clone(),
+                        kind: EnvEntryKind::Contract,
+                        required: requirement.required,
+                        default: requirement.default.clone(),
+                        allowed: requirement.allowed.clone(),
+                        value: Some(display_env_value(value.as_str(), requirement.secret)),
+                        source: (*source).to_string(),
+                        status: EnvEntryStatus::Resolved,
+                        next: None,
+                    });
+                }
+            }
+            None if requirement.required => {
+                missing_count += 1;
+                env.push(EnvEntry {
+                    name: name.clone(),
+                    kind: EnvEntryKind::Contract,
+                    required: true,
+                    default: requirement.default.clone(),
+                    allowed: requirement.allowed.clone(),
+                    value: None,
+                    source: String::from("missing"),
+                    status: EnvEntryStatus::Missing,
+                    next: Some(env_next_for_missing(name, task_name)),
+                });
+            }
+            None => {
+                env.push(EnvEntry {
+                    name: name.clone(),
+                    kind: EnvEntryKind::Contract,
+                    required: false,
+                    default: requirement.default.clone(),
+                    allowed: requirement.allowed.clone(),
+                    value: None,
+                    source: String::from("missing"),
+                    status: EnvEntryStatus::Optional,
+                    next: None,
+                });
+            }
+        }
+    }
+
+    if let Some(task_env) = task_env {
+        for (name, value) in task_env {
+            if contract.env.contains_key(name) {
+                continue;
+            }
+            env.push(EnvEntry {
+                name: name.clone(),
+                kind: EnvEntryKind::Task,
+                required: false,
+                default: None,
+                allowed: Vec::new(),
+                value: Some(value.clone()),
+                source: String::from("task"),
+                status: EnvEntryStatus::Task,
+                next: None,
+            });
+        }
+    }
+
+    let task_count = env
+        .iter()
+        .filter(|entry| matches!(entry.kind, EnvEntryKind::Task))
+        .count();
+
+    Ok(EnvReport {
+        ok: missing_count == 0 && invalid_count == 0,
+        summary: EnvSummary {
+            contract_count: contract.env.len(),
+            task_count,
+            resolved_count: contract_resolved_count,
+            missing_count,
+            invalid_count,
+        },
+        env,
+    })
+}
+
+fn build_task_overridden_env_entry(
+    name: &str,
+    requirement: &EnvRequirement,
+    value: &str,
+) -> EnvEntry {
+    EnvEntry {
+        name: name.to_string(),
+        kind: EnvEntryKind::Contract,
+        required: requirement.required,
+        default: requirement.default.clone(),
+        allowed: requirement.allowed.clone(),
+        value: Some(display_env_value(value, requirement.secret)),
+        source: String::from("task"),
+        status: EnvEntryStatus::Resolved,
+        next: None,
+    }
+}
+
+fn display_env_value(value: &str, secret: bool) -> String {
+    if secret {
+        String::from("<redacted>")
+    } else {
+        value.to_string()
+    }
+}
+
+fn env_next_for_missing(name: &str, task_name: Option<&str>) -> String {
+    match task_name {
+        Some(task_name) => format!(
+            "set {name} in the shell, policy, or task env for `{task_name}`, then rerun `ota env --task {task_name}`"
+        ),
+        None => format!("set {name} in the shell or policy, then rerun `ota env`"),
+    }
+}
+
+fn env_next_for_invalid(name: &str, allowed: &[String]) -> String {
+    format!(
+        "set {name} to one of: {}, then rerun `ota env`",
+        allowed.join(", ")
+    )
+}
+
+fn compose_env_path_value(
+    name: &str,
+    base: &str,
+    requirement: &EnvRequirement,
+) -> Result<String, String> {
+    if requirement.prepend.is_empty() && requirement.append.is_empty() {
+        return Ok(base.to_string());
+    }
+
+    let mut entries = Vec::with_capacity(1 + requirement.prepend.len() + requirement.append.len());
+    entries.extend(requirement.prepend.iter().cloned().map(OsString::from));
+    entries.extend(std::env::split_paths(base).map(|path| path.into_os_string()));
+    entries.extend(requirement.append.iter().cloned().map(OsString::from));
+
+    std::env::join_paths(entries)
+        .map(|joined| joined.to_string_lossy().into_owned())
+        .map_err(|source| {
+            format!("could not compose environment variable `{name}` as a PATH: {source}")
+        })
+}
+
+fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("ENV", path),
+        render_readiness_status(report.ok)
+    );
+    if let Some(task) = task {
+        stdout.push_str(&format!("\n\n{} {}", paint_key("Task:"), task));
+    }
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Overview")));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        summary_bullet(),
+        format!(
+            "{} {}",
+            paint_key("Contract env:"),
+            report.summary.contract_count
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        summary_bullet(),
+        format!("{} {}", paint_key("Task env:"), report.summary.task_count)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        summary_bullet(),
+        format!(
+            "{} {}",
+            paint_key("Resolved:"),
+            report.summary.resolved_count
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        summary_bullet(),
+        format!("{} {}", paint_key("Missing:"), report.summary.missing_count)
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        summary_bullet(),
+        format!("{} {}", paint_key("Invalid:"), report.summary.invalid_count)
+    ));
+
+    stdout.push_str("\n\n");
+    stdout.push_str(&paint_section_title("Contract env"));
+    if report.summary.contract_count == 0 {
+        stdout.push_str(&format!("\n{} none", info_bullet()));
+    } else {
+        for entry in report
+            .env
+            .iter()
+            .filter(|entry| matches!(entry.kind, EnvEntryKind::Contract))
+        {
+            stdout.push_str(&render_env_entry_text(entry));
+        }
+    }
+
+    if task.is_some() && report.summary.task_count > 0 {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Task env")));
+        for entry in report
+            .env
+            .iter()
+            .filter(|entry| matches!(entry.kind, EnvEntryKind::Task))
+        {
+            stdout.push_str(&render_env_entry_text(entry));
+        }
+    }
+
+    stdout
+}
+
+fn render_env_entry_text(entry: &EnvEntry) -> String {
+    let mut output = String::new();
+    output.push_str(&format!("\n{} {}", list_bullet(), paint(&entry.name, "1")));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Kind:"),
+        render_env_kind(entry.kind)
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Required:"),
+        if entry.required { "true" } else { "false" }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Value:"),
+        entry.value.as_deref().unwrap_or("-")
+    ));
+    output.push_str(&format!("\n  {} {}", paint_key("Source:"), entry.source));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Status:"),
+        render_env_status(entry.status)
+    ));
+    if !entry.allowed.is_empty() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Allowed:"),
+            entry.allowed.join(", ")
+        ));
+    }
+    if let Some(default) = entry.default.as_deref() {
+        output.push_str(&format!("\n  {} {}", paint_key("Default:"), default));
+    }
+    if let Some(next) = entry.next.as_deref() {
+        output.push_str(&format!("\n  {} {}", paint_key("Next:"), next));
+    }
+    output
+}
+
+fn render_env_kind(kind: EnvEntryKind) -> &'static str {
+    match kind {
+        EnvEntryKind::Contract => "contract",
+        EnvEntryKind::Task => "task",
+    }
+}
+
+fn render_env_status(status: EnvEntryStatus) -> &'static str {
+    match status {
+        EnvEntryStatus::Resolved => "resolved",
+        EnvEntryStatus::Missing => "missing",
+        EnvEntryStatus::Optional => "optional",
+        EnvEntryStatus::Invalid => "invalid",
+        EnvEntryStatus::Task => "task",
+    }
 }
 
 pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> CommandOutput {
@@ -11502,16 +11929,15 @@ fn compact_contract_file_path_relative_to(
         current_dir.join(path)
     };
     let absolute = fs::canonicalize(&absolute).unwrap_or(absolute);
-
     if current_dir.starts_with(&root) {
         if let Ok(relative) = absolute.strip_prefix(&root) {
             if relative.as_os_str().is_empty() {
                 return String::from(".");
+            } else {
+                return format!("./{}", relative.display());
             }
-            return format!("./{}", relative.display());
         }
     }
-
     absolute.display().to_string()
 }
 

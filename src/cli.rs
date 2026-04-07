@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -111,6 +111,21 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+    #[command(display_order = 10)]
+    /// Inspect resolved environment requirements from an Ota contract.
+    Env {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
+        /// Inspect one task's environment requirements in addition to contract env.
+        #[arg(long)]
+        task: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -1123,6 +1138,19 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Env {
+            json,
+            member,
+            task,
+            path,
+        } => commands::env(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            task.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
         Commands::Run {
             task,
             backend,
@@ -1615,6 +1643,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Validate { .. } => "run `ota init` to create a starter contract",
         Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
         Commands::Services { .. } => "run `ota services` to inspect declared services",
+        Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
         Commands::Run { .. } => "run `ota tasks --use` to inspect runnable task usage",
         Commands::Doctor { .. } => "run `ota init` to create a starter contract",
         Commands::Explain { .. } => {
@@ -1774,6 +1803,7 @@ fn command_requests_json(command: &Commands) -> bool {
         Commands::Validate { json, .. }
         | Commands::Tasks { json, .. }
         | Commands::Services { json, .. }
+        | Commands::Env { json, .. }
         | Commands::Doctor { json, .. }
         | Commands::Explain { json, .. }
         | Commands::Diff { json, .. }
@@ -1813,6 +1843,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Validate { .. } => "ota validate",
         Commands::Tasks { .. } => "ota tasks",
         Commands::Services { .. } => "ota services",
+        Commands::Env { .. } => "ota env",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Annotations { .. } => "ota annotations",
@@ -6833,6 +6864,82 @@ tasks:
             json["execution"]["env"][0]["policy"],
             "http://policy.example.com"
         );
+    }
+
+    #[test]
+    fn env_text_reports_contract_and_task_sources() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  DATABASE_URL:
+    required: true
+    default: postgres://contract
+  OTA_TEST_ENV_HOME:
+    default: /opt/jdk-21
+tasks:
+  test:
+    env:
+      DATABASE_URL: postgres://task
+      CI: "true"
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "env", "--task", "test", fixture.path()]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(stdout.contains("ENV"));
+        assert!(stdout.contains("Task: test"));
+        assert!(stdout.contains("Contract env"));
+        assert!(stdout.contains("Task env"));
+        assert!(stdout.contains("DATABASE_URL"));
+        assert!(stdout.contains("Source: task"));
+        assert!(stdout.contains("OTA_TEST_ENV_HOME"));
+        assert!(stdout.contains("Source: default"));
+        assert!(stdout.contains("CI"));
+        assert!(stdout.contains("Status: task"));
+    }
+
+    #[test]
+    fn env_json_reports_missing_required_env() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  DATABASE_URL:
+    required: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let original = std::env::var_os("DATABASE_URL");
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
+        }
+
+        let output = run_with(["ota", "env", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
+            None => unsafe { std::env::remove_var("DATABASE_URL") },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"]["missing_count"], 1);
+        assert_eq!(json["env"][0]["status"], "missing");
+        assert!(json["env"][0]["next"].as_str().unwrap().contains("ota env"));
     }
 
     #[test]

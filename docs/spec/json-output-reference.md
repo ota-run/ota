@@ -14,6 +14,7 @@ and avoid scraping human-readable text output.
 Canonical JSON Schema files for the current shipped shapes live in:
 
 - [json-schemas/validate.json](json-schemas/validate.json)
+- [json-schemas/env.json](json-schemas/env.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
@@ -42,6 +43,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 ## Which JSON surface to use
 
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
+- use `ota env --json` for read-only environment inspection and validation
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
@@ -122,6 +124,71 @@ Or:
     "error_count": 1
   },
   "error": "..."
+}
+```
+
+## `ota env --json`
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "contract_count": 2,
+    "task_count": 1,
+    "resolved_count": 2,
+    "missing_count": 0,
+    "invalid_count": 0
+  },
+  "env": [
+    {
+      "name": "DATABASE_URL",
+      "kind": "contract",
+      "required": true,
+      "value": "postgres://localhost/app",
+      "source": "process",
+      "status": "resolved"
+    },
+    {
+      "name": "CI",
+      "kind": "task",
+      "required": false,
+      "value": "true",
+      "source": "task",
+      "status": "task"
+    }
+  ]
+}
+```
+
+When `--task` is set, the payload includes the task name:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "task": "test",
+  "summary": {
+    "contract_count": 2,
+    "task_count": 1,
+    "resolved_count": 2,
+    "missing_count": 0,
+    "invalid_count": 0
+  },
+  "env": []
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "task": "test",
+  "error": "task `test` is not defined in ota.yaml"
 }
 ```
 
