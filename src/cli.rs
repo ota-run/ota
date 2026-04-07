@@ -2302,6 +2302,31 @@ tasks:
     }
 
     #[test]
+    fn validate_text_external_contract_next_steps_include_explicit_target() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.file_path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let contract_path = fs::canonicalize(fixture.file_path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(stdout.contains(&format!("ota doctor {contract_path}")));
+        assert!(stdout.contains(&format!("ota tasks --use {contract_path}")));
+    }
+
+    #[test]
     fn validate_json_reports_validation_errors() {
         let fixture = ContractFixture::new(
             r#"
@@ -7156,10 +7181,42 @@ project:
         assert!(stdout.contains("AGENTS"));
         assert!(stdout.contains("Target:"));
         assert!(stdout.contains("Managed block:"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota agents --write"));
+        assert!(stdout.contains("ota doctor"));
         assert!(stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
         assert!(stdout.contains("- `ota tasks`"));
         assert!(stdout.contains("- `ota doctor`"));
         assert!(stdout.contains("- `ota detect --dry-run`"));
+    }
+
+    #[test]
+    fn agents_preview_external_contract_uses_explicit_paths() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "agents", fixture.file_path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let contract_path = fs::canonicalize(fixture.file_path())
+            .unwrap()
+            .display()
+            .to_string();
+        let agents_path = fs::canonicalize(fixture.dir.path())
+            .unwrap()
+            .join("AGENTS.md")
+            .display()
+            .to_string();
+        assert!(stdout.contains(&format!("AGENTS {contract_path}")));
+        assert!(stdout.contains(&agents_path));
+        assert!(stdout.contains(&format!("ota agents --write {contract_path}")));
+        assert!(stdout.contains(&format!("ota doctor {contract_path}")));
     }
 
     #[test]
@@ -7225,6 +7282,8 @@ agent:
         assert!(stdout.contains("AGENTS"));
         assert!(stdout.contains("Managed block:"));
         assert!(stdout.contains("already in sync") || stdout.contains("wrote"));
+        assert!(stdout.contains("Next:"));
+        assert!(stdout.contains("ota doctor"));
         let agents_md = fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap();
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml`."));
@@ -10080,6 +10139,42 @@ tasks:
     }
 
     #[test]
+    fn doctor_uses_pyenv_python_remediation_when_repo_signals_python_version() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: pyenv-demo
+runtimes:
+  python: "3.12.4"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".python-version", "3.12.4\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.13.2\r\n"
+        } else {
+            "#!/bin/sh\necho 'Python 3.13.2'\n"
+        };
+        write_fake_command(&bin_dir, "python", python_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `pyenv install 3.12.4` and rerun `ota doctor`"));
+    }
+
+    #[test]
     fn doctor_uses_sdkman_java_remediation_when_repo_signals_sdkman() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
@@ -10113,6 +10208,204 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `sdk install java 21.0.2-tem` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_external_contract_rewrites_next_steps_with_explicit_target() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: explicit-target-demo
+runtimes:
+  node: "22"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "repo-signal-demo"
+}"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with(["ota", "doctor", fixture.file_path().to_str().unwrap()]);
+        let stdout = strip_ansi(&output.stdout);
+        let contract_path = fs::canonicalize(fixture.file_path())
+            .unwrap()
+            .display()
+            .to_string();
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains(&format!("rerun `ota doctor {contract_path}`")));
+        assert!(stdout.contains(&format!("ota detect --merge --dry-run {contract_path}")));
+    }
+
+    #[test]
+    fn explain_external_contract_rewrites_next_steps_with_explicit_target() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: explicit-target-demo
+runtimes:
+  node: "22"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "repo-signal-demo"
+}"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with(["ota", "explain", fixture.file_path().to_str().unwrap()]);
+        let stdout = strip_ansi(&output.stdout);
+        let contract_path = fs::canonicalize(fixture.file_path())
+            .unwrap()
+            .display()
+            .to_string();
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains(&format!("rerun `ota doctor {contract_path}`")));
+    }
+
+    #[test]
+    fn doctor_uses_volta_node_remediation_when_contract_provider_is_volta() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: volta-demo
+runtimes:
+  node:
+    version: "22"
+    provider: volta
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `volta install node@22` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_nodenv_node_remediation_when_repo_signals_node_version() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: nodenv-demo
+runtimes:
+  node: "22"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".node-version", "22\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `nodenv install 22` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_uses_rbenv_ruby_remediation_when_repo_signals_ruby_version() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: rbenv-demo
+runtimes:
+  ruby: "3.3.0"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".ruby-version", "3.3.0\n");
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let ruby_body = if cfg!(windows) {
+            "@echo off\r\necho ruby 3.4.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'ruby 3.4.1'\n"
+        };
+        write_fake_command(&bin_dir, "ruby", ruby_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains("run `rbenv install 3.3.0` and rerun `ota doctor`"));
     }
 
     #[test]
@@ -10155,6 +10448,44 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `asdf install maven 3.9.9` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn up_external_contract_rewrites_next_steps_with_explicit_target() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: explicit-target-demo
+runtimes:
+  node: "22"
+tasks:
+  setup:
+    run: echo setup
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with(["ota", "up", fixture.file_path().to_str().unwrap()]);
+        let stdout = strip_ansi(&output.stdout);
+        let contract_path = fs::canonicalize(fixture.file_path())
+            .unwrap()
+            .display()
+            .to_string();
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains(&format!("rerun `ota doctor {contract_path}`")));
     }
 
     #[test]

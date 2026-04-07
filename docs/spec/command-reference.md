@@ -665,6 +665,7 @@ Current behavior:
 - preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
 - skips the write if the existing file already contains the generated AGENTS content
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
+- text preview points directly at `ota agents --write` and `ota doctor` so the guidance can be written and then verified from the same contract
 - writes to `AGENTS.md` by default when `--write` is set
 - accepts `--output` to write elsewhere
 - keeps output deterministic and reviewable
@@ -672,8 +673,8 @@ Current behavior:
 Text output:
 
 - header: `AGENTS <path>`
-- preview mode shows the generated markdown content
-- write mode reports whether the target was written or already in sync
+- preview mode shows the generated markdown content together with the write and verification next steps
+- write mode reports whether the target was written or already in sync and points back to `ota doctor`
 
 JSON output:
 
