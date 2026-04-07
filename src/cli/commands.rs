@@ -10382,7 +10382,7 @@ fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> Stri
         if !concise_mode() {
             stdout.push_str(&format!(
                 "\n  {} {}",
-                paint_key("Why:"),
+                explain_why_key(),
                 render_backticked_text(&explain_group_why(group), Some(contract_path))
             ));
         }
@@ -10396,7 +10396,7 @@ fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> Stri
                 if per_finding_next {
                     stdout.push_str(&format!(
                         "\n    {} {}",
-                        paint_key("Next:"),
+                        explain_next_key(),
                         render_backticked_text(
                             &compact_backticked_paths(&finding.next),
                             Some(contract_path)
@@ -10408,7 +10408,7 @@ fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> Stri
         if !per_finding_next {
             stdout.push_str(&format!(
                 "\n  {} {}",
-                paint_key("Next:"),
+                explain_next_key(),
                 render_backticked_text(&explain_group_next(group), Some(contract_path))
             ));
         }
@@ -15133,6 +15133,20 @@ fn paint_key(key: &str) -> String {
     paint(key, "38;2;102;217;255")
 }
 
+fn explain_why_key() -> String {
+    if plain_mode() {
+        return String::from("Why:");
+    }
+    paint("Why:", "38;2;137;164;179")
+}
+
+fn explain_next_key() -> String {
+    if plain_mode() {
+        return String::from("Next:");
+    }
+    paint("Next:", "1;38;2;102;245;255")
+}
+
 fn backup_label() -> String {
     if plain_mode() {
         return String::from("Backup:");
@@ -15287,7 +15301,7 @@ fn summary_bullet() -> String {
     if plain_mode() {
         String::from("-")
     } else {
-        paint("»", "1;38;2;102;245;255")
+        paint("»", "1;38;2;125;255;212")
     }
 }
 
