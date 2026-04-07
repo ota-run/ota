@@ -55,13 +55,17 @@
   the premium text surfaces and snapshot-backed CLI presentation intentionally reviewed.
 - added an adoption readiness gate doc so enterprise-facing scope stays behind an explicit product
   usefulness bar instead of drifting ahead of first-session value.
+- tightened `ota run` failure output so existing `Next:` guidance never leaves a blank spacer line
+  before the action line, even when the error already carried guidance before `RUN SUMMARY`.
+- hardened persistent container reuse so `ota run --mode container` recreates a stale stopped
+  backend instead of trying to `exec` into it and surfacing `cannot exec in a stopped container`.
 
 ## 1.1.3
 
 - grouped repeated remediation findings across doctor-style text outputs so `doctor`, `check`,
   `up`, and workspace variants collapse obvious repeated actions with shared Ota styling.
-- normalized `finding_groups.action_key` around remediation classes instead of literal `Next:`
-  prose so grouped JSON summaries stay stable when copy changes.
+- normalized `finding_groups.action_key` around stable semantic action classes instead of rendered
+  `Next:` or summary prose so grouped JSON summaries stay stable when copy changes.
 - tightened `ota run` failure formatting so injected `Next:` guidance now sits immediately under
   `Why:` and no longer leaves extra blank gaps before `RUN SUMMARY`.
 - regrouped detect contract-drift removals by task in text output so task-related drift reads as

@@ -32,7 +32,7 @@ Options:
       --plain        Emit plain text output (no icons, no ANSI styling, ASCII list markers)
       --concise      Reduce non-essential spacing in text output
       --verbose      Keep full text output detail (default behavior)
-      --file <FILE>  Use an explicit ota.yaml file instead of path discovery
+      --file <FILE>  Use an explicit ota.yaml or ota.workspace.yaml file instead of path discovery
   -h, --help         Print help
 
 

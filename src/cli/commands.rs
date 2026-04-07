@@ -9864,6 +9864,7 @@ enum DoctorFindingGroupKind {
 }
 
 struct DoctorFindingGroup<'a> {
+    group_key: String,
     action_key: String,
     kind: DoctorFindingGroupKind,
     severity: FindingSeverity,
@@ -9878,21 +9879,20 @@ where
 
     for finding in findings {
         let kind = doctor_finding_group_kind(finding);
-        let action_key = doctor_finding_group_key(finding);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| group.action_key == action_key)
-        {
+        let group_key = doctor_finding_group_key(finding);
+        let action_key = doctor_finding_action_key(finding);
+        if let Some(group) = groups.iter_mut().find(|group| group.group_key == group_key) {
             group.severity = group.severity.max(finding.severity);
             if !matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.kind != kind
             {
-                group.kind = DoctorFindingGroupKind::SharedAction(action_key.clone());
+                group.kind = DoctorFindingGroupKind::SharedAction(group_key.clone());
             }
             group.findings.push(finding);
             continue;
         }
 
         groups.push(DoctorFindingGroup {
+            group_key,
             action_key,
             kind,
             severity: finding.severity,
@@ -9983,6 +9983,51 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
                 format!("{code_key}-{summary_key}")
             }
         }
+    }
+}
+
+fn doctor_finding_action_key(finding: &Finding) -> String {
+    let summary = finding.summary.as_str();
+    match finding.code() {
+        "OTA_RUNTIME_VERSION_MISMATCH"
+        | "OTA_RUNTIME_MISSING"
+        | "OTA_TOOL_VERSION_MISMATCH"
+        | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        "OTA_ENV_MISSING" => String::from("environment-missing"),
+        "OTA_ENV_INVALID" => String::from("environment-invalid"),
+        "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
+        "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+        | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
+        "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
+            String::from("execution-backend")
+        }
+        "OTA_DOCTOR_FINDING_UNKNOWN"
+            if summary == "Policy-backed provisioning sources are declared"
+                || summary == "Adapter bootstrap sources are declared" =>
+        {
+            String::from("policy-surface")
+        }
+        "OTA_SERVICE_CHECK_FAILED" => format!(
+            "service-health-failed-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_SERVICE_CHECK_TIMED_OUT" => format!(
+            "service-health-timeout-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_SERVICE_UNVERIFIABLE" => format!(
+            "service-health-unverifiable-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_CHECK_FAILED" => format!(
+            "check-failed-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        "OTA_CHECK_TIMED_OUT" => format!(
+            "check-timeout-{}",
+            doctor_group_slug(doctor_finding_subject(finding))
+        ),
+        _ => doctor_code_group_slug(finding.code()),
     }
 }
 
@@ -11880,10 +11925,7 @@ tasks:
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].action_key, "check-failed-health-check");
         assert_eq!(groups[1].action_key, "check-timeout-lint");
-        assert_eq!(
-            groups[2].action_key,
-            "doctor-finding-unknown-custom-advisory"
-        );
+        assert_eq!(groups[2].action_key, "doctor-finding-unknown");
     }
 
     #[test]
