@@ -60,7 +60,7 @@ human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
-- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, per-repo `findings`, and `execution`
+- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
@@ -75,6 +75,7 @@ Hosted CI can use the same fields as annotations or check-run summaries:
 
 - `summary.primary_blocker` when present, for the headline
 - `findings[]` or per-repo `findings[]` as the annotation stream
+- `finding_groups[]` when present, for grouped human-facing remediation summaries
 - `severity` to decide blocking versus warning annotations
 - `why` for the annotation body
 - `next` for the suggested fix or link target
@@ -301,6 +302,10 @@ When that plan exists, `ota doctor --json` also includes a top-level `provisioni
 object. It is the backend intake form and carries only the selected `actions` from the read-only
 plan, so an installer backend can consume the request without re-deriving policy decisions from
 the diagnostic payload.
+
+`ota doctor --json` and `ota workspace doctor --json` may also include a top-level
+`finding_groups` array when the output contains repeated-action groups. The grouped metadata is
+additive only; each `findings[]` entry remains unchanged for machine consumers.
 
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
 additive policy keys may appear there as well. When a repo declares execution metadata, the shared

@@ -130,6 +130,20 @@
             }
           }
       }
+    },
+    "finding_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action_key", "action_title", "action_next", "count"],
+        "properties": {
+          "action_key": { "type": "string" },
+          "action_title": { "type": "string" },
+          "action_next": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 }
+        }
+      }
     }
   }
 }
