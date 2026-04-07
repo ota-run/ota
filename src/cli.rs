@@ -1684,8 +1684,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         let trimmed = stderr.trim_end_matches('\n');
         if let Some(idx) = trimmed.rfind(summary_title) {
             let (before_summary, summary_block) = trimmed.split_at(idx);
+            let before_summary = before_summary.trim_end_matches('\n');
             return commands::stylize_inline_text(&format!(
-                "{before_summary}\n\n{next_header} {next_value}\n\n{summary_block}"
+                "{before_summary}\n{next_header} {next_value}\n\n{summary_block}"
             ));
         }
     }
@@ -4860,6 +4861,34 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
+    }
+
+    #[test]
+    fn run_failure_try_footer_stays_tight_before_run_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fail:
+    run: exit 7
+"#,
+        );
+
+        let output = run_with(["ota", "run", "fail", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Why: task `fail` failed with exit code 7"));
+        assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
+        assert!(stderr.contains(
+            "Why: task `fail` failed with exit code 7\nNext: run `ota tasks --use` to inspect runnable task usage"
+        ));
+        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\nNext:"));
+        assert!(!stderr.contains(
+            "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
+        ));
     }
 
     #[test]
@@ -9670,6 +9699,8 @@ edition = "2024"
         assert!(detect_stdout.contains("Mode: dry-run (no write)"));
         assert!(detect_stdout.contains("Contract:"));
         assert!(detect_stdout.contains("Annotations:"));
+        assert!(detect_stdout.contains("Next:"));
+        assert!(detect_stdout.find("Annotations:").unwrap() < detect_stdout.find("Next:").unwrap());
         assert!(!detect_stdout.contains("\n---\n"));
     }
 
