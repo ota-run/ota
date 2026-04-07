@@ -138,6 +138,9 @@ case "$command" in
         --rm|-i)
           shift
           ;;
+        --entrypoint)
+          shift 2
+          ;;
         --env)
           shift 2
           ;;
@@ -160,7 +163,7 @@ case "$command" in
     PATH="/usr/bin:/bin"
     export PATH
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$3"
+    exec /bin/sh -lc "$2"
     ;;
 esac
 
@@ -1931,7 +1934,7 @@ fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
 
     assert_eq!(
         json["config"]["services"]["db"]["healthcheck"],
-        "pg_isready -h localhost -p 5432"
+        "docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'"
     );
     assert!(
         json["inferred"]
@@ -2013,7 +2016,8 @@ fn init_write_writes_high_confidence_contract_for_polyglot_ops_fixture() {
     assert!(written.contains("app:"));
     assert!(written.contains("postgres:"));
     assert!(written.contains("provider: docker-compose"));
-    assert!(!written.contains("tools:"));
+    assert!(written.contains("tools:"));
+    assert!(written.contains("docker: '*'"));
     assert!(!written.contains("tasks:"));
 }
 
@@ -2035,7 +2039,8 @@ fn detect_writes_high_confidence_contract_for_polyglot_ops_fixture() {
     assert!(written.contains("app:"));
     assert!(written.contains("postgres:"));
     assert!(written.contains("provider: docker-compose"));
-    assert!(!written.contains("tools:"));
+    assert!(written.contains("tools:"));
+    assert!(written.contains("docker: '*'"));
     assert!(!written.contains("tasks:"));
 }
 

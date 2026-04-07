@@ -2004,6 +2004,9 @@ case "$command" in
         --rm|-i)
           shift
           ;;
+        --entrypoint)
+          shift 2
+          ;;
         --name)
           name="$2"
           shift 2
@@ -2035,7 +2038,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$3"
+    if [ "$1" = "-lc" ]; then
+      exec /bin/sh -lc "$2"
+    fi
+    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
+      exec /bin/sh -lc "$3"
+    fi
+    exec /bin/sh -lc "$1"
     ;;
   rm)
     shift
@@ -2735,11 +2744,12 @@ project:
         assert!(stdout.contains("EXPLAIN"));
         assert!(stdout.contains("Overview"));
         assert!(stdout.contains("Plan"));
-        assert!(stdout.contains("Code:"));
+        assert!(stdout.contains("Findings:"));
+        assert!(stdout.contains("Actions:"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(stdout.contains("Why:"));
         assert!(stdout.contains("Next:"));
-        assert!(stdout.contains("»"));
+        assert!(!stdout.contains("Code:"));
     }
 
     #[test]
@@ -2805,8 +2815,7 @@ policies:
 
         let text = run_with(["ota", "explain", fixture.path().to_str().unwrap()]);
         let stdout = strip_ansi(&text.stdout);
-        assert!(stdout.contains("Provenance:"));
-        assert!(stdout.contains("org policy"));
+        assert!(!stdout.contains("Provenance:"));
     }
 
     #[test]
@@ -2857,8 +2866,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Provenance:"));
-        assert!(stdout.contains("org policy"));
+        assert!(!stdout.contains("Provenance:"));
 
         let json = run_with([
             "ota",
@@ -2925,10 +2933,11 @@ project:
         assert!(stdout.contains("WORKSPACE EXPLAIN"));
         assert!(stdout.contains("Overview"));
         assert!(stdout.contains("Plan"));
-        assert!(stdout.contains("Code:"));
+        assert!(stdout.contains("Actions:"));
         assert!(stdout.contains("api"));
         assert!(stdout.contains("web"));
         assert!(stdout.contains("No tasks defined in contract"));
+        assert!(!stdout.contains("Code:"));
     }
 
     #[test]

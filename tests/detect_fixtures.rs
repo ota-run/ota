@@ -828,7 +828,7 @@ fn detects_fullstack_node_compose_fixture() {
             .services
             .get("db")
             .and_then(|service| service.healthcheck.as_deref()),
-        Some("pg_isready -U postgres")
+        Some("docker compose exec -T db sh -lc 'pg_isready -U postgres'")
     );
     assert_eq!(
         report
@@ -887,7 +887,7 @@ fn detects_mixed_node_python_compose_fixture() {
             .services
             .get("postgres")
             .and_then(|service| service.healthcheck.as_deref()),
-        Some("pg_isready -U ota")
+        Some("docker compose exec -T postgres sh -lc 'pg_isready -U ota'")
     );
     assert_eq!(
         report.high_confidence_contract().runtimes.get("python"),
