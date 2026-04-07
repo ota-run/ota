@@ -586,9 +586,10 @@ pub fn validate(
             Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
                     OutputFormat::Text => CommandOutput::success(format!(
-                        "{}\n\n{}",
+                        "{}\n\n{}{}",
                         format_command_header("VALIDATE", &text_path_display),
-                        render_valid_status()
+                        render_valid_status(),
+                        render_validate_ready_next(member)
                     )),
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
@@ -642,6 +643,21 @@ pub fn validate(
         debug,
         debug_lines,
     )
+}
+
+fn render_validate_ready_next(member: Option<&str>) -> String {
+    let doctor = match member {
+        Some(member) => format!("run `ota doctor --member {member}` to inspect readiness"),
+        None => String::from("run `ota doctor` to inspect readiness"),
+    };
+    let tasks = match member {
+        Some(member) => {
+            format!("run `ota tasks --member {member} --use` to inspect runnable task usage")
+        }
+        None => String::from("run `ota tasks --use` to inspect runnable task usage"),
+    };
+
+    format_next_timeline(&[doctor, tasks])
 }
 
 pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> CommandOutput {
@@ -1380,6 +1396,7 @@ pub fn run_command(
     task_inputs: &[String],
     debug: bool,
     show_receipt: bool,
+    stream: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
@@ -1438,6 +1455,7 @@ pub fn run_command(
             members,
             task_inputs,
             show_receipt,
+            run_command_streaming_enabled(stream),
         ) {
             Ok(stderr) => CommandOutput {
                 stdout: String::new(),
@@ -1465,6 +1483,10 @@ pub fn run_command(
         debug,
         debug_lines,
     )
+}
+
+fn run_command_streaming_enabled(force_stream: bool) -> bool {
+    force_stream || io::stdout().is_terminal() || io::stderr().is_terminal()
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
@@ -3893,6 +3915,17 @@ pub fn detect(
                             format_command_header("DETECT PREVIEW", &compact_root_display)
                         };
                         stdout.push_str(&format!("\n\n{}", format_mode_line("dry-run (no write)")));
+                        let comparison_mode = detect_preview_mode(merge, rewrite);
+                        let comparison_first = comparison
+                            .as_ref()
+                            .is_some_and(|comparison| comparison.existing_contract);
+                        if comparison_first {
+                            render_detect_comparison_section(
+                                &mut stdout,
+                                comparison.as_ref(),
+                                comparison_mode,
+                            );
+                        }
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
                         stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
                         render_inference_section(
@@ -3900,33 +3933,19 @@ pub fn detect(
                             "Annotations",
                             report.inferences.iter(),
                         );
-                        render_detect_comparison_section(&mut stdout, comparison.as_ref());
-                        let next_line = if merge {
-                            format!(
-                                "run `ota detect --merge {}` to apply add-only high-confidence fields",
-                                compact_root_display
-                            )
-                        } else if rewrite {
-                            format!(
-                                "run `ota detect --rewrite --yes {}` to replace the existing contract",
-                                compact_root_display
-                            )
-                        } else {
-                            format!(
-                                "run `ota detect --write {}` to write a high-confidence contract",
-                                compact_root_display
-                            )
-                        };
-                        if let Some(comparison) = comparison.as_ref() {
-                            if !comparison.changes.is_empty() {
-                                stdout.push_str(&format!("\n\n{}", error_next_key("Next:")));
-                                stdout.push_str(&format!("\n{}  {}", next_bullet(), next_line));
-                            } else {
-                                stdout.push_str(&format_next_timeline(&[next_line]));
-                            }
-                        } else {
-                            stdout.push_str(&format_next_timeline(&[next_line]));
+                        if !comparison_first {
+                            render_detect_comparison_section(
+                                &mut stdout,
+                                comparison.as_ref(),
+                                comparison_mode,
+                            );
                         }
+                        let next_lines = detect_preview_next_steps(
+                            comparison_mode,
+                            &compact_root_display,
+                            comparison.as_ref(),
+                        );
+                        append_detect_preview_next(&mut stdout, comparison.as_ref(), &next_lines);
                         CommandOutput::success(stdout)
                     }
                     OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -6404,7 +6423,11 @@ fn write_detected_merge(
         return match format {
             OutputFormat::Text => {
                 let mut stdout = format_command_header("NO CHANGES", &compact_path_display);
-                render_detect_comparison_section(&mut stdout, Some(&comparison));
+                render_detect_comparison_section(
+                    &mut stdout,
+                    Some(&comparison),
+                    DetectComparisonMode::MergePreview,
+                );
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -6545,7 +6568,11 @@ fn write_detected_merge(
                     "Applied selected high-confidence changes"
                 };
                 render_detect_change_section(&mut stdout, applied_title, &applied);
-                render_detect_comparison_section(&mut stdout, post_write_comparison.as_ref());
+                render_detect_comparison_section(
+                    &mut stdout,
+                    post_write_comparison.as_ref(),
+                    DetectComparisonMode::MergeResult,
+                );
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => {
@@ -6684,7 +6711,11 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                     backup_label(),
                     paint_code(&compact_contract_path(&backup_path))
                 ));
-                render_detect_comparison_section(&mut stdout, comparison.as_ref());
+                render_detect_comparison_section(
+                    &mut stdout,
+                    comparison.as_ref(),
+                    DetectComparisonMode::RewriteResult,
+                );
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => CommandOutput::success(to_json(&DetectSuccess {
@@ -7137,7 +7168,102 @@ fn compare_detected_contract(
     }
 }
 
-fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&DetectComparison>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetectComparisonMode {
+    Preview,
+    MergePreview,
+    RewritePreview,
+    MergeResult,
+    RewriteResult,
+}
+
+fn detect_preview_mode(merge: bool, rewrite: bool) -> DetectComparisonMode {
+    if merge {
+        DetectComparisonMode::MergePreview
+    } else if rewrite {
+        DetectComparisonMode::RewritePreview
+    } else {
+        DetectComparisonMode::Preview
+    }
+}
+
+fn detect_preview_next_steps(
+    mode: DetectComparisonMode,
+    root_display: &str,
+    comparison: Option<&DetectComparison>,
+) -> Vec<String> {
+    let has_changes = comparison.is_some_and(|value| !value.changes.is_empty());
+    let has_removals = comparison.is_some_and(|value| !value.removals.is_empty());
+
+    match mode {
+        DetectComparisonMode::Preview => {
+            if comparison.is_none() {
+                vec![format!(
+                    "run `ota detect --write {root_display}` to write a high-confidence contract"
+                )]
+            } else if has_removals {
+                vec![
+                    format!(
+                        "run `ota detect --merge --dry-run {root_display}` to review add-only changes"
+                    ),
+                    format!(
+                        "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement contract"
+                    ),
+                ]
+            } else if has_changes {
+                vec![format!(
+                    "run `ota detect --merge --dry-run {root_display}` to review add-only changes"
+                )]
+            } else {
+                vec![format!(
+                    "run `ota doctor {root_display}` to verify repo readiness"
+                )]
+            }
+        }
+        DetectComparisonMode::MergePreview => {
+            let mut lines = vec![format!(
+                "run `ota detect --merge {root_display}` to apply add-only high-confidence fields"
+            )];
+            if has_removals {
+                lines.push(format!(
+                    "run `ota detect --rewrite --dry-run {root_display}` to review a full replacement that would drop stale fields"
+                ));
+            }
+            lines
+        }
+        DetectComparisonMode::RewritePreview => vec![format!(
+            "run `ota detect --rewrite --yes {root_display}` to replace the existing contract"
+        )],
+        DetectComparisonMode::MergeResult | DetectComparisonMode::RewriteResult => Vec::new(),
+    }
+}
+
+fn append_detect_preview_next(
+    stdout: &mut String,
+    comparison: Option<&DetectComparison>,
+    next_steps: &[String],
+) {
+    if next_steps.is_empty() {
+        return;
+    }
+
+    let needs_attention =
+        comparison.is_some_and(|value| !value.changes.is_empty() || !value.removals.is_empty());
+    if needs_attention {
+        stdout.push_str(&format!("\n\n{}", error_next_key("Next:")));
+        for step in next_steps {
+            stdout.push_str(&format!("\n{}  {}", next_bullet(), step));
+        }
+    } else {
+        stdout.push_str(&format_next_timeline(next_steps));
+    }
+}
+
+fn render_detect_comparison_section(
+    stdout: &mut String,
+    comparison: Option<&DetectComparison>,
+    mode: DetectComparisonMode,
+) {
     let Some(comparison) = comparison else {
         return;
     };
@@ -7153,10 +7279,12 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
     }
 
     if comparison.changes.is_empty() {
-        stdout.push_str(&format!(
-            "\n{}  no detected changes against the existing contract",
-            list_bullet()
-        ));
+        let no_change_copy = if comparison.existing_contract && !comparison.removals.is_empty() {
+            "no additive changes detected against the existing contract"
+        } else {
+            "no detected changes against the existing contract"
+        };
+        stdout.push_str(&format!("\n{}  {}", list_bullet(), no_change_copy,));
     } else {
         for change in &comparison.changes {
             stdout.push_str(&format!(
@@ -7181,103 +7309,524 @@ fn render_detect_comparison_section(stdout: &mut String, comparison: Option<&Det
             "\n\n{}:",
             paint_section_title("Existing contract drift")
         ));
-        render_detect_removals_section(stdout, &comparison.removals);
+        render_detect_removals_section(stdout, &comparison.removals, mode);
     }
 }
 
-fn render_detect_removals_section(stdout: &mut String, removals: &[DetectComparisonRemoval]) {
-    let mut task_removals = BTreeMap::<String, Vec<String>>::new();
-    let mut generic_removals = Vec::new();
+fn render_detect_removals_section(
+    stdout: &mut String,
+    removals: &[DetectComparisonRemoval],
+    mode: DetectComparisonMode,
+) {
+    let mut task_removals = BTreeMap::<String, DetectTaskDriftSummary>::new();
+    let mut runtime_removals = BTreeMap::<String, DetectNamedDriftSummary>::new();
+    let mut tool_removals = BTreeMap::<String, DetectNamedDriftSummary>::new();
+    let mut service_removals = BTreeMap::<String, DetectNamedDriftSummary>::new();
+    let mut other_removals = BTreeMap::<String, DetectNamedDriftSummary>::new();
 
     for removal in removals {
-        if let Some((task_name, entries)) = detect_task_removal_entries(removal) {
-            task_removals.entry(task_name).or_default().extend(entries);
-        } else {
-            generic_removals.push(removal);
-        }
-    }
-
-    if !task_removals.is_empty() {
-        let removal_count = removals.len() - generic_removals.len();
-        let task_count = task_removals.len();
-        stdout.push_str(&format!(
-            "\n\n{}  Review task drift ({} {} across {} {})",
-            render_severity(FindingSeverity::Warn),
-            removal_count,
-            pluralize(removal_count, "removal"),
-            task_count,
-            pluralize(task_count, "task")
-        ));
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Why:"),
-            stylize_inline_text(
-                "current repo signals no longer support some `tasks.*` entries in `ota.yaml`. Applying a detect merge would remove the entries below."
-            )
-        ));
-        for (task_name, entries) in task_removals {
-            stdout.push_str(&format!(
-                "\n\n{}  {} {}",
-                list_bullet(),
-                paint("Task", "1"),
-                paint_task_name_code(&task_name)
-            ));
-            for entry in entries {
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    summary_bullet(),
-                    stylize_inline_text(&entry)
-                ));
+        if let Some((task_name, kind, entries)) = detect_task_removal_entries(removal) {
+            let task = task_removals
+                .entry(task_name.clone())
+                .or_insert_with(|| DetectTaskDriftSummary::new(task_name));
+            match kind {
+                DetectTaskDriftKind::Command => task.command_removals.extend(entries),
+                DetectTaskDriftKind::AgentSafety => task.agent_safety_removals.extend(entries),
+                DetectTaskDriftKind::Other => task.other_removals.extend(entries),
             }
+        } else {
+            let (kind, name, entries) = detect_named_removal_entries(removal);
+            let bucket = match kind {
+                DetectNamedDriftKind::Runtime => &mut runtime_removals,
+                DetectNamedDriftKind::Tool => &mut tool_removals,
+                DetectNamedDriftKind::Service => &mut service_removals,
+                DetectNamedDriftKind::Other => &mut other_removals,
+            };
+            let entry = bucket
+                .entry(name.clone())
+                .or_insert_with(|| DetectNamedDriftSummary::new(name));
+            entry.removals.extend(entries);
         }
     }
 
-    for removal in generic_removals {
+    let mut task_removals = task_removals.into_values().collect::<Vec<_>>();
+    task_removals.sort_by(|left, right| {
+        detect_task_sort_key(&left.task_name).cmp(&detect_task_sort_key(&right.task_name))
+    });
+    let runtime_removals = runtime_removals.into_values().collect::<Vec<_>>();
+    let tool_removals = tool_removals.into_values().collect::<Vec<_>>();
+    let service_removals = service_removals.into_values().collect::<Vec<_>>();
+    let other_removals = other_removals.into_values().collect::<Vec<_>>();
+
+    if !task_removals.is_empty()
+        || !runtime_removals.is_empty()
+        || !tool_removals.is_empty()
+        || !service_removals.is_empty()
+        || !other_removals.is_empty()
+    {
+        render_detect_drift_impact(
+            stdout,
+            &task_removals,
+            &runtime_removals,
+            &tool_removals,
+            &service_removals,
+            &other_removals,
+        );
+        if concise_mode() {
+            render_detect_task_drift_concise(stdout, &task_removals);
+            render_detect_named_drift_concise_group(
+                stdout,
+                &runtime_removals,
+                DetectNamedDriftKind::Runtime,
+                "Review runtime drift",
+            );
+            render_detect_named_drift_concise_group(
+                stdout,
+                &tool_removals,
+                DetectNamedDriftKind::Tool,
+                "Review tool drift",
+            );
+            render_detect_named_drift_concise_group(
+                stdout,
+                &service_removals,
+                DetectNamedDriftKind::Service,
+                "Review service drift",
+            );
+            render_detect_named_drift_concise_group(
+                stdout,
+                &other_removals,
+                DetectNamedDriftKind::Other,
+                "Review other contract drift",
+            );
+        } else {
+            render_detect_task_drift_group(
+                stdout,
+                &task_removals,
+                DetectTaskDriftKind::Command,
+                "Review task command drift",
+                &detect_drift_why(mode, "the commands below"),
+            );
+            render_detect_task_drift_group(
+                stdout,
+                &task_removals,
+                DetectTaskDriftKind::AgentSafety,
+                "Review task agent-safety drift",
+                &detect_drift_why(mode, "the `safe_for_agent` entries below"),
+            );
+            render_detect_task_drift_group(
+                stdout,
+                &task_removals,
+                DetectTaskDriftKind::Other,
+                "Review task field drift",
+                &detect_drift_why(mode, "the task fields below"),
+            );
+            render_detect_named_drift_group(
+                stdout,
+                &runtime_removals,
+                DetectNamedDriftKind::Runtime,
+                "Review runtime drift",
+                &detect_drift_why(mode, "the runtime entries below"),
+            );
+            render_detect_named_drift_group(
+                stdout,
+                &tool_removals,
+                DetectNamedDriftKind::Tool,
+                "Review tool drift",
+                &detect_drift_why(mode, "the tool entries below"),
+            );
+            render_detect_named_drift_group(
+                stdout,
+                &service_removals,
+                DetectNamedDriftKind::Service,
+                "Review service drift",
+                &detect_drift_why(mode, "the service entries below"),
+            );
+            render_detect_named_drift_group(
+                stdout,
+                &other_removals,
+                DetectNamedDriftKind::Other,
+                "Review other contract drift",
+                &detect_drift_why(mode, "the contract fields below"),
+            );
+        }
+    }
+}
+
+fn render_detect_drift_impact(
+    stdout: &mut String,
+    task_removals: &[DetectTaskDriftSummary],
+    runtime_removals: &[DetectNamedDriftSummary],
+    tool_removals: &[DetectNamedDriftSummary],
+    service_removals: &[DetectNamedDriftSummary],
+    other_removals: &[DetectNamedDriftSummary],
+) {
+    let command_count = task_removals
+        .iter()
+        .map(|task| task.command_removals.len())
+        .sum::<usize>();
+    let agent_safety_count = task_removals
+        .iter()
+        .map(|task| task.agent_safety_removals.len())
+        .sum::<usize>();
+    let other_count = task_removals
+        .iter()
+        .map(|task| task.other_removals.len())
+        .sum::<usize>();
+    let runtime_count = detect_named_drift_count(runtime_removals);
+    let tool_count = detect_named_drift_count(tool_removals);
+    let service_count = detect_named_drift_count(service_removals);
+    let generic_other_count = detect_named_drift_count(other_removals);
+    let mut metrics = Vec::new();
+    if !task_removals.is_empty() {
+        metrics.push(render_detect_impact_metric(
+            task_removals.len(),
+            &format!("{} affected", pluralize(task_removals.len(), "task")),
+        ));
+    }
+    if command_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            command_count,
+            pluralize(command_count, "command removal"),
+        ));
+    }
+    if agent_safety_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            agent_safety_count,
+            pluralize(agent_safety_count, "agent-safety removal"),
+        ));
+    }
+    if other_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            other_count,
+            pluralize(other_count, "other removal"),
+        ));
+    }
+    if runtime_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            runtime_count,
+            pluralize(runtime_count, "runtime removal"),
+        ));
+    }
+    if tool_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            tool_count,
+            pluralize(tool_count, "tool removal"),
+        ));
+    }
+    if service_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            service_count,
+            pluralize(service_count, "service removal"),
+        ));
+    }
+    if generic_other_count > 0 {
+        metrics.push(render_detect_impact_metric(
+            generic_other_count,
+            pluralize(generic_other_count, "contract-field removal"),
+        ));
+    }
+
+    stdout.push_str(&format!("\n{}", paint_key("Impact:")));
+    for metric in metrics {
+        stdout.push_str(&format!("\n  {} {}", impact_bullet(), metric));
+    }
+}
+
+fn render_detect_task_drift_concise(stdout: &mut String, task_removals: &[DetectTaskDriftSummary]) {
+    let removal_count = task_removals
+        .iter()
+        .map(DetectTaskDriftSummary::total_removals)
+        .sum::<usize>();
+    stdout.push_str(&format!(
+        "\n\n{}  Review task drift ({} {} across {} {})",
+        render_severity(FindingSeverity::Warn),
+        removal_count,
+        pluralize(removal_count, "removal"),
+        task_removals.len(),
+        pluralize(task_removals.len(), "task")
+    ));
+    for task in task_removals {
+        stdout.push_str(&format!(
+            "\n  {} {}: {}",
+            summary_bullet(),
+            paint_task_label(&task.task_name),
+            task.concise_counts().join(", ")
+        ));
+    }
+}
+
+fn render_detect_task_drift_group(
+    stdout: &mut String,
+    task_removals: &[DetectTaskDriftSummary],
+    kind: DetectTaskDriftKind,
+    title: &str,
+    why: &str,
+) {
+    let scoped_tasks = task_removals
+        .iter()
+        .filter(|task| !task.removals_for(kind).is_empty())
+        .collect::<Vec<_>>();
+    if scoped_tasks.is_empty() {
+        return;
+    }
+
+    let removal_count = scoped_tasks
+        .iter()
+        .map(|task| task.removals_for(kind).len())
+        .sum::<usize>();
+    stdout.push_str(&format!(
+        "\n\n{}  {} ({} {} across {} {})",
+        render_severity(FindingSeverity::Warn),
+        title,
+        removal_count,
+        pluralize(removal_count, "removal"),
+        scoped_tasks.len(),
+        pluralize(scoped_tasks.len(), "task")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Why:"),
+        stylize_inline_text(why)
+    ));
+
+    for task in scoped_tasks {
         stdout.push_str(&format!(
             "\n\n{}  {}",
             list_bullet(),
-            paint(&removal.field, "1;38;2;255;214;79")
+            paint_task_label(&task.task_name)
         ));
-        for value in removal
-            .existing
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-        {
-            stdout.push_str(&format!(
-                "\n  {} {}",
-                summary_bullet(),
-                stylize_inline_text(&format!("remove `{value}`"))
-            ));
+        for removal in task.removals_for(kind) {
+            match kind {
+                DetectTaskDriftKind::Command => {
+                    stdout.push_str(&render_detect_command_removal(removal));
+                }
+                _ => {
+                    stdout.push_str(&render_detect_field_removal("remove", removal));
+                }
+            }
         }
     }
 }
 
-fn detect_task_removal_entries(removal: &DetectComparisonRemoval) -> Option<(String, Vec<String>)> {
+fn render_detect_named_drift_group(
+    stdout: &mut String,
+    entries: &[DetectNamedDriftSummary],
+    kind: DetectNamedDriftKind,
+    title: &str,
+    why: &str,
+) {
+    if entries.is_empty() {
+        return;
+    }
+
+    let removal_count = detect_named_drift_count(entries);
+    stdout.push_str(&format!(
+        "\n\n{}  {} ({} {} across {} {})",
+        render_severity(FindingSeverity::Warn),
+        title,
+        removal_count,
+        pluralize(removal_count, "removal"),
+        entries.len(),
+        pluralize(entries.len(), kind.scope_singular())
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Why:"),
+        stylize_inline_text(why)
+    ));
+
+    for entry in entries {
+        stdout.push_str(&format!(
+            "\n\n{}  {}",
+            list_bullet(),
+            paint_named_drift_label(kind.label(), &entry.name)
+        ));
+        for removal in &entry.removals {
+            stdout.push_str(&render_detect_field_removal("remove", removal));
+        }
+    }
+}
+
+fn render_detect_named_drift_concise_group(
+    stdout: &mut String,
+    entries: &[DetectNamedDriftSummary],
+    kind: DetectNamedDriftKind,
+    title: &str,
+) {
+    if entries.is_empty() {
+        return;
+    }
+
+    let removal_count = detect_named_drift_count(entries);
+    stdout.push_str(&format!(
+        "\n\n{}  {} ({} {} across {} {})",
+        render_severity(FindingSeverity::Warn),
+        title,
+        removal_count,
+        pluralize(removal_count, "removal"),
+        entries.len(),
+        pluralize(entries.len(), kind.scope_singular())
+    ));
+    for entry in entries {
+        stdout.push_str(&format!(
+            "\n  {} {}: {} {}",
+            summary_bullet(),
+            paint_named_drift_label(kind.label(), &entry.name),
+            entry.removals.len(),
+            pluralize(entry.removals.len(), "removal")
+        ));
+    }
+}
+
+fn render_detect_command_removal(command: &str) -> String {
+    let wrapped = wrap_display_tokens(command, 56);
+    if wrapped.len() == 1 {
+        return format!(
+            "\n  {} {} {}",
+            summary_bullet(),
+            paint_muted_action("remove command"),
+            paint_backticked_code(&wrapped[0])
+        );
+    }
+
+    let mut out = format!(
+        "\n  {} {}",
+        summary_bullet(),
+        paint_muted_action("remove command")
+    );
+    for line in wrapped {
+        out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
+    }
+    out
+}
+
+fn render_detect_field_removal(action: &str, value: &str) -> String {
+    format!(
+        "\n  {} {} {}",
+        summary_bullet(),
+        paint_muted_action(action),
+        paint_backticked_code(value)
+    )
+}
+
+fn detect_task_removal_entries(
+    removal: &DetectComparisonRemoval,
+) -> Option<(String, DetectTaskDriftKind, Vec<String>)> {
     let field = removal.field.strip_prefix("tasks.")?;
     let (task_name, property) = field.rsplit_once('.')?;
-    let entries = match property {
-        "run" => removal
-            .existing
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| format!("remove command `{line}`"))
-            .collect::<Vec<_>>(),
-        _ => removal
-            .existing
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| format!("remove `{property}: {line}`"))
-            .collect::<Vec<_>>(),
+    let (kind, entries) = match property {
+        "run" => (
+            DetectTaskDriftKind::Command,
+            removal
+                .existing
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        ),
+        "safe_for_agent" => (
+            DetectTaskDriftKind::AgentSafety,
+            removal
+                .existing
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| format!("{property}: {line}"))
+                .collect::<Vec<_>>(),
+        ),
+        _ => (
+            DetectTaskDriftKind::Other,
+            removal
+                .existing
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| format!("{property}: {line}"))
+                .collect::<Vec<_>>(),
+        ),
     };
 
     if entries.is_empty() {
         return None;
     }
 
-    Some((task_name.to_string(), entries))
+    Some((task_name.to_string(), kind, entries))
+}
+
+fn detect_named_removal_entries(
+    removal: &DetectComparisonRemoval,
+) -> (DetectNamedDriftKind, String, Vec<String>) {
+    if let Some(field) = removal.field.strip_prefix("runtimes.") {
+        return (
+            DetectNamedDriftKind::Runtime,
+            field.to_string(),
+            removal_lines(&removal.existing),
+        );
+    }
+
+    if let Some(field) = removal.field.strip_prefix("tools.") {
+        return (
+            DetectNamedDriftKind::Tool,
+            field.to_string(),
+            removal_lines(&removal.existing),
+        );
+    }
+
+    if let Some(field) = removal.field.strip_prefix("services.") {
+        if let Some((service_name, property)) = field.split_once('.') {
+            return (
+                DetectNamedDriftKind::Service,
+                service_name.to_string(),
+                removal
+                    .existing
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(|line| format!("{property}: {line}"))
+                    .collect(),
+            );
+        }
+    }
+
+    (
+        DetectNamedDriftKind::Other,
+        removal.field.clone(),
+        removal_lines(&removal.existing),
+    )
+}
+
+fn removal_lines(existing: &str) -> Vec<String> {
+    existing
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn detect_named_drift_count(entries: &[DetectNamedDriftSummary]) -> usize {
+    entries.iter().map(|entry| entry.removals.len()).sum()
+}
+
+fn detect_drift_why(mode: DetectComparisonMode, object: &str) -> String {
+    match mode {
+        DetectComparisonMode::Preview => format!(
+            "Current repo signals no longer support {object} in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries."
+        ),
+        DetectComparisonMode::MergePreview => format!(
+            "Current repo signals no longer support {object}. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
+        ),
+        DetectComparisonMode::MergeResult => format!(
+            "Current repo signals no longer support {object}. `ota detect --merge` left these stale entries unchanged because merge is additive-only."
+        ),
+        DetectComparisonMode::RewritePreview => format!(
+            "Running `ota detect --rewrite --yes` would remove {object} from `ota.yaml` because current repo signals no longer support them."
+        ),
+        DetectComparisonMode::RewriteResult => format!(
+            "The rewritten contract should no longer contain {object}; if these entries still appear, review the repo signals and contract manually."
+        ),
+    }
 }
 
 fn pluralize(count: usize, singular: &str) -> &str {
@@ -7287,9 +7836,193 @@ fn pluralize(count: usize, singular: &str) -> &str {
         match singular {
             "removal" => "removals",
             "task" => "tasks",
+            "runtime" => "runtimes",
+            "tool" => "tools",
+            "service" => "services",
+            "field" => "fields",
+            "command removal" => "command removals",
+            "agent-safety removal" => "agent-safety removals",
+            "other removal" => "other removals",
+            "runtime removal" => "runtime removals",
+            "tool removal" => "tool removals",
+            "service removal" => "service removals",
+            "contract-field removal" => "contract-field removals",
             _ => singular,
         }
     }
+}
+
+fn render_detect_impact_metric(count: usize, label: &str) -> String {
+    if plain_mode() {
+        return format!("{count} {label}");
+    }
+    format!(
+        "{} {}",
+        paint(&count.to_string(), "1;37"),
+        paint_muted_action(label)
+    )
+}
+
+fn impact_bullet() -> String {
+    if plain_mode() {
+        String::from("-")
+    } else {
+        paint("•", "38;2;124;136;153")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetectTaskDriftKind {
+    Command,
+    AgentSafety,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DetectNamedDriftKind {
+    Runtime,
+    Tool,
+    Service,
+    Other,
+}
+
+impl DetectNamedDriftKind {
+    fn label(self) -> &'static str {
+        match self {
+            DetectNamedDriftKind::Runtime => "Runtime",
+            DetectNamedDriftKind::Tool => "Tool",
+            DetectNamedDriftKind::Service => "Service",
+            DetectNamedDriftKind::Other => "Field",
+        }
+    }
+
+    fn scope_singular(self) -> &'static str {
+        match self {
+            DetectNamedDriftKind::Runtime => "runtime",
+            DetectNamedDriftKind::Tool => "tool",
+            DetectNamedDriftKind::Service => "service",
+            DetectNamedDriftKind::Other => "field",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct DetectTaskDriftSummary {
+    task_name: String,
+    command_removals: Vec<String>,
+    agent_safety_removals: Vec<String>,
+    other_removals: Vec<String>,
+}
+
+impl DetectTaskDriftSummary {
+    fn new(task_name: String) -> Self {
+        Self {
+            task_name,
+            ..Self::default()
+        }
+    }
+
+    fn removals_for(&self, kind: DetectTaskDriftKind) -> &[String] {
+        match kind {
+            DetectTaskDriftKind::Command => &self.command_removals,
+            DetectTaskDriftKind::AgentSafety => &self.agent_safety_removals,
+            DetectTaskDriftKind::Other => &self.other_removals,
+        }
+    }
+
+    fn total_removals(&self) -> usize {
+        self.command_removals.len() + self.agent_safety_removals.len() + self.other_removals.len()
+    }
+
+    fn concise_counts(&self) -> Vec<String> {
+        let mut counts = Vec::new();
+        if !self.command_removals.is_empty() {
+            counts.push(format!(
+                "{} {}",
+                self.command_removals.len(),
+                pluralize(self.command_removals.len(), "command removal")
+            ));
+        }
+        if !self.agent_safety_removals.is_empty() {
+            counts.push(format!(
+                "{} {}",
+                self.agent_safety_removals.len(),
+                pluralize(self.agent_safety_removals.len(), "agent-safety removal")
+            ));
+        }
+        if !self.other_removals.is_empty() {
+            counts.push(format!(
+                "{} {}",
+                self.other_removals.len(),
+                pluralize(self.other_removals.len(), "other removal")
+            ));
+        }
+        counts
+    }
+}
+
+#[derive(Debug, Default)]
+struct DetectNamedDriftSummary {
+    name: String,
+    removals: Vec<String>,
+}
+
+impl DetectNamedDriftSummary {
+    fn new(name: String) -> Self {
+        Self {
+            name,
+            ..Self::default()
+        }
+    }
+}
+
+fn detect_task_sort_key(task_name: &str) -> (usize, String) {
+    let priority = match task_name {
+        "setup" => 0,
+        "build" => 1,
+        "check" => 2,
+        "test" => 3,
+        "ci" => 4,
+        "lint" => 5,
+        "typecheck" => 6,
+        "verify" => 7,
+        "fmt" => 8,
+        "install" => 20,
+        "install-from-source" => 21,
+        "doctor-annotations" => 30,
+        "compat" => 40,
+        "release-gate" => 41,
+        "bump-version" => 42,
+        _ => 100,
+    };
+    (priority, task_name.to_string())
+}
+
+fn wrap_display_tokens(value: &str, max_width: usize) -> Vec<String> {
+    let tokens = value.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for token in tokens {
+        if current.is_empty() {
+            current.push_str(token);
+            continue;
+        }
+        if current.len() + 1 + token.len() <= max_width {
+            current.push(' ');
+            current.push_str(token);
+        } else {
+            lines.push(current);
+            current = token.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn render_detect_change_section(
@@ -7759,20 +8492,23 @@ fn render_tasks_text(
     let mut output = format_command_header("TASKS", path);
 
     if let Some(agent) = agent {
-        if let Some(summary) = render_agent_summary_block(agent, true) {
-            output.push('\n');
+        if let Some(summary) = render_doctor_agent_summary_text(agent, false) {
+            output.push_str("\n\n");
             output.push_str(&summary);
         }
     }
 
-    output.push('\n');
+    output.push_str("\n\n");
+    output.push_str(&render_tasks_overview_text(agent, tasks));
     if tasks.is_empty() {
         output.push_str(&format!("\n{} none", list_bullet()));
         return output;
     }
 
     for (index, task) in tasks.iter().enumerate() {
-        if index > 0 {
+        if index == 0 {
+            output.push('\n');
+        } else {
             output.push('\n');
         }
         let command_preview = task
@@ -7882,6 +8618,27 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         }
     }
     output
+}
+
+fn render_tasks_overview_text(
+    _agent: Option<&AgentSummary<'_>>,
+    tasks: &[TaskSummary<'_>],
+) -> String {
+    let safe_count = tasks.iter().filter(|task| task.safe_for_agent).count();
+    let mut lines = vec![paint_section_title("Overview")];
+    lines.push(format!(
+        " {}  {} {}",
+        summary_bullet(),
+        paint_key("Tasks:"),
+        paint(&tasks.len().to_string(), "1;37")
+    ));
+    lines.push(format!(
+        " {}  {} {}",
+        summary_bullet(),
+        paint_key("Agent-safe:"),
+        paint(&safe_count.to_string(), "1;37")
+    ));
+    lines.join("\n")
 }
 
 fn render_multiline_field(value: &str) -> String {
@@ -8692,12 +9449,6 @@ fn render_report_section(
         format_command_header(command, path),
         render_readiness_status(report.ok)
     );
-    if let Some(agent) = agent {
-        if let Some(summary) = render_agent_summary_line(agent, !report.ok) {
-            stdout.push_str("\n\n");
-            stdout.push_str(&summary);
-        }
-    }
     if let Some(summary) = summary {
         stdout.push_str("\n\n");
         stdout.push_str(&format!("{}\n", paint_section_title("Verdict")));
@@ -8716,17 +9467,43 @@ fn render_report_section(
         stdout.push_str("\n\n");
     }
 
-    if let Some(execution) = execution {
-        stdout.push_str(&render_execution_summary_text(execution));
-    }
     let skip_primary_finding = summary.and_then(|summary| summary.primary_blocker.as_ref());
     if let Some(primary_blocker) = skip_primary_finding {
+        if !stdout.ends_with("\n\n") {
+            stdout.push_str("\n\n");
+        }
         stdout.push_str(&render_primary_finding_text(
             primary_blocker.severity,
             &primary_blocker.summary,
             &primary_blocker.why,
             &primary_blocker.next,
         ));
+    }
+    if command == "DOCTOR" && report.ok && report.findings.is_empty() {
+        stdout.push_str(&render_doctor_ready_next(agent));
+    } else if command == "CHECK" && report.ok && report.findings.is_empty() {
+        stdout.push_str(&render_check_ready_next());
+    }
+    if let Some(execution) = execution {
+        if !stdout.ends_with("\n\n") {
+            stdout.push_str("\n\n");
+        }
+        if command == "DOCTOR" || command == "CHECK" {
+            stdout.push_str(&render_doctor_execution_summary_text(execution));
+        } else {
+            stdout.push_str(&render_execution_summary_text(execution));
+        }
+    }
+    if let Some(agent) = agent {
+        let summary = if command == "DOCTOR" || command == "CHECK" {
+            render_doctor_agent_summary_text(agent, !report.ok)
+        } else {
+            render_agent_summary_line(agent, !report.ok)
+        };
+        if let Some(summary) = summary {
+            stdout.push_str("\n\n");
+            stdout.push_str(&summary);
+        }
     }
     let grouped_findings = group_doctor_findings(report.findings.iter().enumerate().filter_map(
         |(index, finding)| {
@@ -8785,13 +9562,38 @@ fn render_report_section(
     stdout
 }
 
+fn render_doctor_ready_next(agent: Option<&AgentSummary<'_>>) -> String {
+    let mut items = vec![String::from("run `ota up` to prepare the repo end to end")];
+    if let Some(task) = agent
+        .and_then(|agent| agent.default_task.or(agent.entrypoint))
+        .filter(|task| !task.trim().is_empty())
+    {
+        items.push(format!(
+            "run `ota run {task}` to execute the default repo task"
+        ));
+    } else {
+        items.push(String::from(
+            "run `ota tasks --use` to inspect runnable task usage",
+        ));
+    }
+
+    format_next_timeline(&items)
+}
+
+fn render_check_ready_next() -> String {
+    format_next_timeline(&[
+        String::from("run `ota up` to prepare the repo end to end"),
+        String::from("run `ota tasks --use` to inspect runnable task usage"),
+    ])
+}
+
 fn render_primary_finding_text(
     severity: FindingSeverity,
     summary: &str,
     why: &str,
     next: &str,
 ) -> String {
-    let mut stdout = String::from("\n\n");
+    let mut stdout = String::new();
     let (_arrow_color, title_color, title) = match severity {
         FindingSeverity::Error => ("1;31", "1;31", "Primary Blocker"),
         FindingSeverity::Warn => ("1;38;2;255;235;59", "1;38;2;255;235;59", "Primary Finding"),
@@ -9216,7 +10018,7 @@ fn render_explain_section(
 
 fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("Steps")));
+    stdout.push_str(&paint_section_title("Plan"));
     if steps.is_empty() {
         if plain_mode() {
             stdout.push_str("\n* none");
@@ -9262,7 +10064,7 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
 
 fn render_explain_summary_text(summary: &ExplainSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
@@ -9426,8 +10228,193 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     stdout
 }
 
+fn render_doctor_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
+    let mut lines = vec![paint_section_title("Execution")];
+    if let Some(preferred) = execution.preferred {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Preferred:"),
+            paint_backticked_code(preferred)
+        ));
+    }
+    if !execution.supported.is_empty() {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Supported:"),
+            render_inline_code_list(&execution.supported)
+        ));
+    }
+    if let Some(lifecycle) = execution.lifecycle {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Lifecycle:"),
+            paint_backticked_code(lifecycle)
+        ));
+    }
+    if let Some(backends) = execution.backends.as_ref() {
+        if let Some(container) = backends.container.as_ref() {
+            lines.push(format!(
+                " {}  {} {}",
+                summary_bullet(),
+                paint_key("Container:"),
+                paint_backticked_code(container.image)
+            ));
+        }
+        if let Some(remote) = backends.remote.as_ref() {
+            let mut details = vec![format!(
+                "{} {}",
+                paint_key("provider"),
+                paint_backticked_code(remote.provider)
+            )];
+            if let Some(target) = remote.target {
+                details.push(format!(
+                    "{} {}",
+                    paint_key("target"),
+                    paint_backticked_code(target)
+                ));
+            }
+            if let Some(cwd) = remote.cwd {
+                details.push(format!(
+                    "{} {}",
+                    paint_key("cwd"),
+                    paint_backticked_code(cwd)
+                ));
+            }
+            lines.push(format!(
+                " {}  {} {}",
+                summary_bullet(),
+                paint_key("Remote:"),
+                details.join(" ")
+            ));
+        }
+    }
+    if !execution.env.is_empty() {
+        lines.push(format!(
+            " {}  {} policy > process > contract default > required missing",
+            summary_bullet(),
+            paint_key("Env precedence:")
+        ));
+        for item in &execution.env {
+            let mut details = Vec::new();
+            let source = if item.policy.is_some() {
+                "policy"
+            } else if std::env::var_os(item.name).is_some() {
+                "process"
+            } else if item.default.is_some() {
+                "default"
+            } else {
+                "missing"
+            };
+            details.push(source.to_string());
+            if item.required {
+                details.push(String::from("required"));
+            }
+            if let Some(default) = item.default {
+                details.push(format!("default={default}"));
+            }
+            if !item.allowed.is_empty() {
+                details.push(format!("allowed={}", item.allowed.join(", ")));
+            }
+            lines.push(format!(
+                " {}  {} {} ({})",
+                summary_bullet(),
+                paint_key("Env:"),
+                paint_backticked_code(item.name),
+                details.join(", ")
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
 fn render_agent_summary_line(agent: &AgentSummary<'_>, include_notes: bool) -> Option<String> {
     render_agent_summary_block(agent, include_notes)
+}
+
+fn render_doctor_agent_summary_text(
+    agent: &AgentSummary<'_>,
+    include_notes: bool,
+) -> Option<String> {
+    let mut lines = Vec::new();
+    lines.push(paint_section_title("Agent"));
+    if let Some(entrypoint) = agent.entrypoint {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Entrypoint:"),
+            paint_backticked_code(entrypoint)
+        ));
+    }
+    if let Some(default_task) = agent.default_task {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Default task:"),
+            paint_backticked_code(default_task)
+        ));
+    }
+    if !agent.safe_tasks.is_empty() {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Safe tasks:"),
+            render_inline_code_list(agent.safe_tasks)
+        ));
+    }
+    if !agent.verify_after_changes.is_empty() {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Verify after changes:"),
+            render_inline_code_list(agent.verify_after_changes)
+        ));
+    }
+    if !agent.writable_paths.is_empty() {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Writable paths:"),
+            render_inline_code_list(agent.writable_paths)
+        ));
+    }
+    if !agent.protected_paths.is_empty() {
+        lines.push(format!(
+            " {}  {} {}",
+            summary_bullet(),
+            paint_key("Protected paths:"),
+            render_inline_code_list(agent.protected_paths)
+        ));
+    }
+    if agent
+        .bootstrap
+        .as_ref()
+        .and_then(|bootstrap| bootstrap.ota.as_ref())
+        .is_some()
+    {
+        lines.push(format!(
+            " {}  {} ota install commands available",
+            summary_bullet(),
+            paint_key("Bootstrap:")
+        ));
+    }
+    if include_notes && let Some(notes) = agent.notes {
+        if !notes.trim().is_empty() {
+            lines.push(format!(" {}  {}", summary_bullet(), paint_key("Notes:")));
+            for line in notes.lines() {
+                lines.push(format!("    {line}"));
+            }
+        }
+    }
+
+    if lines.len() == 1 {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }
 
 fn render_agents_markdown(
@@ -9866,8 +10853,9 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        OutputFormat, RepoExecutionMode, RepoUpResult, compact_contract_file_path_relative_to,
-        compact_path_relative_to, compact_policy_path_relative_to_contract, execute_repo_up,
+        DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
+        compact_contract_file_path_relative_to, compact_path_relative_to,
+        compact_policy_path_relative_to_contract, execute_repo_up,
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_up_result,
         render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
@@ -10042,11 +11030,23 @@ mod tests {
     }
 
     #[test]
-    fn detect_comparison_groups_task_removals_by_task() {
+    fn detect_comparison_splits_task_drift_groups_and_wraps_long_commands() {
         let comparison = DetectComparison {
             existing_contract: true,
             changes: Vec::new(),
             removals: vec![
+                DetectComparisonRemoval {
+                    field: String::from("tasks.bump-version.run"),
+                    existing: String::from("./scripts/bump-version.sh"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.setup.run"),
+                    existing: String::from("cargo fetch"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.build.safe_for_agent"),
+                    existing: String::from("true"),
+                },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
                     existing: String::from(
@@ -10058,27 +11058,146 @@ mod tests {
                     existing: String::from("true"),
                 },
                 DetectComparisonRemoval {
+                    field: String::from("tasks.doctor-annotations.run"),
+                    existing: String::from(
+                        "ota doctor --json . | ota annotations --mode doctor --format \"${OTA_INPUT_RENDER_FORMAT}\" --input -",
+                    ),
+                },
+                DetectComparisonRemoval {
                     field: String::from("tools.node"),
                     existing: String::from("22"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("runtimes.java"),
+                    existing: String::from("21"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("services.postgres.provider"),
+                    existing: String::from("docker-compose"),
                 },
             ],
             error: None,
         };
         let mut stdout = String::new();
-        render_detect_comparison_section(&mut stdout, Some(&comparison));
+        render_detect_comparison_section(
+            &mut stdout,
+            Some(&comparison),
+            DetectComparisonMode::MergePreview,
+        );
         let text = strip_ansi_codes(&stdout);
 
         assert!(text.contains("Existing contract drift:"));
-        assert!(text.contains("Review task drift (2 removals across 1 task)"));
+        assert!(text.contains(
+            "Existing contract drift:\nImpact:\n  • 5 tasks affected\n  • 6 command removals\n  • 2 agent-safety removals\n  • 1 runtime removal\n  • 1 tool removal\n  • 1 service removal"
+        ));
+        assert!(text.contains("Review task command drift (6 removals across 4 tasks)"));
+        assert!(text.contains("Review task agent-safety drift (2 removals across 2 tasks)"));
+        assert!(text.contains(
+            "Why: Current repo signals no longer support the commands below. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
+        ));
+        assert!(text.contains(
+            "Why: Current repo signals no longer support the `safe_for_agent` entries below. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
+        ));
+        assert!(text.contains("Review runtime drift (1 removal across 1 runtime)"));
+        assert!(text.contains("Review tool drift (1 removal across 1 tool)"));
+        assert!(text.contains("Review service drift (1 removal across 1 service)"));
+        assert!(text.contains("Runtime `java`"));
+        assert!(text.contains("Tool `node`"));
+        assert!(text.contains("Service `postgres`"));
+        assert!(text.contains("» remove `21`"));
+        assert!(text.contains("» remove `22`"));
+        assert!(text.contains("» remove `provider: docker-compose`"));
+        let setup_index = text.find("Task `setup`").expect("setup task");
+        let ci_index = text.find("Task `ci`").expect("ci task");
+        let doctor_index = text.find("Task `doctor-annotations`").expect("doctor task");
+        let bump_index = text.find("Task `bump-version`").expect("bump task");
+        assert!(setup_index < ci_index);
+        assert!(ci_index < doctor_index);
+        assert!(doctor_index < bump_index);
         assert!(text.contains("Task `ci`"));
         assert!(text.contains("» remove command `cargo fmt --check`"));
         assert!(text.contains("» remove command `cargo check`"));
         assert!(text.contains("» remove command `cargo test -- --test-threads=1`"));
         assert!(text.contains("» remove `safe_for_agent: true`"));
-        assert!(text.contains("tools.node"));
+        assert!(text.contains("» remove command\n    `ota doctor --json . | ota annotations --mode doctor`\n    `--format \"${OTA_INPUT_RENDER_FORMAT}\" --input -`"));
         assert!(text.contains("» remove `22`"));
         assert!(!text.contains("tasks.ci.run"));
         assert!(!text.contains("would remove:"));
+    }
+
+    #[test]
+    fn detect_comparison_concise_summarizes_task_drift_by_task() {
+        let comparison = DetectComparison {
+            existing_contract: true,
+            changes: Vec::new(),
+            removals: vec![
+                DetectComparisonRemoval {
+                    field: String::from("tasks.setup.run"),
+                    existing: String::from("cargo fetch"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.build.safe_for_agent"),
+                    existing: String::from("true"),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.ci.run"),
+                    existing: String::from(
+                        "cargo fmt --check\ncargo check\ncargo test -- --test-threads=1",
+                    ),
+                },
+                DetectComparisonRemoval {
+                    field: String::from("tasks.ci.safe_for_agent"),
+                    existing: String::from("true"),
+                },
+            ],
+            error: None,
+        };
+        super::set_concise_mode(true);
+        let mut stdout = String::new();
+        render_detect_comparison_section(
+            &mut stdout,
+            Some(&comparison),
+            DetectComparisonMode::MergePreview,
+        );
+        super::set_concise_mode(false);
+
+        let text = strip_ansi_codes(&stdout);
+        assert!(text.contains(
+            "Existing contract drift:\nImpact:\n  • 3 tasks affected\n  • 4 command removals\n  • 2 agent-safety removals"
+        ));
+        assert!(text.contains("Review task drift (6 removals across 3 tasks)"));
+        assert!(text.contains("» Task `setup`: 1 command removal"));
+        assert!(text.contains("» Task `build`: 1 agent-safety removal"));
+        assert!(text.contains("» Task `ci`: 3 command removals, 1 agent-safety removal"));
+        assert!(!text.contains("Review task command drift"));
+        assert!(!text.contains("Why: Applying detect merge"));
+        assert!(!text.contains("remove command `cargo fmt --check`"));
+    }
+
+    #[test]
+    fn detect_comparison_preview_uses_truthful_non_merge_drift_copy() {
+        let comparison = DetectComparison {
+            existing_contract: true,
+            changes: Vec::new(),
+            removals: vec![DetectComparisonRemoval {
+                field: String::from("tasks.setup.run"),
+                existing: String::from("cargo fetch"),
+            }],
+            error: None,
+        };
+        let mut stdout = String::new();
+        render_detect_comparison_section(
+            &mut stdout,
+            Some(&comparison),
+            DetectComparisonMode::Preview,
+        );
+        let text = strip_ansi_codes(&stdout);
+
+        assert!(text.contains(
+            "Why: Current repo signals no longer support the commands below in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries."
+        ));
+        assert!(text.contains("no additive changes detected against the existing contract"));
+        assert!(!text.contains("Applying detect merge would remove"));
     }
 
     #[test]
@@ -10558,6 +11677,83 @@ tasks:
         assert!(!text.contains(
             "Summary Ephemeral lifecycle is only enforced for backend-backed task execution"
         ));
+    }
+
+    #[test]
+    fn doctor_ready_text_surfaces_next_steps_before_execution_and_agent_details() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: Vec::new(),
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::Ready,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let writable_paths = vec![String::from("src")];
+        let safe_tasks = Vec::new();
+        let verify_after_changes = Vec::new();
+        let protected_paths = Vec::new();
+        let agent = crate::output::AgentSummary {
+            entrypoint: Some("setup"),
+            default_task: Some("ci"),
+            safe_tasks: &safe_tasks,
+            verify_after_changes: &verify_after_changes,
+            writable_paths: &writable_paths,
+            protected_paths: &protected_paths,
+            bootstrap: None,
+            notes: None,
+        };
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            Some(&agent),
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains("Next:"));
+        assert!(text.contains("run `ota up` to prepare the repo end to end"));
+        assert!(text.contains("run `ota run ci` to execute the default repo task"));
+        let verdict = text.find("Verdict").expect("verdict");
+        let next = text.find("Next:").expect("next");
+        let agent_index = text.find("\nAgent\n").expect("agent");
+        assert!(verdict < next);
+        assert!(next < agent_index);
+    }
+
+    #[test]
+    fn up_ready_text_hides_successful_phase_output() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: Vec::new(),
+        };
+
+        let text = strip_ansi_codes(&render_up_section_from_parts(
+            "./ota.yaml",
+            "READY",
+            "post-setup diagnosis",
+            &report,
+            Some("container"),
+            None,
+            None,
+            Some("setup"),
+            Some("cargo fetch"),
+            Some("Downloading crates ..."),
+            Some(0),
+        ));
+
+        assert!(!text.contains("Task output:"));
+        assert!(text.contains("Phase: post-setup diagnosis"));
+        assert!(text.contains("Backend: container"));
     }
 
     #[test]
@@ -11605,6 +12801,7 @@ fn run_contract_targets(
     members: &[String],
     task_inputs: &[String],
     show_receipt: bool,
+    stream_output: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
         let target = load_and_validate_target(resolved_path, None)
@@ -11616,12 +12813,12 @@ fn run_contract_targets(
             target,
             task_inputs,
             show_receipt,
+            stream_output,
         );
     }
 
     let mut stderr_sections = Vec::new();
     for member in members {
-        eprintln!("MEMBER {member}");
         let target = load_and_validate_target(resolved_path, Some(member.as_str()))
             .map_err(render_contract_problem_failure)?;
         stderr_sections.push(run_single_contract_target(
@@ -11631,6 +12828,7 @@ fn run_contract_targets(
             target,
             task_inputs,
             show_receipt,
+            stream_output,
         )?);
     }
 
@@ -11644,8 +12842,41 @@ fn run_single_contract_target(
     target: LoadedContractTarget,
     task_inputs: &[String],
     show_receipt: bool,
+    stream_output: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(member);
+    if stream_output {
+        return run_single_contract_target_streaming(
+            task_name,
+            overrides,
+            member,
+            target,
+            task_inputs,
+            show_receipt,
+            &details_footer,
+        );
+    }
+
+    run_single_contract_target_captured(
+        task_name,
+        overrides,
+        member,
+        target,
+        task_inputs,
+        show_receipt,
+        &details_footer,
+    )
+}
+
+fn run_single_contract_target_streaming(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    target: LoadedContractTarget,
+    task_inputs: &[String],
+    show_receipt: bool,
+    details_footer: &str,
+) -> Result<String, RunCommandFailure> {
     match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
@@ -11684,7 +12915,7 @@ fn run_single_contract_target(
             if !output.is_empty() {
                 output.push('\n');
             }
-            output.push_str(&details_footer);
+            output.push_str(details_footer);
             Ok(output)
         }
         Ok(outcome) => Err(RunCommandFailure {
@@ -11781,17 +13012,272 @@ fn run_single_contract_target(
     }
 }
 
-fn task_use_details_footer(member: Option<&str>) -> String {
-    match member {
-        Some(_) => format!(
-            "\nNext: run {} to inspect runnable task usage",
-            paint_code("ota workspace tasks --use")
-        ),
-        None => format!(
-            "\nNext: run {} to inspect runnable task usage",
-            paint_code("ota tasks --use")
-        ),
+fn run_single_contract_target_captured(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    target: LoadedContractTarget,
+    task_inputs: &[String],
+    show_receipt: bool,
+    details_footer: &str,
+) -> Result<String, RunCommandFailure> {
+    match run_task_captured_with_args_with_overrides_with_policy(
+        &target.contract,
+        &target.contract_path,
+        task_name,
+        task_inputs,
+        overrides,
+        None,
+    ) {
+        Ok(outcome) if outcome.exit_code == 0 => {
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &outcome.executed_tasks,
+                outcome.exit_code,
+                true,
+                outcome.target.clone(),
+                None,
+            );
+            let mut output = String::new();
+            if let Some(output_block) = render_run_output_excerpt_block(
+                task_name,
+                member,
+                &outcome.stdout,
+                &outcome.stderr,
+                12,
+            ) {
+                output.push_str(&output_block);
+                output.push('\n');
+            }
+            if show_receipt {
+                let receipt_text = render_execution_receipt_text(&receipt);
+                if output.is_empty() {
+                    output.push_str(receipt_text.trim_start_matches('\n'));
+                } else {
+                    output.push_str(&receipt_text);
+                }
+                output.push('\n');
+            }
+            output.push_str(&render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name),
+                "RUN SUMMARY",
+            ));
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str(details_footer);
+            Ok(output)
+        }
+        Ok(outcome) => {
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &outcome.executed_tasks,
+                outcome.exit_code,
+                false,
+                outcome.target.clone(),
+                Some(format!(
+                    "inspect the task output excerpt and rerun `{}`",
+                    repo_run_stream_command(task_name, member)
+                )),
+            );
+            let summary =
+                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
+            Err(RunCommandFailure {
+                message: render_run_captured_failure_text(
+                    &display_contract_target(&compact_contract_path(&target.contract_path), member),
+                    task_name,
+                    member,
+                    outcome.exit_code,
+                    &outcome.stdout,
+                    &outcome.stderr,
+                    receipt_text.as_deref(),
+                    &summary,
+                ),
+                summary: None,
+                exit_code: outcome.exit_code,
+                receipt: None,
+            })
+        }
+        Err(error) => Err(RunCommandFailure {
+            message: render_run_error(error),
+            summary: Some(render_execution_receipt_summary_block(
+                &run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &[],
+                    1,
+                    false,
+                    None,
+                    Some(format!(
+                        "{}; {}",
+                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                        details_footer
+                    )),
+                ),
+                Some(task_name),
+                "RUN SUMMARY",
+            )),
+            exit_code: 1,
+            receipt: show_receipt.then(|| {
+                render_execution_receipt_text(&run_execution_receipt(
+                    &target.contract,
+                    &target.contract_path,
+                    overrides,
+                    task_name,
+                    member,
+                    &[],
+                    1,
+                    false,
+                    None,
+                    Some(format!(
+                        "{}; {}",
+                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                        details_footer
+                    )),
+                ))
+            }),
+        }),
     }
+}
+
+fn render_run_captured_failure_text(
+    where_value: &str,
+    task_name: &str,
+    member: Option<&str>,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+    receipt_text: Option<&str>,
+    summary: &str,
+) -> String {
+    let mut output = format!(
+        "{}  {}\n{} {}\n{} task `{task_name}` failed with exit code {exit_code}",
+        render_severity(FindingSeverity::Error),
+        paint("Operation failed", "1;37"),
+        paint_key("Where:"),
+        paint_code(where_value),
+        error_key("Why:")
+    );
+    if let Some(output_block) =
+        render_run_output_excerpt_block(task_name, member, stdout, stderr, 20)
+    {
+        output.push('\n');
+        output.push_str(&output_block);
+    }
+
+    let mut next_steps = Vec::new();
+    if run_output_excerpt(stdout, stderr, 20).is_some() {
+        next_steps.push(format!(
+            "rerun `{}` for live task output if the excerpt is insufficient",
+            repo_run_stream_command(task_name, member)
+        ));
+    }
+    next_steps.push(task_use_details_step(member));
+    if next_steps.len() == 1 {
+        output.push_str(&format!("\n{} {}", error_next_key("Next:"), next_steps[0]));
+    } else {
+        output.push_str(&format_error_next_timeline(&next_steps));
+    }
+
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        output.push_str(receipt_text);
+    }
+    output.push('\n');
+    output.push_str(summary);
+    output
+}
+
+fn render_run_output_excerpt_block(
+    task_name: &str,
+    member: Option<&str>,
+    stdout: &str,
+    stderr: &str,
+    max_lines: usize,
+) -> Option<String> {
+    let (excerpt, omitted) = run_output_excerpt(stdout, stderr, max_lines)?;
+    let mut output = String::new();
+    output.push_str(&paint_key("Task output:"));
+    if omitted > 0 {
+        output.push_str(&format!(
+            "\n  {} {}",
+            summary_bullet(),
+            stylize_inline_text(&format!(
+                "showing last {max_lines} of {} lines; rerun `{}` for live output",
+                omitted + excerpt.len(),
+                repo_run_stream_command(task_name, member)
+            ))
+        ));
+    }
+    for line in excerpt {
+        output.push_str(&format!("\n  {} {}", summary_bullet(), line));
+    }
+    Some(output)
+}
+
+fn run_output_excerpt(
+    stdout: &str,
+    stderr: &str,
+    max_lines: usize,
+) -> Option<(Vec<String>, usize)> {
+    let mut lines = Vec::new();
+    for source in [stdout, stderr] {
+        let normalized = source.replace("\r\n", "\n");
+        for line in normalized.lines().map(str::trim_end) {
+            if !line.trim().is_empty() {
+                lines.push(stylize_inline_text(line));
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let total = lines.len();
+    let excerpt = if total > max_lines {
+        lines.split_off(total - max_lines)
+    } else {
+        lines
+    };
+    Some((excerpt, total.saturating_sub(max_lines)))
+}
+
+fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
+    match member {
+        Some(member) => format!("ota run {task_name} --member {member} --stream"),
+        None => format!("ota run {task_name} --stream"),
+    }
+}
+
+fn task_use_details_step(member: Option<&str>) -> String {
+    match member {
+        Some(member) => {
+            format!("run `ota tasks --member {member} --use` to inspect runnable task usage")
+        }
+        None => String::from("run `ota tasks --use` to inspect runnable task usage"),
+    }
+}
+
+fn task_use_details_footer(member: Option<&str>) -> String {
+    format!(
+        "\nNext: {}",
+        stylize_inline_text(&task_use_details_step(member))
+    )
 }
 
 fn receipt_env_value(resolved: &ResolvedEnvValue) -> String {
@@ -12096,14 +13582,17 @@ fn render_up_section_from_parts(
     if let Some(task_command) = task_command {
         stdout.push_str(&format!("\n{} {task_command}", paint_key("Command:")));
     }
-    if let Some(stderr) = stderr.and_then(|stderr| {
-        let stderr = stderr.trim_end();
-        if stderr.is_empty() {
-            None
-        } else {
-            Some(stderr)
-        }
-    }) {
+    let should_render_phase_output = status != "READY" || exit_code.unwrap_or(0) != 0;
+    if should_render_phase_output
+        && let Some(stderr) = stderr.and_then(|stderr| {
+            let stderr = stderr.trim_end();
+            if stderr.is_empty() {
+                None
+            } else {
+                Some(stderr)
+            }
+        })
+    {
         let output_label = if phase == "setup" {
             setup_failure_output_label(stderr)
         } else if phase == "services" {
@@ -12940,6 +14429,33 @@ fn paint_task_name_code(value: &str) -> String {
         return format!("`{value}`");
     }
     format!("`{}`", paint(value, "1;38;2;255;214;79"))
+}
+
+fn paint_task_label(value: &str) -> String {
+    paint_named_drift_label("Task", value)
+}
+
+fn paint_named_drift_label(label: &str, value: &str) -> String {
+    format!("{} {}", paint(label, "1"), paint_task_name_code(value))
+}
+
+fn render_inline_code_list<T: AsRef<str>>(items: &[T]) -> String {
+    items
+        .iter()
+        .map(|value| paint_backticked_code(value.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn paint_backticked_code(value: &str) -> String {
+    format!("`{}`", paint_code(value))
+}
+
+fn paint_muted_action(value: &str) -> String {
+    if plain_mode() {
+        return value.to_string();
+    }
+    paint(value, "38;2;164;176;190")
 }
 
 fn paint_ota_command_code(value: &str) -> String {

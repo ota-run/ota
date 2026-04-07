@@ -41,3 +41,21 @@
 - Pattern: Child action markers that share the same hue family as parent bullets flatten hierarchy and make grouped output harder to scan.
 - Correction: Give nested action bullets a clearly distinct accent color from their parent group/task markers while preserving the overall palette.
 - Rule: In rich CLI output, use color to reinforce structure; child markers should not visually blend into parent bullets.
+- Pattern: A roll-up line that sits visually like a sibling section can compete with the content it is supposed to frame.
+- Correction: Render drift impact as a lightweight block directly under the section title, not as a full section headline or inline sentence fighting with the real warning groups.
+- Rule: Summary/impact metadata should frame the next block, not visually rival it.
+- Pattern: Existing-contract detect previews become less useful when the inferred contract dump appears before the actual comparison and drift review.
+- Correction: Lead existing-contract detect text output with comparison/drift, then show the inferred contract and annotations as supporting detail.
+- Rule: In review-oriented CLI flows, show the delta before the payload.
+- Pattern: Successful orchestration commands can feel noisy and low-quality if captured backend logs are dumped by default.
+- Correction: Suppress successful phase output on the happy path and reserve detailed command/service logs for failures or explicit inspection surfaces.
+- Rule: Default success output should confirm the outcome and next step, not replay backend chatter.
+- Pattern: Default readiness output can still feel internal and heavy even after the most important findings are reordered to the top.
+- Correction: Render execution and agent detail as compact summary blocks with strong visual hierarchy instead of YAML-shaped detail dumps.
+- Rule: In default human output, prefer compact operator summaries over schema-shaped blocks unless the extra structure is needed for actionability.
+- Pattern: Raw task logs that are acceptable in an interactive terminal become noisy and low-trust when the same command runs in a captured or non-interactive context.
+- Correction: Keep live streaming for interactive repo task runs, but buffer non-interactive output into a bounded excerpt with an explicit `--stream` escape hatch.
+- Rule: When a command can be both interactive and captured, optimize the default presentation for the active context instead of forcing one output mode everywhere.
+- Pattern: Premium sibling commands drift apart when some still end at a bare status while others close with obvious next steps.
+- Correction: Give successful low-noise commands like `validate` explicit next actions, and reuse the same concise section naming across adjacent commands like `explain`.
+- Rule: Core first-contact commands should not end in dead air; successful output should still point to the next useful Ota action.

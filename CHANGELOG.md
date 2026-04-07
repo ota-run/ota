@@ -38,8 +38,29 @@
   actionable task changes instead of a raw dotted-path diff dump.
 - retuned the rich-mode `»` child-action accent to a brighter cyan so grouped drift/action items
   stand apart more clearly from their parent bullets.
+- split detect task drift into command vs agent-safety sections, added impact summaries, concise
+  task-count views, stronger task ordering, and wrapped command removals with clearer verb/code
+  styling.
+- restyled detect drift impact as a stacked `Impact:` block so the roll-up reads as framing
+  metadata instead of a competing section headline.
 - highlighted detect task names in grouped drift blocks with a dedicated yellow code accent so the
   task being discussed reads as the primary unit of change.
+- made existing-contract detect previews lead with comparison and drift before the inferred
+  contract/annotation dump, and clarified zero-addition previews as "no additive changes" when
+  only stale drift remains.
+- kept successful `ota up` text output focused by suppressing noisy captured task/service logs on
+  the happy path while still showing them for failures.
+- reordered default `ota doctor` text so verdict and next-step guidance appear before execution and
+  agent detail, and added ready-path next actions for repos that have no findings.
+- compacted default `ota doctor` execution and agent sections into higher-signal summary blocks,
+  with calmer cyan child markers and highlighted code values instead of YAML-style detail dumps.
+- made repo `ota run` text output context-aware: interactive terminals still stream live logs,
+  while non-interactive runs now buffer into bounded excerpts with a new `--stream` escape hatch
+  for raw live output.
+- upgraded default `ota validate` success output with clear next-step guidance into `ota doctor`
+  and `ota tasks --use`.
+- renamed repo `ota explain` text sections to `Plan` and `Overview` so the remediation surface
+  matches the higher-signal style now used across `doctor`, `check`, and `tasks`.
 - added `ota detect --contract` so ota can preview the exact starter contract init would write
   without annotations or comparison noise.
 - moved detect preview `Next:` guidance to the end of the preview so the contract readout comes

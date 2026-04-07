@@ -38,8 +38,8 @@ In practice, most useful contracts also define tasks, runtimes, or checks.
 
 ## Primary sections at a glance
 
-- `version`: schema version for the contract itself. Today this is `1`.
-- `project`: stable repo identity and high-level classification.
+- `version` (required): schema version for the contract itself. Today this is `1`.
+- `project` (required): stable repo identity and high-level classification.
 - `runtimes`: required language/runtime versions for the repo to be runnable.
 - `tools`: external CLI and tool dependencies the repo expects on PATH.
 - `env`: required environment variables, defaults, allowed values, and provenance-aware resolution.
