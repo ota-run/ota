@@ -48,6 +48,11 @@
   explicit target instead of implying the current working directory.
 - tightened the public adoption path in README and quickstart with a clearer existing-repo flow,
   an explicit `ota agents` path, and a chooser for shipped examples by goal.
+- promoted `ota agents` and the doctor-first repo/workspace start paths more explicitly in root
+  help, README, quickstart, and command reference so the derived guidance path is part of the
+  obvious first-session value story.
+- added a repo-local `ux-review` task plus a dedicated UX review loop doc so maintainers can keep
+  the premium text surfaces and snapshot-backed CLI presentation intentionally reviewed.
 - added an adoption readiness gate doc so enterprise-facing scope stays behind an explicit product
   usefulness bar instead of drifting ahead of first-session value.
 

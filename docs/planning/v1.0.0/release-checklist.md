@@ -43,7 +43,7 @@ This checklist defines the minimum work that should be complete before the first
 - README introduction and quickstart aligned to the landing page
 - docs home / command reference aligned to the same public story
 - install path and first-run path confirmed
-- `ota doctor`, `ota detect`, `ota init`, `ota up`, and `ota run` examples are current
+- `ota doctor`, `ota detect`, `ota init`, `ota up`, `ota run`, and `ota agents` examples are current
 - JSON output examples and schemas match the shipped contract
 - release notes explain what `v1.0.0` means and what is intentionally deferred
 
@@ -51,6 +51,7 @@ This checklist defines the minimum work that should be complete before the first
 
 - `cargo test --quiet --lib -- --test-threads=1`
 - `cargo test --quiet --tests -- --test-threads=1`
+- `ota run ux-review`
 - `cargo fmt --check`
 - release workflow on GitHub
 
@@ -68,4 +69,3 @@ This checklist defines the minimum work that should be complete before the first
 3. Re-validate the public install and first-run path
 4. Cut `v1.0.0`
 5. Start the enterprise phase separately
-

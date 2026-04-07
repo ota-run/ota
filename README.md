@@ -114,10 +114,13 @@ If you are using ota on an existing repo, start with the read path:
 ota doctor
 ota explain
 ota up
+ota agents
 ota run <task>
 ```
 
-That path tells you what is wrong, turns the findings into an ordered plan, prepares the repo, and gives you one declared task path without guessing.
+That path tells you what is wrong, turns the findings into an ordered plan, prepares the repo,
+derives repo-local agent guidance from the same contract, and gives you one declared task path
+without guessing.
 
 If you are writing or refining a contract, use the authoring path:
 
@@ -144,6 +147,12 @@ If you want agent-safe repo guidance from the same contract:
 ```bash
 ota agents
 ota agents --write
+```
+
+If you are not sure which task to run after `ota up`, use:
+
+```bash
+ota tasks --use
 ```
 
 ### Workspace bootstrap
@@ -496,6 +505,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Security posture](docs/design/security-posture.md)
 - [Performance budget](docs/design/performance-budget.md)
 - [Doctor quality bar](docs/design/doctor-quality-bar.md)
+- [UX review loop](docs/design/ux-review-loop.md)
 - [Adoption readiness gate](docs/design/adoption-readiness-gate.md)
 - [Detect write gate](docs/design/detect-write-gate.md)
 

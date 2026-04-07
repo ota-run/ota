@@ -36,7 +36,8 @@ Fastest proof of value on a repo that already has `ota.yaml`:
 ota doctor
 ota explain
 ota up
-ota run test
+ota agents
+ota run <task>
 ```
 
 What this gives you:
@@ -44,7 +45,8 @@ What this gives you:
 - `ota doctor` tells you what is broken and what to do next
 - `ota explain` turns the current findings into an ordered fix plan
 - `ota up` prepares the repo from the contract instead of from guesswork
-- `ota run test` executes a declared task through the same contract
+- `ota agents` turns the same contract into repo-local agent guidance
+- `ota run <task>` executes a declared task through the same contract
 
 If the repo does not yet have a contract, use the authoring path:
 
@@ -76,6 +78,12 @@ ota agents --write
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
 
+If you are not sure which task to run next, use:
+
+```bash
+ota tasks --use
+```
+
 ## Validate A Workspace
 
 From a directory with `ota.workspace.yaml`:
@@ -87,11 +95,16 @@ ota workspace up
 ota workspace validate
 ota workspace tasks
 ota workspace run setup
+```
+
+Follow-on workspace inspection commands stay available after the first bootstrap path:
+
+```bash
 ota workspace check
-ota workspace refresh
 ota workspace diff
 ota workspace status
 ota workspace receipt
+ota workspace refresh --dry-run
 ```
 
 ota resolves `ota.workspace.yaml` upward the same way repo commands resolve `ota.yaml`.

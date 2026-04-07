@@ -53,6 +53,7 @@ Before enterprise-first work is treated as the main path:
 
 - dogfood ota on a representative set of messy real repos
 - keep the premium text snapshots green
+- keep `ota run ux-review` green when text UX or help output changes
 - keep README, quickstart, examples, and command reference aligned with shipped behavior
 - keep exact remediation coverage strong for the common manager flows users actually hit
 - keep the workspace path at parity with the repo path
