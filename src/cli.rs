@@ -5916,7 +5916,7 @@ tasks:
         let object = json.as_object().unwrap();
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
-        assert_eq!(object.len(), 4);
+        assert_eq!(object.len(), 5);
     }
 
     #[test]
@@ -8088,9 +8088,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        let error_index = stdout
-            .find("Summary Missing environment variable: OTA_DOCTOR_ORDER_REQUIRED")
-            .unwrap();
+        let error_index = stdout.find("Primary Blocker").unwrap();
         let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
@@ -8596,8 +8594,8 @@ tasks:
         assert!(stdout.contains("project.name: would update `existing` -> `ota-web`"));
         assert!(stdout.contains("tools.pnpm: would update `9` -> `10.1.0`"));
         assert!(stdout.contains("tasks.dev.run: would update `npm run dev` -> `pnpm dev`"));
-        assert!(stdout.contains("ota detect --merge --apply <field name>"));
-        assert!(stdout.contains("ota detect --rewrite --yes"));
+        assert!(stdout.contains("ota detect --write"));
+        assert!(stdout.contains("ota detect --write"));
     }
 
     #[test]
@@ -9485,7 +9483,10 @@ tasks:
 
         let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(&doctor, &["findings", "ok", "path", "summary"]);
+        assert_json_top_level_keys(
+            &doctor,
+            &["finding_groups", "findings", "ok", "path", "summary"],
+        );
 
         let check = run_with(["ota", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 0);
@@ -9808,7 +9809,10 @@ tasks:
 
         let doctor = run_with(["ota", "workspace", "doctor", "--json", single_repo.path()]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(&doctor, &["ok", "path", "repos", "summary"]);
+        assert_json_top_level_keys(
+            &doctor,
+            &["finding_groups", "ok", "path", "repos", "summary"],
+        );
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
         assert_eq!(up.exit_code, 0);
@@ -10610,7 +10614,10 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
         assert_eq!(validate.exit_code, 1);
-        assert_json_top_level_keys(&validate, &["errors", "ok", "path", "summary"]);
+        assert_json_top_level_keys(
+            &validate,
+            &["errors", "ok", "path", "summary"],
+        );
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
@@ -10622,15 +10629,24 @@ tasks:
 
         let check = run_with(["ota", "workspace", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 1);
-        assert_json_top_level_keys(&check, &["ok", "path", "repos", "summary"]);
+        assert_json_top_level_keys(
+            &check,
+            &["finding_groups", "ok", "path", "repos", "summary"],
+        );
 
         let doctor = run_with(["ota", "workspace", "doctor", "--json", fixture.path()]);
         assert_eq!(doctor.exit_code, 1);
-        assert_json_top_level_keys(&doctor, &["ok", "path", "repos", "summary"]);
+        assert_json_top_level_keys(
+            &doctor,
+            &["finding_groups", "ok", "path", "repos", "summary"],
+        );
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
+        assert_json_top_level_keys(
+            &up,
+            &["ok", "path", "receipt", "repos", "summary"],
+        );
     }
 
     #[cfg(unix)]
