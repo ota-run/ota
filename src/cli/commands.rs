@@ -541,6 +541,17 @@ fn backticked_tokens(value: &str) -> Vec<&str> {
     tokens
 }
 
+fn explicit_run_command(next: &str) -> Option<&str> {
+    for prefix in ["run `", "rerun `"] {
+        if let Some(rest) = next.strip_prefix(prefix)
+            && let Some(end) = rest.find('`')
+        {
+            return Some(&rest[..end]);
+        }
+    }
+    None
+}
+
 fn policy_finding_source(summary: &str, why: &str) -> Option<String> {
     if summary != "Repo does not satisfy org policy pack" && summary != "Invalid org policy pack" {
         return None;
@@ -589,7 +600,7 @@ pub fn validate(
                         "{}\n\n{}{}",
                         format_command_header("VALIDATE", &text_path_display),
                         render_valid_status(),
-                        render_validate_ready_next(member)
+                        render_validate_ready_next(&resolved_path, member)
                     )),
                     OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                         ok: true,
@@ -645,16 +656,26 @@ pub fn validate(
     )
 }
 
-fn render_validate_ready_next(member: Option<&str>) -> String {
+fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> String {
     let doctor = match member {
-        Some(member) => format!("run `ota doctor --member {member}` to inspect readiness"),
-        None => String::from("run `ota doctor` to inspect readiness"),
+        Some(member) => format!(
+            "run `{}` to inspect readiness",
+            command_for_contract(&format!("ota doctor --member {member}"), contract_path)
+        ),
+        None => format!(
+            "run `{}` to inspect readiness",
+            command_for_contract("ota doctor", contract_path)
+        ),
     };
     let tasks = match member {
-        Some(member) => {
-            format!("run `ota tasks --member {member} --use` to inspect runnable task usage")
-        }
-        None => String::from("run `ota tasks --use` to inspect runnable task usage"),
+        Some(member) => format!(
+            "run `{}` to inspect runnable task usage",
+            command_for_contract(&format!("ota tasks --member {member} --use"), contract_path)
+        ),
+        None => format!(
+            "run `{}` to inspect runnable task usage",
+            command_for_contract("ota tasks --use", contract_path)
+        ),
     };
 
     format_next_timeline(&[doctor, tasks])
@@ -1742,11 +1763,13 @@ pub fn doctor(
             let root = Path::new(&start);
             let report = diagnose_contractless_repo(root);
             let empty_extensions = BTreeMap::new();
+            let synthetic_contract_path = root.join(DEFAULT_CONTRACT_FILE);
 
             return finalize_debug(
                 match format {
                     OutputFormat::Text => render_doctor_text(
                         &compact_repo_path(root),
+                        &synthetic_contract_path,
                         None,
                         None,
                         &empty_extensions,
@@ -1821,6 +1844,7 @@ pub fn doctor(
                     let mut overall_ok = report.ok;
                     let mut text_sections = vec![render_doctor_section(
                         &text_path_display,
+                        &target.contract_path,
                         agent_summary.as_ref(),
                         execution_summary.as_ref(),
                         &target.contract.extensions,
@@ -1913,6 +1937,7 @@ pub fn doctor(
                                     &compact_path_display,
                                     Some(member.as_str()),
                                 ),
+                                &member_target.contract_path,
                                 member_agent.as_ref(),
                                 member_execution.as_ref(),
                                 &member_target.contract.extensions,
@@ -1950,6 +1975,7 @@ pub fn doctor(
                     match format {
                         OutputFormat::Text => render_doctor_text(
                             &text_path_display,
+                            &target.contract_path,
                             agent_summary.as_ref(),
                             execution_summary.as_ref(),
                             &target.contract.extensions,
@@ -2064,6 +2090,7 @@ pub fn doctor(
                     let execution_summary = ExecutionSummary::from_contract(&target.contract);
                     text_sections.push(render_doctor_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
+                        &target.contract_path,
                         agent.as_ref(),
                         execution_summary.as_ref(),
                         &target.contract.extensions,
@@ -2328,6 +2355,7 @@ pub fn explain(
                     OutputFormat::Text => CommandOutput {
                         stdout: render_explain_section(
                             &text_path_display,
+                            &target.contract_path,
                             &report,
                             &summary,
                             &steps,
@@ -2430,6 +2458,7 @@ pub fn check(
                     let mut text_sections = vec![render_report_section(
                         "CHECK",
                         &text_path_display,
+                        Some(&target.contract_path),
                         None,
                         execution_summary.as_ref(),
                         &report,
@@ -2513,6 +2542,7 @@ pub fn check(
                                     &compact_path_display,
                                     Some(member.as_str()),
                                 ),
+                                Some(&member_target.contract_path),
                                 None,
                                 member_execution.as_ref(),
                                 &member_report,
@@ -2553,6 +2583,7 @@ pub fn check(
                         OutputFormat::Text => render_report_text(
                             "CHECK",
                             &text_path_display,
+                            Some(&target.contract_path),
                             None,
                             execution_summary.as_ref(),
                             report,
@@ -2658,6 +2689,7 @@ pub fn check(
                     text_sections.push(render_report_section(
                         "CHECK",
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
+                        Some(&target.contract_path),
                         None,
                         execution_summary.as_ref(),
                         &report,
@@ -3127,11 +3159,12 @@ pub fn agents(
     };
     let agent = contract.agent.as_ref().and_then(AgentSummary::from_config);
     let contract_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
-    let compact_path_display = compact_contract_file_path_relative_to(
+    let repo_local_contract_display = compact_contract_file_path_relative_to(
         &contract_path,
         DEFAULT_CONTRACT_FILE,
         Some(contract_root),
     );
+    let compact_path_display = compact_contract_path(&contract_path);
     let output_path = output.map(Path::to_path_buf).unwrap_or_else(|| {
         contract_path
             .parent()
@@ -3139,8 +3172,7 @@ pub fn agents(
             .join("AGENTS.md")
     });
     let output_path_display = output_path.display().to_string();
-    let compact_output_display =
-        compact_path_relative_to(&output_path, "AGENTS.md", Some(contract_root));
+    let compact_output_display = compact_path(&normalized_display_path(&output_path), "AGENTS.md");
     let debug_lines = vec![
         String::from("DEBUG command=agents"),
         format!("DEBUG contract_path={path_display}"),
@@ -3148,7 +3180,12 @@ pub fn agents(
         format!("DEBUG write={write}"),
     ];
 
-    let content = render_agents_markdown(&contract, agent.as_ref(), &compact_path_display);
+    let content = render_agents_markdown(&contract, agent.as_ref(), &repo_local_contract_display);
+    let write_command = format!(
+        "`{}`",
+        command_for_contract("ota agents --write", &contract_path)
+    );
+    let doctor_command = format!("`{}`", command_for_contract("ota doctor", &contract_path));
 
     let render_text = |status: &str| {
         let mut stdout = format_command_header("AGENTS", &compact_path_display);
@@ -3167,6 +3204,12 @@ pub fn agents(
             "\n{} {}",
             format_result_line(status),
             paint_code(&compact_output_display)
+        ));
+        stdout.push_str(&format!(
+            "\n\n{}\n{}  run {} to verify repo readiness and task safety from the same contract",
+            error_next_key("Next:"),
+            next_bullet(),
+            paint_code(&doctor_command)
         ));
         stdout
     };
@@ -3294,6 +3337,16 @@ pub fn agents(
                     paint_key("Managed block:"),
                     paint_code("Ota-generated content")
                 ));
+                stdout.push_str(&format!(
+                    "\n\n{}\n{}  run {} to write {}\n{}  run {} to verify repo readiness and task safety from the same contract",
+                    error_next_key("Next:"),
+                    next_bullet(),
+                    paint_code(&write_command),
+                    paint_code(&format!("`{compact_output_display}`")),
+                    next_bullet(),
+                    paint_code(&doctor_command)
+                ));
+                stdout.push('\n');
                 stdout.push('\n');
                 stdout.push_str(&content);
                 CommandOutput::success(stdout)
@@ -4174,6 +4227,10 @@ fn render_workspace_validate_failure(
 }
 
 fn compact_backticked_paths(value: &str) -> String {
+    render_backticked_text(value, None)
+}
+
+fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
     let mut output = String::with_capacity(value.len());
     let mut rest = value;
 
@@ -4191,7 +4248,11 @@ fn compact_backticked_paths(value: &str) -> String {
 
         let token = &after_start[..end];
         output.push('`');
-        if token.starts_with('/') {
+        if let Some(contract_path) = contract_path
+            && let Some(command) = contextualize_repo_command(token, contract_path)
+        {
+            output.push_str(&command);
+        } else if token.starts_with('/') {
             output.push_str(&compact_path(Path::new(token), DEFAULT_CONTRACT_FILE));
         } else {
             output.push_str(token);
@@ -4201,6 +4262,32 @@ fn compact_backticked_paths(value: &str) -> String {
     }
 
     output
+}
+
+fn contextualize_repo_command(token: &str, contract_path: &Path) -> Option<String> {
+    let normalized = match token {
+        "ota doctor" => Some("ota doctor"),
+        "ota explain" => Some("ota explain"),
+        "ota up" => Some("ota up"),
+        "ota check" => Some("ota check"),
+        "ota tasks --use" => Some("ota tasks --use"),
+        "ota detect --dry-run" | "ota detect --dry-run ." => Some("ota detect --dry-run"),
+        "ota detect --merge --dry-run" | "ota detect --merge --dry-run ." => {
+            Some("ota detect --merge --dry-run")
+        }
+        "ota detect --merge" | "ota detect --merge ." => Some("ota detect --merge"),
+        "ota detect --rewrite --dry-run" | "ota detect --rewrite --dry-run ." => {
+            Some("ota detect --rewrite --dry-run")
+        }
+        "ota detect --rewrite" | "ota detect --rewrite ." => Some("ota detect --rewrite"),
+        "ota agents --write" => Some("ota agents --write"),
+        _ if token.starts_with("ota run ") => Some(token),
+        _ if token.starts_with("ota doctor --member ") => Some(token),
+        _ if token.starts_with("ota tasks --member ") => Some(token),
+        _ => None,
+    }?;
+
+    Some(command_for_contract(normalized, contract_path))
 }
 
 #[derive(Debug, Serialize)]
@@ -8992,13 +9079,22 @@ fn escape_github_value(value: &str) -> String {
 
 fn render_doctor_text(
     path: &str,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: DoctorReport,
 ) -> CommandOutput {
     let summary = doctor_summary(&report, agent_verdict_from_summary(agent));
-    let mut output = render_report_text("DOCTOR", path, agent, execution, report, Some(&summary));
+    let mut output = render_report_text(
+        "DOCTOR",
+        path,
+        Some(contract_path),
+        agent,
+        execution,
+        report,
+        Some(&summary),
+    );
     if !extensions.is_empty() {
         output.stdout.push_str(&render_extensions_text(extensions));
     }
@@ -9279,14 +9375,22 @@ fn workspace_primary_blocker(
 
 fn render_doctor_section(
     path: &str,
+    contract_path: &Path,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
     report: &DoctorReport,
 ) -> String {
     let summary = doctor_summary(report, agent_verdict_from_summary(agent));
-    let mut output =
-        render_report_section("DOCTOR", path, agent, execution, report, Some(&summary));
+    let mut output = render_report_section(
+        "DOCTOR",
+        path,
+        Some(contract_path),
+        agent,
+        execution,
+        report,
+        Some(&summary),
+    );
     if !extensions.is_empty() {
         output.push_str(&render_extensions_text(extensions));
     }
@@ -9517,12 +9621,21 @@ fn render_extensions_text(extensions: &BTreeMap<String, ExtensionSpec>) -> Strin
 fn render_report_text(
     command: &str,
     path: &str,
+    contract_path: Option<&Path>,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> CommandOutput {
-    let stdout = render_report_section(command, path, agent, execution, &report, summary);
+    let stdout = render_report_section(
+        command,
+        path,
+        contract_path,
+        agent,
+        execution,
+        &report,
+        summary,
+    );
     CommandOutput {
         stdout,
         stderr: None,
@@ -9533,6 +9646,7 @@ fn render_report_text(
 fn render_report_section(
     command: &str,
     path: &str,
+    contract_path: Option<&Path>,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     report: &DoctorReport,
@@ -9570,13 +9684,13 @@ fn render_report_section(
             primary_blocker.severity,
             &primary_blocker.summary,
             &primary_blocker.why,
-            &primary_blocker.next,
+            &render_backticked_text(&primary_blocker.next, contract_path),
         ));
     }
     if command == "DOCTOR" && report.ok && report.findings.is_empty() {
-        stdout.push_str(&render_doctor_ready_next(agent));
+        stdout.push_str(&render_doctor_ready_next(agent, contract_path));
     } else if command == "CHECK" && report.ok && report.findings.is_empty() {
-        stdout.push_str(&render_check_ready_next());
+        stdout.push_str(&render_check_ready_next(contract_path));
     }
     if let Some(execution) = execution {
         if !stdout.ends_with("\n\n") {
@@ -9611,7 +9725,7 @@ fn render_report_section(
     for group in grouped_findings {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
-            let next = compact_backticked_paths(&finding.next);
+            let next = render_backticked_text(&finding.next, contract_path);
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -9634,7 +9748,7 @@ fn render_report_section(
                     next
                 ));
             } else {
-                let why = compact_backticked_paths(&finding.why);
+                let why = render_backticked_text(&finding.why, contract_path);
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
                     "{}  {}\n{} {}{}\n{} {}",
@@ -9650,34 +9764,52 @@ fn render_report_section(
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group));
+        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path));
     }
 
     stdout
 }
 
-fn render_doctor_ready_next(agent: Option<&AgentSummary<'_>>) -> String {
-    let mut items = vec![String::from("run `ota up` to prepare the repo end to end")];
+fn render_doctor_ready_next(
+    agent: Option<&AgentSummary<'_>>,
+    contract_path: Option<&Path>,
+) -> String {
+    let up_command = contract_path
+        .map(|path| command_for_contract("ota up", path))
+        .unwrap_or_else(|| String::from("ota up"));
+    let mut items = vec![format!("run `{up_command}` to prepare the repo end to end")];
     if let Some(task) = agent
         .and_then(|agent| agent.default_task.or(agent.entrypoint))
         .filter(|task| !task.trim().is_empty())
     {
+        let run_command = contract_path
+            .map(|path| command_for_contract(&format!("ota run {task}"), path))
+            .unwrap_or_else(|| format!("ota run {task}"));
         items.push(format!(
-            "run `ota run {task}` to execute the default repo task"
+            "run `{run_command}` to execute the default repo task"
         ));
     } else {
-        items.push(String::from(
-            "run `ota tasks --use` to inspect runnable task usage",
+        let tasks_command = contract_path
+            .map(|path| command_for_contract("ota tasks --use", path))
+            .unwrap_or_else(|| String::from("ota tasks --use"));
+        items.push(format!(
+            "run `{tasks_command}` to inspect runnable task usage"
         ));
     }
 
     format_next_timeline(&items)
 }
 
-fn render_check_ready_next() -> String {
+fn render_check_ready_next(contract_path: Option<&Path>) -> String {
+    let up_command = contract_path
+        .map(|path| command_for_contract("ota up", path))
+        .unwrap_or_else(|| String::from("ota up"));
+    let tasks_command = contract_path
+        .map(|path| command_for_contract("ota tasks --use", path))
+        .unwrap_or_else(|| String::from("ota tasks --use"));
     format_next_timeline(&[
-        String::from("run `ota up` to prepare the repo end to end"),
-        String::from("run `ota tasks --use` to inspect runnable task usage"),
+        format!("run `{up_command}` to prepare the repo end to end"),
+        format!("run `{tasks_command}` to inspect runnable task usage"),
     ])
 }
 
@@ -9865,7 +9997,10 @@ fn doctor_group_slug(value: &str) -> String {
     slug
 }
 
-fn render_grouped_doctor_findings(group: &DoctorFindingGroup<'_>) -> String {
+fn render_grouped_doctor_findings(
+    group: &DoctorFindingGroup<'_>,
+    contract_path: Option<&Path>,
+) -> String {
     let display_items = doctor_finding_group_display_items(group);
     let mut stdout = String::from("\n\n");
     stdout.push_str(&format!(
@@ -9898,7 +10033,10 @@ fn render_grouped_doctor_findings(group: &DoctorFindingGroup<'_>) -> String {
     stdout.push_str(&format!(
         "\n{} {}",
         finding_detail_key(group.severity, "Next:"),
-        doctor_finding_group_next(&group.kind, &group.findings)
+        render_backticked_text(
+            &doctor_finding_group_next(&group.kind, &group.findings),
+            contract_path
+        )
     ));
     stdout
 }
@@ -10076,8 +10214,7 @@ fn doctor_finding_group_item_text(
     match kind {
         DoctorFindingGroupKind::ToolingVersion => {
             let command_hint = if include_command_hint {
-                backticked_tokens(&finding.next)
-                    .first()
+                explicit_run_command(&finding.next)
                     .map(|command| format!("; run `{command}`"))
                     .unwrap_or_default()
             } else {
@@ -10116,6 +10253,7 @@ fn render_doctor_verdict(verdict: DoctorVerdict) -> String {
 
 fn render_explain_section(
     path: &str,
+    contract_path: &Path,
     report: &DoctorReport,
     summary: &ExplainSummary,
     steps: &[ExplainStep],
@@ -10125,12 +10263,12 @@ fn render_explain_section(
         format_command_header("EXPLAIN", path),
         render_readiness_status(report.ok)
     );
-    stdout.push_str(&render_explain_steps_text(steps));
+    stdout.push_str(&render_explain_steps_text(steps, contract_path));
     stdout.push_str(&render_explain_summary_text(summary));
     stdout
 }
 
-fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
+fn render_explain_steps_text(steps: &[ExplainStep], contract_path: &Path) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Plan"));
     if steps.is_empty() {
@@ -10161,12 +10299,12 @@ fn render_explain_steps_text(steps: &[ExplainStep]) -> String {
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("Why:"),
-            compact_backticked_paths(&step.why)
+            render_backticked_text(&step.why, Some(contract_path))
         ));
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("Next:"),
-            compact_backticked_paths(&step.next)
+            render_backticked_text(&step.next, Some(contract_path))
         ));
         if let Some(provenance) = step.provenance.as_deref() {
             stdout.push_str(&format!("\n  {} {}", paint_key("Provenance:"), provenance));
@@ -10898,6 +11036,23 @@ fn compact_path(path: &Path, fallback: &str) -> String {
     compact_path_relative_to_current_dir(path, fallback)
 }
 
+fn normalized_display_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = fs::canonicalize(path) {
+        return canonical;
+    }
+
+    let Some(parent) = path.parent() else {
+        return path.to_path_buf();
+    };
+    let Some(file_name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+
+    fs::canonicalize(parent)
+        .map(|canonical_parent| canonical_parent.join(file_name))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn compact_path_relative_to_current_dir(path: &Path, fallback: &str) -> String {
     compact_path_relative_to(path, fallback, std::env::current_dir().ok().as_deref())
 }
@@ -11427,6 +11582,7 @@ mod tests {
             "./ota.yaml",
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -11504,6 +11660,7 @@ mod tests {
         };
         let text = strip_ansi_codes(&render_up_section_from_parts(
             "./ota.yaml",
+            None,
             "PROVISION FAILED",
             "provisioning",
             &report,
@@ -11671,6 +11828,7 @@ tasks:
             "./ota.yaml",
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -11680,6 +11838,59 @@ tasks:
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
         assert_eq!(text.matches("Next:").count(), 2);
+    }
+
+    #[test]
+    fn doctor_text_grouped_version_items_only_append_explicit_commands() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for tool: curl"),
+                    why: String::from(
+                        "curl resolved to `8.13.0` but the contract requires `8.7.1`",
+                    ),
+                    next: String::from(
+                        "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for tool: maven"),
+                    why: String::from(
+                        "maven resolved to `3.9.14` but the contract requires `3.9.9`",
+                    ),
+                    next: String::from("run `asdf install maven 3.9.9` and rerun `ota doctor`"),
+                },
+            ],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 2,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
+        assert!(!text.contains("run `8.7.1`"));
+        assert!(text.contains(
+            "» maven resolved `3.9.14`, requires `3.9.9`; run `asdf install maven 3.9.9`"
+        ));
     }
 
     #[test]
@@ -11717,6 +11928,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             &report,
@@ -11759,6 +11971,7 @@ tasks:
 
         let text = strip_ansi_codes(&render_up_section_from_parts(
             "./ota.yaml",
+            None,
             "PROVISION FAILED",
             "provisioning",
             &report,
@@ -11821,6 +12034,7 @@ tasks:
             "./ota.yaml",
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -11867,6 +12081,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             Some(&agent),
             None,
             &report,
@@ -11894,6 +12109,7 @@ tasks:
 
         let text = strip_ansi_codes(&render_up_section_from_parts(
             "./ota.yaml",
+            None,
             "READY",
             "post-setup diagnosis",
             &report,
@@ -12220,7 +12436,11 @@ fn command_for_contract(command: &str, contract_path: &Path) -> String {
     if contract_path_matches_current_dir(contract_path) {
         command.to_string()
     } else {
-        format!("{command} {}", compact_contract_path(contract_path))
+        let display_path = compact_path(
+            &normalized_display_path(contract_path),
+            DEFAULT_CONTRACT_FILE,
+        );
+        format!("{command} {display_path}")
     }
 }
 
@@ -12249,12 +12469,11 @@ fn command_for_workspace(command: &str, workspace_path: &Path) -> String {
 
 fn contract_path_matches_current_dir(contract_path: &Path) -> bool {
     std::env::current_dir().ok().is_some_and(|current_dir| {
-        let target = if contract_path.is_absolute() {
-            contract_path.to_path_buf()
-        } else {
-            current_dir.join(contract_path)
-        };
-        target == current_dir.join(DEFAULT_CONTRACT_FILE)
+        let current_dir = fs::canonicalize(&current_dir).unwrap_or(current_dir);
+        let target = normalized_display_path(contract_path);
+        target
+            .parent()
+            .is_some_and(|contract_root| current_dir.starts_with(contract_root))
     })
 }
 
@@ -13709,6 +13928,7 @@ fn render_up_text(
 ) -> CommandOutput {
     let mut stdout = render_up_section_from_parts(
         path,
+        Some(Path::new(path)),
         status,
         phase,
         &report,
@@ -13740,6 +13960,7 @@ fn render_up_text(
 fn render_up_section(path: &str, result: &RepoUpResult) -> String {
     render_up_section_from_parts(
         path,
+        Some(Path::new(path)),
         result.status,
         result.phase,
         &result.report,
@@ -13769,6 +13990,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
 
 fn render_up_section_from_parts(
     path: &str,
+    contract_path: Option<&Path>,
     status: &str,
     phase: &str,
     report: &DoctorReport,
@@ -13844,8 +14066,8 @@ fn render_up_section_from_parts(
     for group in group_doctor_findings(report.findings.iter()) {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
-            let why = compact_backticked_paths(&finding.why);
-            let next = compact_backticked_paths(&finding.next);
+            let why = render_backticked_text(&finding.why, contract_path);
+            let next = render_backticked_text(&finding.next, contract_path);
             stdout.push_str("\n\n");
             stdout.push_str(&format!(
                 "{}  {}\n{} {}\n{} {}",
@@ -13859,7 +14081,7 @@ fn render_up_section_from_parts(
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group));
+        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path));
     }
 
     stdout

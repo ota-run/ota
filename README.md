@@ -112,12 +112,12 @@ If you are using ota on an existing repo, start with the read path:
 
 ```bash
 ota doctor
-ota validate
+ota explain
 ota up
 ota run <task>
 ```
 
-That path tells you what is wrong, whether the contract is valid, how to prepare the repo, and how to run a declared task without guessing.
+That path tells you what is wrong, turns the findings into an ordered plan, prepares the repo, and gives you one declared task path without guessing.
 
 If you are writing or refining a contract, use the authoring path:
 
@@ -137,6 +137,13 @@ If the repo already has `ota.yaml`, review the delta first:
 ```bash
 ota detect --merge --dry-run .
 ota detect --rewrite --dry-run .
+```
+
+If you want agent-safe repo guidance from the same contract:
+
+```bash
+ota agents
+ota agents --write
 ```
 
 ### Workspace bootstrap
@@ -489,6 +496,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Security posture](docs/design/security-posture.md)
 - [Performance budget](docs/design/performance-budget.md)
 - [Doctor quality bar](docs/design/doctor-quality-bar.md)
+- [Adoption readiness gate](docs/design/adoption-readiness-gate.md)
 - [Detect write gate](docs/design/detect-write-gate.md)
 
 ### Planning and roadmap
@@ -512,6 +520,13 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 - [Contributing guide](CONTRIBUTING.md)
 
 ## Examples
+
+Choose by goal:
+
+- first repo contract: [Basic Node](examples/basic-node/ota.yaml), [Basic Python](examples/basic-python/ota.yaml), [Basic Rust](examples/basic-rust/ota.yaml)
+- existing app with services: [Basic Services](examples/basic-services/ota.yaml), [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
+- multi-repo bootstrap: [Basic Workspace](examples/workspace-basic/ota.workspace.yaml), [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)
+- realistic reference shape: [Fullstack Node + Go](examples/fullstack-node-go/ota.yaml), [Full contract example](examples/full-contract/ota.yaml), [ota-run/examples](https://github.com/ota-run/examples)
 
 ### Minimal contracts
 - [Basic Node](examples/basic-node/ota.yaml) - Node / TypeScript starter

@@ -183,7 +183,10 @@ pub(crate) fn render_workspace_explain_text(
         }
 
         let steps = explain_steps(&repo.findings);
-        stdout.push_str(&render_explain_steps_text(&steps));
+        stdout.push_str(&render_explain_steps_text(
+            &steps,
+            Path::new(&repo.contract_path),
+        ));
     }
     stdout.push_str(&render_workspace_explain_summary_text(
         &workspace_explain_summary(report),

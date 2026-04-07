@@ -29,6 +29,8 @@
 - made runtime/tool remediation exact and manager-aware when ota has strong signals, including
   repo-local hints such as `.nvmrc`, `.python-version`, `.sdkmanrc`, `.tool-versions`, and
   policy-backed provisioning sources.
+- broadened exact remediation coverage further with stronger manager signals such as `volta`,
+  `nodenv`, `pyenv`, `rbenv`, `goenv`, `rustup`, and explicit runtime `provider` hints.
 - removed duplicate adapter-bootstrap info findings by loading the policy pack once for doctor
   diagnostics and reusing that source across provisioning and bootstrap surfaces.
 - tightened workspace text parity so `workspace check` now promotes the primary blocker and
@@ -37,6 +39,17 @@
   and workspace entry paths.
 - locked the premium text UX with checked-in golden snapshots for root help, repo `doctor`,
   `detect`, `up`, `run`, and workspace `validate`, `doctor`, `explain`, `up`, and `run`.
+- fixed grouped tooling remediation hints so repeated version-mismatch blocks only surface real
+  exact commands and never degrade into stray version tokens.
+- made `ota agents` text output more adoption-friendly by pointing preview users at
+  `ota agents --write` and pointing write users back to `ota doctor`.
+- made repo-targeted text guidance truthful when commands operate on external contracts, so
+  `validate`, `agents`, `doctor`, `explain`, and `up` now rewrite follow-up commands with an
+  explicit target instead of implying the current working directory.
+- tightened the public adoption path in README and quickstart with a clearer existing-repo flow,
+  an explicit `ota agents` path, and a chooser for shipped examples by goal.
+- added an adoption readiness gate doc so enterprise-facing scope stays behind an explicit product
+  usefulness bar instead of drifting ahead of first-session value.
 
 ## 1.1.3
 

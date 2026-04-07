@@ -40,7 +40,8 @@ use crate::policy_pack::{
 };
 use crate::provisioning::render_provisioning_action_command;
 use crate::schema::{
-    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, ServiceSpec,
+    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
+    ServiceSpec,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -909,6 +910,7 @@ fn diagnose_runtimes(
             name,
             requirement.version(),
             true,
+            runtime_provider_hint(requirement),
             contract_path,
             provisioning_actions,
             findings,
@@ -934,10 +936,18 @@ fn diagnose_tools(
             tool_executable_name(name),
             requirement.version(),
             required,
+            None,
             contract_path,
             provisioning_actions,
             findings,
         );
+    }
+}
+
+fn runtime_provider_hint(requirement: &RuntimeRequirement) -> Option<&str> {
+    match requirement {
+        RuntimeRequirement::Simple(_) => None,
+        RuntimeRequirement::Detailed(detail) => detail.provider.as_deref(),
     }
 }
 
@@ -1137,6 +1147,7 @@ fn exact_tooling_remediation(
     target_kind: ProvisioningTargetKind,
     name: &str,
     requirement: &str,
+    provider_hint: Option<&str>,
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<String> {
@@ -1150,22 +1161,29 @@ fn exact_tooling_remediation(
 
     let contract_root = contract_working_dir(contract_path);
 
+    if let Some(command) = provider_hint_remediation(target_kind, name, requirement, provider_hint)
+    {
+        return Some(command);
+    }
+
     match (target_kind, name) {
         (ProvisioningTargetKind::Runtime, "node") => {
-            if contract_root.join(".nvmrc").is_file()
-                || contract_root.join(".node-version").is_file()
-            {
+            if contract_root.join(".nvmrc").is_file() {
                 return Some(format!(
                     "nvm install {requirement} && nvm use {requirement}"
                 ));
             }
+            if contract_root.join(".node-version").is_file() {
+                return Some(format!("nodenv install {requirement}"));
+            }
             tool_versions_remediation(&contract_root, &["nodejs", "node"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "python") => {
-            if contract_root.join(".python-version").is_file()
-                || contract_root.join("uv.lock").is_file()
-            {
+            if contract_root.join("uv.lock").is_file() {
                 return Some(format!("uv python install {requirement}"));
+            }
+            if contract_root.join(".python-version").is_file() {
+                return Some(format!("pyenv install {requirement}"));
             }
             tool_versions_remediation(&contract_root, &["python"], requirement)
         }
@@ -1176,12 +1194,18 @@ fn exact_tooling_remediation(
             tool_versions_remediation(&contract_root, &["java"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "go") => {
+            if contract_root.join(".go-version").is_file() {
+                return Some(format!("goenv install {requirement}"));
+            }
             tool_versions_remediation(&contract_root, &["go", "golang"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "rust") => {
             tool_versions_remediation(&contract_root, &["rust"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "ruby") => {
+            if contract_root.join(".ruby-version").is_file() {
+                return Some(format!("rbenv install {requirement}"));
+            }
             tool_versions_remediation(&contract_root, &["ruby"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "php") => {
@@ -1200,6 +1224,79 @@ fn exact_tooling_remediation(
         (ProvisioningTargetKind::Tool, name) => {
             tool_versions_remediation(&contract_root, &[name], requirement)
         }
+    }
+}
+
+fn provider_hint_remediation(
+    target_kind: ProvisioningTargetKind,
+    name: &str,
+    requirement: &str,
+    provider_hint: Option<&str>,
+) -> Option<String> {
+    let provider = provider_hint?.trim().to_ascii_lowercase();
+
+    match (target_kind, name, provider.as_str()) {
+        (ProvisioningTargetKind::Runtime, "node", "volta") => {
+            Some(format!("volta install node@{requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "node", "nvm") => Some(format!(
+            "nvm install {requirement} && nvm use {requirement}"
+        )),
+        (ProvisioningTargetKind::Runtime, "node", "nodenv") => {
+            Some(format!("nodenv install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "python", "uv") => {
+            Some(format!("uv python install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "python", "pyenv") => {
+            Some(format!("pyenv install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "java", "sdkman") => {
+            Some(format!("sdk install java {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "go", "goenv") => {
+            Some(format!("goenv install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "rust", "rustup") => {
+            Some(format!("rustup toolchain install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, "ruby", "rbenv") => {
+            Some(format!("rbenv install {requirement}"))
+        }
+        (ProvisioningTargetKind::Runtime, _, "asdf")
+        | (ProvisioningTargetKind::Tool, _, "asdf") => {
+            provider_tool_versions_remediation(ToolVersionsManager::Asdf, name, requirement)
+        }
+        (ProvisioningTargetKind::Runtime, _, "mise")
+        | (ProvisioningTargetKind::Tool, _, "mise") => {
+            provider_tool_versions_remediation(ToolVersionsManager::Mise, name, requirement)
+        }
+        _ => None,
+    }
+}
+
+fn provider_tool_versions_remediation(
+    manager: ToolVersionsManager,
+    name: &str,
+    requirement: &str,
+) -> Option<String> {
+    let tool_name = match name {
+        "node" => "node",
+        "python" => "python",
+        "java" => "java",
+        "go" => "go",
+        "rust" => "rust",
+        "ruby" => "ruby",
+        "php" => "php",
+        "dotnet" => "dotnet",
+        "elixir" => "elixir",
+        other if !other.is_empty() => other,
+        _ => return None,
+    };
+
+    match manager {
+        ToolVersionsManager::Asdf => Some(format!("asdf install {tool_name} {requirement}")),
+        ToolVersionsManager::Mise => Some(format!("mise install {tool_name}@{requirement}")),
     }
 }
 
@@ -1282,6 +1379,7 @@ fn diagnose_command_version(
     executable_name: &str,
     requirement: &str,
     required: bool,
+    provider_hint: Option<&str>,
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
@@ -1294,6 +1392,7 @@ fn diagnose_command_version(
         target_kind,
         display_name,
         requirement,
+        provider_hint,
         contract_path,
         provisioning_actions,
     );

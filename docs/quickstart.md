@@ -30,7 +30,7 @@ Install ota first: [installation.md](installation.md)
 
 Doctor first, contract second.
 
-One practical path:
+Fastest proof of value on a repo that already has `ota.yaml`:
 
 ```bash
 ota doctor
@@ -65,6 +65,13 @@ If the repo already has `ota.yaml`, review the delta first:
 ota detect --merge --dry-run .
 ota detect --rewrite --dry-run .
 ota validate
+```
+
+If you want repo-local agent guidance from the same contract:
+
+```bash
+ota agents
+ota agents --write
 ```
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
