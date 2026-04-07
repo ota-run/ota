@@ -20,3 +20,9 @@
 - Pattern: A user asking for status or clarification may not be asking for implementation.
 - Correction: Answer the status directly first, and only change code when the user explicitly asks to do so.
 - Rule: Do not turn a confirmation question into a code change without a clear request to implement.
+
+## 2026-04-07
+
+- Pattern: Doctor output can be technically correct but still too repetitive for humans when every finding repeats the same `Next:` action.
+- Correction: Group repeated doctor findings by shared remediation, keep the primary blocker explicit, and keep JSON unchanged.
+- Rule: In human doctor output, group by action/family, not severity alone; collapse identical or equivalent `Next:` lines into one shared remediation block.
