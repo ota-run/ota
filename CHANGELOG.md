@@ -57,6 +57,13 @@
 - made repo `ota run` text output context-aware: interactive terminals still stream live logs,
   while non-interactive runs now buffer into bounded excerpts with a new `--stream` escape hatch
   for raw live output.
+- brought workspace `validate`, `doctor`, `check`, and `explain` text output closer to the repo
+  UX bar with clearer next steps, shared grouped findings, `Plan`/`Overview` section naming, and
+  a properly separated primary-blocker section.
+- upgraded empty-state text for `ota services`, `ota extensions`, and `ota policy` so those
+  commands explain the absence and point to the next useful Ota action instead of ending cold.
+- made wrapped task and extension detail lines terminal-width aware, and taught captured output
+  excerpts to prefer the most relevant failure window instead of always dumping the tail.
 - upgraded default `ota validate` success output with clear next-step guidance into `ota doctor`
   and `ota tasks --use`.
 - renamed repo `ota explain` text sections to `Plan` and `Overview` so the remediation surface

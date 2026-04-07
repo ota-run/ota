@@ -1069,9 +1069,9 @@ agent:
         "stderr was: {}",
         String::from_utf8_lossy(&text_output.stderr)
     );
-    assert!(stdout.contains("AGENT:"));
-    assert!(stdout.contains("  entrypoint: setup"));
-    assert!(stdout.contains("  safe_tasks: setup"));
+    assert!(stdout.contains("Agent"));
+    assert!(stdout.contains("Entrypoint: `setup`"));
+    assert!(stdout.contains("Safe tasks: `setup`"));
 
     let json_output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
     let json = stdout_json(&json_output);

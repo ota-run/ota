@@ -282,6 +282,8 @@ Text output:
 
 - header: `SERVICES <path>`
 - each service may include `required`, `provider`, `depends_on`, `start`, `stop`, `healthcheck`, `timeout`, and a management note
+- when no services are declared, the text output says so explicitly and points users back to
+  `ota doctor` or contract authoring instead of ending empty
 
 JSON output:
 
@@ -425,6 +427,8 @@ Text output:
 - header: `EXTENSIONS <path>`
 - each descriptor may include `kind`, `command`, `api_version`, `description`, and `config`
 - the report is read-only unless `--run <name>` is set
+- when no descriptors are staged, the text output says so explicitly and points users back to
+  `ota doctor` or adding `extensions` to the contract
 
 JSON output:
 
@@ -794,6 +798,8 @@ Text output:
 - `Policy source:` shows where ota loaded the policy from
 - `Policy path:` shows the resolved policy file path or URL
 - effective policy content when one is loaded
+- when no policy pack is found, the text output says so explicitly and points users back to repo
+  readiness or `.ota/org-policy.yaml`
 
 JSON output:
 
@@ -1114,7 +1120,8 @@ Current behavior:
 
 Text output:
 
-- success: `VALID WORKSPACE <path>`
+- header: `WORKSPACE VALIDATE <path>`
+- success: `VALID` plus next steps into `ota workspace doctor` and `ota workspace tasks`
 - failure: validation or load error text
 
 JSON output:
@@ -1287,8 +1294,10 @@ Text output:
 
 - header: `WORKSPACE CHECK <path>`
 - status line: `READY` or `NOT READY`
-- summary roll-up includes repo verdict and agent verdict before the counts at the bottom of the report
-- each repo includes required/optional status, contract path, and findings
+- summary roll-up includes repo verdict and agent verdict before the `Overview` count block at the
+  bottom of the report
+- each repo includes required/optional status, contract path, and findings rendered through the
+  shared grouped finding UX
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
 JSON output:
@@ -1331,8 +1340,11 @@ Text output:
 
 - header: `WORKSPACE DOCTOR <path>`
 - status line: `READY` or `NOT READY`
-- summary roll-up includes repo verdict and agent verdict before the counts and per-repo details
-- each repo includes required/optional status, contract path, and findings
+- when the workspace is blocked, a primary blocker appears immediately under the readiness status
+- summary roll-up includes repo verdict and agent verdict before the `Overview` count block at the
+  bottom of the report
+- each repo includes required/optional status, contract path, and findings rendered through the
+  shared grouped finding UX
 - with `--concise`, repo `Path`/`Contract` and finding `Why` detail are omitted; summary + `Next` remain
 
 JSON output:
@@ -1367,8 +1379,8 @@ Current behavior:
 Text output:
 
 - one section per workspace repo
-- ordered remediation steps under each repo
-- summary counts at the end
+- ordered remediation `Plan` steps under each repo
+- an `Overview` count block at the end
 
 JSON output:
 

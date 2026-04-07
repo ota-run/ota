@@ -1328,7 +1328,15 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
     output.push('\n');
 
     if services.is_empty() {
-        output.push_str(&format!("\n{} none", list_bullet()));
+        output.push_str(&format!(
+            "\n\n{} {}",
+            list_bullet(),
+            paint("No declared services.", "1")
+        ));
+        output.push_str(&format_next_timeline(&[
+            String::from("run `ota doctor` to inspect readiness without managed services"),
+            String::from("add `services` to `ota.yaml` when repo readiness depends on local infra"),
+        ]));
         return output;
     }
 
@@ -1364,13 +1372,20 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
         ));
 
         if let Some(start) = service.start.as_deref() {
-            output.push_str(&format!("\n  {} {start}", paint_key("Start:")));
+            append_wrapped_detail(&mut output, "Start:", start, "  ", 84, stylize_inline_text);
         }
         if let Some(stop) = service.stop.as_deref() {
-            output.push_str(&format!("\n  {} {stop}", paint_key("Stop:")));
+            append_wrapped_detail(&mut output, "Stop:", stop, "  ", 84, stylize_inline_text);
         }
         if let Some(healthcheck) = service.healthcheck.as_deref() {
-            output.push_str(&format!("\n  {} {healthcheck}", paint_key("Healthcheck:")));
+            append_wrapped_detail(
+                &mut output,
+                "Healthcheck:",
+                healthcheck,
+                "  ",
+                84,
+                stylize_inline_text,
+            );
         }
         if let Some(timeout) = service.timeout {
             output.push_str(&format!("\n  {} {timeout}s", paint_key("Timeout:")));
@@ -1562,6 +1577,12 @@ fn render_policy_text(
         output.push_str(yaml.trim_end());
     } else {
         output.push_str("No policy pack found.");
+        output.push_str(&format_next_timeline(&[
+            String::from("run `ota doctor` to inspect repo-local readiness without policy"),
+            String::from(
+                "add `.ota/org-policy.yaml` when provisioning or org rules should come from approved policy",
+            ),
+        ]));
     }
 
     output
@@ -4031,9 +4052,10 @@ pub fn workspace_validate(
         match load_and_validate_workspace(&resolved_path) {
             Ok(()) => match format {
                 OutputFormat::Text => CommandOutput::success(format!(
-                    "{}\n\n{}",
+                    "{}\n\n{}{}",
                     format_command_header("WORKSPACE VALIDATE", &compact_path_display),
-                    render_valid_status()
+                    render_valid_status(),
+                    render_workspace_validate_ready_next()
                 )),
                 OutputFormat::Json => CommandOutput::success(to_json(&ValidateSuccess {
                     ok: true,
@@ -4079,6 +4101,13 @@ pub fn workspace_validate(
         debug,
         debug_lines,
     )
+}
+
+fn render_workspace_validate_ready_next() -> String {
+    format_next_timeline(&[
+        String::from("run `ota workspace doctor` to inspect readiness"),
+        String::from("run `ota workspace tasks` to inspect runnable task usage"),
+    ])
 }
 
 fn render_workspace_validate_failure(
@@ -7679,7 +7708,7 @@ fn render_detect_named_drift_concise_group(
 }
 
 fn render_detect_command_removal(command: &str) -> String {
-    let wrapped = wrap_display_tokens(command, 56);
+    let wrapped = wrap_display_tokens_for_terminal(command, 72, 22);
     if wrapped.len() == 1 {
         return format!(
             "\n  {} {} {}",
@@ -8023,6 +8052,50 @@ fn wrap_display_tokens(value: &str, max_width: usize) -> Vec<String> {
         lines.push(current);
     }
     lines
+}
+
+fn wrap_display_tokens_for_terminal(
+    value: &str,
+    fallback_max_width: usize,
+    reserve: usize,
+) -> Vec<String> {
+    wrap_display_tokens(value, display_wrap_width(fallback_max_width, reserve))
+}
+
+fn display_wrap_width(fallback_max_width: usize, reserve: usize) -> usize {
+    let terminal_width = env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > reserve + 24)
+        .map(|value| value.saturating_sub(reserve))
+        .unwrap_or(fallback_max_width);
+    terminal_width.clamp(24, fallback_max_width)
+}
+
+fn append_wrapped_detail<F>(
+    output: &mut String,
+    label: &str,
+    value: &str,
+    indent: &str,
+    fallback_max_width: usize,
+    render_value: F,
+) where
+    F: Fn(&str) -> String,
+{
+    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 18);
+    if wrapped.is_empty() {
+        output.push_str(&format!("\n{indent}{} -", paint_key(label)));
+        return;
+    }
+
+    output.push_str(&format!(
+        "\n{indent}{} {}",
+        paint_key(label),
+        render_value(&wrapped[0])
+    ));
+    for line in wrapped.iter().skip(1) {
+        output.push_str(&format!("\n{indent}  {}", render_value(line)));
+    }
 }
 
 fn render_detect_change_section(
@@ -9223,11 +9296,10 @@ fn render_extensions_output_text(
     path: &str,
     extensions: &BTreeMap<String, ExtensionSpec>,
 ) -> String {
-    format!(
-        "{}\n{}",
-        format_command_header("EXTENSIONS", path),
-        render_extensions_text(extensions)
-    )
+    let mut output = format_command_header("EXTENSIONS", path);
+    output.push('\n');
+    output.push_str(&render_extensions_text(extensions));
+    output
 }
 
 fn render_extension_run_text(
@@ -9243,11 +9315,14 @@ fn render_extension_run_text(
         paint_key("Kind:"),
         extension.kind.as_str()
     ));
-    stdout.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Command:"),
-        extension.command
-    ));
+    append_wrapped_detail(
+        &mut stdout,
+        "Command:",
+        &extension.command,
+        "  ",
+        84,
+        stylize_inline_text,
+    );
     stdout.push_str(&format!(
         "\n  {} {}",
         paint_key("API Version:"),
@@ -9376,10 +9451,22 @@ fn run_extension_descriptor(
 
 fn render_extensions_text(extensions: &BTreeMap<String, ExtensionSpec>) -> String {
     if extensions.is_empty() {
-        return String::new();
+        let mut stdout = String::from("\n\n");
+        stdout.push_str(&format!(
+            "{} {}",
+            list_bullet(),
+            paint("No staged extensions declared.", "1")
+        ));
+        stdout.push_str(&format_next_timeline(&[
+            String::from("run `ota doctor` to inspect repo readiness without extensions"),
+            String::from(
+                "add `extensions` to `ota.yaml` when repo workflows need provider hooks or adapters",
+            ),
+        ]));
+        return stdout;
     }
 
-    let mut stdout = String::from("\n");
+    let mut stdout = String::from("\n\n");
     stdout.push_str(&format!("\n{}", paint_key("Extensions:")));
 
     for (name, extension) in extensions {
@@ -9389,22 +9476,28 @@ fn render_extensions_text(extensions: &BTreeMap<String, ExtensionSpec>) -> Strin
             paint_key("Kind:"),
             extension.kind.as_str()
         ));
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Command:"),
-            extension.command
-        ));
+        append_wrapped_detail(
+            &mut stdout,
+            "Command:",
+            &extension.command,
+            "  ",
+            84,
+            stylize_inline_text,
+        );
         stdout.push_str(&format!(
             "\n  {} {}",
             paint_key("API Version:"),
             extension.api_version
         ));
         if let Some(description) = extension.description.as_deref() {
-            stdout.push_str(&format!(
-                "\n  {} {}",
-                paint_key("Description:"),
-                description
-            ));
+            append_wrapped_detail(
+                &mut stdout,
+                "Description:",
+                description,
+                "  ",
+                84,
+                stylize_inline_text,
+            );
         }
         if !extension.config.is_empty() {
             let keys = extension
@@ -10848,6 +10941,7 @@ fn describe_adapter_bootstrap_request(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::env;
     use std::fs;
     use std::path::Path;
@@ -11030,6 +11124,44 @@ mod tests {
     }
 
     #[test]
+    fn policy_text_without_policy_pack_includes_next_steps() {
+        let contract = Path::new("./ota.yaml");
+        let text = strip_ansi_codes(&super::render_policy_text(contract, "none", None));
+
+        assert!(text.contains("Policy source: none"));
+        assert!(text.contains("No policy pack found."));
+        assert!(text.contains("run `ota doctor` to inspect repo-local readiness without policy"));
+        assert!(text.contains(
+            "add `.ota/org-policy.yaml` when provisioning or org rules should come from approved policy"
+        ));
+    }
+
+    #[test]
+    fn services_text_without_declared_services_includes_next_steps() {
+        let text = strip_ansi_codes(&super::render_services_output_text("./ota.yaml", &[]));
+
+        assert!(text.contains("SERVICES ./ota.yaml"));
+        assert!(text.contains("No declared services."));
+        assert!(text.contains("run `ota doctor` to inspect readiness without managed services"));
+        assert!(
+            text.contains(
+                "add `services` to `ota.yaml` when repo readiness depends on local infra"
+            )
+        );
+    }
+
+    #[test]
+    fn extensions_text_without_declared_extensions_includes_next_steps() {
+        let text = strip_ansi_codes(&super::render_extensions_text(&BTreeMap::new()));
+
+        assert!(text.contains("No staged extensions declared."));
+        assert!(text.contains("run `ota doctor` to inspect repo readiness without extensions"));
+        assert!(text.contains(
+            "add `extensions` to `ota.yaml` when repo workflows need provider hooks or adapters"
+        ));
+    }
+
+    #[test]
     fn detect_comparison_splits_task_drift_groups_and_wraps_long_commands() {
         let comparison = DetectComparison {
             existing_contract: true,
@@ -11119,7 +11251,9 @@ mod tests {
         assert!(text.contains("» remove command `cargo check`"));
         assert!(text.contains("» remove command `cargo test -- --test-threads=1`"));
         assert!(text.contains("» remove `safe_for_agent: true`"));
-        assert!(text.contains("» remove command\n    `ota doctor --json . | ota annotations --mode doctor`\n    `--format \"${OTA_INPUT_RENDER_FORMAT}\" --input -`"));
+        assert!(text.contains(
+            "» remove command\n    `ota doctor --json . | ota annotations --mode doctor --format`\n    `\"${OTA_INPUT_RENDER_FORMAT}\" --input -`"
+        ));
         assert!(text.contains("» remove `22`"));
         assert!(!text.contains("tasks.ci.run"));
         assert!(!text.contains("would remove:"));
@@ -13209,37 +13343,45 @@ fn render_run_output_excerpt_block(
     stderr: &str,
     max_lines: usize,
 ) -> Option<String> {
-    let (excerpt, omitted) = run_output_excerpt(stdout, stderr, max_lines)?;
+    let excerpt = run_output_excerpt(stdout, stderr, max_lines)?;
     let mut output = String::new();
     output.push_str(&paint_key("Task output:"));
-    if omitted > 0 {
+    if excerpt.omitted_before > 0 || excerpt.omitted_after > 0 {
         output.push_str(&format!(
             "\n  {} {}",
             summary_bullet(),
             stylize_inline_text(&format!(
-                "showing last {max_lines} of {} lines; rerun `{}` for live output",
-                omitted + excerpt.len(),
+                "{}; rerun `{}` for live output",
+                output_excerpt_notice(&excerpt),
                 repo_run_stream_command(task_name, member)
             ))
         ));
     }
-    for line in excerpt {
-        output.push_str(&format!("\n  {} {}", summary_bullet(), line));
+    for line in excerpt.lines {
+        output.push_str(&format!(
+            "\n  {} {}",
+            summary_bullet(),
+            stylize_inline_text(&line)
+        ));
     }
     Some(output)
 }
 
-fn run_output_excerpt(
-    stdout: &str,
-    stderr: &str,
-    max_lines: usize,
-) -> Option<(Vec<String>, usize)> {
+struct OutputExcerpt {
+    lines: Vec<String>,
+    total: usize,
+    shown: usize,
+    omitted_before: usize,
+    omitted_after: usize,
+}
+
+fn run_output_excerpt(stdout: &str, stderr: &str, max_lines: usize) -> Option<OutputExcerpt> {
     let mut lines = Vec::new();
     for source in [stdout, stderr] {
         let normalized = source.replace("\r\n", "\n");
-        for line in normalized.lines().map(str::trim_end) {
-            if !line.trim().is_empty() {
-                lines.push(stylize_inline_text(line));
+        for line in normalized.lines().map(str::trim) {
+            if !line.is_empty() {
+                lines.push(line.to_string());
             }
         }
     }
@@ -13249,12 +13391,72 @@ fn run_output_excerpt(
     }
 
     let total = lines.len();
-    let excerpt = if total > max_lines {
-        lines.split_off(total - max_lines)
+    let (start, end) = choose_output_excerpt_window(&lines, max_lines);
+    let excerpt_lines = lines[start..end]
+        .iter()
+        .flat_map(|line| wrap_display_tokens_for_terminal(line, 96, 14))
+        .collect::<Vec<_>>();
+
+    Some(OutputExcerpt {
+        lines: excerpt_lines,
+        total,
+        shown: end.saturating_sub(start),
+        omitted_before: start,
+        omitted_after: total.saturating_sub(end),
+    })
+}
+
+fn choose_output_excerpt_window(lines: &[String], max_lines: usize) -> (usize, usize) {
+    if lines.len() <= max_lines {
+        return (0, lines.len());
+    }
+
+    if let Some(index) = lines
+        .iter()
+        .enumerate()
+        .rev()
+        .max_by_key(|(_, line)| output_excerpt_relevance_score(line))
+        .filter(|(_, line)| output_excerpt_relevance_score(line) > 0)
+        .map(|(index, _)| index)
+    {
+        let desired = max_lines.saturating_sub(1);
+        let mut start = index.saturating_sub(desired.saturating_sub(4));
+        let end = (start + max_lines).min(lines.len());
+        if end - start < max_lines {
+            start = end.saturating_sub(max_lines);
+        }
+        return (start, end);
+    }
+
+    (lines.len().saturating_sub(max_lines), lines.len())
+}
+
+fn output_excerpt_relevance_score(line: &str) -> usize {
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("panic") || lower.contains("thread '") {
+        5
+    } else if lower.contains("error:") || lower.contains("failed") {
+        4
+    } else if lower.contains("not found") || lower.contains("exit code") {
+        3
+    } else if lower.contains("warning:") {
+        1
     } else {
-        lines
-    };
-    Some((excerpt, total.saturating_sub(max_lines)))
+        0
+    }
+}
+
+fn output_excerpt_notice(excerpt: &OutputExcerpt) -> String {
+    if excerpt.omitted_before > 0 && excerpt.omitted_after == 0 {
+        return format!("showing last {} of {} lines", excerpt.shown, excerpt.total);
+    }
+    if excerpt.omitted_before == 0 && excerpt.omitted_after > 0 {
+        return format!("showing first {} of {} lines", excerpt.shown, excerpt.total);
+    }
+    format!(
+        "showing {} of {} lines around the most relevant output",
+        excerpt.shown, excerpt.total
+    )
 }
 
 fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
@@ -14211,8 +14413,22 @@ fn append_output_block(buffer: &mut String, label: &str, contents: Option<&str>)
     }
 
     buffer.push_str(&format!("\n  {} ", paint_key(&format!("{label}:"))));
-    for line in contents.lines() {
-        buffer.push_str(&format!("\n    {line}"));
+    let Some(excerpt) = run_output_excerpt(contents, "", 14) else {
+        return;
+    };
+    if excerpt.omitted_before > 0 || excerpt.omitted_after > 0 {
+        buffer.push_str(&format!(
+            "\n    {} {}",
+            summary_bullet(),
+            stylize_inline_text(&output_excerpt_notice(&excerpt))
+        ));
+    }
+    for line in excerpt.lines {
+        buffer.push_str(&format!(
+            "\n    {} {}",
+            summary_bullet(),
+            stylize_inline_text(&line)
+        ));
     }
 }
 

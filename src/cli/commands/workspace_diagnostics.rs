@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use super::*;
+use crate::cli::commands::workspace_output::render_workspace_repo_findings_text;
 
 pub(crate) fn apply_workspace_doctor_filters(
     report: crate::workspace::WorkspaceDoctorReport,
@@ -82,6 +83,9 @@ pub(crate) fn render_workspace_doctor_text(
         render_readiness_status(report.ok)
     );
     if let Some(primary_blocker) = summary.primary_blocker.as_ref() {
+        if !stdout.ends_with("\n\n") {
+            stdout.push_str("\n\n");
+        }
         stdout.push_str(&render_primary_finding_text(
             primary_blocker.severity,
             &format!(
@@ -92,6 +96,12 @@ pub(crate) fn render_workspace_doctor_text(
             &primary_blocker.why,
             &primary_blocker.next,
         ));
+    }
+    if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {
+        stdout.push_str(&format_next_timeline(&[
+            String::from("run `ota workspace up` to prepare the workspace end to end"),
+            String::from("run `ota workspace tasks` to inspect runnable workspace tasks"),
+        ]));
     }
 
     for repo in &report.repos {
@@ -126,30 +136,7 @@ pub(crate) fn render_workspace_doctor_text(
         if !repo.extensions.is_empty() {
             stdout.push_str(&render_extensions_text(&repo.extensions));
         }
-
-        for finding in &repo.findings {
-            let next = compact_backticked_paths(&finding.next);
-            if concise_mode() {
-                stdout.push_str(&format!(
-                    "\n\n{}  {}\n{} {}",
-                    render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
-                ));
-            } else {
-                let why = compact_backticked_paths(&finding.why);
-                stdout.push_str(&format!(
-                    "\n\n{}  {}\n{} {}\n{} {}",
-                    render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
-                    finding_detail_key(finding.severity, "Why:"),
-                    why,
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
-                ));
-            }
-        }
+        stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
     }
     stdout.push_str(&render_workspace_summary_text(&summary));
 
@@ -225,20 +212,23 @@ pub(crate) fn render_check_summary_text(summary: &DoctorSummary) -> String {
         render_doctor_verdict(summary.agent_verdict)
     ));
     stdout.push_str("\n\n");
-    stdout.push_str(&format!("{}\n", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!("{}\n", paint_section_title("Overview")));
     stdout.push_str(&format!(
-        "{} {}",
-        paint("Errors:", "1;38;2;255;255;255"),
+        "{} {} {}",
+        summary_bullet(),
+        paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;31")
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
-        paint("Warnings:", "1;38;2;255;255;255"),
+        "\n{} {} {}",
+        summary_bullet(),
+        paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;33")
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
-        paint("Info:", "1;38;2;255;255;255"),
+        "\n{} {} {}",
+        summary_bullet(),
+        paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;36")
     ));
     stdout
@@ -260,40 +250,40 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
         render_doctor_verdict(summary.agent_verdict)
     ));
     stdout.push_str("\n\n");
-    stdout.push_str(&format!("{}\n", paint_section_title("SUMMARY")));
+    stdout.push_str(&format!("{}\n", paint_section_title("Overview")));
     stdout.push_str(&format!(
         "{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Ready:", "1;38;2;0;255;120"),
         paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Not Ready:", "1;38;2;255;235;59"),
         paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -302,46 +292,46 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
 
 fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Repos:", "1;38;2;102;217;255"),
         paint(&summary.repo_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Ready:", "1;38;2;0;255;120"),
         paint(&summary.ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Not Ready:", "1;38;2;255;235;59"),
         paint(&summary.not_ready_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Warnings:", "1;33"),
         paint(&summary.warn_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout.push_str(&format!(
         "\n{} {} {}",
-        paint("»", "1;38;2;255;214;79"),
+        summary_bullet(),
         paint("Steps:", "1;38;2;102;217;255"),
         paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -357,6 +347,12 @@ pub(crate) fn render_workspace_check_text(
         format_command_header("WORKSPACE CHECK", path),
         render_readiness_status(report.ok)
     );
+    if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {
+        stdout.push_str(&format_next_timeline(&[
+            String::from("run `ota workspace up` to prepare the workspace end to end"),
+            String::from("run `ota workspace tasks` to inspect runnable workspace tasks"),
+        ]));
+    }
 
     for repo in &report.repos {
         stdout.push_str(&format!(
@@ -388,29 +384,7 @@ pub(crate) fn render_workspace_check_text(
         if !repo.extensions.is_empty() {
             stdout.push_str(&render_extensions_text(&repo.extensions));
         }
-        for finding in &repo.findings {
-            let next = compact_backticked_paths(&finding.next);
-            if concise_mode() {
-                stdout.push_str(&format!(
-                    "\n\n{}  {}\n{} {}",
-                    render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
-                ));
-            } else {
-                let why = compact_backticked_paths(&finding.why);
-                stdout.push_str(&format!(
-                    "\n\n{}  {}\n{} {}\n{} {}",
-                    render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
-                    finding_detail_key(finding.severity, "Why:"),
-                    why,
-                    finding_detail_key(finding.severity, "Next:"),
-                    next
-                ));
-            }
-        }
+        stdout.push_str(&render_workspace_repo_findings_text(&repo.findings));
     }
     stdout.push_str(&render_workspace_summary_text(&workspace_doctor_summary(
         report,

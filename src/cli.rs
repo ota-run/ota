@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota policy\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up",
+    after_help = "\nExamples:\n  ota doctor\n  ota explain\n  ota init --dry-run\n  ota detect --dry-run .\n  ota up\n  ota run ci",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -856,14 +856,14 @@ fn run_command_value_span(flag: &str) -> Option<usize> {
     if let Some((name, _)) = flag.split_once('=') {
         return match name {
             "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(1),
-            "--receipt" | "--json" | "--stream" => Some(1),
+            "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" => Some(1),
             _ => None,
         };
     }
 
     match flag {
         "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(2),
-        "--receipt" | "--json" | "--stream" => Some(1),
+        "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" => Some(1),
         _ => None,
     }
 }
@@ -2810,8 +2810,8 @@ project:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("WORKSPACE EXPLAIN"));
-        assert!(stdout.contains("SUMMARY"));
-        assert!(stdout.contains("Steps"));
+        assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Plan"));
         assert!(stdout.contains("Code:"));
         assert!(stdout.contains("api"));
         assert!(stdout.contains("web"));
@@ -4667,7 +4667,9 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("`execution.backends.remote.provider` `unknown` is not supported"));
+        assert!(stderr.contains(
+            "INVALID ota.yaml | - `execution.backends.remote.provider` `unknown` is not supported"
+        ));
         assert!(stderr.contains(
             "declare a matching `backend_provider` extension or use a built-in provider"
         ));
@@ -8062,11 +8064,11 @@ checks:
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Check failed: api-health"));
-        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Overview"));
         assert!(stdout.contains("Errors:"));
         assert!(stdout.contains("Warnings:"));
         assert!(stdout.contains("Info:"));
-        assert!(stdout.rfind("SUMMARY") > stdout.rfind("Check failed: api-health"));
+        assert!(stdout.rfind("Overview") > stdout.rfind("Check failed: api-health"));
         assert!(stdout.contains("\n\n"));
     }
 
@@ -11625,6 +11627,8 @@ tasks:
         assert!(stdout.contains("WORKSPACE VALIDATE"));
         assert!(stdout.contains("VALID"));
         assert!(stdout.contains("WORKSPACE VALIDATE ./ota.workspace.yaml"));
+        assert!(stdout.contains("run `ota workspace doctor` to inspect readiness"));
+        assert!(stdout.contains("run `ota workspace tasks` to inspect runnable task usage"));
     }
 
     #[test]
@@ -11881,14 +11885,14 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Execution"));
-        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Overview"));
         assert!(stdout.contains("»"));
         assert!(stdout.contains("Repos: 2"));
         assert!(stdout.contains("Ready: 2"));
         assert!(stdout.contains("Preferred: remote"));
         assert!(stdout.contains("Remote Provider: ssh"));
         assert!(stdout.contains("Remote Target: user@host"));
-        assert!(stdout.rfind("SUMMARY") > stdout.rfind("Preferred: remote"));
+        assert!(stdout.rfind("Overview") > stdout.rfind("Preferred: remote"));
     }
 
     #[test]
@@ -11952,7 +11956,7 @@ checks:
         let body = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(body.contains("SUMMARY"));
+        assert!(body.contains("Overview"));
         assert!(body.contains("»"));
         assert!(body.contains("Repos:"));
         assert!(body.contains("Errors:"));

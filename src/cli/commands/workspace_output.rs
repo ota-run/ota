@@ -357,7 +357,8 @@ mod tests {
         assert_eq!(text.matches("Next:").count(), 2);
         assert!(text.contains("» Policy-backed provisioning sources are declared"));
         assert!(text.contains("» Adapter bootstrap sources are declared"));
-        assert!(text.contains("Task output: \n    sh: 1: sdk: not found"));
+        assert!(text.contains("Task output:"));
+        assert!(text.contains("» sh: 1: sdk: not found"));
     }
 
     #[test]
@@ -437,22 +438,47 @@ mod tests {
     }
 }
 
-fn render_workspace_repo_findings_text(findings: &[Finding]) -> String {
+pub(crate) fn render_workspace_repo_findings_text(findings: &[Finding]) -> String {
     let mut stdout = String::new();
     for group in group_doctor_findings(findings.iter()) {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
-            let why = compact_backticked_paths(&finding.why);
             let next = compact_backticked_paths(&finding.next);
-            stdout.push_str(&format!(
-                "\n\n{}  {}\n{} {}\n{} {}",
-                render_severity(finding.severity),
-                render_finding_summary(finding.severity, &finding.summary),
-                finding_detail_key(finding.severity, "Why:"),
-                why,
-                finding_detail_key(finding.severity, "Next:"),
-                next
-            ));
+            let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
+                format!(
+                    "{} {}",
+                    finding_detail_key(finding.severity, "Source:"),
+                    value
+                )
+            });
+            let source_block = source_line
+                .as_ref()
+                .map(|value| format!("\n{}", value))
+                .unwrap_or_default();
+            if concise_mode() {
+                stdout.push_str("\n\n");
+                stdout.push_str(&format!(
+                    "{}  {}{}\n{} {}",
+                    render_severity(finding.severity),
+                    render_finding_summary(finding.severity, &finding.summary),
+                    source_block,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            } else {
+                let why = compact_backticked_paths(&finding.why);
+                stdout.push_str("\n\n");
+                stdout.push_str(&format!(
+                    "{}  {}\n{} {}{}\n{} {}",
+                    render_severity(finding.severity),
+                    render_finding_summary(finding.severity, &finding.summary),
+                    finding_detail_key(finding.severity, "Why:"),
+                    why,
+                    source_block,
+                    finding_detail_key(finding.severity, "Next:"),
+                    next
+                ));
+            }
             continue;
         }
 
@@ -795,7 +821,7 @@ pub(crate) fn render_workspace_run(
             stdout.push_str(&render_execution_receipt_summary_block(
                 &report.receipt,
                 Some(task),
-                "RUN SUMMARY",
+                "WORKSPACE RUN SUMMARY",
             ));
 
             CommandOutput {
