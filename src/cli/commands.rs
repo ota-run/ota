@@ -57,13 +57,13 @@ use crate::output::{
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
     ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
     UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3735,6 +3735,7 @@ pub fn detect(
     path: Option<&Path>,
     write: bool,
     dry_run: bool,
+    contract: bool,
     merge: bool,
     apply: &[String],
     apply_all: bool,
@@ -3752,12 +3753,15 @@ pub fn detect(
         format!("DEBUG contract_path={path_display}"),
         format!("DEBUG write={write}"),
         format!("DEBUG dry_run={dry_run}"),
+        format!("DEBUG contract={contract}"),
         format!("DEBUG merge={merge}"),
         format!("DEBUG apply={}", apply.join(",")),
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
     ];
-    let dry_run = if merge || rewrite {
+    let dry_run = if contract {
+        true
+    } else if merge || rewrite {
         dry_run
     } else {
         dry_run || !write
@@ -3863,6 +3867,16 @@ pub fn detect(
         match detect_repo(&root) {
             Ok(report) if dry_run => {
                 let compact_root_display = compact_repo_path(&report.root);
+                if contract {
+                    return match format {
+                        OutputFormat::Text => {
+                            render_detect_contract_preview(&report, &contract_path)
+                        }
+                        OutputFormat::Json => CommandOutput::failure(String::from(
+                            "`ota detect --contract` is only supported with text output",
+                        )),
+                    };
+                }
                 let comparison = compare_detected_contract(&contract_path, &report.contract);
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
                 let comparison =
@@ -3945,6 +3959,30 @@ pub fn detect(
         debug,
         debug_lines,
     )
+}
+
+fn render_detect_contract_preview(
+    report: &crate::detector::DetectReport,
+    contract_path: &Path,
+) -> CommandOutput {
+    let compact_root_display = compact_repo_path(&report.root);
+    let bootstrap_contract = bootstrap_init_contract(report);
+    let review_yaml = serde_yaml::to_string(&bootstrap_contract)
+        .expect("serializing detected starter contract should not fail");
+
+    if let Err(error) = parse_contract_str(contract_path, &review_yaml)
+        .map_err(|error| error.to_string())
+        .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
+    {
+        return CommandOutput::failure(error);
+    }
+
+    let mut stdout = format_command_header("DETECT CONTRACT PREVIEW", &compact_root_display);
+    stdout.push_str(&format!(
+        "\n\n{}",
+        stylize_yaml_preview(review_yaml.trim_end())
+    ));
+    CommandOutput::success(stdout)
 }
 
 pub fn workspace_validate(
@@ -7182,7 +7220,7 @@ fn render_detect_removals_section(stdout: &mut String, removals: &[DetectCompari
                 "\n\n{}  {} {}",
                 list_bullet(),
                 paint("Task", "1"),
-                stylize_inline_text(&format!("`{task_name}`"))
+                paint_task_name_code(&task_name)
             ));
             for entry in entries {
                 stdout.push_str(&format!(
@@ -7200,7 +7238,12 @@ fn render_detect_removals_section(stdout: &mut String, removals: &[DetectCompari
             list_bullet(),
             paint(&removal.field, "1;38;2;255;214;79")
         ));
-        for value in removal.existing.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        for value in removal
+            .existing
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
             stdout.push_str(&format!(
                 "\n  {} {}",
                 summary_bullet(),
@@ -12890,6 +12933,13 @@ fn paint_code(value: &str) -> String {
         return paint_ota_command_code(value);
     }
     paint(value, "1;37")
+}
+
+fn paint_task_name_code(value: &str) -> String {
+    if plain_mode() {
+        return format!("`{value}`");
+    }
+    format!("`{}`", paint(value, "1;38;2;255;214;79"))
 }
 
 fn paint_ota_command_code(value: &str) -> String {

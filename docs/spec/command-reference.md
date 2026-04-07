@@ -872,6 +872,7 @@ Infer a starting contract from repo state.
 ```bash
 ota detect --dry-run [PATH]
 ota detect --json --dry-run [PATH]
+ota detect --contract [PATH]
 ota detect --write [PATH]
 ota detect --json --write [PATH]
 ota detect --merge --dry-run [PATH]
@@ -944,6 +945,12 @@ Dry-run behavior:
 - prints per-field confidence
 - when `ota.yaml` already exists, prints a non-destructive comparison preview for detected fields
 - does not write anything
+
+Contract preview behavior:
+
+- `ota detect --contract` prints the exact starter contract that `ota init` would write
+- `ota detect --contract` omits annotations and comparison output
+- `ota detect --contract` is text output only
 
 Current write behavior:
 
