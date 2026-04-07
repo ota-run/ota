@@ -10614,10 +10614,7 @@ tasks:
 
         let validate = run_with(["ota", "workspace", "validate", "--json", fixture.path()]);
         assert_eq!(validate.exit_code, 1);
-        assert_json_top_level_keys(
-            &validate,
-            &["errors", "ok", "path", "summary"],
-        );
+        assert_json_top_level_keys(&validate, &["errors", "ok", "path", "summary"]);
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
@@ -10643,10 +10640,7 @@ tasks:
 
         let up = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
         assert_eq!(up.exit_code, 1);
-        assert_json_top_level_keys(
-            &up,
-            &["ok", "path", "receipt", "repos", "summary"],
-        );
+        assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
     #[cfg(unix)]
