@@ -137,7 +137,14 @@ Success:
     "safe_tasks": ["setup", "test"],
     "verify_after_changes": ["test"],
     "writable_paths": ["src", "docs"],
-    "protected_paths": ["Cargo.lock", "LICENSE"]
+    "protected_paths": ["Cargo.lock", "LICENSE"],
+    "bootstrap": {
+      "ota": {
+        "note": "Only install ota if it is missing and installation is approved.",
+        "sh": "curl -fsSL https://dist.ota.run/install.sh | sh",
+        "powershell": "irm https://dist.ota.run/install.ps1 | iex"
+      }
+    }
   },
   "tasks": [
     {
@@ -207,7 +214,14 @@ Root monorepo summary output can also include grouped member results:
   },
   "agent": {
     "entrypoint": "setup",
-    "verify_after_changes": ["test"]
+    "verify_after_changes": ["test"],
+    "bootstrap": {
+      "ota": {
+        "note": "Only install ota if it is missing and installation is approved.",
+        "sh": "curl -fsSL https://dist.ota.run/install.sh | sh",
+        "powershell": "irm https://dist.ota.run/install.ps1 | iex"
+      }
+    }
   },
   "provisioning": {
     "allowed": [

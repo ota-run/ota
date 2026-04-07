@@ -773,6 +773,39 @@ fn validate_agent(
         }
     }
 
+    if let Some(bootstrap) = agent.bootstrap.as_ref() {
+        if let Some(ota) = bootstrap.ota.as_ref() {
+            let sh = ota
+                .sh
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let powershell = ota
+                .powershell
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+
+            if sh.is_none() && powershell.is_none() {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota` must declare `sh` or `powershell`",
+                ));
+            }
+
+            if let Some(note) = ota.note.as_deref()
+                && note.trim().is_empty()
+            {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.note` must not be empty",
+                ));
+            }
+        } else {
+            errors.push(ValidationError::new(
+                "`agent.bootstrap` must declare an `ota` entry when present",
+            ));
+        }
+    }
+
     for task in tasks.values() {
         for name in task.env.keys() {
             if name.trim().is_empty() {

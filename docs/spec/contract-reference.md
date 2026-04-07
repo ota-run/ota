@@ -751,6 +751,11 @@ agent:
   protected_paths:
     - Cargo.lock
     - LICENSE
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
   notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
 
@@ -762,6 +767,7 @@ Current validation rules:
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty
 - `protected_paths` entries must not be empty
+- `bootstrap.ota` must include at least one install command when present
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 
@@ -770,7 +776,9 @@ confidence to write one. The block is stored under `agent`, and it gives an AI a
 paths and tasks it should use first. That default usually includes `setup` as the entrypoint when
 present, `test` as the verification task when present, `test` in `verify_after_changes` when
 present, `ota.yaml` in `protected_paths`, and a short note pointing at the matching
-`ota run <task>` command.
+`ota run <task>` command. When `ota` itself should be installable by an agent, the starter block
+can also include an approved `bootstrap.ota` entry with the shell and PowerShell install
+commands.
 
 Agent semantics:
 
@@ -780,6 +788,9 @@ Agent semantics:
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
 - `protected_paths` are the paths an AI agent should avoid editing casually
+- `bootstrap.ota` provides an approved `ota` install path for agents when the binary is missing
+- `bootstrap.ota.note` should explain when that install path may be used
+- `bootstrap.ota.sh` and `bootstrap.ota.powershell` should give the approved shell and PowerShell install commands
 - `notes` is free-form repo guidance for humans and AI agents
 - `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
 

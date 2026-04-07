@@ -426,6 +426,24 @@ pub enum CheckSeverity {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct AgentBootstrapTargetConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sh: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub powershell: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentBootstrapConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ota: Option<AgentBootstrapTargetConfig>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
@@ -439,6 +457,8 @@ pub struct AgentConfig {
     pub writable_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protected_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<AgentBootstrapConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 }

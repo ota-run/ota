@@ -81,7 +81,10 @@ use crate::runner::{
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{AgentConfig, Backend, Contract, ExtensionSpec, TaskSpec};
+use crate::schema::{
+    AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, Backend, Contract,
+    ExtensionSpec, TaskSpec,
+};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -6953,8 +6956,26 @@ fn apply_starter_contract_defaults(contract: &mut crate::detector::DetectContrac
     {
         contract.project = Some(DetectProject { name });
     }
-    if contract.agent.is_none() {
+    if let Some(agent) = contract.agent.as_mut() {
+        if agent.bootstrap.is_none() {
+            agent.bootstrap = Some(starter_agent_bootstrap());
+        }
+    } else {
         contract.agent = starter_agent_from_detected_contract(contract, root);
+    }
+}
+
+fn starter_agent_bootstrap() -> AgentBootstrapConfig {
+    AgentBootstrapConfig {
+        ota: Some(AgentBootstrapTargetConfig {
+            note: Some(String::from(
+                "Only install ota if it is missing and installation is approved.",
+            )),
+            sh: Some(String::from(
+                "curl -fsSL https://dist.ota.run/install.sh | sh",
+            )),
+            powershell: Some(String::from("irm https://dist.ota.run/install.ps1 | iex")),
+        }),
     }
 }
 
@@ -7010,6 +7031,7 @@ fn starter_agent_from_detected_contract(
         verify_after_changes,
         writable_paths,
         protected_paths: vec![String::from("ota.yaml")],
+        bootstrap: Some(starter_agent_bootstrap()),
         notes: Some(notes),
     })
 }
@@ -8999,6 +9021,30 @@ fn render_agents_markdown(
             );
             output.push('\n');
         }
+        if let Some(bootstrap) = agent.bootstrap.as_ref()
+            && let Some(ota) = bootstrap.ota.as_ref()
+        {
+            output.push_str("\n## Bootstrap\n\n");
+            if let Some(note) = ota.note {
+                output.push_str(note);
+                output.push('\n');
+                output.push('\n');
+            } else {
+                output.push_str(
+                    "Only install `ota` if it is missing and installation is approved.\n\n",
+                );
+            }
+            if let Some(sh) = ota.sh {
+                output.push_str("- `sh`: `");
+                output.push_str(sh);
+                output.push_str("`\n");
+            }
+            if let Some(powershell) = ota.powershell {
+                output.push_str("- `powershell`: `");
+                output.push_str(powershell);
+                output.push_str("`\n");
+            }
+        }
         if let Some(notes) = agent.notes {
             if !notes.trim().is_empty() {
                 output.push_str("\n## Notes\n\n");
@@ -9094,6 +9140,21 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
             "  protected_paths: {}",
             agent.protected_paths.join(", ")
         ));
+    }
+    if let Some(bootstrap) = agent.bootstrap.as_ref()
+        && let Some(ota) = bootstrap.ota.as_ref()
+    {
+        lines.push(String::from("  bootstrap:"));
+        lines.push(String::from("    ota:"));
+        if let Some(note) = ota.note {
+            lines.push(format!("      note: {note}"));
+        }
+        if let Some(sh) = ota.sh {
+            lines.push(format!("      sh: {sh}"));
+        }
+        if let Some(powershell) = ota.powershell {
+            lines.push(format!("      powershell: {powershell}"));
+        }
     }
     if include_notes && let Some(notes) = agent.notes {
         if !notes.trim().is_empty() {
