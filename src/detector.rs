@@ -256,6 +256,7 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_bash_markers(&root, &mut builder)?;
     detect_powershell_markers(&root, &mut builder)?;
     detect_deno_markers(&root, &mut builder)?;
+    detect_release_script(&root, &mut builder)?;
     detect_compose_services(&root, &mut builder)?;
     detect_directory_name(&root, &mut builder);
 
@@ -1177,6 +1178,17 @@ fn detect_pom_xml(root: &Path, builder: &mut DetectBuilder) -> Result<(), Detect
         .unwrap_or("pom.xml");
     let task_confidence = Confidence::High;
 
+    let setup_command = if root.join("mvnw").exists() {
+        "./mvnw -q -DskipTests dependency:go-offline"
+    } else {
+        "mvn -q -DskipTests dependency:go-offline"
+    };
+    builder.set_task(
+        "setup".to_string(),
+        setup_command.to_string(),
+        task_source.to_string(),
+        Confidence::Medium,
+    );
     builder.set_task(
         "build".to_string(),
         build_command.to_string(),
@@ -1220,60 +1232,49 @@ fn detect_ruby_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
 }
 
 fn detect_dotnet_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
-    let mut has_dotnet = false;
-    let mut project_name = None;
-
-    for entry in fs::read_dir(root).map_err(|source| DetectError::Read {
-        path: root.display().to_string(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| DetectError::Read {
-            path: root.display().to_string(),
-            source,
-        })?;
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-
-        if name.ends_with(".sln") || name.ends_with(".csproj") || name.ends_with(".fsproj") {
-            has_dotnet = true;
-            if project_name.is_none() {
-                project_name = path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .map(ToString::to_string);
-            }
-        }
-    }
-
-    if !has_dotnet {
+    let mut candidates = find_files_with_extensions(root, &["sln", "csproj"], 4)?;
+    if candidates.is_empty() {
         return Ok(());
     }
+    candidates.sort_by_key(|path| dotnet_project_sort_key(root, path));
+    let project_path = candidates
+        .first()
+        .expect("dotnet candidates should not be empty");
+    let source = relative_detect_source(root, project_path);
+    let project_name = project_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(ToString::to_string);
 
     builder.set_tool(
         "dotnet".to_string(),
         "*".to_string(),
-        "dotnet-project".to_string(),
+        source.clone(),
         Confidence::High,
     );
 
     if let Some(name) = project_name
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name, "dotnet-project".to_string(), Confidence::Medium);
+        builder.set_project_name(name, source.clone(), Confidence::Medium);
     }
 
     builder.set_task(
+        "setup".to_string(),
+        "dotnet restore".to_string(),
+        source.clone(),
+        Confidence::Medium,
+    );
+    builder.set_task(
         "build".to_string(),
         "dotnet build".to_string(),
-        "dotnet-project".to_string(),
+        source.clone(),
         Confidence::Medium,
     );
     builder.set_task(
         "test".to_string(),
         "dotnet test".to_string(),
-        "dotnet-project".to_string(),
+        source,
         Confidence::Medium,
     );
 
@@ -2979,6 +2980,12 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
     };
 
     let file_name = path.file_name().unwrap().to_string_lossy();
+    builder.set_tool(
+        "docker".to_string(),
+        "*".to_string(),
+        file_name.to_string(),
+        Confidence::High,
+    );
     for service_name in services.keys().filter_map(YamlValue::as_str) {
         builder.set_service_provider(
             service_name.to_string(),
@@ -3001,7 +3008,7 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
 
         if let Some(command) = services
             .get(YamlValue::String(service_name.to_string()))
-            .and_then(extract_compose_healthcheck_command)
+            .and_then(|service| extract_compose_healthcheck_command(service_name, service))
         {
             builder.set_service_healthcheck(
                 service_name.to_string(),
@@ -3015,14 +3022,14 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
     Ok(())
 }
 
-fn extract_compose_healthcheck_command(service: &YamlValue) -> Option<String> {
+fn extract_compose_healthcheck_command(service_name: &str, service: &YamlValue) -> Option<String> {
     let test = service
         .as_mapping()?
         .get(YamlValue::String(String::from("healthcheck")))?
         .as_mapping()?
         .get(YamlValue::String(String::from("test")))?;
 
-    match test {
+    let command = match test {
         YamlValue::String(command) => {
             let command = command.trim();
             if command.is_empty() {
@@ -3077,7 +3084,12 @@ fn extract_compose_healthcheck_command(service: &YamlValue) -> Option<String> {
             }
         }
         _ => None,
-    }
+    }?;
+
+    Some(format!(
+        "docker compose exec -T {service_name} sh -lc {}",
+        shell_single_quote(&command)
+    ))
 }
 
 fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
@@ -3426,6 +3438,132 @@ fn find_extension_file(root: &Path, extension: &str) -> Result<Option<PathBuf>, 
         }
     }
     Ok(None)
+}
+
+fn find_files_with_extensions(
+    root: &Path,
+    extensions: &[&str],
+    max_depth: usize,
+) -> Result<Vec<PathBuf>, DetectError> {
+    let mut matches = Vec::new();
+    collect_files_with_extensions(root, root, extensions, max_depth, &mut matches)?;
+    Ok(matches)
+}
+
+fn collect_files_with_extensions(
+    root: &Path,
+    directory: &Path,
+    extensions: &[&str],
+    depth: usize,
+    matches: &mut Vec<PathBuf>,
+) -> Result<(), DetectError> {
+    for entry in fs::read_dir(directory).map_err(|source| DetectError::Read {
+        path: directory.display().to_string(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| DetectError::Read {
+            path: directory.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|source| DetectError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+
+        if file_type.is_dir() {
+            if depth == 0 {
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(should_skip_detect_dir)
+            {
+                continue;
+            }
+            collect_files_with_extensions(root, &path, extensions, depth - 1, matches)?;
+            continue;
+        }
+
+        if file_type.is_file()
+            && path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    extensions
+                        .iter()
+                        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+                })
+        {
+            matches.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+        }
+    }
+
+    Ok(())
+}
+
+fn should_skip_detect_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "target" | "dist" | "build" | "vendor" | "bin" | "obj"
+        )
+}
+
+fn relative_detect_source(root: &Path, relative_path: &Path) -> String {
+    root.join(relative_path)
+        .strip_prefix(root)
+        .unwrap_or(relative_path)
+        .display()
+        .to_string()
+}
+
+fn dotnet_project_sort_key(root: &Path, relative_path: &Path) -> (usize, usize, String) {
+    let path = root.join(relative_path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let is_solution = file_name.ends_with(".sln");
+    let is_test_project = stem.ends_with(".Tests")
+        || stem.ends_with("Tests")
+        || relative_path
+            .components()
+            .any(|component| component.as_os_str() == "tests");
+
+    (
+        usize::from(!is_solution),
+        usize::from(is_test_project),
+        relative_path.display().to_string(),
+    )
+}
+
+fn detect_release_script(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let shell_path = root.join("scripts/release.sh");
+    if !shell_path.exists() {
+        return Ok(());
+    }
+
+    let shell_source = String::from("scripts/release.sh");
+    let run = String::from("./scripts/release.sh");
+    let confidence = if root.join("scripts/release.ps1").exists() {
+        Confidence::Low
+    } else {
+        Confidence::Medium
+    };
+    builder.set_task("release".to_string(), run, shell_source, confidence);
+
+    Ok(())
+}
+
+fn shell_single_quote(command: &str) -> String {
+    let escaped = command.replace('\'', r"'\''");
+    format!("'{}'", escaped)
 }
 
 fn extract_xml_tag(contents: &str, tag: &str) -> Option<String> {
@@ -4121,10 +4259,80 @@ gem "rails"
             report
                 .contract
                 .tasks
+                .get("setup")
+                .map(|task| task.run.as_str()),
+            Some("dotnet restore")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
                 .get("build")
                 .map(|task| task.run.as_str()),
             Some("dotnet build")
         );
+    }
+
+    #[test]
+    fn detects_nested_dotnet_projects() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "global.json",
+            r#"{
+  "sdk": {
+    "version": "8.0.203"
+  }
+}"#,
+        );
+        fixture.write(
+            "src/WindowsAdoptionFlow/WindowsAdoptionFlow.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+        fixture.write(
+            "tests/WindowsAdoptionFlow.Tests/WindowsAdoptionFlow.Tests.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("WindowsAdoptionFlow")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("setup")
+                .map(|task| task.run.as_str()),
+            Some("dotnet restore")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.safe_for_agent),
+            Some(true)
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tools.dotnet"
+                && inference.source == "src/WindowsAdoptionFlow/WindowsAdoptionFlow.csproj"
+                && inference.confidence == Confidence::High
+        }));
     }
 
     #[test]
@@ -5318,6 +5526,14 @@ channel = "1.85.0"
             report
                 .contract
                 .tasks
+                .get("setup")
+                .map(|task| task.run.as_str()),
+            Some("mvn -q -DskipTests dependency:go-offline")
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
                 .get("test")
                 .map(|task| task.run.as_str()),
             Some("mvn test")
@@ -5385,6 +5601,14 @@ channel = "1.85.0"
         assert_eq!(
             report.contract.tools.get("maven"),
             Some(&"3.9.9".to_string())
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("setup")
+                .map(|task| task.run.as_str()),
+            Some("./mvnw -q -DskipTests dependency:go-offline")
         );
         assert_eq!(
             report
@@ -5475,6 +5699,7 @@ channel = "1.85.0"
 
         let report = detect_repo(fixture.path()).unwrap();
 
+        assert_eq!(report.contract.tools.get("docker"), Some(&"*".to_string()));
         assert_eq!(
             report
                 .contract
@@ -5532,7 +5757,7 @@ channel = "1.85.0"
                 .services
                 .get("db")
                 .and_then(|service| service.healthcheck.as_deref()),
-            Some("pg_isready -h localhost -p 5432")
+            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
         );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
@@ -5646,7 +5871,7 @@ channel = "1.85.0"
                 .services
                 .get("db")
                 .and_then(|service| service.healthcheck.as_deref()),
-            Some("pg_isready -h localhost -p 5432")
+            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
         );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
@@ -5676,7 +5901,7 @@ channel = "1.85.0"
                 .services
                 .get("db")
                 .and_then(|service| service.healthcheck.as_deref()),
-            Some("pg_isready -h localhost -p 5432")
+            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
         );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
@@ -5696,6 +5921,49 @@ channel = "1.85.0"
         assert_eq!(
             report.contract.runtimes.get("node"),
             Some(&"22".to_string())
+        );
+    }
+
+    #[test]
+    fn detects_release_script_as_medium_confidence_task() {
+        let fixture = Fixture::new();
+        fixture.write("scripts/release.sh", "#!/bin/sh\necho release\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("release")
+                .map(|task| task.run.as_str()),
+            Some("./scripts/release.sh")
+        );
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.release.run"
+                && inference.source == "scripts/release.sh"
+                && inference.confidence == Confidence::Medium
+        }));
+    }
+
+    #[test]
+    fn detects_release_script_as_low_confidence_when_powershell_variant_exists() {
+        let fixture = Fixture::new();
+        fixture.write("scripts/release.sh", "#!/bin/sh\necho release\n");
+        fixture.write("scripts/release.ps1", "Write-Host release\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "tasks.release.run"
+                && inference.source == "scripts/release.sh"
+                && inference.confidence == Confidence::Low
+        }));
+        assert!(
+            !report
+                .contract_with_min_confidence(Confidence::Medium)
+                .tasks
+                .contains_key("release")
         );
     }
 

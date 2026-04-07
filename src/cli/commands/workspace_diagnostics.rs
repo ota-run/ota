@@ -182,14 +182,18 @@ pub(crate) fn render_workspace_explain_text(
             ));
         }
 
-        let steps = explain_steps(&repo.findings);
         stdout.push_str(&render_explain_steps_text(
-            &steps,
+            &repo.findings,
             Path::new(&repo.contract_path),
         ));
     }
     stdout.push_str(&render_workspace_explain_summary_text(
         &workspace_explain_summary(report),
+        report
+            .repos
+            .iter()
+            .map(|repo| explain_action_count(&repo.findings))
+            .sum(),
     ));
 
     CommandOutput {
@@ -293,7 +297,10 @@ fn render_workspace_summary_text(summary: &WorkspaceDoctorSummary) -> String {
     stdout
 }
 
-fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> String {
+fn render_workspace_explain_summary_text(
+    summary: &WorkspaceExplainSummary,
+    action_count: usize,
+) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
@@ -317,6 +324,12 @@ fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> S
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
+        paint("Actions:", "1;38;2;102;217;255"),
+        paint(&action_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
         paint("Errors:", "1;31"),
         paint(&summary.error_count.to_string(), "1;38;2;255;255;255")
     ));
@@ -331,12 +344,6 @@ fn render_workspace_explain_summary_text(summary: &WorkspaceExplainSummary) -> S
         summary_bullet(),
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
-    ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Steps:", "1;38;2;102;217;255"),
-        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
     ));
     stdout
 }

@@ -2358,7 +2358,6 @@ pub fn explain(
                             &target.contract_path,
                             &report,
                             &summary,
-                            &steps,
                         ),
                         stderr: None,
                         exit_code: if report.ok { 0 } else { 1 },
@@ -10338,22 +10337,25 @@ fn render_explain_section(
     contract_path: &Path,
     report: &DoctorReport,
     summary: &ExplainSummary,
-    steps: &[ExplainStep],
 ) -> String {
     let mut stdout = format!(
         "{}\n\n{}",
         format_command_header("EXPLAIN", path),
         render_readiness_status(report.ok)
     );
-    stdout.push_str(&render_explain_steps_text(steps, contract_path));
-    stdout.push_str(&render_explain_summary_text(summary));
+    stdout.push_str(&render_explain_steps_text(&report.findings, contract_path));
+    stdout.push_str(&render_explain_summary_text(
+        summary,
+        explain_action_count(&report.findings),
+    ));
     stdout
 }
 
-fn render_explain_steps_text(steps: &[ExplainStep], contract_path: &Path) -> String {
+fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Plan"));
-    if steps.is_empty() {
+    let groups = group_doctor_findings(findings.iter());
+    if groups.is_empty() {
         if plain_mode() {
             stdout.push_str("\n* none");
         } else {
@@ -10362,43 +10364,74 @@ fn render_explain_steps_text(steps: &[ExplainStep], contract_path: &Path) -> Str
         return stdout;
     }
 
-    for step in steps {
-        if step.order > 1 {
+    for (index, group) in groups.iter().enumerate() {
+        let finding_count = group.findings.len();
+        let per_finding_next = explain_group_uses_per_finding_nexts(group);
+        let render_items = explain_group_renders_items(group);
+        if index > 0 {
             stdout.push_str("\n\n");
         } else {
             stdout.push('\n');
         }
         stdout.push_str(&format!(
-            " {}. {}",
-            step.order,
-            render_finding_summary(step.severity, &step.summary)
+            " {}. {} ({})",
+            index + 1,
+            render_finding_summary(group.severity, &explain_group_title(group)),
+            finding_count
         ));
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Code:"),
-            paint_code(step.code)
-        ));
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Why:"),
-            render_backticked_text(&step.why, Some(contract_path))
-        ));
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Next:"),
-            render_backticked_text(&step.next, Some(contract_path))
-        ));
-        if let Some(provenance) = step.provenance.as_deref() {
-            stdout.push_str(&format!("\n  {} {}", paint_key("Provenance:"), provenance));
+        if !concise_mode() {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Why:"),
+                render_backticked_text(&explain_group_why(group), Some(contract_path))
+            ));
+        }
+        if render_items {
+            for finding in &group.findings {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    summary_bullet(),
+                    explain_group_item_text(group, finding)
+                ));
+                if per_finding_next {
+                    stdout.push_str(&format!(
+                        "\n    {} {}",
+                        paint_key("Next:"),
+                        render_backticked_text(
+                            &compact_backticked_paths(&finding.next),
+                            Some(contract_path)
+                        )
+                    ));
+                }
+            }
+        }
+        if !per_finding_next {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Next:"),
+                render_backticked_text(&explain_group_next(group), Some(contract_path))
+            ));
         }
     }
 
     stdout
 }
 
-fn render_explain_summary_text(summary: &ExplainSummary) -> String {
+fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Overview"));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint("Findings:", "1;38;2;102;217;255"),
+        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint("Actions:", "1;38;2;102;217;255"),
+        paint(&action_count.to_string(), "1;38;2;255;255;255")
+    ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
@@ -10417,13 +10450,70 @@ fn render_explain_summary_text(summary: &ExplainSummary) -> String {
         paint("Info:", "1;36"),
         paint(&summary.info_count.to_string(), "1;38;2;255;255;255")
     ));
-    stdout.push_str(&format!(
-        "\n{} {} {}",
-        summary_bullet(),
-        paint("Steps:", "1;38;2;102;217;255"),
-        paint(&summary.step_count.to_string(), "1;38;2;255;255;255")
-    ));
     stdout
+}
+
+fn explain_action_count(findings: &[Finding]) -> usize {
+    group_doctor_findings(findings.iter()).len()
+}
+
+fn explain_group_uses_per_finding_nexts(group: &DoctorFindingGroup<'_>) -> bool {
+    matches!(group.kind, DoctorFindingGroupKind::ToolingVersion)
+        && group
+            .findings
+            .iter()
+            .map(|finding| compact_backticked_paths(&finding.next))
+            .collect::<BTreeSet<_>>()
+            .len()
+            > 1
+}
+
+fn explain_group_renders_items(group: &DoctorFindingGroup<'_>) -> bool {
+    !(matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.findings.len() == 1)
+}
+
+fn explain_group_title(group: &DoctorFindingGroup<'_>) -> String {
+    match group.kind {
+        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
+            group.findings[0].summary.clone()
+        }
+        _ => doctor_finding_group_title(&group.kind, &group.findings),
+    }
+}
+
+fn explain_group_why(group: &DoctorFindingGroup<'_>) -> String {
+    match group.kind {
+        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
+            group.findings[0].why.clone()
+        }
+        _ => doctor_finding_group_why(&group.kind, &group.findings),
+    }
+}
+
+fn explain_group_next(group: &DoctorFindingGroup<'_>) -> String {
+    match group.kind {
+        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
+            compact_backticked_paths(&group.findings[0].next)
+        }
+        _ => doctor_finding_group_next(&group.kind, &group.findings),
+    }
+}
+
+fn explain_group_item_text(group: &DoctorFindingGroup<'_>, finding: &Finding) -> String {
+    match group.kind {
+        DoctorFindingGroupKind::ToolingVersion => {
+            doctor_finding_group_item_text(&group.kind, finding, false)
+        }
+        DoctorFindingGroupKind::ContractDrift => {
+            doctor_finding_group_item_text(&group.kind, finding, false)
+        }
+        DoctorFindingGroupKind::PolicySurface
+        | DoctorFindingGroupKind::ServiceHealth
+        | DoctorFindingGroupKind::CheckFailure
+        | DoctorFindingGroupKind::EnvironmentValue
+        | DoctorFindingGroupKind::ExecutionBackend
+        | DoctorFindingGroupKind::SharedAction(_) => finding.summary.clone(),
+    }
 }
 
 fn explain_summary(report: &DoctorReport) -> ExplainSummary {
@@ -11590,6 +11680,73 @@ mod tests {
         ));
         assert!(text.contains("no additive changes detected against the existing contract"));
         assert!(!text.contains("Applying detect merge would remove"));
+    }
+
+    #[test]
+    fn explain_text_groups_shared_actions_by_remediation() {
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Version mismatch for runtime: java"),
+                why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
+                next: String::from("run `sdk install java 21` and rerun `ota doctor`"),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Version mismatch for tool: node"),
+                why: String::from("node resolved to `24.14.1` but the contract requires `22`"),
+                next: String::from("run `brew install node@22` and rerun `ota doctor`"),
+            },
+            Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Contract drift: `tools.node` is no longer detected"),
+                why: String::from(
+                    "`ota.yaml` still declares `tools.node` = `22`, but repo inspection under `.` no longer detects it",
+                ),
+                next: String::from(
+                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Contract drift: `tools.yq` is no longer detected"),
+                why: String::from(
+                    "`ota.yaml` still declares `tools.yq` = `4.52.5`, but repo inspection under `.` no longer detects it",
+                ),
+                next: String::from(
+                    "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved provisioning sources: node via brew",
+                ),
+                next: String::from(
+                    "use this policy surface when repo prerequisites need an approved source",
+                ),
+            },
+        ];
+
+        let text = strip_ansi_codes(&super::render_explain_steps_text(
+            &findings,
+            Path::new("./ota.yaml"),
+        ));
+
+        assert!(text.contains("Plan"));
+        assert!(text.contains("1. Fix version mismatches (2)"));
+        assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
+        assert!(text.contains("Next: run `sdk install java 21` and rerun `ota doctor`"));
+        assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
+        assert!(text.contains("Next: run `brew install node@22` and rerun `ota doctor`"));
+        assert!(text.contains("2. Review contract drift (2)"));
+        assert!(text.contains("» `tools.node` is no longer detected"));
+        assert!(text.contains("Next: run `ota detect --merge --dry-run"));
+        assert!(text.contains("then `ota detect --merge"));
+        assert!(text.contains("3. Review approved policy surfaces (1)"));
+        assert!(!text.contains("Code:"));
+        assert!(!text.contains("Provenance:"));
     }
 
     #[test]

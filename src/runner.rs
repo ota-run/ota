@@ -1689,6 +1689,8 @@ fn execute_ephemeral_container_task_command(
         .arg("run")
         .arg("--rm")
         .arg("-i")
+        .arg("--entrypoint")
+        .arg("sh")
         .arg("-v")
         .arg(format!("{}:/workspace", working_dir.display()))
         .arg("-w")
@@ -1703,7 +1705,6 @@ fn execute_ephemeral_container_task_command(
     }
     container
         .arg(image)
-        .arg("sh")
         .arg("-lc")
         .arg(command_with_path_export(command, path_export));
 
@@ -1870,12 +1871,13 @@ fn create_persistent_container(
             "-d",
             "--name",
             container_name,
+            "--entrypoint",
+            "sh",
             "-v",
             &format!("{}:/workspace", working_dir.display()),
             "-w",
             "/workspace",
             image,
-            "sh",
             "-lc",
             "while true; do sleep 3600; done",
         ],
@@ -3799,6 +3801,9 @@ case "$command" in
         --rm|-i)
           shift
           ;;
+        --entrypoint)
+          shift 2
+          ;;
         --name)
           name="$2"
           shift 2
@@ -3831,7 +3836,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$3"
+    if [ "$1" = "-lc" ]; then
+      exec /bin/sh -lc "$2"
+    fi
+    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
+      exec /bin/sh -lc "$3"
+    fi
+    exec /bin/sh -lc "$1"
     ;;
   rm)
     shift
