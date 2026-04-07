@@ -36,25 +36,39 @@
         "info_count": { "type": "integer", "minimum": 0 }
       }
     },
+    "finding_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action_key", "action_title", "action_next", "count"],
+        "properties": {
+          "action_key": { "type": "string" },
+          "action_title": { "type": "string" },
+          "action_next": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
     "repos": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["name", "path", "contract_path", "required", "ok", "findings"],
-          "properties": {
-            "name": { "type": "string" },
-            "path": { "type": "string" },
-            "contract_path": { "type": "string" },
-            "required": { "type": "boolean" },
-            "ok": { "type": "boolean" },
-            "agent_verdict": {
-              "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
-            },
-            "findings": {
-              "type": "array",
-              "items": { "$ref": "./shared.json#/$defs/finding" }
-            }
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "ok": { "type": "boolean" },
+          "agent_verdict": {
+            "enum": ["ready", "risky", "not_ready", "policy_blocked", "agent_blocked"]
+          },
+          "findings": {
+            "type": "array",
+            "items": { "$ref": "./shared.json#/$defs/finding" }
+          }
         }
       }
     }
