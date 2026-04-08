@@ -8682,6 +8682,16 @@ fn append_wrapped_labeled_text<F, K>(
     F: Fn(&str) -> String,
     K: Fn(&str) -> String,
 {
+    if label == "Next:" {
+        let rendered = render_value(value);
+        if rendered.is_empty() {
+            output.push_str(&format!("\n{indent}{} -", render_key(label)));
+        } else {
+            output.push_str(&format!("\n{indent}{} {}", render_key(label), rendered));
+        }
+        return;
+    }
+
     let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 18);
     if wrapped.is_empty() {
         output.push_str(&format!("\n{indent}{} -", render_key(label)));
@@ -10898,9 +10908,9 @@ fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => {
             String::from("install the listed runtimes and tools, then rerun `ota doctor`")
         }
-        DoctorFindingGroupKind::ToolingVersion => String::from(
-            "install compatible versions for the listed runtime and tool entries, then rerun `ota doctor`",
-        ),
+        DoctorFindingGroupKind::ToolingVersion => {
+            String::from("install compatible runtimes and tools, then rerun `ota doctor`")
+        }
         DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
             String::from("set the listed environment variables, then rerun `ota doctor`")
         }
@@ -12713,7 +12723,7 @@ tasks:
         assert_eq!(groups[0].action_title, "Fix version mismatches");
         assert_eq!(
             groups[0].action_next,
-            "install compatible versions for the listed runtime and tool entries, then rerun `ota doctor`"
+            "install compatible runtimes and tools, then rerun `ota doctor`"
         );
         assert_eq!(groups[0].count, 2);
     }

@@ -1,5 +1,5 @@
 ◉ ERROR  Operation failed
-Where: ./ota.yaml
+Where: <TMP>/ota.yaml
 Why: task `install-from-source` failed with exit code 7
 Task output:
   » build log
@@ -11,8 +11,8 @@ Next:
 🦦  RUN SUMMARY
 
 Scope:      repo
-Path:       .
-Contract:   ./ota.yaml
+Path:       <TMP>
+Contract:   <TMP>/ota.yaml
 Mode:       native
 Task:       install-from-source
 Note:       running on the host environment

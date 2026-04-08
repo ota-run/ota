@@ -31,7 +31,9 @@ use tempfile::TempDir;
 
 use ota::parser::load_contract;
 use ota::policy_pack::load_org_policy_pack_auto;
-use ota::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request_with_target};
+use ota::provisioning::{
+    ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
+};
 use ota::validator::validate_contract;
 
 fn real_fixture_path(name: &str) -> PathBuf {
@@ -770,8 +772,19 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
         lifecycle: ota::schema::Lifecycle::Persistent,
     };
 
-    let outcome = apply_provisioning_request_with_target(&request, fixture.path(), &target)
-        .expect("provisioning request should apply");
+    let outcome = match apply_provisioning_request_with_target(&request, fixture.path(), &target) {
+        Ok(outcome) => outcome,
+        Err(ProvisioningBackendError::CommandFailed { stderr, .. })
+            if stderr.contains("Failed to fetch")
+                || stderr.contains("Unable to locate package") =>
+        {
+            eprintln!(
+                "skipping real container provisioning test: apt repository unavailable ({stderr})"
+            );
+            return;
+        }
+        Err(error) => panic!("provisioning request should apply: {error:?}"),
+    };
     assert!(
         outcome.stderr.contains("apt-utils"),
         "stderr was: {}",
