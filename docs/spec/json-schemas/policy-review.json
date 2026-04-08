@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/policy-review.json",
+  "title": "ota policy review --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "policy_source", "summary", "findings"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "policy_source": { "type": "string" },
+    "policy_path": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "error_count", "warn_count", "info_count"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "finding_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action_key", "action_title", "action_next", "count"],
+        "properties": {
+          "action_key": { "type": "string" },
+          "action_title": { "type": "string" },
+          "action_next": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/finding" }
+    }
+  }
+}

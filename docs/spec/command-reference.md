@@ -87,6 +87,7 @@ ota currently ships these commands:
 - `ota clean`
 - `ota extensions`
 - `ota policy`
+- `ota policy review`
 - `ota uninstall`
 - `ota self-update` / `ota upgrade`
 - `ota workspace init`
@@ -866,6 +867,47 @@ JSON output:
 - failure responses include `error`
 
 Use this when you need to confirm which org policy ota actually applied before a run or diagnosis.
+
+## `ota policy review`
+
+Review the policy-vs-contract boundary and approved policy sources.
+
+```bash
+ota policy review [PATH]
+ota policy review --json [PATH]
+ota policy review --file /path/to/ota.yaml
+ota policy review --file /path/to/ota.yaml --json
+```
+
+Current behavior:
+
+- resolves the active policy pack using the same precedence as `ota policy`
+- focuses only on policy-authority findings, approved provisioning sources, and adapter bootstrap sources
+- stays read-only
+- points repo-owned conflicts back to `ota.yaml`
+- points governance-owned conflicts back to `.ota/org-policy.yaml`
+
+Text output:
+
+- header: `POLICY REVIEW <path>`
+- `Policy source:` shows where ota loaded the policy from
+- `Policy path:` shows the resolved policy file path or URL
+- `Overview` rolls up the policy findings by severity
+- grouped policy findings reuse the same premium remediation styling as `ota doctor`
+- when no policy pack is found, the text output says so explicitly and points users back to `ota policy`
+
+JSON output:
+
+- `ok`
+- `path`
+- `policy_source`
+- `policy_path`
+- `summary`
+- `finding_groups`
+- `policy`
+- `findings`
+
+Use this when you need to understand what policy ota enforced, why a repo-contract request is outside the approved policy boundary, or whether the org policy pack itself needs to change.
 
 ## `ota uninstall`
 

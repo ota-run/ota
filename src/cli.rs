@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -306,6 +306,8 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        #[command(subcommand)]
+        command: Option<PolicyCommands>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -372,6 +374,18 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         command: WorkspaceCommands,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum PolicyCommands {
+    /// Review the policy-vs-contract boundary and approved sources.
+    Review {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
     },
 }
 
@@ -1124,6 +1138,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Agents { json: true, .. }
             | Commands::Detect { json: true, .. }
             | Commands::Policy { json: true, .. }
+            | Commands::Policy {
+                command: Some(PolicyCommands::Review { json: true, .. }),
+                ..
+            }
     ));
     let debug = cli.debug;
     let file = cli.file;
@@ -1278,8 +1296,25 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Clean { member, path } => {
             commands::clean(path.as_deref(), file.as_deref(), &member, debug)
         }
-        Commands::Policy { json, path } => commands::policy(
+        Commands::Policy {
+            json,
+            command: None,
+            path,
+        } => commands::policy(
             path.as_deref(),
+            file.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Policy {
+            command:
+                Some(PolicyCommands::Review {
+                    json,
+                    path: review_path,
+                }),
+            ..
+        } => commands::policy_review(
+            review_path.as_deref(),
             file.as_deref(),
             format_from_json(json),
             debug,
@@ -1837,7 +1872,15 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Check { json, .. }
         | Commands::Up { json, .. }
         | Commands::Detect { json, .. }
-        | Commands::Policy { json, .. } => *json,
+        | Commands::Policy {
+            json,
+            command: None,
+            ..
+        } => *json,
+        Commands::Policy {
+            command: Some(PolicyCommands::Review { json, .. }),
+            ..
+        } => *json,
         Commands::Workspace { command } => match command {
             WorkspaceCommands::Init { json, .. }
             | WorkspaceCommands::Detect { json, .. }
@@ -1879,7 +1922,11 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
-        Commands::Policy { .. } => "ota policy",
+        Commands::Policy { command: None, .. } => "ota policy",
+        Commands::Policy {
+            command: Some(PolicyCommands::Review { .. }),
+            ..
+        } => "ota policy review",
         Commands::Uninstall => "ota uninstall",
         Commands::SelfUpdate { .. } => "ota self-update",
         Commands::Detect { .. } => "ota detect",
@@ -1915,6 +1962,7 @@ mod tests {
     #[cfg(unix)]
     use std::time::{Duration, Instant};
 
+    use clap::Parser;
     use serde_json::Value;
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
@@ -1922,8 +1970,8 @@ mod tests {
     use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
 
     use super::{
-        Commands, append_try_footer, collapse_blank_lines, commands, maybe_append_update_notice,
-        run_with,
+        Cli, Commands, PolicyCommands, append_try_footer, collapse_blank_lines, commands,
+        maybe_append_update_notice, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -6369,6 +6417,29 @@ policies:
         assert!(finding["evidence"]["expected"].is_string());
         assert_eq!(json["summary"]["verdict"], "policy_blocked");
         assert_eq!(json["summary"]["agent_verdict"], "not_ready");
+    }
+
+    #[test]
+    fn policy_review_parses_review_subcommand() {
+        let cli = Cli::parse_from(["ota", "policy", "review", "--json", "./ota.yaml"]);
+        let command = cli.command;
+
+        match &command {
+            Commands::Policy {
+                json: false,
+                command:
+                    Some(PolicyCommands::Review {
+                        json: true,
+                        path: Some(path),
+                    }),
+                path: None,
+            } => {
+                assert_eq!(path.as_path(), Path::new("./ota.yaml"));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+
+        assert_eq!(super::command_where_label(&command), "ota policy review");
     }
 
     #[test]

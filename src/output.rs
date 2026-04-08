@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 
 use crate::detector::{DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
-use crate::policy_pack::{ProvisioningBackendRequest, ProvisioningPlan};
+use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::policy_env_values;
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
@@ -104,6 +104,14 @@ pub struct DoctorSummary {
     pub primary_blocker: Option<DoctorPrimaryBlocker>,
 }
 
+#[derive(Debug, Serialize, Default, Clone, PartialEq, Eq)]
+pub struct PolicyReviewSummary {
+    pub ok: bool,
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+}
+
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DoctorVerdict {
@@ -121,6 +129,21 @@ pub struct DoctorPrimaryBlocker {
     pub summary: String,
     pub why: String,
     pub next: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PolicyReviewSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub policy_source: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_path: Option<String>,
+    pub summary: PolicyReviewSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub finding_groups: Vec<DoctorFindingGroupSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<&'a OrgPolicyPack>,
+    pub findings: &'a [Finding],
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
