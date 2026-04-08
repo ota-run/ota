@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added `ota doctor --mode container` so readiness can be diagnosed against the declared container execution boundary instead of only the host context.
+- made doctor JSON explicit about the selected diagnosis mode and kept container-mode next steps pointed at `ota doctor --mode container` so machine consumers and text users see the same execution boundary.
+
 ## 1.2.0
 
 - updated the premium `run` failure snapshot so the current task-output excerpt and compact `Next:` footer are released together.
