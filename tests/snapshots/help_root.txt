@@ -16,6 +16,7 @@ Commands:
   tasks        List validated tasks from an Ota contract
   services     List declared services from an Ota contract
   diff         Compare two Ota contracts semantically
+  env          Inspect resolved environment requirements from an Ota contract
   check        Run configured checks from an Ota contract
   annotations  Render Ota JSON findings as CI annotations or log lines
   agents       Generate or sync AGENTS.md from an Ota contract
@@ -42,6 +43,7 @@ Choose a flow:
   repo without ota.yaml        ota detect --dry-run .
   review a starter contract    ota init --dry-run
   prepare the repo             ota up
+  inspect env requirements     ota env
   generate agent guidance      ota agents
   list runnable tasks          ota tasks --use
   run a declared task          ota run ci

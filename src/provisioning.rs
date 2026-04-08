@@ -321,6 +321,10 @@ impl PacmanProvisioningBackend {
 }
 
 impl AptProvisioningBackend {
+    fn apt_options() -> &'static str {
+        "-o Acquire::Retries=0 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=5 -o Acquire::https::Timeout=5"
+    }
+
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
@@ -365,16 +369,26 @@ impl AptProvisioningBackend {
                     String::from("sh"),
                     vec![
                         String::from("-lc"),
-                        format!("apt-get update >/dev/null && apt-get install -y {install_target}"),
+                        format!(
+                            "apt-get {} update >/dev/null && apt-get {} install -y {install_target}",
+                            Self::apt_options(),
+                            Self::apt_options()
+                        ),
                     ],
-                    format!("apt-get update && apt-get install -y {install_target}"),
+                    format!(
+                        "apt-get {} update && apt-get {} install -y {install_target}",
+                        Self::apt_options(),
+                        Self::apt_options()
+                    ),
                 ),
             };
         }
 
         let sources_list = source_lines.join("\n");
         let shell_script = format!(
-            "set -e; tmpdir=$(mktemp -d); cat > \"$tmpdir/sources.list\" <<'EOF'\n{sources_list}\nEOF\napt-get -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" update >/dev/null && apt-get -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" install -y {install_target}"
+            "set -e; tmpdir=$(mktemp -d); cat > \"$tmpdir/sources.list\" <<'EOF'\n{sources_list}\nEOF\napt-get {} -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" update >/dev/null && apt-get {} -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" install -y {install_target}",
+            Self::apt_options(),
+            Self::apt_options()
         );
         match target {
             ProvisioningExecutionTarget::Native | ProvisioningExecutionTarget::Container { .. } => {

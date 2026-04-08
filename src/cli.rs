@@ -2338,9 +2338,18 @@ exec /bin/sh -lc "$1"
         let canonical_dir = fs::canonicalize(dir)
             .map(|value| value.display().to_string())
             .unwrap_or_else(|_| raw_dir.clone());
+        let temp_name = dir
+            .file_name()
+            .map(|value| value.to_string_lossy().to_string());
         let normalized = normalize_snapshot_text(actual)
             .replace(&canonical_dir, "<TMP>")
             .replace(&raw_dir, "<TMP>");
+        let normalized = temp_name
+            .as_deref()
+            .map(|name| normalized.replace(name, "<TMP>"))
+            .unwrap_or(normalized)
+            .replace("../<TMP>", "<TMP>")
+            .replace("./<TMP>", "<TMP>");
         let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
         assert_eq!(normalized, normalize_snapshot_text(&expected));
     }
@@ -10959,17 +10968,25 @@ project:
   name: premium-run
 tasks:
   install-from-source:
-    run: python3 -c "import sys; print('build log'); sys.stderr.write('trace line\n'); sys.exit(7)"
+    run: |
+      printf 'build log\n'
+      printf 'trace line\n' >&2
+      exit 7
 "#,
         );
 
-        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
-        let output = run_with(["ota", "run", "install-from-source", "."]);
+        let output = run_with([
+            "ota",
+            "run",
+            "install-from-source",
+            fixture.file_path().to_str().unwrap(),
+        ]);
 
         assert_eq!(output.exit_code, 7);
-        assert_text_snapshot(
+        assert_text_snapshot_for_dir(
             "run_premium_error.txt",
             &strip_ansi(output.stderr.as_deref().expect("run failure stderr")),
+            fixture.dir.path(),
         );
     }
 
