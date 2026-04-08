@@ -11416,11 +11416,9 @@ tasks:
         ]);
 
         assert_eq!(output.exit_code, 7);
-        assert_text_snapshot_for_dir(
-            "run_premium_error.txt",
-            &strip_ansi(output.stderr.as_deref().expect("run failure stderr")),
-            fixture.dir.path(),
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().expect("run failure stderr"))
+            .replace("./ota.yaml", "<TMP>/ota.yaml");
+        assert_text_snapshot_for_dir("run_premium_error.txt", &stderr, fixture.dir.path());
     }
 
     #[test]
