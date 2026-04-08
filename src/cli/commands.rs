@@ -14525,16 +14525,6 @@ fn run_single_contract_target_captured(
                 None,
             );
             let mut output = String::new();
-            if let Some(output_block) = render_run_output_excerpt_block(
-                task_name,
-                member,
-                &outcome.stdout,
-                &outcome.stderr,
-                12,
-            ) {
-                output.push_str(&output_block);
-                output.push('\n');
-            }
             if show_receipt {
                 let receipt_text = render_execution_receipt_text(&receipt);
                 if output.is_empty() {
@@ -14653,12 +14643,6 @@ fn render_run_captured_failure_text(
         paint_code(where_value),
         error_key("Why:")
     );
-    if let Some(output_block) =
-        render_run_output_excerpt_block(task_name, member, stdout, stderr, 20)
-    {
-        output.push('\n');
-        output.push_str(&output_block);
-    }
 
     let mut next_steps = Vec::new();
     if run_output_excerpt(stdout, stderr, 20).is_some() {
@@ -14682,37 +14666,6 @@ fn render_run_captured_failure_text(
     output.push('\n');
     output.push_str(summary);
     output
-}
-
-fn render_run_output_excerpt_block(
-    task_name: &str,
-    member: Option<&str>,
-    stdout: &str,
-    stderr: &str,
-    max_lines: usize,
-) -> Option<String> {
-    let excerpt = run_output_excerpt(stdout, stderr, max_lines)?;
-    let mut output = String::new();
-    output.push_str(&paint_key("Task output:"));
-    if excerpt.omitted_before > 0 || excerpt.omitted_after > 0 {
-        output.push_str(&format!(
-            "\n  {} {}",
-            summary_bullet(),
-            stylize_inline_text(&format!(
-                "{}; rerun `{}` for live output",
-                output_excerpt_notice(&excerpt),
-                repo_run_stream_command(task_name, member)
-            ))
-        ));
-    }
-    for line in excerpt.lines {
-        output.push_str(&format!(
-            "\n  {} {}",
-            summary_bullet(),
-            stylize_inline_text(&line)
-        ));
-    }
-    Some(output)
 }
 
 struct OutputExcerpt {
