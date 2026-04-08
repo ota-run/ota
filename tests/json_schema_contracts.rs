@@ -57,6 +57,7 @@ fn doctor_schema_includes_agent_summary() {
     assert!(properties.get("agent").is_some());
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
+    assert!(properties.get("mode").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
     assert!(execution_properties.get("env").is_some());

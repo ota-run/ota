@@ -482,7 +482,7 @@ pub(crate) fn render_workspace_repo_findings_text(findings: &[Finding]) -> Strin
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group, None));
+        stdout.push_str(&render_grouped_doctor_findings(&group, None, None));
     }
     stdout
 }

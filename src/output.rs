@@ -54,6 +54,7 @@ pub struct CommandOutput {
 pub struct DoctorSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
+    pub mode: &'a str,
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub finding_groups: Vec<DoctorFindingGroupSummary>,
@@ -69,6 +70,16 @@ pub struct DoctorSuccess<'a> {
     pub adapter_bootstrap: Option<&'a AdapterBootstrapDiagnostics>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extensions: &'a BTreeMap<String, ExtensionSpec>,
+    pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub summary: DoctorSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub finding_groups: Vec<DoctorFindingGroupSummary>,
     pub findings: &'a [Finding],
 }
 
