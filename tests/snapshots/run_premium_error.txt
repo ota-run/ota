@@ -1,5 +1,5 @@
 ◉ ERROR  Operation failed
-Where: ./ota.yaml
+Where: <TMP>/ota.yaml
 Why: task `install-from-source` failed with exit code 7
 Next: run `ota tasks --use` to inspect runnable task usage
 
