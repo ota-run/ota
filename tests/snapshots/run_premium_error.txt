@@ -1,7 +1,9 @@
 ◉ ERROR  Operation failed
 Where: <TMP>/ota.yaml
 Why: task `install-from-source` failed with exit code 7
-Next: run `ota tasks --use` to inspect runnable task usage
+Next:
+▸  rerun `ota run install-from-source --stream` for live task output if the excerpt is insufficient
+▸  run `ota tasks --use` to inspect runnable task usage
 
 🦦  RUN SUMMARY
 
