@@ -50,7 +50,7 @@ use crate::doctor::{
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
-    AgentSummary, AgentsFailure, AgentsSuccess, CommandOutput, DetectComparison,
+    AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput, DetectComparison,
     DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
     DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker,
     DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus,
@@ -2246,8 +2246,12 @@ pub fn doctor(
                         stdout: to_json(&DoctorSuccess {
                             ok: false,
                             path: &start,
+                            mode: mode.as_str(),
                             summary: doctor_summary(&report, DoctorVerdict::NotReady),
-                            finding_groups: doctor_finding_group_summaries(&report.findings),
+                            finding_groups: doctor_finding_group_summaries(
+                                &report.findings,
+                                Some(mode),
+                            ),
                             agent: None,
                             execution: None,
                             provisioning: report.provisioning.as_ref().map(|value| &value.plan),
@@ -2459,6 +2463,7 @@ pub fn doctor(
                                 stdout: to_json(&DoctorSuccess {
                                     ok: report.ok,
                                     path: &path_display,
+                                    mode: mode.as_str(),
                                     summary: doctor_summary(
                                         &report,
                                         crate::workspace::agent_verdict_from_agent(
@@ -2467,6 +2472,7 @@ pub fn doctor(
                                     ),
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
+                                        Some(mode),
                                     ),
                                     agent: agent_summary,
                                     execution: ExecutionSummary::from_contract(&target.contract),
@@ -3068,7 +3074,7 @@ pub fn check(
                         OutputFormat::Json => {
                             let exit_code = if report.ok { 0 } else { 1 };
                             CommandOutput {
-                                stdout: to_json(&DoctorSuccess {
+                                stdout: to_json(&CheckSuccess {
                                     ok: report.ok,
                                     path: &path_display,
                                     summary: doctor_summary(
@@ -3079,22 +3085,8 @@ pub fn check(
                                     ),
                                     finding_groups: doctor_finding_group_summaries(
                                         &report.findings,
+                                        None,
                                     ),
-                                    agent: None,
-                                    execution: ExecutionSummary::from_contract(&target.contract),
-                                    provisioning: report
-                                        .provisioning
-                                        .as_ref()
-                                        .map(|value| &value.plan),
-                                    provisioning_request: report
-                                        .provisioning
-                                        .as_ref()
-                                        .map(|value| &value.request),
-                                    adapter_bootstrap: report
-                                        .adapter_bootstrap
-                                        .as_ref()
-                                        .map(|value| value),
-                                    extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
                                 stderr: None,
@@ -6035,6 +6027,7 @@ pub fn workspace_doctor(
                             summary: workspace_doctor_summary(&report),
                             finding_groups: doctor_finding_group_summaries(
                                 report.repos.iter().flat_map(|repo| repo.findings.iter()),
+                                None,
                             ),
                             repos: &report.repos,
                         }),
@@ -6208,6 +6201,7 @@ pub fn workspace_check(
                         summary: workspace_doctor_summary(&report),
                         finding_groups: doctor_finding_group_summaries(
                             report.repos.iter().flat_map(|repo| repo.findings.iter()),
+                            None,
                         ),
                         repos: &report.repos,
                     }),
@@ -10459,7 +10453,11 @@ fn render_report_section(
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path));
+        stdout.push_str(&render_grouped_doctor_findings(
+            &group,
+            contract_path,
+            doctor_mode,
+        ));
     }
 
     stdout
@@ -10613,7 +10611,10 @@ where
     groups
 }
 
-fn doctor_finding_group_summaries<'a, I>(findings: I) -> Vec<DoctorFindingGroupSummary>
+fn doctor_finding_group_summaries<'a, I>(
+    findings: I,
+    doctor_mode: Option<DoctorMode>,
+) -> Vec<DoctorFindingGroupSummary>
 where
     I: IntoIterator<Item = &'a Finding>,
 {
@@ -10624,7 +10625,7 @@ where
             DoctorFindingGroupSummary {
                 action_key: group.action_key.clone(),
                 action_title: doctor_finding_group_title(&group.kind, &group.findings),
-                action_next: doctor_finding_group_next(&group.kind, &group.findings),
+                action_next: doctor_finding_group_next(&group.kind, &group.findings, doctor_mode),
                 count: display_items.len(),
             }
         })
@@ -10792,6 +10793,7 @@ fn doctor_group_slug(value: &str) -> String {
 fn render_grouped_doctor_findings(
     group: &DoctorFindingGroup<'_>,
     contract_path: Option<&Path>,
+    doctor_mode: Option<DoctorMode>,
 ) -> String {
     let display_items = doctor_finding_group_display_items(group);
     let mut stdout = String::from("\n\n");
@@ -10835,7 +10837,7 @@ fn render_grouped_doctor_findings(
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
-        &doctor_finding_group_next(&group.kind, &group.findings),
+        &doctor_finding_group_next(&group.kind, &group.findings, doctor_mode),
         "",
         84,
         true,
@@ -10923,7 +10925,11 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
     }
 }
 
-fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
+fn doctor_finding_group_next(
+    kind: &DoctorFindingGroupKind,
+    findings: &[&Finding],
+    doctor_mode: Option<DoctorMode>,
+) -> String {
     let has_missing_tooling = findings
         .iter()
         .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
@@ -10942,7 +10948,7 @@ fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding
     let has_provisioning_surface = findings
         .iter()
         .any(|finding| finding.summary == "Policy-backed provisioning sources are declared");
-    match kind {
+    let next = match kind {
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling && has_version_mismatch => {
             String::from("install or align the listed runtimes and tools, then rerun `ota doctor`")
         }
@@ -10983,6 +10989,17 @@ fn doctor_finding_group_next(kind: &DoctorFindingGroupKind, findings: &[&Finding
             .first()
             .map(|finding| compact_backticked_paths(&finding.next))
             .unwrap_or_default(),
+    };
+
+    rewrite_doctor_mode_command(&next, doctor_mode)
+}
+
+fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> String {
+    match doctor_mode {
+        Some(DoctorMode::Container) => {
+            next.replace("`ota doctor`", "`ota doctor --mode container`")
+        }
+        _ => next.to_string(),
     }
 }
 
@@ -11231,7 +11248,7 @@ fn explain_group_next(group: &DoctorFindingGroup<'_>) -> String {
         DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
             compact_backticked_paths(&group.findings[0].next)
         }
-        _ => doctor_finding_group_next(&group.kind, &group.findings),
+        _ => doctor_finding_group_next(&group.kind, &group.findings, None),
     }
 }
 
@@ -12039,7 +12056,7 @@ mod tests {
         render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
         stylize_text_failure, workspace_refresh_command,
     };
-    use crate::doctor::{DoctorReport, Finding, FindingSeverity};
+    use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{DetectComparison, DetectComparisonRemoval};
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -12769,7 +12786,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter());
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].action_key, "tooling-version");
         assert_eq!(groups[0].action_title, "Fix version mismatches");
@@ -12805,7 +12822,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter());
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].action_key, "service-health-failed-postgres");
         assert_eq!(groups[1].action_key, "service-health-failed-redis");
@@ -12847,7 +12864,7 @@ tasks:
             },
         ];
 
-        let groups = super::doctor_finding_group_summaries(findings.iter());
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
         assert_eq!(groups.len(), 3);
         assert_eq!(groups[0].action_key, "check-failed-health-check");
         assert_eq!(groups[1].action_key, "check-timeout-lint");
@@ -12975,6 +12992,61 @@ tasks:
         assert!(text.contains(
             "» maven resolved `3.9.14`, requires `3.9.9`; run `asdf install maven 3.9.9`"
         ));
+    }
+
+    #[test]
+    fn doctor_text_container_mode_updates_grouped_next_command() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for runtime: java"),
+                    why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
+                    next: String::from(
+                        "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Version mismatch for tool: curl"),
+                    why: String::from(
+                        "curl resolved to `8.13.0` but the contract requires `8.7.1`",
+                    ),
+                    next: String::from(
+                        "install a compatible curl version that satisfies `8.7.1`, then rerun `ota doctor`",
+                    ),
+                },
+            ],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 2,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            Some(DoctorMode::Container),
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(
+            !text.contains(
+                "install or align the listed runtimes and tools, then rerun `ota doctor`"
+            )
+        );
+        assert!(text.contains("ota doctor --mode container"));
     }
 
     #[test]
@@ -15181,7 +15253,7 @@ fn render_up_section_from_parts(
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path));
+        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path, None));
     }
 
     stdout

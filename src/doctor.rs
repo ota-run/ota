@@ -582,7 +582,11 @@ fn diagnose_contract_with_scope(
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
-        diagnose_env(contract, &mut findings);
+        if mode == DoctorMode::Native {
+            diagnose_env(contract, &mut findings);
+        } else if contract_has_host_bound_readiness_surfaces(contract) {
+            findings.push(container_mode_scope_note_finding(contract));
+        }
         diagnose_runtimes(
             contract,
             contract_path,
@@ -611,10 +615,14 @@ fn diagnose_contract_with_scope(
         diagnose_tasks_surface(contract, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
-        diagnose_services(contract, contract_path, &mut findings);
+        if mode == DoctorMode::Native {
+            diagnose_services(contract, contract_path, &mut findings);
+        }
     }
     if scope != DoctorScope::ServicesOnly {
-        diagnose_checks(contract, contract_path, scope, &mut findings);
+        if mode == DoctorMode::Native {
+            diagnose_checks(contract, contract_path, scope, &mut findings);
+        }
     }
 
     findings.sort_by_key(|finding| finding.severity);
@@ -715,6 +723,27 @@ fn diagnose_execution_backend(
         return None;
     };
 
+    if mode == DoctorMode::Container {
+        let Some(container) = execution
+            .backends
+            .as_ref()
+            .and_then(|backends| backends.container.as_ref())
+        else {
+            findings.push(container_mode_not_configured_finding());
+            return None;
+        };
+
+        let Some(engine) = selected_container_engine(contract) else {
+            diagnose_container_backend_cli(contract, findings);
+            return None;
+        };
+
+        return Some(ContainerProbeContext {
+            image: container.image.clone(),
+            engine,
+        });
+    }
+
     match execution.preferred {
         Some(Backend::Container) => diagnose_container_backend_cli(contract, findings),
         Some(Backend::Remote) => {
@@ -793,30 +822,7 @@ fn diagnose_execution_backend(
         _ => {}
     }
 
-    if mode != DoctorMode::Container {
-        return None;
-    }
-
-    let Some(container) = execution
-        .backends
-        .as_ref()
-        .and_then(|backends| backends.container.as_ref())
-    else {
-        findings.push(container_mode_not_configured_finding());
-        return None;
-    };
-
-    let Some(engine) = selected_container_engine(contract) else {
-        if execution.preferred != Some(Backend::Container) {
-            diagnose_container_backend_cli(contract, findings);
-        }
-        return None;
-    };
-
-    Some(ContainerProbeContext {
-        image: container.image.clone(),
-        engine,
-    })
+    None
 }
 
 fn container_mode_not_configured_finding() -> Finding {
@@ -828,6 +834,35 @@ fn container_mode_not_configured_finding() -> Finding {
         ),
         next: String::from(
             "add `execution.backends.container.image` and a supported container engine, or rerun `ota doctor` without `--mode container`",
+        ),
+    }
+}
+
+fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
+    !contract.env.is_empty() || !contract.checks.is_empty() || !contract.services.is_empty()
+}
+
+fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
+    let mut skipped = Vec::new();
+    if !contract.env.is_empty() {
+        skipped.push("env requirements");
+    }
+    if !contract.checks.is_empty() {
+        skipped.push("checks");
+    }
+    if !contract.services.is_empty() {
+        skipped.push("service healthchecks");
+    }
+
+    let skipped = skipped.join(", ");
+    Finding {
+        severity: FindingSeverity::Info,
+        summary: String::from("Host-bound readiness checks are not evaluated in container mode"),
+        why: format!(
+            "container diagnosis currently inspects the execution image, backend availability, runtimes, and tools; {skipped} still run against the host or current working directory and would mix contexts"
+        ),
+        next: String::from(
+            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
         ),
     }
 }

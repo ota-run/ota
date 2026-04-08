@@ -6537,6 +6537,7 @@ tasks:
             json["summary"]["primary_blocker"]["summary"],
             "Ephemeral lifecycle is advisory only in V1"
         );
+        assert_eq!(json["mode"], "native");
         assert_eq!(json["execution"]["preferred"], "remote");
         assert_eq!(json["execution"]["supported"][0], "remote");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
@@ -6549,6 +6550,63 @@ tasks:
         assert_eq!(json["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
+    }
+
+    #[test]
+    fn doctor_json_reports_selected_mode() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  ci:
+    run: echo ci
+runtimes:
+  node: "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with([
+            "ota",
+            "doctor",
+            "--mode",
+            "container",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "container");
+        assert_eq!(json["summary"]["error_count"], 0);
     }
 
     #[test]
@@ -10604,6 +10662,82 @@ runtimes:
         assert!(text.contains("Mode:"));
         assert!(text.contains("ready"));
         assert!(!text.contains("Version mismatch for runtime: node"));
+    }
+
+    #[test]
+    fn doctor_container_mode_skips_host_bound_readiness_checks() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: remote
+  supported: [native, container, remote]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+    remote:
+      provider: ssh
+      target: badtarget
+env:
+  OTA_CONTAINER_MODE_REQUIRED:
+    required: true
+checks:
+  - name: failing-check
+    kind: health
+    severity: error
+    run: exit 1
+services:
+  postgres:
+    required: true
+    healthcheck: exit 1
+tasks:
+  ci:
+    run: echo ci
+runtimes:
+  node: "22"
+agent:
+  entrypoint: ci
+  default_task: ci
+  safe_tasks: [ci]
+  verify_after_changes: [ci]
+  writable_paths: [src]
+  protected_paths: [ota.yaml]
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Host-bound readiness checks are not evaluated in container mode"));
+        assert!(!text.contains("Version mismatch for runtime: node"));
+        assert!(!text.contains("Missing environment variable: OTA_CONTAINER_MODE_REQUIRED"));
+        assert!(!text.contains("Check failed: failing-check"));
+        assert!(!text.contains("Service healthcheck failed: postgres"));
+        assert!(!text.contains("Suspicious remote target for ssh"));
     }
 
     #[test]
