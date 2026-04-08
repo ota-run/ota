@@ -1009,7 +1009,7 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
         render_readiness_status(report.ok)
     );
     if let Some(task) = task {
-        stdout.push_str(&format!("\n\n{} {}", paint_key("Task:"), task));
+        stdout.push_str(&format!("\n\n{} {}", paint("Task:", "1"), task));
     }
     stdout.push_str(&format!("\n\n{}", paint_section_title("Overview")));
     stdout.push_str(&format!(
@@ -8146,7 +8146,7 @@ fn render_detect_task_drift_group(
     stdout.push_str(&format!(
         "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
-        title,
+        paint(title, "1"),
         paint_group_meta(&format!(
             "({} {} across {} {})",
             removal_count,
@@ -8200,7 +8200,7 @@ fn render_detect_named_drift_group(
     stdout.push_str(&format!(
         "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
-        title,
+        paint(title, "1"),
         paint_group_meta(&format!(
             "({} {} across {} {})",
             removal_count,
@@ -8246,7 +8246,7 @@ fn render_detect_named_drift_concise_group(
     stdout.push_str(&format!(
         "\n\n{}  {} {}",
         render_severity(FindingSeverity::Warn),
-        title,
+        paint(title, "1"),
         paint_group_meta(&format!(
             "({} {} across {} {})",
             removal_count,
@@ -10760,7 +10760,10 @@ fn render_grouped_doctor_findings(
     stdout.push_str(&format!(
         "{}  {} {}",
         render_severity(group.severity),
-        doctor_finding_group_title(&group.kind, &group.findings),
+        render_finding_summary(
+            group.severity,
+            &doctor_finding_group_title(&group.kind, &group.findings),
+        ),
         paint_group_meta(&format!("({})", display_items.len()))
     ));
     if !concise_mode() {
@@ -15840,10 +15843,8 @@ fn render_severity(severity: FindingSeverity) -> String {
 }
 
 fn render_finding_summary(severity: FindingSeverity, summary: &str) -> String {
-    match severity {
-        FindingSeverity::Error => paint(summary, "1"),
-        _ => summary.to_string(),
-    }
+    let _ = severity;
+    paint(summary, "1")
 }
 
 fn render_valid_status() -> String {
