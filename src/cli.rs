@@ -6371,7 +6371,7 @@ tasks:
         let object = json.as_object().unwrap();
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
-        assert_eq!(object.len(), 5);
+        assert_eq!(object.len(), 6);
     }
 
     #[test]
@@ -10240,7 +10240,14 @@ tasks:
         assert_eq!(doctor.exit_code, 0);
         assert_json_top_level_keys(
             &doctor,
-            &["finding_groups", "findings", "ok", "path", "summary"],
+            &[
+                "finding_groups",
+                "findings",
+                "mode",
+                "ok",
+                "path",
+                "summary",
+            ],
         );
 
         let check = run_with(["ota", "check", "--json", fixture.path()]);
