@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.2.0
+
 - made runtime/tool remediation exact and manager-aware when ota has strong signals, including
   repo-local hints such as `.nvmrc`, `.python-version`, `.sdkmanrc`, `.tool-versions`, and
   policy-backed provisioning sources.
