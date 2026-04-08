@@ -2006,7 +2006,22 @@ fn compact_policy_path_relative_to_contract(contract_path: &Path, policy_path: &
         return policy_path.display().to_string();
     };
 
-    compact_path_relative_to(policy_path, "org-policy.yaml", Some(repo_root))
+    let repo_root = fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let absolute = normalized_display_path(policy_path);
+    let absolute = fs::canonicalize(&absolute).unwrap_or(absolute);
+
+    if let Ok(relative) = absolute.strip_prefix(&repo_root) {
+        if relative.as_os_str().is_empty() {
+            return String::from(".");
+        }
+        return format!("./{}", relative.display());
+    }
+
+    if let Some(relative) = relative_path_from(&repo_root, &absolute) {
+        return relative.display().to_string();
+    }
+
+    absolute.display().to_string()
 }
 
 fn render_policy_text(
@@ -11951,7 +11966,7 @@ fn compact_contract_file_path_relative_to(
             }
         }
     }
-    compact_path_relative_to(&absolute, fallback, Some(&current_dir))
+    absolute.display().to_string()
 }
 
 fn describe_adapter_bootstrap_request(
@@ -12242,7 +12257,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
                     existing: String::from(
-                        "cargo fmt --check\ncargo check\ncargo test -- --test-threads=1",
+                        "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
                 },
                 DetectComparisonRemoval {
@@ -12309,7 +12324,7 @@ mod tests {
         assert!(text.contains("Task `ci`"));
         assert!(text.contains("» remove command `cargo fmt --check`"));
         assert!(text.contains("» remove command `cargo check`"));
-        assert!(text.contains("» remove command `cargo test -- --test-threads=1`"));
+        assert!(text.contains("» remove command `cargo test --lib -- --test-threads=1`"));
         assert!(text.contains("» remove `safe_for_agent: true`"));
         assert!(text.contains(
             "» remove command\n    `ota doctor --json . | ota annotations --mode doctor --format`\n    `\"${OTA_INPUT_RENDER_FORMAT}\" --input -`"
@@ -12336,7 +12351,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
                     existing: String::from(
-                        "cargo fmt --check\ncargo check\ncargo test -- --test-threads=1",
+                        "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
                 },
                 DetectComparisonRemoval {

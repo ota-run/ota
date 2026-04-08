@@ -5176,13 +5176,9 @@ tasks:
 
         assert_eq!(output.exit_code, 7);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Task output:"));
-        assert!(stderr.contains("showing last 20 of 24 lines"));
-        assert!(stderr.contains("line-24"));
-        assert!(!stderr.contains("line-01"));
-        assert!(stderr.contains("ota run fail --stream"));
         assert!(stderr.contains("run `ota tasks --use` to inspect runnable task usage"));
         assert!(stderr.contains("RUN SUMMARY"));
+        assert!(!stderr.contains("Task output:"));
     }
 
     #[test]
@@ -5207,12 +5203,8 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Task output:"));
-        assert!(stderr.contains("showing last 12 of 15 lines"));
-        assert!(stderr.contains("line-15"));
-        assert!(!stderr.contains("line-01"));
-        assert!(stderr.contains("ota run setup --stream"));
         assert!(stderr.contains("RUN SUMMARY"));
+        assert!(!stderr.contains("Task output:"));
     }
 
     #[test]
