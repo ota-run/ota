@@ -2408,6 +2408,47 @@ tasks:
     }
 
     #[test]
+    fn validate_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot_for_dir(
+            "validate_premium.txt",
+            &strip_ansi(&output.stdout),
+            fixture.dir.path(),
+        );
+    }
+
+    #[test]
+    fn validate_narrow_text_snapshot_is_stable() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("48"));
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_text_snapshot_for_dir(
+            "validate_narrow_premium.txt",
+            &strip_ansi(&output.stdout),
+            fixture.dir.path(),
+        );
+    }
+
+    #[test]
     fn validate_json_reports_validation_errors() {
         let fixture = ContractFixture::new(
             r#"
@@ -6106,6 +6147,45 @@ tasks:
     run: printf ready > prepared.txt
 "#,
         );
+        let validate_fixture = ContractFixture::new_dir();
+        validate_fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-web
+"#,
+        );
+        let tasks_fixture = ContractFixture::new_dir();
+        tasks_fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-web
+tasks:
+  build:
+    run: cargo build
+"#,
+        );
+        let env_fixture = ContractFixture::new_dir();
+        env_fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-web
+env:
+  DATABASE_URL:
+    required: true
+    default: postgres://contract
+tasks:
+  test:
+    env:
+      DATABASE_URL: postgres://task
+    run: cargo test
+"#,
+        );
 
         let detect = run_with([
             "ota",
@@ -6117,6 +6197,16 @@ tasks:
         let doctor = run_with(["ota", "--plain", "doctor", doctor_fixture.path()]);
         let explain = run_with(["ota", "--plain", "explain", doctor_fixture.path()]);
         let up = run_with(["ota", "--plain", "up", doctor_fixture.path()]);
+        let validate = run_with(["ota", "--plain", "validate", validate_fixture.path()]);
+        let tasks = run_with(["ota", "--plain", "tasks", tasks_fixture.path()]);
+        let env = run_with([
+            "ota",
+            "--plain",
+            "env",
+            "--task",
+            "test",
+            env_fixture.path(),
+        ]);
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
@@ -6142,6 +6232,24 @@ tasks:
             assert!(!body.contains("✦"));
             assert!(!body.contains("▸"));
         }
+        for output in [&validate, &tasks, &env] {
+            assert_eq!(output.exit_code, 0);
+            let body = format!(
+                "{}\n{}",
+                output.stdout,
+                output.stderr.as_deref().unwrap_or_default()
+            );
+            assert!(!body.contains("🦦"));
+            assert!(!body.contains("➤"));
+            assert!(!body.contains("»"));
+            assert!(!body.contains("●"));
+            assert!(!body.contains("→"));
+            assert!(!body.contains("✦"));
+            assert!(!body.contains("▸"));
+        }
+        assert!(strip_ansi(&validate.stdout).contains("VALIDATE"));
+        assert!(strip_ansi(&tasks.stdout).contains("TASKS"));
+        assert!(strip_ansi(&env.stdout).contains("ENV"));
     }
 
     #[test]
