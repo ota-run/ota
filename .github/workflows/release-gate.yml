@@ -262,6 +262,16 @@ jobs:
               --content-type text/plain
           done
 
+      - name: Publish release version manifest
+        run: |
+          version="${{ needs.release-tag.outputs.version }}"
+          updated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf '{"version":"%s","updated_at":"%s"}\n' "${version}" "${updated_at}" > version.json
+          npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/version.json" \
+            --file version.json \
+            --remote \
+            --content-type application/json
+
   publish-release:
     name: Publish GitHub Release
     needs:
