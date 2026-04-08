@@ -883,6 +883,7 @@ Text output:
 - already removed: `ota was already removed from <path>`
 
 Use this when you want to remove ota from the machine itself, not when you want to clean a repo.
+
 - on success, the command runs the installer for the chosen release target
 
 Use this when:
