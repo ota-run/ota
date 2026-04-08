@@ -11951,7 +11951,7 @@ fn compact_contract_file_path_relative_to(
             }
         }
     }
-    absolute.display().to_string()
+    compact_path_relative_to(&absolute, fallback, Some(&current_dir))
 }
 
 fn describe_adapter_bootstrap_request(
