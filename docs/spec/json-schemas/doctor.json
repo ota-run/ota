@@ -4,10 +4,11 @@
   "title": "ota doctor --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "summary", "findings"],
+  "required": ["ok", "path", "mode", "summary", "findings"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
+    "mode": { "enum": ["native", "container"] },
     "summary": {
       "type": "object",
       "additionalProperties": false,
