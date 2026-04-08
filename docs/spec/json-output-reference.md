@@ -22,6 +22,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
+- [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
 - [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
@@ -46,6 +47,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
+- use `ota policy review --json` when you need policy-authority review over a repo contract
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
@@ -420,6 +422,59 @@ named `export_provider` descriptor with `api_version: 1`. `backend_provider` is 
 JSON output and can be selected by `execution.backends.remote.provider` for custom remote
 execution. Backend providers receive a structured request on stdin and in
 `OTA_BACKEND_PROVIDER_REQUEST_JSON`, then return a structured JSON response on stdout.
+
+## `ota policy review --json`
+
+`ota policy review --json` is the policy-authority view over a repo contract. It is read-only and
+keeps the active policy source/path explicit so editors and CI can tell whether the repo contract
+or the org policy boundary needs to move.
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "policy_source": "repo policy",
+  "policy_path": "./.ota/org-policy.yaml",
+  "summary": {
+    "ok": false,
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0
+  },
+  "finding_groups": [
+    {
+      "action_key": "policy-provisioning-declared",
+      "action_title": "Review approved policy surfaces",
+      "action_next": "use this policy surface when provisioning needs an approved source",
+      "count": 1
+    }
+  ],
+  "findings": [
+    {
+      "code": "OTA_POLICY_PACK_VIOLATION",
+      "category": "policy",
+      "owner": "org_policy",
+      "severity": "error",
+      "summary": "Repo does not satisfy org policy pack",
+      "why": "...",
+      "next": "...",
+      "evidence": {
+        "observed": "...",
+        "expected": "...",
+        "source": "...",
+        "checked_at": "...",
+        "command": "...",
+        "path": "..."
+      }
+    }
+  ]
+}
+```
+
+The optional `policy` payload mirrors the loaded policy pack when ota can read it. Consumers that
+need the authoritative boundary can inspect `policy_source` and `policy_path` first, then read the
+findings and grouped actions to decide whether the repo contract or the org policy pack should be
+updated.
 
 `ota workspace doctor --json` may include the same `execution` object on each repo item when the
 underlying repo contract declares execution metadata, including env provenance for inherited

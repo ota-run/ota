@@ -71,6 +71,27 @@ fn doctor_schema_includes_agent_summary() {
 }
 
 #[test]
+fn policy_review_schema_includes_summary_and_policy_fields() {
+    let schema = load_schema("docs/spec/json-schemas/policy-review.json");
+    let properties = &schema["properties"];
+    let summary = &properties["summary"]["properties"];
+    let finding_groups = &properties["finding_groups"]["items"]["properties"];
+
+    assert!(properties.get("policy_source").is_some());
+    assert!(properties.get("policy_path").is_some());
+    assert!(properties.get("policy").is_some());
+    assert!(properties.get("findings").is_some());
+    assert!(summary.get("ok").is_some());
+    assert!(summary.get("error_count").is_some());
+    assert!(summary.get("warn_count").is_some());
+    assert!(summary.get("info_count").is_some());
+    assert!(finding_groups.get("action_key").is_some());
+    assert!(finding_groups.get("action_title").is_some());
+    assert!(finding_groups.get("action_next").is_some());
+    assert!(finding_groups.get("count").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

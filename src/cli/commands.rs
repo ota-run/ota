@@ -44,8 +44,8 @@ use crate::contract_drift::{
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
-    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
-    diagnose_service, diagnose_services_only,
+    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
+    diagnose_preconditions, diagnose_service, diagnose_services_only,
 };
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
@@ -57,15 +57,15 @@ use crate::output::{
     EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
+    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -2158,6 +2158,259 @@ pub fn policy(
     };
 
     finalize_debug(output, debug, debug_lines)
+}
+
+pub fn policy_review(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let contract_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=policy.review")],
+            );
+        }
+    };
+    let contract = match load_contract(&contract_path) {
+        Ok(contract) => contract,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=policy.review")],
+            );
+        }
+    };
+    if let Err(error) = validate_contract(&contract) {
+        return finalize_debug(
+            CommandOutput::failure(error.to_string()),
+            debug,
+            vec![String::from("DEBUG command=policy.review")],
+        );
+    }
+
+    let review = diagnose_policy_review(&contract, &contract_path);
+    let policy_source = review
+        .policy
+        .as_ref()
+        .map(|loaded| loaded.source.as_str())
+        .unwrap_or("none");
+    let policy_path = review
+        .policy
+        .as_ref()
+        .map(|loaded| compact_policy_path_relative_to_contract(&contract_path, &loaded.path));
+    let path_display = compact_contract_path(&contract_path);
+
+    let output = match format {
+        OutputFormat::Text => CommandOutput {
+            stdout: render_policy_review_text(
+                &path_display,
+                policy_source,
+                policy_path.as_deref(),
+                review.policy.as_ref(),
+                &review.report,
+            ),
+            stderr: None,
+            exit_code: if review.report.ok { 0 } else { 1 },
+        },
+        OutputFormat::Json => {
+            let summary = policy_review_summary(&review.report);
+            CommandOutput {
+                stdout: to_json(&PolicyReviewSuccess {
+                    ok: review.report.ok,
+                    path: &path_display,
+                    policy_source,
+                    policy_path,
+                    summary,
+                    finding_groups: doctor_finding_group_summaries(
+                        review.report.findings.iter(),
+                        None,
+                    ),
+                    policy: review.policy.as_ref().map(|loaded| &loaded.pack),
+                    findings: &review.report.findings,
+                }),
+                stderr: None,
+                exit_code: if review.report.ok { 0 } else { 1 },
+            }
+        }
+    };
+
+    finalize_debug(
+        output,
+        debug,
+        vec![
+            String::from("DEBUG command=policy.review"),
+            format!("DEBUG contract_path={}", contract_path.display()),
+            format!("DEBUG policy_source={policy_source}"),
+        ],
+    )
+}
+
+fn policy_review_summary(report: &DoctorReport) -> PolicyReviewSummary {
+    let mut summary = PolicyReviewSummary::default();
+    summary.ok = report.ok;
+    for finding in &report.findings {
+        match finding.severity {
+            FindingSeverity::Error => summary.error_count += 1,
+            FindingSeverity::Warn => summary.warn_count += 1,
+            FindingSeverity::Info => summary.info_count += 1,
+        }
+    }
+    summary
+}
+
+fn render_policy_review_text(
+    path: &str,
+    policy_source: &str,
+    policy_path: Option<&str>,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    report: &DoctorReport,
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("POLICY REVIEW", path),
+        render_readiness_status(report.ok)
+    );
+    stdout.push_str("\n\n");
+    stdout.push_str(&format!(
+        "{} {}\n",
+        paint_key("Policy source:"),
+        paint_code(policy_source)
+    ));
+    if let Some(policy_path) = policy_path {
+        stdout.push_str(&format!(
+            "{} {}\n",
+            paint_key("Policy path:"),
+            paint_code(policy_path)
+        ));
+    }
+
+    if loaded_policy.is_none() {
+        stdout.push_str("No policy pack found.");
+        stdout.push_str(&format_next_timeline(&[
+            String::from("run `ota policy` to inspect the active policy pack"),
+            String::from(
+                "add `.ota/org-policy.yaml` when provisioning or org rules should come from approved policy",
+            ),
+        ]));
+        return stdout;
+    }
+
+    let summary = policy_review_summary(report);
+    stdout.push_str("\n");
+    stdout.push_str(&render_policy_review_overview_text(&summary));
+
+    if report.findings.is_empty() {
+        stdout.push_str("\n\n");
+        stdout.push_str(&paint(
+            "No policy boundary conflicts detected.",
+            "1;38;2;233;238;240",
+        ));
+        stdout.push_str(&format_next_timeline(&[
+            String::from("run `ota policy` to inspect the active policy pack"),
+            String::from("run `ota doctor` for the full readiness view"),
+        ]));
+        return stdout;
+    }
+
+    for group in group_doctor_findings(report.findings.iter()) {
+        if group.findings.len() == 1 {
+            let finding = group.findings[0];
+            let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
+                format!(
+                    "{} {}",
+                    finding_detail_key(finding.severity, "Source:"),
+                    value
+                )
+            });
+            let source_block = source_line
+                .as_ref()
+                .map(|value| format!("\n{}", value))
+                .unwrap_or_default();
+            stdout.push_str("\n\n");
+            stdout.push_str(&format!(
+                "{}  {}{}",
+                render_severity(finding.severity),
+                render_finding_summary(finding.severity, &finding.summary),
+                source_block,
+            ));
+            append_wrapped_labeled_text(
+                &mut stdout,
+                "Why:",
+                &finding.why,
+                "",
+                84,
+                false,
+                |key| finding_detail_key(finding.severity, key),
+                |value| render_backticked_text(value, None),
+            );
+            append_wrapped_labeled_text(
+                &mut stdout,
+                "Next:",
+                &finding.next,
+                "",
+                84,
+                true,
+                |key| finding_detail_key(finding.severity, key),
+                |value| render_backticked_text(value, None),
+            );
+            continue;
+        }
+
+        stdout.push_str(&render_grouped_doctor_findings(&group, None, None));
+    }
+
+    stdout
+}
+
+fn render_policy_review_overview_text(summary: &PolicyReviewSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&paint_section_title("Overview"));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Findings:", "1;38;2;102;217;255"),
+            &paint(
+                &summary
+                    .error_count
+                    .saturating_add(summary.warn_count)
+                    .saturating_add(summary.info_count)
+                    .to_string(),
+                "1;38;2;255;255;255"
+            ),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Errors:", "1;38;2;102;217;255"),
+            &paint(&summary.error_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Warnings:", "1;38;2;102;217;255"),
+            &paint(&summary.warn_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Info:", "1;38;2;102;217;255"),
+            &paint(&summary.info_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout
 }
 
 pub fn uninstall(debug: bool) -> CommandOutput {
@@ -12065,7 +12318,7 @@ mod tests {
     };
     use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
     use tempfile::TempDir;
 
     fn write_executable_script(path: &Path, body: &str) {
@@ -12256,6 +12509,61 @@ mod tests {
         assert!(text.contains("Policy source: none"));
         assert!(text.contains("No policy pack found."));
         assert!(text.contains("run `ota doctor` to inspect repo-local readiness without policy"));
+        assert!(text.contains(
+            "add `.ota/org-policy.yaml` when provisioning or org rules should come from approved policy"
+        ));
+    }
+
+    #[test]
+    fn policy_review_text_reports_policy_boundary_and_sources() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let contract = repo.path().join("ota.yaml");
+        let policy = repo.path().join(".ota").join("org-policy.yaml");
+        fs::create_dir_all(policy.parent().unwrap()).unwrap();
+        fs::write(
+            &contract,
+            "version: 1\nproject:\n  name: ota\ntasks:\n  ci:\n    run: echo ci\n",
+        )
+        .unwrap();
+        fs::write(
+            &policy,
+            "policies:\n  required_files:\n    - AGENTS.md\n  provisioning:\n    node:\n      source: brew\n      approved_versions:\n        - \"22\"\n",
+        )
+        .unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(repo.path()).unwrap();
+        let text = strip_ansi_codes(
+            &super::policy_review(Some(repo.path()), None, OutputFormat::Text, false).stdout,
+        );
+        env::set_current_dir(cwd).unwrap();
+
+        assert!(text.contains("POLICY REVIEW ./ota.yaml"));
+        assert!(text.contains("Policy source: repo policy"));
+        assert!(text.contains("Policy path: ./.ota/org-policy.yaml"));
+        assert!(text.contains("Repo does not satisfy org policy pack"));
+        assert!(text.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn policy_review_text_without_policy_pack_includes_next_steps() {
+        let _guard = CWD_MUTEX.lock().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let contract = repo.path().join("ota.yaml");
+        fs::write(&contract, "version: 1\nproject:\n  name: ota\n").unwrap();
+
+        let cwd = env::current_dir().unwrap();
+        env::set_current_dir(repo.path()).unwrap();
+        let text = strip_ansi_codes(
+            &super::policy_review(Some(repo.path()), None, OutputFormat::Text, false).stdout,
+        );
+        env::set_current_dir(cwd).unwrap();
+
+        assert!(text.contains("POLICY REVIEW ./ota.yaml"));
+        assert!(text.contains("Policy source: none"));
+        assert!(text.contains("No policy pack found."));
+        assert!(text.contains("run `ota policy` to inspect the active policy pack"));
         assert!(text.contains(
             "add `.ota/org-policy.yaml` when provisioning or org rules should come from approved policy"
         ));

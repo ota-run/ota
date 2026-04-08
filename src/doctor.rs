@@ -483,6 +483,12 @@ pub struct DoctorReport {
     pub findings: Vec<Finding>,
 }
 
+#[derive(Debug)]
+pub struct PolicyReviewReport {
+    pub policy: Option<LoadedOrgPolicyPack>,
+    pub report: DoctorReport,
+}
+
 pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
@@ -498,6 +504,41 @@ pub fn diagnose_contract_in_mode(
     mode: DoctorMode,
 ) -> DoctorReport {
     diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode)
+}
+
+pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> PolicyReviewReport {
+    let mut findings = Vec::new();
+    let loaded_policy = match load_org_policy_pack_auto_details(contract_path) {
+        Ok(policy) => policy,
+        Err(err) => {
+            findings.push(policy_error_finding(err));
+            None
+        }
+    };
+
+    if let Some(loaded_policy_ref) = loaded_policy.as_ref() {
+        diagnose_org_policy(
+            contract,
+            contract_path,
+            Some(loaded_policy_ref),
+            &mut findings,
+        );
+        diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
+    }
+
+    let report = DoctorReport {
+        ok: !findings
+            .iter()
+            .any(|finding| finding.severity == FindingSeverity::Error),
+        provisioning: None,
+        adapter_bootstrap: None,
+        findings,
+    };
+
+    PolicyReviewReport {
+        policy: loaded_policy,
+        report,
+    }
 }
 
 pub fn diagnose_preconditions(contract: &Contract, contract_path: &Path) -> DoctorReport {

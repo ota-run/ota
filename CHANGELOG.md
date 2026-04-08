@@ -28,6 +28,7 @@
 
 - added `ota doctor --mode container` so readiness can be diagnosed against the declared container execution boundary instead of only the host context.
 - made doctor JSON explicit about the selected diagnosis mode and kept container-mode next steps pointed at `ota doctor --mode container` so machine consumers and text users see the same execution boundary.
+- added `ota policy review` as a read-only policy-authority lens so policy-vs-contract conflicts and approved sources can be reviewed without mutating either side.
 
 ## 1.2.0
 
