@@ -25,6 +25,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 use serde_json::Value;
 use tempfile::TempDir;
@@ -35,6 +36,8 @@ use ota::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
 };
 use ota::validator::validate_contract;
+
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 fn real_fixture_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -704,6 +707,7 @@ fn up_uses_container_provisioning_target_on_real_command_path() {
 #[cfg(unix)]
 #[test]
 fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     let fixture = copy_fixture_to_temp("container-path-probe");
 
     let bin_dir = fixture.path().join("bin");
@@ -817,6 +821,7 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
 #[cfg(unix)]
 #[test]
 fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     let fixture = copy_fixture_to_temp("linux-mirror-probe");
     let contract_path = fixture.path().join("ota.yaml");
     let contract = load_contract(&contract_path).expect("contract should parse");
