@@ -73,7 +73,7 @@ jobs:
         run: ota validate
 
       - name: Run release gate
-        run: ota run release-gate --backend native
+        run: ota run release-gate --backend native --stream
 
   release-tag:
     name: Create Release Tag
