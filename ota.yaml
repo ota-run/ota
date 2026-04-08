@@ -167,7 +167,7 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
-  bump-version:
+  bump:version:
     description: Bump Cargo.toml to a new release version
     notes: |
       Use this when preparing a release and you need to update Cargo.toml consistently.
