@@ -30,6 +30,10 @@
 
 ota is open infrastructure for repo readiness, not another task runner or package manager. It gives every repo one explicit contract for what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents can answer why a repo is or is not runnable without guesswork.
 
+<div align="center">
+  <img src="docs/assets/ota-social-card.png" alt="ota social card showing repo readiness and doctor output" width="1280" />
+</div>
+
 Doctor first, contract second.
 
 ## What problem ota solves
