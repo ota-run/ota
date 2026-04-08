@@ -43,9 +43,9 @@ use crate::contract_drift::{
 };
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
-    DoctorReport, Finding, FindingSeverity, command_available, command_version,
-    diagnose_checks_only, diagnose_contract, diagnose_preconditions, diagnose_service,
-    diagnose_services_only,
+    DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
+    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
+    diagnose_service, diagnose_services_only,
 };
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
@@ -2207,6 +2207,7 @@ pub fn doctor(
     path: Option<&Path>,
     file_override: Option<&Path>,
     members: &[String],
+    mode: DoctorMode,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -2238,6 +2239,7 @@ pub fn doctor(
                         None,
                         None,
                         &empty_extensions,
+                        None,
                         report,
                     ),
                     OutputFormat::Json => CommandOutput {
@@ -2288,7 +2290,8 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let mut report = diagnose_contract(&target.contract, &target.contract_path);
+                let mut report =
+                    diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
                 append_contract_drift_findings(
                     &target.contract,
                     &target.contract_path,
@@ -2313,6 +2316,7 @@ pub fn doctor(
                         agent_summary.as_ref(),
                         execution_summary.as_ref(),
                         &target.contract.extensions,
+                        Some(mode),
                         &report,
                     )];
                     let mut member_results = Vec::new();
@@ -2371,9 +2375,10 @@ pub fn doctor(
                                         );
                                     }
                                 };
-                            let member_report = diagnose_contract(
+                            let member_report = diagnose_contract_in_mode(
                                 &member_target.contract,
                                 &member_target.contract_path,
+                                mode,
                             );
                             append_contract_drift_findings(
                                 &member_target.contract,
@@ -2406,6 +2411,7 @@ pub fn doctor(
                                 member_agent.as_ref(),
                                 member_execution.as_ref(),
                                 &member_target.contract.extensions,
+                                Some(mode),
                                 &member_report,
                             ));
                             member_results.push(json!({
@@ -2444,6 +2450,7 @@ pub fn doctor(
                             agent_summary.as_ref(),
                             execution_summary.as_ref(),
                             &target.contract.extensions,
+                            Some(mode),
                             report,
                         ),
                         OutputFormat::Json => {
@@ -2538,7 +2545,8 @@ pub fn doctor(
                                 );
                             }
                         };
-                    let mut report = diagnose_contract(&target.contract, &target.contract_path);
+                    let mut report =
+                        diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
                     append_contract_drift_findings(
                         &target.contract,
                         &target.contract_path,
@@ -2559,6 +2567,7 @@ pub fn doctor(
                         agent.as_ref(),
                         execution_summary.as_ref(),
                         &target.contract.extensions,
+                        Some(mode),
                         &report,
                     ));
                     member_results.push(json!({
@@ -2925,6 +2934,7 @@ pub fn check(
                         Some(&target.contract_path),
                         None,
                         execution_summary.as_ref(),
+                        None,
                         &report,
                         None,
                     )];
@@ -3009,6 +3019,7 @@ pub fn check(
                                 Some(&member_target.contract_path),
                                 None,
                                 member_execution.as_ref(),
+                                None,
                                 &member_report,
                                 None,
                             ));
@@ -3050,6 +3061,7 @@ pub fn check(
                             Some(&target.contract_path),
                             None,
                             execution_summary.as_ref(),
+                            None,
                             report,
                             None,
                         ),
@@ -3156,6 +3168,7 @@ pub fn check(
                         Some(&target.contract_path),
                         None,
                         execution_summary.as_ref(),
+                        None,
                         &report,
                         None,
                     ));
@@ -9732,6 +9745,7 @@ fn render_doctor_text(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
+    doctor_mode: Option<DoctorMode>,
     report: DoctorReport,
 ) -> CommandOutput {
     let summary = doctor_summary(&report, agent_verdict_from_summary(agent));
@@ -9741,6 +9755,7 @@ fn render_doctor_text(
         Some(contract_path),
         agent,
         execution,
+        doctor_mode,
         report,
         Some(&summary),
     );
@@ -10028,6 +10043,7 @@ fn render_doctor_section(
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
     extensions: &BTreeMap<String, ExtensionSpec>,
+    doctor_mode: Option<DoctorMode>,
     report: &DoctorReport,
 ) -> String {
     let summary = doctor_summary(report, agent_verdict_from_summary(agent));
@@ -10037,6 +10053,7 @@ fn render_doctor_section(
         Some(contract_path),
         agent,
         execution,
+        doctor_mode,
         report,
         Some(&summary),
     );
@@ -10273,6 +10290,7 @@ fn render_report_text(
     contract_path: Option<&Path>,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
+    doctor_mode: Option<DoctorMode>,
     report: DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> CommandOutput {
@@ -10282,6 +10300,7 @@ fn render_report_text(
         contract_path,
         agent,
         execution,
+        doctor_mode,
         &report,
         summary,
     );
@@ -10298,6 +10317,7 @@ fn render_report_section(
     contract_path: Option<&Path>,
     agent: Option<&AgentSummary<'_>>,
     execution: Option<&ExecutionSummary<'_>>,
+    doctor_mode: Option<DoctorMode>,
     report: &DoctorReport,
     summary: Option<&DoctorSummary>,
 ) -> String {
@@ -10347,7 +10367,10 @@ fn render_report_section(
             stdout.push_str("\n\n");
         }
         if command == "DOCTOR" || command == "CHECK" {
-            stdout.push_str(&render_doctor_execution_summary_text(execution));
+            stdout.push_str(&render_doctor_execution_summary_text(
+                execution,
+                doctor_mode,
+            ));
         } else {
             stdout.push_str(&render_execution_summary_text(execution));
         }
@@ -11365,8 +11388,18 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     stdout
 }
 
-fn render_doctor_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
+fn render_doctor_execution_summary_text(
+    execution: &ExecutionSummary<'_>,
+    doctor_mode: Option<DoctorMode>,
+) -> String {
     let mut lines = vec![paint_section_title("Execution")];
+    if let Some(mode) = doctor_mode {
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Mode:"),
+            &paint_backticked_code(mode.as_str()),
+        ));
+    }
     if let Some(preferred) = execution.preferred {
         lines.push(section_list_row(
             &summary_bullet(),
@@ -12557,6 +12590,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -12877,6 +12911,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -12930,6 +12965,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -12976,6 +13012,7 @@ tasks:
         let text = strip_ansi_codes(&render_report_section(
             "DOCTOR",
             "./ota.yaml",
+            None,
             None,
             None,
             None,
@@ -13083,6 +13120,7 @@ tasks:
             None,
             None,
             None,
+            None,
             &report,
             Some(&summary),
         ));
@@ -13131,6 +13169,7 @@ tasks:
             "./ota.yaml",
             None,
             Some(&agent),
+            None,
             None,
             &report,
             Some(&summary),

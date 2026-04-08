@@ -167,6 +167,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Diagnose readiness in a specific execution context.
+        #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
+        mode: DoctorModeArg,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
         member: Vec<String>,
@@ -413,6 +416,12 @@ enum AnnotationFormat {
     Github,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DoctorModeArg {
+    Native,
+    Container,
+}
+
 impl UpdateChannel {
     const fn as_str(&self) -> &'static str {
         match self {
@@ -427,6 +436,15 @@ impl From<RunLifecycle> for crate::schema::Lifecycle {
         match value {
             RunLifecycle::Persistent => crate::schema::Lifecycle::Persistent,
             RunLifecycle::Ephemeral => crate::schema::Lifecycle::Ephemeral,
+        }
+    }
+}
+
+impl From<DoctorModeArg> for crate::doctor::DoctorMode {
+    fn from(value: DoctorModeArg) -> Self {
+        match value {
+            DoctorModeArg::Native => crate::doctor::DoctorMode::Native,
+            DoctorModeArg::Container => crate::doctor::DoctorMode::Container,
         }
     }
 }
@@ -1179,10 +1197,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
             receipt,
             stream,
         ),
-        Commands::Doctor { json, member, path } => commands::doctor(
+        Commands::Doctor {
+            json,
+            mode,
+            member,
+            path,
+        } => commands::doctor(
             path.as_deref(),
             file.as_deref(),
             &member,
+            mode.into(),
             format_from_json(json),
             debug,
         ),
@@ -10483,6 +10507,103 @@ runtimes:
 
         assert_eq!(output.exit_code, 1);
         assert_text_snapshot("doctor_plain_premium.txt", &output.stdout);
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_container_context() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: jdxcode/mise:latest
+      engines: [notarealengine]
+tasks:
+  ci:
+    run: echo ci
+agent:
+  entrypoint: ci
+  default_task: ci
+  safe_tasks: [ci]
+  verify_after_changes: [ci]
+  writable_paths: [src]
+  protected_paths: [ota.yaml]
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Mode:"));
+        assert!(text.contains("Missing container execution backend CLI"));
+        assert!(text.contains("Execution"));
+    }
+
+    #[test]
+    fn doctor_container_mode_probes_the_container_image() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  ci:
+    run: echo ci
+agent:
+  entrypoint: ci
+  default_task: ci
+  safe_tasks: [ci]
+  verify_after_changes: [ci]
+  writable_paths: [src]
+  protected_paths: [ota.yaml]
+runtimes:
+  node: "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Mode:"));
+        assert!(text.contains("ready"));
+        assert!(!text.contains("Version mismatch for runtime: node"));
     }
 
     #[test]

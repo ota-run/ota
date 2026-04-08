@@ -12,6 +12,7 @@ Why: node resolved to `24.14.1` but the contract requires `22`
 Next: run `nvm install 22 && nvm use 22` and rerun `ota doctor`
 
 Execution
+ -  Mode: `native`
  -  Lifecycle: `ephemeral`
 
 Agent

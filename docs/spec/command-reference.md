@@ -574,6 +574,8 @@ Diagnose repo readiness from a validated contract.
 
 ```bash
 ota doctor [PATH]
+ota doctor --mode native [PATH]
+ota doctor --mode container [PATH]
 ota doctor --json [PATH]
 ota doctor --member api [PATH]
 ota doctor --member api --member web --json [PATH]
@@ -589,10 +591,12 @@ ota doctor --member api --member web --json [PATH]
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - checks configured env requirements
 - checks preferred execution backend prerequisites such as `docker` / `podman` / `nerdctl`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
+- `--mode native` diagnoses host/native readiness; `--mode container` diagnoses the selected container execution context when container backends are declared
 - warns on suspicious remote target shape:
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
+- in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
 - runs declared service healthchecks
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
@@ -614,6 +618,7 @@ Text output:
 
 - header: `DOCTOR <path>`
 - status line: `READY` or `NOT READY`
+- `Execution` includes a `Mode:` line in text output so the selected diagnosis context is explicit
 - summary includes repo verdict and agent verdict before per-finding details
 - with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
 
