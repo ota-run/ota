@@ -34,7 +34,7 @@ use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
 use serde_json::Value as JsonValue;
 
-use crate::execution::container_engine_candidates;
+use crate::execution::{container_engine_candidates, selected_container_engine};
 use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
     ProvisioningPlan, ProvisioningTargetKind, load_org_policy_pack_auto_details,
@@ -59,6 +59,22 @@ pub struct Finding {
     pub summary: String,
     pub why: String,
     pub next: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoctorMode {
+    Native,
+    Container,
+}
+
+impl DoctorMode {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            DoctorMode::Native => "native",
+            DoctorMode::Container => "container",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -96,6 +112,12 @@ pub struct ProvisioningDiagnostics {
 pub struct AdapterBootstrapDiagnostics {
     pub plan: crate::policy_pack::AdapterBootstrapPlan,
     pub request: crate::policy_pack::ProvisioningBackendRequest,
+}
+
+#[derive(Debug, Clone)]
+struct ContainerProbeContext {
+    image: String,
+    engine: String,
 }
 
 impl Finding {
@@ -462,19 +484,47 @@ pub struct DoctorReport {
 }
 
 pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::All,
+        DoctorMode::Native,
+    )
+}
+
+pub fn diagnose_contract_in_mode(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+) -> DoctorReport {
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::All, mode)
 }
 
 pub fn diagnose_preconditions(contract: &Contract, contract_path: &Path) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::Preconditions)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        DoctorMode::Native,
+    )
 }
 
 pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::ChecksOnly)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::ChecksOnly,
+        DoctorMode::Native,
+    )
 }
 
 pub fn diagnose_services_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
-    diagnose_contract_with_scope(contract, contract_path, DoctorScope::ServicesOnly)
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::ServicesOnly,
+        DoctorMode::Native,
+    )
 }
 
 pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -> DoctorReport {
@@ -509,6 +559,7 @@ fn diagnose_contract_with_scope(
     contract: &Contract,
     contract_path: &Path,
     scope: DoctorScope,
+    mode: DoctorMode,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
@@ -528,20 +579,23 @@ fn diagnose_contract_with_scope(
         .as_ref()
         .map(|loaded| loaded.pack.selected_provisioning_actions(contract))
         .unwrap_or_default();
-
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
-        diagnose_execution_backend(contract, &mut findings);
+        let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
         diagnose_env(contract, &mut findings);
         diagnose_runtimes(
             contract,
             contract_path,
+            mode,
+            container_probe.as_ref(),
             &provisioning_actions,
             &mut findings,
         );
         diagnose_tools(
             contract,
             contract_path,
+            mode,
+            container_probe.as_ref(),
             &provisioning_actions,
             &mut findings,
         );
@@ -649,9 +703,16 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
     }
 }
 
-fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_execution_backend(
+    contract: &Contract,
+    findings: &mut Vec<Finding>,
+    mode: DoctorMode,
+) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
-        return;
+        if mode == DoctorMode::Container {
+            findings.push(container_mode_not_configured_finding());
+        }
+        return None;
     };
 
     match execution.preferred {
@@ -662,7 +723,7 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
                 .as_ref()
                 .and_then(|backends| backends.remote.as_ref())
             else {
-                return;
+                return None;
             };
 
             let provider = remote.provider.trim();
@@ -683,7 +744,7 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
                                 "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
                             ),
                         });
-                        return;
+                        return None;
                     };
 
                     if extension.kind != ExtensionKind::BackendProvider {
@@ -697,7 +758,7 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
                                 "change the extension kind to `backend_provider` or change the remote provider name",
                             ),
                         });
-                        return;
+                        return None;
                     }
 
                     if extension.api_version != 1 {
@@ -712,7 +773,7 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
                                 "bump the backend provider extension to `api_version: 1`",
                             ),
                         });
-                        return;
+                        return None;
                     }
 
                     None
@@ -730,6 +791,44 @@ fn diagnose_execution_backend(contract: &Contract, findings: &mut Vec<Finding>) 
             }
         }
         _ => {}
+    }
+
+    if mode != DoctorMode::Container {
+        return None;
+    }
+
+    let Some(container) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref())
+    else {
+        findings.push(container_mode_not_configured_finding());
+        return None;
+    };
+
+    let Some(engine) = selected_container_engine(contract) else {
+        if execution.preferred != Some(Backend::Container) {
+            diagnose_container_backend_cli(contract, findings);
+        }
+        return None;
+    };
+
+    Some(ContainerProbeContext {
+        image: container.image.clone(),
+        engine,
+    })
+}
+
+fn container_mode_not_configured_finding() -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Container execution is not configured"),
+        why: String::from(
+            "container diagnosis requires `execution.backends.container.image` so Ota can inspect the execution image that actually runs tasks",
+        ),
+        next: String::from(
+            "add `execution.backends.container.image` and a supported container engine, or rerun `ota doctor` without `--mode container`",
+        ),
     }
 }
 
@@ -901,9 +1000,15 @@ fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
 fn diagnose_runtimes(
     contract: &Contract,
     contract_path: &Path,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) {
+    if mode == DoctorMode::Container && container_probe.is_none() {
+        return;
+    }
+
     for (name, requirement) in &contract.runtimes {
         diagnose_command_version(
             "runtime",
@@ -912,6 +1017,8 @@ fn diagnose_runtimes(
             requirement.version(),
             true,
             runtime_provider_hint(requirement),
+            mode,
+            container_probe,
             contract_path,
             provisioning_actions,
             findings,
@@ -922,9 +1029,15 @@ fn diagnose_runtimes(
 fn diagnose_tools(
     contract: &Contract,
     contract_path: &Path,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) {
+    if mode == DoctorMode::Container && container_probe.is_none() {
+        return;
+    }
+
     for (name, requirement) in &contract.tools {
         let required = match requirement {
             crate::schema::ToolRequirement::Simple(_) => true,
@@ -938,6 +1051,8 @@ fn diagnose_tools(
             requirement.version(),
             required,
             None,
+            mode,
+            container_probe,
             contract_path,
             provisioning_actions,
             findings,
@@ -1423,6 +1538,8 @@ fn diagnose_command_version(
     requirement: &str,
     required: bool,
     provider_hint: Option<&str>,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
@@ -1431,16 +1548,33 @@ fn diagnose_command_version(
         "runtime" => ProvisioningTargetKind::Runtime,
         _ => ProvisioningTargetKind::Tool,
     };
-    let exact_remediation = exact_tooling_remediation(
-        target_kind,
-        display_name,
-        requirement,
-        provider_hint,
-        contract_path,
-        provisioning_actions,
-    );
+    let exact_remediation = if mode == DoctorMode::Native {
+        exact_tooling_remediation(
+            target_kind,
+            display_name,
+            requirement,
+            provider_hint,
+            contract_path,
+            provisioning_actions,
+        )
+    } else {
+        None
+    };
 
-    let Some(actual) = command_version(executable_name) else {
+    let actual = if mode == DoctorMode::Container {
+        let Some(container_probe) = container_probe else {
+            return;
+        };
+        command_version_in_container(
+            &container_probe.engine,
+            &container_probe.image,
+            executable_name,
+        )
+    } else {
+        command_version(executable_name)
+    };
+
+    let Some(actual) = actual else {
         findings.push(Finding {
             severity: if required {
                 FindingSeverity::Error
@@ -1448,14 +1582,26 @@ fn diagnose_command_version(
                 FindingSeverity::Warn
             },
             summary: format!("Missing {kind}: {display_name}"),
-            why: format!("{display_name} is declared in the contract but is not available on PATH"),
-            next: exact_remediation
-                .map(|command| format!("run `{command}` and rerun `ota doctor`"))
-                .unwrap_or_else(|| {
-                    format!(
-                        "install {display_name} and make it available on PATH, then rerun `ota doctor`"
-                    )
-                }),
+            why: if mode == DoctorMode::Container {
+                format!(
+                    "{display_name} is declared in the contract but is not available inside the selected container image"
+                )
+            } else {
+                format!("{display_name} is declared in the contract but is not available on PATH")
+            },
+            next: if mode == DoctorMode::Container {
+                format!(
+                    "update `execution.backends.container.image` so `{display_name}` is available, then rerun `ota doctor --mode container`"
+                )
+            } else {
+                exact_remediation
+                    .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+                    .unwrap_or_else(|| {
+                        format!(
+                            "install {display_name} and make it available on PATH, then rerun `ota doctor`"
+                        )
+                    })
+            },
         });
         return;
     };
@@ -1471,17 +1617,67 @@ fn diagnose_command_version(
             FindingSeverity::Warn
         },
         summary: format!("Version mismatch for {kind}: {display_name}"),
-        why: format!(
-            "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
-        ),
-        next: exact_remediation
-            .map(|command| format!("run `{command}` and rerun `ota doctor`"))
-            .unwrap_or_else(|| {
-                format!(
-                    "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
-                )
-            }),
+        why: if mode == DoctorMode::Container {
+            format!(
+                "{display_name} resolved to `{actual}` inside the selected container image but the contract requires `{requirement}`"
+            )
+        } else {
+            format!(
+                "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
+            )
+        },
+        next: if mode == DoctorMode::Container {
+            format!(
+                "update `execution.backends.container.image` so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
+            )
+        } else {
+            exact_remediation
+                .map(|command| format!("run `{command}` and rerun `ota doctor`"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
+                    )
+                })
+        },
     });
+}
+
+fn command_version_in_container(engine: &str, image: &str, name: &str) -> Option<String> {
+    let output = version_command_in_container(engine, image, name)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let combined = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    extract_version_token(&combined)
+}
+
+fn version_command_in_container(engine: &str, image: &str, name: &str) -> Command {
+    let mut command = Command::new(engine);
+    command
+        .arg("run")
+        .arg("--rm")
+        .arg("--entrypoint")
+        .arg("sh")
+        .arg(image)
+        .arg("-lc")
+        .arg(version_command_string(name));
+    command
+}
+
+fn version_command_string(name: &str) -> String {
+    if name == "go" {
+        String::from("go version")
+    } else {
+        format!("{name} --version")
+    }
 }
 
 fn compact_display_path(path: &Path) -> String {

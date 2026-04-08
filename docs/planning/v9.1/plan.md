@@ -47,6 +47,8 @@ This slice is the public-adoption hardening pass before `v1.0.0`.
 - doctor-first onboarding language in public docs
 - explicit repo-boundary behavior for path inputs
 - more actionable remediation text from `doctor` and `explain`
+- backend-aware diagnosis for container-first repos
+- a read-only policy review command surface
 - stronger starter contract inference for common repo workflows
 - `AGENTS.md` export or sync from `ota.yaml`
 
@@ -84,6 +86,34 @@ This slice is the public-adoption hardening pass before `v1.0.0`.
 - keep doctor/explain output deterministic and short
 - preserve a stable review path for weaker signals
 
+1. Target-aware diagnosis and policy review
+
+- let `ota doctor` diagnose the execution target the repo actually uses, not only the host
+- keep container diagnosis explicit so host readiness and container readiness do not get conflated
+- add a read-only `ota policy review` lens for policy-versus-contract drift without introducing policy sync behavior
+- keep policy review separate from repo readiness diagnosis so each command has one authority boundary
+
+Proposed command contract:
+
+- `ota doctor` remains the current readiness view, but its diagnosis should follow the repo's actual execution target when the contract supports one
+- `ota doctor` should be able to report host/native readiness and container-target readiness explicitly, without conflating the two
+- any explicit target override for doctor should be read-only and must not mutate the repo, policy, or container state
+- `ota policy review` is a read-only policy-authority lens under `ota policy`
+- `ota policy review` reports policy source, policy path, and policy-versus-contract conflicts without trying to sync them
+- `ota policy review` does not replace `ota doctor`; it answers whether the repo contract is aligned with the active org policy
+- `ota policy review` should tell the user whether the repo needs to change, the policy pack needs to change, or both need review
+- `ota policy` itself remains the active-policy inspection command
+
+Output contract:
+
+- target-aware `ota doctor` keeps the same premium section structure as the current doctor output
+- the primary blocker or primary finding should describe the selected execution context, not just the host
+- `Execution` should continue to show preferred, supported, lifecycle, and container details in a stable order
+- `ota policy review` should lead with `Policy`, then grouped conflicts, then deterministic next steps
+- when the repo asks for an unapproved runtime or source, `ota policy review` should point to `ota.yaml`
+- when the policy pack is missing an approved source or required rule, `ota policy review` should point to `.ota/org-policy.yaml`
+- both commands should keep JSON output stable and read-only
+
 1. Starter contract quality
 
 - infer the most common workflow shape with higher confidence
@@ -101,6 +131,7 @@ This slice is the public-adoption hardening pass before `v1.0.0`.
 - first-contact docs lead with `ota doctor`
 - explicit directory inputs no longer feel like a trap
 - remediation text offers clear next commands instead of generic advice
+- container-first repos can be diagnosed against the container target when needed
+- policy drift can be reviewed without implying automatic policy synchronization
 - `ota init` produces a more immediately useful starter contract
 - `AGENTS.md` can be generated or synchronized from the existing contract
-
