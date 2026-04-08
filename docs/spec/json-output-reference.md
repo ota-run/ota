@@ -62,7 +62,7 @@ human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
-- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`
+- `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
@@ -90,6 +90,7 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "mode": "native",
   "summary": {
     "error_count": 0
   }
@@ -397,6 +398,11 @@ machine-readable `verdict` / `agent_verdict` values so hosted validation and edi
 not need to recompute them. When there is at least one finding, the summary may also include
 `primary_blocker` with the highest-priority blocker details so CI and editors can answer the
 question “what should I fix first?” without scanning the full list.
+
+`ota doctor --json` also includes a top-level `mode` string. It is `native` for host readiness
+diagnosis and `container` when the report was produced with `ota doctor --mode container`, so
+consumers can tell which execution context the findings describe without inferring it from the CLI
+invocation.
 
 When the repo signals no longer match the declared contract, `ota doctor --json` may include
 warning findings that describe the drift and point back to `ota detect --merge --dry-run` for the

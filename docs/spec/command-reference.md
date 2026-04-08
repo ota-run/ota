@@ -589,7 +589,7 @@ ota doctor --member api --member web --json [PATH]
 - when `--member` is set, diagnoses the merged member contract
 - repeated `--member` values diagnose those members in the provided order
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
-- checks configured env requirements
+- checks configured env requirements, declared checks, and service healthchecks in native mode
 - checks preferred execution backend prerequisites such as `docker` / `podman` / `nerdctl`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
 - `--mode native` diagnoses host/native readiness; `--mode container` diagnoses the selected container execution context when container backends are declared
 - warns on suspicious remote target shape:
@@ -597,7 +597,7 @@ ota doctor --member api --member web --json [PATH]
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
-- runs declared service healthchecks
+- in container mode, host-bound env, check, and service healthchecks are omitted so container diagnosis does not mix execution contexts
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
