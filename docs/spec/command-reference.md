@@ -992,8 +992,8 @@ Current behavior:
 - `ota clean --stale --dry-run` previews stale containers without removing them
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
-- remote backends do not currently define cleanup semantics; they report `NO CLEANUP NEEDED`
-- reports `NO CLEANUP NEEDED` when there is no persistent container state to remove
+- remote backends do not currently define cleanup semantics; they report `No cleanup needed`
+- reports `No cleanup needed` when there is no persistent container state to remove
 - does not stop services or perform workspace-wide cleanup
 
 ## `ota detect`

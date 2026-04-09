@@ -4604,8 +4604,8 @@ pub fn clean(
 
 fn render_clean_text<E: ToString>(path: &str, result: Result<bool, E>) -> Result<String, String> {
     match result {
-        Ok(true) => Ok(format!("CLEANED {path}")),
-        Ok(false) => Ok(format!("NO CLEANUP NEEDED {path}")),
+        Ok(true) => Ok(format!("Cleaned {path}")),
+        Ok(false) => Ok(format!("No cleanup needed for {path}")),
         Err(error) => Err(error.to_string()),
     }
 }
@@ -4615,17 +4615,17 @@ fn render_stale_clean_text(
     dry_run: bool,
 ) -> String {
     if containers.is_empty() {
-        return String::from("NO CLEANUP NEEDED stale ota-managed containers");
+        return String::from("No cleanup needed for stale ota-managed containers");
     }
 
     let mut stdout = if dry_run {
         format!(
-            "DRY RUN stale ota-managed containers ({})",
+            "Dry run stale ota-managed containers ({})",
             containers.len()
         )
     } else {
         format!(
-            "CLEANED stale ota-managed containers ({})",
+            "Cleaned stale ota-managed containers ({})",
             containers.len()
         )
     };

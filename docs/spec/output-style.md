@@ -67,8 +67,8 @@ ota --plain workspace up .
 - one-line compatibility outputs remain unchanged where tests assert exact strings:
   - `VALID ...`
   - `VALID WORKSPACE ...`
-  - `CLEANED ...`
-  - `NO CLEANUP NEEDED ...`
+  - `Cleaned ...`
+  - `No cleanup needed ...`
 - text output may evolve visually, but should preserve:
   - deterministic ordering
   - stable section meaning
