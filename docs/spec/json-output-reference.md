@@ -1092,7 +1092,7 @@ skip plan without provisioning, starting services, or writing repo files. See
 
 `ota clean --stale --json` is contract-free. It reports exited ota-managed containers that match
 the local cleanup scan and tells automation whether the command removed them or only previewed
-them. If a local container engine cannot answer `ps`, ota returns a cleanup error instead of this
+them. If no local container engine can be queried, ota returns a cleanup error instead of this
 success shape.
 
 ```json

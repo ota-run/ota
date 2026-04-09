@@ -988,7 +988,7 @@ Current behavior:
 - when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
 - `ota clean --stale` does not require `ota.yaml`; it scans available local container engines for exited ota-managed containers from any repo
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
-- if a local container engine cannot answer `ps`, stale cleanup fails with a query error instead of pretending no stale containers exist
+- if a local container engine cannot answer `ps`, stale cleanup continues with other available engines and only fails when none of them can be queried
 - `ota clean --stale --dry-run` previews stale containers without removing them
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`

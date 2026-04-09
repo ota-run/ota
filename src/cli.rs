@@ -4452,6 +4452,80 @@ exit 1
         assert!(stderr.contains("Docker daemon is not running"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn clean_stale_continues_when_one_engine_queries_successfully() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  printf "Docker version 29.3.1, build deadbeef\n"
+  exit 0
+fi
+if [ "$1" = "ps" ]; then
+  printf "ota-test-stale\n"
+  exit 0
+fi
+if [ "$1" = "rm" ]; then
+  exit 0
+fi
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 1
+"#,
+        );
+        write_fake_command(
+            &bin_dir,
+            "podman",
+            r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  printf "podman version 5.0.0\n"
+  exit 0
+fi
+if [ "$1" = "ps" ]; then
+  printf "Cannot connect to Podman.\n" >&2
+  exit 1
+fi
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 1
+"#,
+        );
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", "--stale"]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = normalize_inline_whitespace(&strip_ansi(&output.stdout));
+        assert!(stdout.contains("CLEANED stale ota-managed containers (1)"));
+        assert!(stdout.contains("ota-test-stale"));
+    }
+
     #[test]
     fn clean_reports_root_monorepo_summary_with_members() {
         let fixture = ContractFixture::new_dir();
