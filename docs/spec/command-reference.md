@@ -599,8 +599,7 @@ ota doctor --member api --member web --json [PATH]
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
-- in container mode, ota also uses safe non-mutating installability probes for supported backends when policy-backed provisioning is declared
-- today that probe path is shipped for `apt`, `brew`, `dnf`, and `pacman`
+- in container mode, ota also uses safe non-mutating installability probes for the shipped mutating provisioning adapters when policy-backed provisioning is declared
 - in container mode, `apt` findings distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
 - in container mode, host-bound env, check, and service healthchecks are omitted so container diagnosis does not mix execution contexts
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
@@ -794,6 +793,7 @@ Current behavior:
 - when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
 - when provisioning fails, `ota up` now surfaces a higher-level backend diagnosis for every shipped adapter while still preserving the raw backend stdout/stderr in the failure output
+- when the initial provisioning stderr is too generic to classify safely, `ota up` reuses the read-only installability probe for that adapter to refine the diagnosis without hiding the original backend output
 - when container/Linux provisioning uses `apt`, ota also classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures
 - `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
 - runs explicit `services.<name>.start` commands for required services before setup

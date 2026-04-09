@@ -194,6 +194,65 @@ pub(crate) fn provisioning_installability_finding(
                 "fix apt repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
             ),
         },
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            backend,
+            ProvisioningFailureKind::VersionUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container {backend} cannot install pinned version: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the Linux/container target requests `{} {}`, but the configured `{backend}` provisioning path does not provide that version inside container image `{}`",
+                diagnosis.name,
+                diagnosis.requested_version,
+                image.unwrap_or("unknown")
+            ),
+            next: format!(
+                "fix the selected container image{image_hint} or the configured `{backend}` provisioning path, or relax the version pin for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            backend,
+            ProvisioningFailureKind::PackageUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container {backend} cannot locate required package: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the Linux/container target requests `{}`, but the configured `{backend}` provisioning path does not provide that package inside container image `{}`",
+                diagnosis.name,
+                image.unwrap_or("unknown")
+            ),
+            next: format!(
+                "fix the selected container image{image_hint} or the configured `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            backend,
+            ProvisioningFailureKind::IndexUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container {backend} cannot refresh configured sources: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the Linux/container target could not refresh the configured `{backend}` sources, so ota could not verify or install `{} {}`",
+                diagnosis.name, diagnosis.requested_version
+            ),
+            next: format!(
+                "fix `{backend}` repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
+            ),
+        },
         (ProvisioningExecutionTarget::Container { .. }, backend, _) => Finding {
             severity: FindingSeverity::Error,
             summary: format!(
@@ -228,6 +287,43 @@ pub(crate) fn provisioning_installability_finding(
             next: format!(
                 "fix the host `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Native,
+            backend,
+            ProvisioningFailureKind::PackageUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Host {backend} cannot locate required package: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the host target requests `{}`, but the configured `{backend}` provisioning path does not provide that package",
+                diagnosis.name
+            ),
+            next: format!(
+                "fix the host `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Native,
+            backend,
+            ProvisioningFailureKind::IndexUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Host {backend} cannot refresh configured sources: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the host target could not refresh the configured `{backend}` sources, so ota could not verify or install `{} {}`",
+                diagnosis.name, diagnosis.requested_version
+            ),
+            next: format!(
+                "fix the host `{backend}` repository access, then rerun `{rerun_command}`"
             ),
         },
         (ProvisioningExecutionTarget::Native, backend, _) => Finding {
@@ -329,6 +425,17 @@ impl Finding {
             s if s.starts_with("Container apt cannot refresh configured sources: ") => {
                 "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
             }
+            s if s.starts_with("Container ") && s.contains(" cannot install pinned version: ") => {
+                "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Container ") && s.contains(" cannot locate required package: ") => {
+                "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            }
+            s if s.starts_with("Container ")
+                && s.contains(" cannot refresh configured sources: ") =>
+            {
+                "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+            }
             s if s.starts_with("Container ")
                 && s.contains(" cannot install requested prerequisite: ") =>
             {
@@ -336,6 +443,12 @@ impl Finding {
             }
             s if s.starts_with("Host ") && s.contains(" cannot install pinned version: ") => {
                 "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Host ") && s.contains(" cannot locate required package: ") => {
+                "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            }
+            s if s.starts_with("Host ") && s.contains(" cannot refresh configured sources: ") => {
+                "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
             }
             s if s.starts_with("Host ")
                 && s.contains(" cannot install requested prerequisite: ") =>
@@ -374,8 +487,13 @@ impl Finding {
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
             | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "provisioning",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
@@ -406,8 +524,13 @@ impl Finding {
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
             "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
             "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => {
                 "remote_backend"
@@ -532,6 +655,27 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE" => (
+                "the configured container provisioning backend could not provide the pinned version".to_string(),
+                "the configured container provisioning backend provides the pinned version".to_string(),
+                "container_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                "the configured container provisioning backend could not provide the requested package".to_string(),
+                "the configured container provisioning backend provides the requested package".to_string(),
+                "container_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE" => (
+                "the configured container provisioning backend could not refresh its sources".to_string(),
+                "the configured container provisioning backend refreshes its sources successfully".to_string(),
+                "container_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
                 "the configured container provisioning backend could not satisfy the requested prerequisite".to_string(),
                 "the configured container provisioning backend satisfies the requested prerequisite".to_string(),
@@ -542,6 +686,20 @@ impl Finding {
             "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
                 "the configured host provisioning backend could not provide the pinned version".to_string(),
                 "the configured host provisioning backend provides the pinned version".to_string(),
+                "host_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                "the configured host provisioning backend could not provide the requested package".to_string(),
+                "the configured host provisioning backend provides the requested package".to_string(),
+                "host_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE" => (
+                "the configured host provisioning backend could not refresh its sources".to_string(),
+                "the configured host provisioning backend refreshes its sources successfully".to_string(),
                 "host_provisioning".to_string(),
                 String::new(),
                 String::new(),
