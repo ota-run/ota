@@ -68,3 +68,9 @@
 - Pattern: Reusing a shared findings renderer across repo and workspace commands can silently reintroduce verbose `Why:` lines and spacing bugs if the concise/section rules are not carried over too.
 - Correction: When promoting shared CLI renderers, verify concise-mode behavior, primary-blocker spacing, and single-finding formatting on every consumer, not just the original command.
 - Rule: Shared output helpers must preserve the UX contract of every command that adopts them, especially concise-mode omission rules and section separators.
+- Pattern: Adapter bootstrap failures can get lost if the backend shell error is allowed to fall through to a later setup phase.
+- Correction: Stop at the bootstrap boundary, insert a first-class bootstrap failure finding, and keep the raw backend stderr underneath it.
+- Rule: When bootstrap is the selected recovery path, it owns the failure report until it either succeeds or fails explicitly.
+- Pattern: A missing adapter command can look like an ordinary provisioning command failure if the backend does not translate the shell symptom into a semantic missing-command error.
+- Correction: Detect the missing adapter command at the backend boundary and return `MissingCommand` so the approved bootstrap path can run and report the real bootstrap failure if it still fails.
+- Rule: When a backend depends on an adapter command, translate `command not found` into a semantic missing-command error before falling back to higher-level provisioning handling.

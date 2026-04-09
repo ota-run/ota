@@ -12294,6 +12294,80 @@ fn describe_adapter_bootstrap_request(
     }
 }
 
+fn adapter_bootstrap_request_for_missing_backend(
+    policy_pack: &crate::policy_pack::OrgPolicyPack,
+    provisioning_request: &crate::policy_pack::ProvisioningBackendRequest,
+    missing_command: &str,
+) -> crate::policy_pack::ProvisioningBackendRequest {
+    let mut adapters = provisioning_request
+        .actions
+        .iter()
+        .map(|action| action.source.as_str())
+        .filter(|source| !source.trim().is_empty())
+        .collect::<Vec<_>>();
+    adapters.sort_unstable();
+    adapters.dedup();
+
+    if adapters.is_empty() {
+        adapters.push(missing_command);
+    }
+
+    policy_pack.adapter_bootstrap_backend_request(&adapters)
+}
+
+fn bootstrap_failure_finding(
+    request: &crate::policy_pack::ProvisioningBackendRequest,
+    doctor_mode: DoctorMode,
+) -> Finding {
+    let sdkman_bootstrap = request
+        .actions
+        .iter()
+        .any(|action| action.source == "sdkman-bootstrap" && action.name == "sdkman");
+
+    if sdkman_bootstrap {
+        let why = match doctor_mode {
+            DoctorMode::Container => String::from(
+                "sdk is not available in the container and bootstrap could not run (missing curl and zip)",
+            ),
+            DoctorMode::Native => String::from(
+                "sdk is not available on the host and bootstrap could not run (missing curl and zip)",
+            ),
+        };
+        let next = match doctor_mode {
+            DoctorMode::Container => String::from(
+                "install `curl` and `zip` in the container image, then rerun `ota up --mode container`",
+            ),
+            DoctorMode::Native => {
+                String::from("install `curl` and `zip` on the host, then rerun `ota up`")
+            }
+        };
+
+        return Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Adapter bootstrap failed: sdkman"),
+            why,
+            next,
+        };
+    }
+
+    let rerun = match doctor_mode {
+        DoctorMode::Container => "ota up --mode container",
+        DoctorMode::Native => "ota up",
+    };
+
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Adapter bootstrap failed"),
+        why: format!(
+            "{} could not complete in the selected execution environment",
+            describe_adapter_bootstrap_request(request)
+        ),
+        next: format!(
+            "install the bootstrap prerequisites in the selected execution environment, then rerun `{rerun}`"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -12303,6 +12377,7 @@ mod tests {
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
+        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_finding,
         compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, execute_repo_up,
         render_detect_comparison_section, render_execution_receipt_summary_block,
@@ -13818,6 +13893,117 @@ policies:
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn up_renders_sdkman_bootstrap_failure_before_container_preflight_findings() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![
+                bootstrap_failure_finding(
+                    &ProvisioningBackendRequest {
+                        actions: vec![ProvisioningAction {
+                            kind: ProvisioningActionKind::SelectSource,
+                            target_kind: ProvisioningTargetKind::Tool,
+                            name: String::from("sdkman"),
+                            requested_version: String::from("1.0"),
+                            source: String::from("sdkman-bootstrap"),
+                            source_config: None,
+                            approved_version: None,
+                        }],
+                    },
+                    DoctorMode::Container,
+                ),
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Install required runtimes and tools (7)"),
+                    why: String::from(
+                        "one or more required runtimes or tools are missing or do not match the contract",
+                    ),
+                    next: String::from(
+                        "install or align the listed runtimes and tools, then rerun `ota doctor --mode container`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from(
+                        "Host-bound readiness checks are not evaluated in container mode",
+                    ),
+                    why: String::from(
+                        "container diagnosis currently inspects the execution image, backend availability, runtimes, and tools; service healthchecks still run against the host or current working directory and would mix contexts",
+                    ),
+                    next: String::from(
+                        "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                    ),
+                },
+            ],
+        };
+
+        let rendered = strip_ansi_codes(&render_up_section_from_parts(
+            "./ota.yaml",
+            None,
+            "PROVISION FAILED",
+            "provisioning",
+            &report,
+            Some("container"),
+            None,
+            None,
+            None,
+            None,
+            Some("bash: line 1: sdk: command not found"),
+            Some(127),
+        ));
+
+        let bootstrap_index = rendered
+            .find("Adapter bootstrap failed: sdkman")
+            .expect("bootstrap finding");
+        let preflight_index = rendered
+            .find("Install required runtimes and tools (7)")
+            .expect("preflight finding");
+
+        assert!(bootstrap_index < preflight_index);
+        assert!(rendered.contains(
+            "Why: sdk is not available in the container and bootstrap could not run (missing curl and zip)"
+        ));
+        assert!(rendered.contains(
+            "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
+        ));
+        assert!(rendered.contains("Task output: bash: line 1: sdk: command not found"));
+    }
+
+    #[test]
+    fn bootstrap_lookup_uses_provisioning_sources_before_missing_command_name() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  adapter_bootstrap:
+    sdkman:
+      source: sdkman-bootstrap
+      approved_versions:
+        - "1.0"
+"#,
+        )
+        .unwrap();
+        let provisioning_request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Runtime,
+                name: String::from("java"),
+                requested_version: String::from("21"),
+                source: String::from("sdkman"),
+                source_config: None,
+                approved_version: Some(String::from("21")),
+            }],
+        };
+
+        let bootstrap_request =
+            adapter_bootstrap_request_for_missing_backend(&policy, &provisioning_request, "sdk");
+
+        assert_eq!(bootstrap_request.actions.len(), 1);
+        assert_eq!(bootstrap_request.actions[0].name, "sdkman");
+        assert_eq!(bootstrap_request.actions[0].source, "sdkman-bootstrap");
     }
 
     #[test]
@@ -17420,8 +17606,11 @@ fn execute_repo_up(
                     if let Ok(Some((policy_pack, _policy_path))) =
                         load_org_policy_pack_auto(resolved_path)
                     {
-                        let bootstrap_request =
-                            policy_pack.adapter_bootstrap_backend_request(&[command.as_str()]);
+                        let bootstrap_request = adapter_bootstrap_request_for_missing_backend(
+                            &policy_pack,
+                            &provisioning.request,
+                            &command,
+                        );
                         if !bootstrap_request.actions.is_empty() {
                             let bootstrap_note =
                                 describe_adapter_bootstrap_request(&bootstrap_request);
@@ -17443,6 +17632,11 @@ fn execute_repo_up(
                                 }) => {
                                     stdout.push_str(&bootstrap_stdout);
                                     stderr.push_str(&bootstrap_stderr);
+                                    let mut report = preflight;
+                                    report.findings.insert(
+                                        0,
+                                        bootstrap_failure_finding(&bootstrap_request, doctor_mode),
+                                    );
                                     return Ok(RepoUpResult {
                                         ok: false,
                                         status: "PROVISION FAILED",
@@ -17455,11 +17649,11 @@ fn execute_repo_up(
                                             "provisioning",
                                             None,
                                             None,
-                                            &preflight.findings,
+                                            &report.findings,
                                             Some(exit_code),
                                             None,
                                         ),
-                                        report: preflight,
+                                        report,
                                         service: None,
                                         service_command: None,
                                         task: None,

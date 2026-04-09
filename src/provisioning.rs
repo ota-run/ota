@@ -543,6 +543,15 @@ impl SdkmanBootstrapProvisioningBackend {
     }
 }
 
+impl SdkmanProvisioningBackend {
+    fn missing_sdk_command(output: &ProvisioningCommandOutput) -> bool {
+        output.exit_code == 127
+            && output.stderr.lines().any(|line| {
+                line.contains("sdk: command not found") || line.contains("sdk: not found")
+            })
+    }
+}
+
 impl UvBootstrapProvisioningBackend {
     fn bootstrap_script() -> &'static str {
         r#"curl -LsSf https://astral.sh/uv/install.sh | sh"#
@@ -800,6 +809,12 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
+
+            if Self::missing_sdk_command(&output) {
+                return Err(ProvisioningBackendError::MissingCommand {
+                    command: String::from("sdk"),
+                });
+            }
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
@@ -2052,6 +2067,19 @@ mod tests {
         fs::set_permissions(&shim, perms).unwrap();
     }
 
+    fn make_passthrough_shim(dir: &Path, name: &str, target: &str) {
+        let shim = dir.join(name);
+        let script = format!("#!/bin/sh\nexec {} \"$@\"\n", target);
+        fs::write(&shim, script).unwrap();
+        let mut perms = fs::metadata(&shim).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&shim, perms).unwrap();
+    }
+
     fn make_powershell_bootstrap_shim(dir: &Path, target_name: &str, version: &str, log: &Path) {
         let shim = dir.join("powershell");
         let target = dir.join(target_name);
@@ -2242,6 +2270,40 @@ mod tests {
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("java"));
         assert!(log_contents.contains("22"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_provisioning_request_with_sdkman_missing_sdk_reports_missing_command() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        make_passthrough_shim(shim_dir.path(), "bash", "/bin/bash");
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path().display().to_string());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Runtime,
+                name: "java".to_string(),
+                requested_version: "22".to_string(),
+                source: "sdkman".to_string(),
+                source_config: None,
+                approved_version: Some("22".to_string()),
+            }],
+        };
+
+        let error = apply_provisioning_request(&request, Path::new(".")).unwrap_err();
+        assert!(matches!(
+            error,
+            ProvisioningBackendError::MissingCommand { command } if command == "sdk"
+        ));
 
         unsafe {
             env::set_var("PATH", original_path);
