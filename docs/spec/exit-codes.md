@@ -115,7 +115,7 @@ This document records the current command exit-code contract for the shipped ota
 
 - `0` when exited ota-managed containers are removed
 - `0` when `ota clean --stale --dry-run` previews exited ota-managed containers
-- `1` when a local container engine cannot be queried or stale container removal fails
+- `1` when no local container engine can be queried or stale container removal fails
 - `2` when `ota clean --stale` is combined with PATH, `--file`, or `--member`
 
 ## `ota workspace doctor`

@@ -86,3 +86,6 @@
 - Pattern: Fake container engines in tests often call real system tools like `dirname`, `cat`, `grep`, and `rm`; truncating `PATH` to only the fake engine bin dir makes those helper calls fail and produces false negatives.
 - Correction: When a fake engine script depends on external shell tools, prepend the fake bin dir to the existing `PATH` instead of replacing it.
 - Rule: Test harnesses for fake container engines should preserve a usable system `PATH` unless the test explicitly stubs every helper command the script invokes.
+- Pattern: Global stale cleanup can fail unnecessarily if one available engine is down even though another available engine can still report and remove stale ota containers.
+- Correction: Treat `ota clean --stale` as best-effort across accessible engines; only fail when no engine can be queried or stale removal itself fails.
+- Rule: Global stale cleanup should prefer partial success over total failure when at least one engine can still be queried and cleaned safely.

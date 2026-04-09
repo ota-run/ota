@@ -675,15 +675,25 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
 pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupReport, RunError> {
     let engines = available_container_engines();
     let mut containers = Vec::new();
+    let mut query_error = None;
 
     for engine in &engines {
-        containers.extend(list_stale_ota_containers(engine)?);
+        match list_stale_ota_containers(engine) {
+            Ok(found) => containers.extend(found),
+            Err(error) => {
+                query_error.get_or_insert(error);
+            }
+        }
     }
 
     if !dry_run {
         for container in &containers {
             let _ = remove_persistent_container(&container.engine, &container.name, "clean")?;
         }
+    }
+
+    if containers.is_empty() && query_error.is_some() {
+        return Err(query_error.expect("query_error is set when containers are empty"));
     }
 
     Ok(StaleContainerCleanupReport {
