@@ -4156,9 +4156,15 @@ tasks:
         .unwrap();
 
         let original_path = std::env::var_os("PATH");
-        let joined_path = std::env::join_paths([bin_dir.clone()]).unwrap();
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        let original_required = std::env::var_os("OTA_CONTAINER_ONLY_REQUIRED");
         unsafe {
             std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", "present");
         }
 
         let output = run_with(["ota", "clean", fixture.path()]);
@@ -4169,6 +4175,14 @@ tasks:
             },
             None => unsafe {
                 std::env::remove_var("PATH");
+            },
+        }
+        match original_required {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_CONTAINER_ONLY_REQUIRED");
             },
         }
 
@@ -4251,6 +4265,7 @@ tasks:
         .unwrap();
 
         let original_path = std::env::var_os("PATH");
+        let original_required = std::env::var_os("OTA_CONTAINER_ONLY_REQUIRED");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(std::env::split_paths(existing));
@@ -4258,6 +4273,7 @@ tasks:
         let joined_path = std::env::join_paths(path_entries).unwrap();
         unsafe {
             std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", "present");
         }
 
         let output = run_with(["ota", "clean", "--stale", "--dry-run"]);
@@ -4268,6 +4284,14 @@ tasks:
             },
             None => unsafe {
                 std::env::remove_var("PATH");
+            },
+        }
+        match original_required {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_CONTAINER_ONLY_REQUIRED");
             },
         }
 
@@ -4315,6 +4339,7 @@ tasks:
         .unwrap();
 
         let original_path = std::env::var_os("PATH");
+        let original_required = std::env::var_os("OTA_CONTAINER_ONLY_REQUIRED");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(std::env::split_paths(existing));
@@ -4322,6 +4347,7 @@ tasks:
         let joined_path = std::env::join_paths(path_entries).unwrap();
         unsafe {
             std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", "present");
         }
 
         let output = run_with(["ota", "clean", "--stale", "--json"]);
@@ -4332,6 +4358,14 @@ tasks:
             },
             None => unsafe {
                 std::env::remove_var("PATH");
+            },
+        }
+        match original_required {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_CONTAINER_ONLY_REQUIRED");
             },
         }
 
@@ -4856,6 +4890,7 @@ tasks:
         }
 
         let original_path = std::env::var_os("PATH");
+        let original_required = std::env::var_os("OTA_CONTAINER_ONLY_REQUIRED");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(std::env::split_paths(existing));
@@ -4863,6 +4898,7 @@ tasks:
         let joined_path = std::env::join_paths(path_entries).unwrap();
         unsafe {
             std::env::set_var("PATH", &joined_path);
+            std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", "present");
         }
 
         let output = run_with([
@@ -4880,6 +4916,14 @@ tasks:
             },
             None => unsafe {
                 std::env::remove_var("PATH");
+            },
+        }
+        match original_required {
+            Some(value) => unsafe {
+                std::env::set_var("OTA_CONTAINER_ONLY_REQUIRED", value);
+            },
+            None => unsafe {
+                std::env::remove_var("OTA_CONTAINER_ONLY_REQUIRED");
             },
         }
 
@@ -11382,11 +11426,12 @@ runtimes:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Missing runtime: java"));
-        assert!(text.contains("inside container image"));
+        assert!(text.contains("inside the configured"));
+        assert!(text.contains("Image:"));
         assert!(text.contains("`premium/test:latest`"));
-        assert!(text.contains(
-            "update `execution.backends.container.image` (currently `premium/test:latest`) so `java` is available"
-        ));
+        assert!(
+            text.contains("update `execution.backends.container.image` so `java` is available")
+        );
     }
 
     #[test]
@@ -13363,7 +13408,9 @@ tasks:
         assert_eq!(up.exit_code, 0);
         assert_json_top_level_keys(
             &up,
-            &["findings", "members", "ok", "path", "phase", "status"],
+            &[
+                "dry_run", "findings", "members", "ok", "path", "phase", "status",
+            ],
         );
     }
 

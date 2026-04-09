@@ -83,3 +83,6 @@
 - Pattern: Global cleanup can silently lie if backend discovery treats a failed `docker ps` / `podman ps` query as “no stale containers found”.
 - Correction: Surface stale-clean backend query failures as command errors with the real engine output instead of collapsing them into an empty result.
 - Rule: Cleanup discovery must fail closed; when ota cannot inspect ownership safely, it must report the query failure, not success.
+- Pattern: Fake container engines in tests often call real system tools like `dirname`, `cat`, `grep`, and `rm`; truncating `PATH` to only the fake engine bin dir makes those helper calls fail and produces false negatives.
+- Correction: When a fake engine script depends on external shell tools, prepend the fake bin dir to the existing `PATH` instead of replacing it.
+- Rule: Test harnesses for fake container engines should preserve a usable system `PATH` unless the test explicitly stubs every helper command the script invokes.

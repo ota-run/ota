@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.2.2
+
 - added `ota up --dry-run` with text and JSON preview output so operators can review the selected backend, lifecycle, target, planned provisioning/setup work, current skips, and first blocker before ota mutates repo or execution state.
 - fixed container execution and `ota up --dry-run --mode container` probing to use a non-login shell inside images, preserving image-defined `PATH` entries such as Rust toolchains, and made preview output/json show the selected container image with preview-specific rerun guidance.
 - made `ota up --dry-run` service planning truthful by only listing `start service ...` when a service actually declares `start`, and by separating readiness checks from service starts in the preview plan.
