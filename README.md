@@ -130,6 +130,12 @@ This path tells you what is wrong, turns the findings into an ordered plan, prep
 derives repo-local agent guidance from the same contract, and gives you one declared task path
 without guessing.
 
+If the repo is meant to run inside a container, use:
+
+```bash
+ota doctor --mode container
+```
+
 If you are not sure which task to run after `ota up`, use:
 
 ```bash
@@ -162,6 +168,14 @@ Review the delta before writing:
 ```bash
 ota detect --merge --dry-run .
 ota detect --rewrite --dry-run .
+```
+
+### Policy boundary review
+
+Use policy review when the contract and approved policy need to be reconciled:
+
+```bash
+ota policy review
 ```
 
 ### Agent guidance from the same contract
