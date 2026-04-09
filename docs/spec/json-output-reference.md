@@ -1045,6 +1045,43 @@ Example contract-validation failure (before `up` execution starts):
 
 ## `ota detect --json`
 
+## `ota clean --stale --json`
+
+`ota clean --stale --json` is contract-free. It reports exited ota-managed containers that match
+the local cleanup scan and tells automation whether the command removed them or only previewed
+them.
+
+```json
+{
+  "ok": true,
+  "scope": "stale",
+  "dry_run": false,
+  "engines": [
+    "docker"
+  ],
+  "summary": {
+    "matched_count": 2,
+    "removed_count": 2,
+    "would_remove_count": 0
+  },
+  "containers": [
+    {
+      "engine": "docker",
+      "name": "ota-a6be4471a4598386",
+      "ownership": "label"
+    },
+    {
+      "engine": "docker",
+      "name": "ota-legacydeadbeef",
+      "ownership": "legacy_name"
+    }
+  ]
+}
+```
+
+`ownership` is `label` for containers matched through ota's management labels and
+`legacy_name` for older `ota-*` containers that predate labels.
+
 `ota detect --merge --json --dry-run` currently uses the same success shape as `ota detect --json
 --dry-run`, but requires an existing contract and includes `comparison`.
 

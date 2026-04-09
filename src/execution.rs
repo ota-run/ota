@@ -107,3 +107,11 @@ pub(crate) fn selected_container_engine(contract: &Contract) -> Option<String> {
         .into_iter()
         .find(|engine| command_available(engine))
 }
+
+pub(crate) fn available_container_engines() -> Vec<String> {
+    ["docker", "podman"]
+        .into_iter()
+        .filter(|engine| command_available(engine))
+        .map(String::from)
+        .collect()
+}

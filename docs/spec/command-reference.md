@@ -968,6 +968,9 @@ Clean persistent execution state for a repo.
 ota clean [PATH]
 ota clean --member api [PATH]
 ota clean --member api --member web [PATH]
+ota clean --stale
+ota clean --stale --dry-run
+ota clean --stale --json
 ```
 
 Current behavior:
@@ -976,6 +979,10 @@ Current behavior:
 - when a root contract declares `workspace.type: monorepo`, plain `ota clean` reports the root cleanup result and grouped member cleanup results
 - when `--member` is set, targets those merged member contracts in the provided order
 - when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
+- `ota clean --stale` does not require `ota.yaml`; it scans available local container engines for exited ota-managed containers from any repo
+- stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
+- `ota clean --stale --dry-run` previews stale containers without removing them
+- `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - remote backends do not currently define cleanup semantics; they report `NO CLEANUP NEEDED`
 - reports `NO CLEANUP NEEDED` when there is no persistent container state to remove
 - does not stop services or perform workspace-wide cleanup

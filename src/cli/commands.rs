@@ -79,10 +79,10 @@ use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, clean_execution,
-    effective_execution, resolve_task_env_details, resolve_task_env_details_with_policy,
-    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides_with_policy,
+    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, StaleContainerOwnership,
+    clean_execution, clean_stale_execution, effective_execution, resolve_task_env_details,
+    resolve_task_env_details_with_policy, run_task_captured_with_args_with_overrides_with_policy,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, Backend, Contract,
@@ -4398,8 +4398,82 @@ pub fn clean(
     path: Option<&Path>,
     file_override: Option<&Path>,
     members: &[String],
+    stale: bool,
+    dry_run: bool,
+    format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if stale {
+        let mut debug_lines = vec![
+            String::from("DEBUG command=clean"),
+            String::from("DEBUG stale=true"),
+        ];
+        if dry_run {
+            debug_lines.push(String::from("DEBUG dry_run=true"));
+        }
+        if let Some(path) = path {
+            debug_lines.push(format!("DEBUG rejected_path={}", path.display()));
+        }
+        if let Some(file_override) = file_override {
+            debug_lines.push(format!("DEBUG rejected_file={}", file_override.display()));
+        }
+        if !members.is_empty() {
+            for member in members {
+                debug_lines.push(format!("DEBUG rejected_member={member}"));
+            }
+        }
+
+        if path.is_some() || file_override.is_some() || !members.is_empty() {
+            return finalize_debug(
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`ota clean --stale` is global and does not take PATH, `--file`, or `--member`",
+                    ),
+                    2,
+                ),
+                debug,
+                debug_lines,
+            );
+        }
+
+        return finalize_debug(
+            match clean_stale_execution(dry_run) {
+                Ok(report) => {
+                    let matched_count = report.containers.len();
+                    let engines = report.engines;
+                    let containers = report.containers;
+                    match format {
+                        OutputFormat::Text => {
+                            CommandOutput::success(render_stale_clean_text(&containers, dry_run))
+                        }
+                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                            "ok": true,
+                            "scope": "stale",
+                            "dry_run": dry_run,
+                            "engines": engines,
+                            "summary": {
+                                "matched_count": matched_count,
+                                "removed_count": if dry_run { 0 } else { matched_count },
+                                "would_remove_count": if dry_run { matched_count } else { 0 }
+                            },
+                            "containers": containers.iter().map(|container| json!({
+                                "engine": container.engine,
+                                "name": container.name,
+                                "ownership": match container.ownership {
+                                    StaleContainerOwnership::Label => "label",
+                                    StaleContainerOwnership::LegacyName => "legacy_name"
+                                }
+                            })).collect::<Vec<_>>()
+                        }))),
+                    }
+                }
+                Err(error) => CommandOutput::failure(error.to_string()),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -4548,6 +4622,38 @@ fn render_clean_text<E: ToString>(path: &str, result: Result<bool, E>) -> Result
         Ok(false) => Ok(format!("NO CLEANUP NEEDED {path}")),
         Err(error) => Err(error.to_string()),
     }
+}
+
+fn render_stale_clean_text(
+    containers: &[crate::runner::StaleContainerCleanupTarget],
+    dry_run: bool,
+) -> String {
+    if containers.is_empty() {
+        return String::from("NO CLEANUP NEEDED stale ota-managed containers");
+    }
+
+    let mut stdout = if dry_run {
+        format!(
+            "DRY RUN stale ota-managed containers ({})",
+            containers.len()
+        )
+    } else {
+        format!(
+            "CLEANED stale ota-managed containers ({})",
+            containers.len()
+        )
+    };
+
+    for container in containers {
+        stdout.push_str("\n  ");
+        stdout.push_str(&summary_bullet());
+        stdout.push(' ');
+        stdout.push_str(&paint_code(&container.engine));
+        stdout.push(' ');
+        stdout.push_str(&paint_code(&container.name));
+    }
+
+    stdout
 }
 
 pub fn detect(

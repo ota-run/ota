@@ -294,8 +294,17 @@ enum Commands {
     #[command(display_order = 14)]
     /// Clean persistent execution state for a repo.
     Clean {
+        /// Remove exited ota-managed containers from any repo.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stale: bool,
+        /// Preview stale cleanup without removing containers.
+        #[arg(long, action = ArgAction::SetTrue, requires = "stale")]
+        dry_run: bool,
+        /// Emit machine-readable JSON output for stale cleanup.
+        #[arg(long, action = ArgAction::SetTrue, requires = "stale")]
+        json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "stale")]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -1294,9 +1303,21 @@ fn dispatch(cli: Cli) -> CommandOutput {
             debug,
             receipt,
         ),
-        Commands::Clean { member, path } => {
-            commands::clean(path.as_deref(), file.as_deref(), &member, debug)
-        }
+        Commands::Clean {
+            stale,
+            dry_run,
+            json,
+            member,
+            path,
+        } => commands::clean(
+            path.as_deref(),
+            file.as_deref(),
+            &member,
+            stale,
+            dry_run,
+            format_from_json(json),
+            debug,
+        ),
         Commands::Policy {
             json,
             command: None,
@@ -2061,7 +2082,68 @@ case "$command" in
   info)
     exit 0
     ;;
+  ps)
+    label_filter=""
+    want_stale=0
+    format=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -a)
+          shift
+          ;;
+        --filter)
+          case "$2" in
+            label=*)
+              label_filter="${2#label=}"
+              ;;
+            status=exited|status=dead)
+              want_stale=1
+              ;;
+          esac
+          shift 2
+          ;;
+        --format)
+          format="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    for path_file in "$state_dir"/*.path; do
+      [ -e "$path_file" ] || continue
+      name=$(basename "$path_file" .path)
+      if [ "$want_stale" = "1" ] && [ -f "$state_dir/$name.running" ]; then
+        continue
+      fi
+      if [ -n "$label_filter" ]; then
+        [ -f "$state_dir/$name.labels" ] || continue
+        grep -Fx "$label_filter" "$state_dir/$name.labels" >/dev/null || continue
+      fi
+      if [ "$format" = "{{.Names}}" ]; then
+        printf "%s\n" "$name"
+      else
+        printf "%s\n" "$name"
+      fi
+    done
+    exit 0
+    ;;
   inspect)
+    if [ "$1" = "-f" ]; then
+      format="$2"
+      name="$3"
+      [ -f "$state_dir/$name.path" ] || exit 1
+      if [ "$format" = "{{.State.Running}}" ]; then
+        if [ -f "$state_dir/$name.running" ]; then
+          printf "true\n"
+        else
+          printf "false\n"
+        fi
+        exit 0
+      fi
+      exit 1
+    fi
     name="$1"
     [ -f "$state_dir/$name.path" ]
     exit $?
@@ -2099,6 +2181,7 @@ case "$command" in
     detached=0
     mount=""
     name=""
+    labels=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -2113,6 +2196,11 @@ case "$command" in
           ;;
         --name)
           name="$2"
+          shift 2
+          ;;
+        --label)
+          labels="${labels}${2}
+"
           shift 2
           ;;
         -v)
@@ -2137,6 +2225,10 @@ case "$command" in
     printf "%s" "$image" > "$host_dir/docker-image.txt"
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
+      : > "$state_dir/$name.running"
+      if [ -n "$labels" ]; then
+        printf "%s" "$labels" > "$state_dir/$name.labels"
+      fi
       printf "run-persistent\n" >> "$host_dir/docker-log.txt"
       exit 0
     fi
@@ -2157,6 +2249,8 @@ case "$command" in
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
     rm -f "$state_dir/$name.path"
+    rm -f "$state_dir/$name.running"
+    rm -f "$state_dir/$name.labels"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
     ;;
@@ -4047,6 +4141,141 @@ tasks:
                 compact_contract(&fixture.file_path())
             )
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_stale_dry_run_lists_labelled_and_legacy_ota_containers() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).unwrap();
+        }
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("ota-labelled.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-labelled.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=persistent\n",
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-legacy.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", "--stale", "--dry-run"]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("DRY RUN stale ota-managed containers (2)"));
+        assert!(stdout.contains("ota-labelled"));
+        assert!(stdout.contains("ota-legacy"));
+        assert!(state_dir.join("ota-labelled.path").exists());
+        assert!(state_dir.join("ota-legacy.path").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_stale_json_reports_removed_containers() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&docker_path, permissions).unwrap();
+        }
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            state_dir.join("ota-labelled.path"),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join("ota-labelled.labels"),
+            "dev.ota.managed=true\ndev.ota.lifecycle=persistent\n",
+        )
+        .unwrap();
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", "--stale", "--json"]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["scope"], "stale");
+        assert_eq!(json["dry_run"], false);
+        assert_eq!(json["summary"]["matched_count"], 1);
+        assert_eq!(json["summary"]["removed_count"], 1);
+        assert_eq!(json["containers"][0]["ownership"], "label");
+        assert!(!state_dir.join("ota-labelled.path").exists());
+    }
+
+    #[test]
+    fn clean_stale_rejects_contract_scoped_arguments() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "clean", "--stale", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`ota clean --stale` is global"));
     }
 
     #[test]
