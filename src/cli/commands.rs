@@ -18502,6 +18502,22 @@ fn render_up_preview_skip_action(action: &crate::policy_pack::ProvisioningAction
     format!("skip `{}`; already satisfies the contract", action.name)
 }
 
+fn append_up_preview_service_actions(contract: &Contract, actions: &mut Vec<String>) {
+    for service_name in service_start_order(contract) {
+        let service = contract
+            .services
+            .get(service_name.as_str())
+            .expect("validated service should exist");
+
+        if service.start.is_some() {
+            actions.push(format!("start service `{service_name}`"));
+        }
+        if service.healthcheck.is_some() {
+            actions.push(format!("verify service `{service_name}` readiness"));
+        }
+    }
+}
+
 fn build_up_preview(
     contract: &Contract,
     resolved_path: &Path,
@@ -18524,9 +18540,7 @@ fn build_up_preview(
         }
     }
 
-    for service_name in service_start_order(contract) {
-        actions.push(format!("start service `{service_name}`"));
-    }
+    append_up_preview_service_actions(contract, &mut actions);
 
     if contract.tasks.contains_key("setup") {
         actions.push(String::from("run task `setup`"));

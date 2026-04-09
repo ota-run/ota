@@ -1075,6 +1075,7 @@ Current preview JSON fields:
 - `phase` (`preview`)
 - `execution.backend`
 - `execution.lifecycle` when one is selected
+- `execution.image` when container execution is selected
 - `execution.target` when a persistent backend target exists
 - `execution.task` when `up` would run `setup`
 - `plan.actions`

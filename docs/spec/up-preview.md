@@ -90,6 +90,7 @@ Current shape:
 Execution
  » Backend: `container`
  » Lifecycle: `persistent`
+ » Image: `jdxcode/mise:latest`
  » Target: `ota-a6be4471a4598386`
  » Task: `setup`
 
@@ -101,7 +102,7 @@ Plan
 Blocked by
  ◉ ERROR  Adapter bootstrap failed: sdkman
  Why: required commands are missing from the container: `curl` and `zip`
- Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`
+ Next: install `curl` and `zip` in the container image, then rerun `ota up --dry-run --mode container`
 
 Dry run only
  » no provisioning executed
@@ -114,6 +115,7 @@ Required text fields:
 - preview mode line: `Mode: dry-run (no write)`
 - selected `Backend`
 - selected `Lifecycle` when one exists
+- selected container `Image` when container execution is active
 - selected `Target` when one exists
 - effective `Task` when `setup` would run
 - the ordered action plan
@@ -124,7 +126,7 @@ The preview should show:
 
 - actions ota would attempt
 - actions ota would skip because the current state already satisfies them
-- whether service start would be attempted before `setup`
+- whether service start and service readiness checks would be attempted before `setup`
 
 The preview should not:
 
@@ -149,6 +151,7 @@ Suggested shape:
   "execution": {
     "backend": "container",
     "lifecycle": "persistent",
+    "image": "jdxcode/mise:latest",
     "target": "ota-a6be4471a4598386",
     "task": "setup"
   },
@@ -168,7 +171,7 @@ Suggested shape:
       "summary": "Adapter bootstrap failed: sdkman",
       "severity": "error",
       "why": "required commands are missing from the container: `curl` and `zip`",
-      "next": "install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
+      "next": "install `curl` and `zip` in the container image, then rerun `ota up --dry-run --mode container`"
     }
   ]
 }
@@ -190,6 +193,7 @@ Required JSON fields:
 
 - `backend`
 - `lifecycle` when present
+- `image` when container execution is selected
 - `target` when present
 - `task` when `setup` would run
 

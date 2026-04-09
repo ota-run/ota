@@ -805,7 +805,7 @@ Current behavior:
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
-- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
+- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)

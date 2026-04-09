@@ -71,6 +71,17 @@ fn doctor_schema_includes_agent_summary() {
 }
 
 #[test]
+fn up_schema_preview_execution_includes_optional_image() {
+    let schema = load_schema("docs/spec/json-schemas/up.json");
+    let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
+    let preview_member_execution = &schema["oneOf"][0]["properties"]["members"]["items"]["properties"]
+        ["execution"]["properties"];
+
+    assert!(preview_execution.get("image").is_some());
+    assert!(preview_member_execution.get("image").is_some());
+}
+
+#[test]
 fn policy_review_schema_includes_summary_and_policy_fields() {
     let schema = load_schema("docs/spec/json-schemas/policy-review.json");
     let properties = &schema["properties"];
