@@ -253,7 +253,7 @@ Current behavior:
 - `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
-- `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, and leads with the highest-priority blocker first
+- `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, and supports `ota doctor --mode container` for container-targeted readiness
 - `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
