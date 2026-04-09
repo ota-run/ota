@@ -2398,11 +2398,13 @@ exec /bin/sh -lc "$1"
     }
 
     fn assert_text_snapshot(name: &str, actual: &str) {
+        let normalized = normalize_snapshot_text(actual);
+        if should_update_snapshots() {
+            fs::write(snapshot_file(name), &normalized).expect("write snapshot");
+            return;
+        }
         let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
-        assert_eq!(
-            normalize_snapshot_text(actual),
-            normalize_snapshot_text(&expected)
-        );
+        assert_eq!(normalized, normalize_snapshot_text(&expected));
     }
 
     fn assert_text_snapshot_for_dir(name: &str, actual: &str, dir: &std::path::Path) {
@@ -2422,8 +2424,22 @@ exec /bin/sh -lc "$1"
             .unwrap_or(normalized)
             .replace("../<TMP>", "<TMP>")
             .replace("./<TMP>", "<TMP>");
+        if should_update_snapshots() {
+            fs::write(snapshot_file(name), &normalized).expect("write snapshot");
+            return;
+        }
         let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
         assert_eq!(normalized, normalize_snapshot_text(&expected));
+    }
+
+    fn should_update_snapshots() -> bool {
+        let Ok(value) = std::env::var("OTA_UPDATE_SNAPSHOTS") else {
+            return false;
+        };
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
     }
 
     #[test]
@@ -4449,6 +4465,9 @@ execution:
   backends:
     container:
       image: ghcr.io/ota/test:latest
+env:
+  OTA_CONTAINER_ONLY_REQUIRED:
+    required: true
 tasks:
   setup:
     run: printf ready > prepared.txt

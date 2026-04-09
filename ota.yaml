@@ -167,6 +167,21 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  ux:refresh:
+    description: Refresh premium CLI UX snapshots
+    notes: |
+      Use this when snapshot-backed output intentionally changes. It updates snapshots before
+      rerunning `ota run ux-review`.
+    category: test
+    inputs:
+      test_threads:
+        description: Test threads for snapshot refresh (default 1)
+        default: "1"
+    script: |
+      OTA_UPDATE_SNAPSHOTS=1 cargo test snapshot_is_stable -- --test-threads=${OTA_INPUT_TEST_THREADS}
+    depends_on:
+      - setup
+    safe_for_agent: true
   bump:version:
     description: Bump Cargo.toml to a new release version
     notes: |

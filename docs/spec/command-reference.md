@@ -879,6 +879,12 @@ ota policy review --file /path/to/ota.yaml
 ota policy review --file /path/to/ota.yaml --json
 ```
 
+Example:
+
+```bash
+ota policy review
+```
+
 Current behavior:
 
 - resolves the active policy pack using the same precedence as `ota policy`
