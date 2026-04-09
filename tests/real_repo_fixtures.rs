@@ -2325,7 +2325,7 @@ tasks:
     assert_eq!(json["status"], "READY");
     assert_eq!(json["phase"], "post-setup diagnosis");
     assert!(json.get("path").is_some());
-    assert!(json["findings"].as_array().unwrap().len() >= 1);
+    assert!(!json["findings"].as_array().unwrap().is_empty());
     assert_eq!(json["findings"][0]["severity"], "warn");
     assert!(json.get("service").is_none());
     assert!(json.get("task").is_none());

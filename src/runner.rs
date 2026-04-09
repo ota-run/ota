@@ -422,11 +422,10 @@ pub fn resolve_task_env(
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
-        if matches!(resolved.source, EnvResolutionSource::Default) {
-            overrides.insert(name, resolved.value);
-        } else if matches!(resolved.source, EnvResolutionSource::Policy) {
-            overrides.insert(name, resolved.value);
-        } else if matches!(resolved.source, EnvResolutionSource::Task) {
+        if matches!(
+            resolved.source,
+            EnvResolutionSource::Default | EnvResolutionSource::Policy | EnvResolutionSource::Task
+        ) {
             overrides.insert(name, resolved.value);
         }
     }
@@ -862,8 +861,10 @@ pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupRepor
         }
     }
 
-    if queried_engines == 0 && query_error.is_some() {
-        return Err(query_error.expect("query_error is set when containers are empty"));
+    if queried_engines == 0
+        && let Some(error) = query_error
+    {
+        return Err(error);
     }
 
     Ok(StaleContainerCleanupReport {
@@ -1063,7 +1064,7 @@ fn run_task_internal(
 
         let command_output = execute_task_command(
             task_name,
-            &command,
+            command,
             working_dir,
             &combined_env,
             path_export.as_deref(),

@@ -806,9 +806,7 @@ fn resolve_workspace_repo_source(
     repo: &WorkspaceRepoSpec,
     errors: &mut Vec<WorkspaceValidationError>,
 ) -> Option<String> {
-    let Some(source) = repo.source.as_ref() else {
-        return None;
-    };
+    let source = repo.source.as_ref()?;
 
     let git = source
         .git

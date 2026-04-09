@@ -200,12 +200,12 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         paint_code(&where_value)
     ));
 
-    if let Some(summary_block) = summary_block.as_ref() {
-        if body_message.trim().is_empty() {
-            out.push('\n');
-            out.push_str(&summary_block);
-            return out;
-        }
+    if let Some(summary_block) = summary_block.as_ref()
+        && body_message.trim().is_empty()
+    {
+        out.push('\n');
+        out.push_str(summary_block);
+        return out;
     }
 
     if body_message.trim().is_empty() {
@@ -1017,37 +1017,34 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
     }
     stdout.push_str(&format!("\n\n{}", paint_section_title("Overview")));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
         summary_bullet(),
-        format!(
-            "{} {}",
-            paint_key("Contract env:"),
-            report.summary.contract_count
-        )
+        paint_key("Contract env:"),
+        report.summary.contract_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
         summary_bullet(),
-        format!("{} {}", paint_key("Task env:"), report.summary.task_count)
+        paint_key("Task env:"),
+        report.summary.task_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
         summary_bullet(),
-        format!(
-            "{} {}",
-            paint_key("Resolved:"),
-            report.summary.resolved_count
-        )
+        paint_key("Resolved:"),
+        report.summary.resolved_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
         summary_bullet(),
-        format!("{} {}", paint_key("Missing:"), report.summary.missing_count)
+        paint_key("Missing:"),
+        report.summary.missing_count
     ));
     stdout.push_str(&format!(
-        "\n{} {}",
+        "\n{} {} {}",
         summary_bullet(),
-        format!("{} {}", paint_key("Invalid:"), report.summary.invalid_count)
+        paint_key("Invalid:"),
+        report.summary.invalid_count
     ));
 
     stdout.push_str("\n\n");
@@ -2306,7 +2303,7 @@ fn render_policy_review_text(
     }
 
     let summary = policy_review_summary(report);
-    stdout.push_str("\n");
+    stdout.push('\n');
     stdout.push_str(&render_policy_review_overview_text(&summary));
 
     if report.findings.is_empty() {
@@ -2516,7 +2513,7 @@ pub fn doctor(
                                 .provisioning
                                 .as_ref()
                                 .map(|value| &value.request),
-                            adapter_bootstrap: report.adapter_bootstrap.as_ref().map(|value| value),
+                            adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                             extensions: &empty_extensions,
                             findings: &report.findings,
                         }),
@@ -2741,10 +2738,7 @@ pub fn doctor(
                                         .provisioning
                                         .as_ref()
                                         .map(|value| &value.request),
-                                    adapter_bootstrap: report
-                                        .adapter_bootstrap
-                                        .as_ref()
-                                        .map(|value| value),
+                                    adapter_bootstrap: report.adapter_bootstrap.as_ref(),
                                     extensions: &target.contract.extensions,
                                     findings: &report.findings,
                                 }),
@@ -5411,9 +5405,8 @@ pub fn workspace_init(
                 if let Err(error) = parse_workspace_contract_str(&workspace_path, &yaml)
                     .map_err(|error| error.to_string())
                 {
-                    let error = error;
                     return match format {
-                        OutputFormat::Text => CommandOutput::failure(error),
+                        OutputFormat::Text => CommandOutput::failure(error.clone()),
                         OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                             "ok": false,
                             "path": path_display,
@@ -6193,7 +6186,7 @@ pub fn workspace_list(
                         .iter()
                         .map(|repo| repo.name.as_str())
                         .collect::<Vec<_>>();
-                    if !known_repos.iter().any(|name| *name == target_repo) {
+                    if !known_repos.contains(&target_repo) {
                         let known_list = if known_repos.is_empty() {
                             String::from("none")
                         } else {
@@ -6366,7 +6359,7 @@ pub fn workspace_doctor(
                         .iter()
                         .map(|repo| repo.name.as_str())
                         .collect::<Vec<_>>();
-                    if !known_repos.iter().any(|name| *name == target_repo) {
+                    if !known_repos.contains(&target_repo) {
                         let known_list = if known_repos.is_empty() {
                             String::from("none")
                         } else {
@@ -8774,20 +8767,20 @@ fn detect_named_removal_entries(
         );
     }
 
-    if let Some(field) = removal.field.strip_prefix("services.") {
-        if let Some((service_name, property)) = field.split_once('.') {
-            return (
-                DetectNamedDriftKind::Service,
-                service_name.to_string(),
-                removal
-                    .existing
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(|line| format!("{property}: {line}"))
-                    .collect(),
-            );
-        }
+    if let Some(field) = removal.field.strip_prefix("services.")
+        && let Some((service_name, property)) = field.split_once('.')
+    {
+        return (
+            DetectNamedDriftKind::Service,
+            service_name.to_string(),
+            removal
+                .existing
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| format!("{property}: {line}"))
+                .collect(),
+        );
     }
 
     (
@@ -9751,11 +9744,11 @@ fn render_tasks_text(
 ) -> String {
     let mut output = format_command_header("TASKS", path);
 
-    if let Some(agent) = agent {
-        if let Some(summary) = render_doctor_agent_summary_text(agent, false) {
-            output.push_str("\n\n");
-            output.push_str(&summary);
-        }
+    if let Some(agent) = agent
+        && let Some(summary) = render_doctor_agent_summary_text(agent, false)
+    {
+        output.push_str("\n\n");
+        output.push_str(&summary);
     }
 
     output.push_str("\n\n");
@@ -9766,11 +9759,7 @@ fn render_tasks_text(
     }
 
     for (index, task) in tasks.iter().enumerate() {
-        if index == 0 {
-            output.push('\n');
-        } else {
-            output.push('\n');
-        }
+        output.push('\n');
         let command_preview = task
             .run
             .map(str::to_string)
@@ -12100,12 +12089,13 @@ fn render_doctor_agent_summary_text(
             "ota install commands available",
         ));
     }
-    if include_notes && let Some(notes) = agent.notes {
-        if !notes.trim().is_empty() {
-            lines.push(format!(" {}  {}", summary_bullet(), paint_key("Notes:")));
-            for line in notes.lines() {
-                lines.push(format!("    {line}"));
-            }
+    if include_notes
+        && let Some(notes) = agent.notes
+        && !notes.trim().is_empty()
+    {
+        lines.push(format!(" {}  {}", summary_bullet(), paint_key("Notes:")));
+        for line in notes.lines() {
+            lines.push(format!("    {line}"));
         }
     }
 
@@ -12131,18 +12121,18 @@ fn render_agents_markdown(
     output.push_str("     ░███ ░███  ░███ ███ ███░░███\n");
     output.push_str("     ░░██████   ░░█████ ░░████████\n");
     output.push_str("      ░░░░░░     ░░░░░   ░░░░░░░░\n");
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.\n");
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.\n");
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.\n");
     output.push_str("   You may not use this file except in compliance with that License.\n");
     output.push_str("   Unless required by applicable law or agreed to in writing, software distributed under the\n");
     output.push_str("   License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,\n");
     output.push_str("   either express or implied. See the License for the specific language governing permissions\n");
     output.push_str("   and limitations under the License.\n");
-    output.push_str("\n");
+    output.push('\n');
     output.push_str(
         "   If you need additional information or have any questions, please email: os@ota.run\n",
     );
@@ -12250,13 +12240,13 @@ fn render_agents_markdown(
                 output.push_str("`\n");
             }
         }
-        if let Some(notes) = agent.notes {
-            if !notes.trim().is_empty() {
-                output.push_str("\n## Notes\n\n");
-                for line in notes.lines() {
-                    output.push_str(line);
-                    output.push('\n');
-                }
+        if let Some(notes) = agent.notes
+            && !notes.trim().is_empty()
+        {
+            output.push_str("\n## Notes\n\n");
+            for line in notes.lines() {
+                output.push_str(line);
+                output.push('\n');
             }
         }
     } else {
@@ -12361,12 +12351,13 @@ fn render_agent_summary_block(agent: &AgentSummary<'_>, include_notes: bool) -> 
             lines.push(format!("      powershell: {powershell}"));
         }
     }
-    if include_notes && let Some(notes) = agent.notes {
-        if !notes.trim().is_empty() {
-            lines.push(String::from("  notes:"));
-            for line in notes.lines() {
-                lines.push(format!("    {line}"));
-            }
+    if include_notes
+        && let Some(notes) = agent.notes
+        && !notes.trim().is_empty()
+    {
+        lines.push(String::from("  notes:"));
+        for line in notes.lines() {
+            lines.push(format!("    {line}"));
         }
     }
 
@@ -13323,7 +13314,7 @@ mod tests {
 
     #[test]
     fn explain_text_groups_shared_actions_by_remediation() {
-        let findings = vec![
+        let findings = [
             Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for runtime: java"),
@@ -13715,7 +13706,7 @@ tasks:
 
     #[test]
     fn doctor_json_exports_group_summaries() {
-        let findings = vec![
+        let findings = [
             Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for runtime: java"),
@@ -13747,7 +13738,7 @@ tasks:
 
     #[test]
     fn doctor_group_summaries_keep_distinct_service_remediations_separate() {
-        let findings = vec![
+        let findings = [
             Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck failed: postgres"),
@@ -13787,7 +13778,7 @@ tasks:
 
     #[test]
     fn doctor_group_summaries_use_stable_keys_for_check_failures() {
-        let findings = vec![
+        let findings = [
             Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: health-check"),
@@ -16531,7 +16522,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(&result.receipt));
     }
-    stdout.push_str("\n");
+    stdout.push('\n');
     stdout.push_str(&render_execution_receipt_summary_block(
         &result.receipt,
         result.task.as_deref().or(Some(result.phase)),
