@@ -1834,7 +1834,7 @@ fn execute_ephemeral_container_task_command(
     }
     container
         .arg(image)
-        .arg("-lc")
+        .arg("-c")
         .arg(command_with_path_export(command, path_export));
 
     match mode {
@@ -2088,7 +2088,7 @@ fn exec_persistent_container_task_command(
     container
         .arg(&container_name)
         .arg("sh")
-        .arg("-lc")
+        .arg("-c")
         .arg(command_with_path_export(command, path_export));
 
     match mode {
@@ -3976,7 +3976,7 @@ case "$command" in
     fi
     printf "exec\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$3"
+    exec /bin/sh -c "$3"
     ;;
   run)
     detached=0
@@ -4035,13 +4035,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    if [ "$1" = "-lc" ]; then
-      exec /bin/sh -lc "$2"
+    if [ "$1" = "-c" ]; then
+      exec /bin/sh -c "$2"
     fi
-    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
-      exec /bin/sh -lc "$3"
+    if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      exec /bin/sh -c "$3"
     fi
-    exec /bin/sh -lc "$1"
+    exec /bin/sh -c "$1"
     ;;
   rm)
     shift
