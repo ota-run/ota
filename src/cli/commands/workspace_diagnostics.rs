@@ -96,6 +96,7 @@ pub(crate) fn render_workspace_doctor_text(
             &primary_blocker.why,
             &primary_blocker.next,
             None,
+            None,
         ));
     }
     if report.ok && report.repos.iter().all(|repo| repo.findings.is_empty()) {
@@ -398,6 +399,7 @@ pub(crate) fn render_workspace_check_text(
             ),
             &primary_blocker.why,
             &primary_blocker.next,
+            None,
             None,
         ));
     }
