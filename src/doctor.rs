@@ -1756,7 +1756,7 @@ fn version_command_in_container(engine: &str, image: &str, name: &str) -> Comman
         .arg("--entrypoint")
         .arg("sh")
         .arg(image)
-        .arg("-lc")
+        .arg("-c")
         .arg(version_command_string(name));
     command
 }

@@ -784,6 +784,8 @@ pub struct UpPreviewExecution {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<String>,

@@ -11437,6 +11437,18 @@ fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> S
     }
 }
 
+fn rewrite_up_preview_next_command(next: &str, doctor_mode: Option<DoctorMode>) -> String {
+    let next = rewrite_doctor_mode_command(next, doctor_mode);
+    match doctor_mode {
+        Some(DoctorMode::Container) => next.replace(
+            "`ota doctor --mode container`",
+            "`ota up --dry-run --mode container`",
+        ),
+        Some(DoctorMode::Native) => next.replace("`ota doctor`", "`ota up --dry-run`"),
+        None => next.replace("`ota doctor`", "`ota up --dry-run`"),
+    }
+}
+
 fn doctor_finding_group_display_items(group: &DoctorFindingGroup<'_>) -> Vec<String> {
     let include_tooling_commands = matches!(group.kind, DoctorFindingGroupKind::ToolingVersion)
         && group
@@ -16438,6 +16450,14 @@ fn render_up_preview_text(
             lifecycle
         ));
     }
+    if let Some(image) = execution.image.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Image:"),
+            paint_backticked_code(image)
+        ));
+    }
     if let Some(target) = execution.target.as_deref() {
         stdout.push_str(&format!(
             "\n {}  {} {}",
@@ -16513,7 +16533,7 @@ fn render_up_preview_text(
         append_wrapped_labeled_text(
             &mut stdout,
             "Next:",
-            &rewrite_doctor_mode_command(
+            &rewrite_up_preview_next_command(
                 &display_next,
                 doctor_mode_from_backend(Some(execution.backend.as_str())),
             ),
@@ -18518,6 +18538,13 @@ fn build_up_preview(
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
             lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+            image: contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+                .filter(|_| matches!(backend, Backend::Container))
+                .map(|container| container.image.clone()),
             target,
             task: contract
                 .tasks
