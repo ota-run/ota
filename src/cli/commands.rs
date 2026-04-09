@@ -10602,6 +10602,7 @@ fn render_report_section(
             &primary_blocker.summary,
             &primary_blocker.why,
             &primary_blocker.next,
+            doctor_mode,
             contract_path,
         ));
     }
@@ -10668,7 +10669,7 @@ fn render_report_section(
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &finding.next,
+                    &rewrite_doctor_mode_command(&finding.next, doctor_mode),
                     "",
                     84,
                     true,
@@ -10696,7 +10697,7 @@ fn render_report_section(
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &finding.next,
+                    &rewrite_doctor_mode_command(&finding.next, doctor_mode),
                     "",
                     84,
                     true,
@@ -10765,6 +10766,7 @@ fn render_primary_finding_text(
     summary: &str,
     why: &str,
     next: &str,
+    doctor_mode: Option<DoctorMode>,
     contract_path: Option<&Path>,
 ) -> String {
     let mut stdout = String::new();
@@ -10803,7 +10805,7 @@ fn render_primary_finding_text(
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
-        next,
+        &rewrite_doctor_mode_command(next, doctor_mode),
         "",
         84,
         true,
@@ -13677,6 +13679,97 @@ tasks:
         assert!(!text.contains(
             "Summary Ephemeral lifecycle is only enforced for backend-backed task execution"
         ));
+    }
+
+    #[test]
+    fn doctor_text_container_mode_updates_primary_blocker_next_command() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Invalid org policy pack"),
+                why: String::from(
+                    "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
+                ),
+                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::PolicyBlocked,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(super::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Invalid org policy pack"),
+                why: String::from(
+                    "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
+                ),
+                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+            }),
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            Some(DoctorMode::Container),
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(
+            text.contains(
+                "repair `./.ota/org-policy.yaml` and re-run `ota doctor --mode container`"
+            )
+        );
+    }
+
+    #[test]
+    fn doctor_text_container_mode_updates_single_finding_next_command() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Invalid org policy pack"),
+                why: String::from(
+                    "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
+                ),
+                next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::PolicyBlocked,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            Some(DoctorMode::Container),
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(
+            text.contains(
+                "repair `./.ota/org-policy.yaml` and re-run `ota doctor --mode container`"
+            )
+        );
     }
 
     #[test]
