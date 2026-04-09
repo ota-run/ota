@@ -110,8 +110,6 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 ## Quickstart
 
-**DOCTOR FIRST, CONTRACT SECOND.**
-
 Choose the path that matches the repo.
 
 ### Existing repo with `ota.yaml`
