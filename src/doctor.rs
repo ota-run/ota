@@ -40,8 +40,8 @@ use crate::policy_pack::{
     ProvisioningPlan, ProvisioningTargetKind, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
-    AptProvisioningFailure, AptProvisioningFailureKind, ProvisioningBackendError,
-    ProvisioningExecutionTarget, probe_apt_installability_with_target,
+    ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
+    ProvisioningFailureKind, probe_provisioning_installability_with_target,
     render_provisioning_action_command,
 };
 use crate::schema::{
@@ -124,58 +124,125 @@ struct ContainerProbeContext {
     engine: String,
 }
 
-pub(crate) fn container_apt_failure_finding(
-    failure: &AptProvisioningFailure,
-    image: Option<&str>,
+pub(crate) fn provisioning_installability_finding(
+    diagnosis: &ProvisioningFailureDiagnosis,
+    target: &ProvisioningExecutionTarget,
     rerun_command: &str,
 ) -> Finding {
+    let image = match target {
+        ProvisioningExecutionTarget::Container { image, .. } => Some(image.as_str()),
+        ProvisioningExecutionTarget::Native => None,
+    };
     let image_hint = image
         .map(|value| format!(" (currently `{value}`)"))
         .unwrap_or_default();
 
-    match failure.kind {
-        AptProvisioningFailureKind::VersionUnavailable => Finding {
+    match (&target, diagnosis.backend.as_str(), diagnosis.kind) {
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            "apt",
+            ProvisioningFailureKind::VersionUnavailable,
+        ) => Finding {
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot install pinned package version: {}",
-                failure.package
+                diagnosis.name
             ),
             why: format!(
                 "the Linux/container target requests `{} {}`, but the configured apt sources do not provide that version",
-                failure.package, failure.version
+                diagnosis.name, diagnosis.requested_version
             ),
             next: format!(
                 "update the selected container image{image_hint} or its apt sources, or relax the Linux/container version pin for `{}`, then rerun `{rerun_command}`",
-                failure.package
+                diagnosis.name
             ),
         },
-        AptProvisioningFailureKind::PackageUnavailable => Finding {
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            "apt",
+            ProvisioningFailureKind::PackageUnavailable,
+        ) => Finding {
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot locate required package: {}",
-                failure.package
+                diagnosis.name
             ),
             why: format!(
                 "the Linux/container target requests `{}`, but the configured apt sources do not provide that package",
-                failure.package
+                diagnosis.name
             ),
             next: format!(
                 "update the selected container image{image_hint} or its apt sources so `{}` is available, then rerun `{rerun_command}`",
-                failure.package
+                diagnosis.name
             ),
         },
-        AptProvisioningFailureKind::IndexUnavailable => Finding {
+        (
+            ProvisioningExecutionTarget::Container { .. },
+            "apt",
+            ProvisioningFailureKind::IndexUnavailable,
+        ) => Finding {
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot refresh configured sources: {}",
-                failure.package
+                diagnosis.name
             ),
             why: format!(
                 "the Linux/container target could not refresh apt indexes, so ota could not verify or install `{} {}`",
-                failure.package, failure.version
+                diagnosis.name, diagnosis.requested_version
             ),
             next: format!(
                 "fix apt repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
+            ),
+        },
+        (ProvisioningExecutionTarget::Container { .. }, backend, _) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container {backend} cannot install requested prerequisite: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the Linux/container target requests `{} {}`, but the configured `{backend}` provisioning path could not satisfy it inside container image `{}`",
+                diagnosis.name,
+                diagnosis.requested_version,
+                image.unwrap_or("unknown")
+            ),
+            next: format!(
+                "fix the selected container image{image_hint} or the configured `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Native,
+            backend,
+            ProvisioningFailureKind::VersionUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Host {backend} cannot install pinned version: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the host target requests `{} {}`, but the configured `{backend}` provisioning path could not provide that version",
+                diagnosis.name, diagnosis.requested_version
+            ),
+            next: format!(
+                "fix the host `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (ProvisioningExecutionTarget::Native, backend, _) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Host {backend} cannot install requested prerequisite: {}",
+                diagnosis.name
+            ),
+            why: format!(
+                "the host target requests `{} {}`, but the configured `{backend}` provisioning path could not satisfy it",
+                diagnosis.name, diagnosis.requested_version
+            ),
+            next: format!(
+                "fix the host `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
             ),
         },
     }
@@ -262,6 +329,19 @@ impl Finding {
             s if s.starts_with("Container apt cannot refresh configured sources: ") => {
                 "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
             }
+            s if s.starts_with("Container ")
+                && s.contains(" cannot install requested prerequisite: ") =>
+            {
+                "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            }
+            s if s.starts_with("Host ") && s.contains(" cannot install pinned version: ") => {
+                "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Host ")
+                && s.contains(" cannot install requested prerequisite: ") =>
+            {
+                "OTA_HOST_PROVISIONING_BACKEND_FAILED"
+            }
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
             "Adapter bootstrap sources are declared" => {
@@ -293,7 +373,10 @@ impl Finding {
             | "OTA_TOOL_MISSING" => "environment",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => "provisioning",
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "provisioning",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
             | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "policy",
@@ -322,7 +405,10 @@ impl Finding {
             | "OTA_TOOL_MISSING" => "host",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => "container_target",
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
+            "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
             "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => {
                 "remote_backend"
             }
@@ -443,6 +529,27 @@ impl Finding {
                 "the configured container apt sources could not refresh indexes".to_string(),
                 "the configured container apt sources refresh successfully".to_string(),
                 "container_apt".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
+                "the configured container provisioning backend could not satisfy the requested prerequisite".to_string(),
+                "the configured container provisioning backend satisfies the requested prerequisite".to_string(),
+                "container_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
+                "the configured host provisioning backend could not provide the pinned version".to_string(),
+                "the configured host provisioning backend provides the pinned version".to_string(),
+                "host_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_HOST_PROVISIONING_BACKEND_FAILED" => (
+                "the configured host provisioning backend could not satisfy the requested prerequisite".to_string(),
+                "the configured host provisioning backend satisfies the requested prerequisite".to_string(),
+                "host_provisioning".to_string(),
                 String::new(),
                 String::new(),
             ),
@@ -1785,7 +1892,7 @@ fn diagnose_command_version(
 
     let Some(actual) = actual else {
         if mode == DoctorMode::Container
-            && let Some(failure) = container_apt_installability_failure(
+            && let Some(failure) = container_installability_failure(
                 target_kind,
                 display_name,
                 requirement,
@@ -1794,9 +1901,19 @@ fn diagnose_command_version(
                 provisioning_actions,
             )
         {
-            findings.push(container_apt_failure_finding(
+            findings.push(provisioning_installability_finding(
                 &failure,
-                container_probe.map(|probe| probe.image.as_str()),
+                &ProvisioningExecutionTarget::Container {
+                    image: container_probe
+                        .expect("container probe is present in container mode")
+                        .image
+                        .clone(),
+                    engine: container_probe
+                        .expect("container probe is present in container mode")
+                        .engine
+                        .clone(),
+                    lifecycle: Lifecycle::Ephemeral,
+                },
                 "ota doctor --mode container",
             ));
             return;
@@ -1842,7 +1959,7 @@ fn diagnose_command_version(
     }
 
     if mode == DoctorMode::Container
-        && let Some(failure) = container_apt_installability_failure(
+        && let Some(failure) = container_installability_failure(
             target_kind,
             display_name,
             requirement,
@@ -1851,9 +1968,19 @@ fn diagnose_command_version(
             provisioning_actions,
         )
     {
-        findings.push(container_apt_failure_finding(
+        findings.push(provisioning_installability_finding(
             &failure,
-            container_probe.map(|probe| probe.image.as_str()),
+            &ProvisioningExecutionTarget::Container {
+                image: container_probe
+                    .expect("container probe is present in container mode")
+                    .image
+                    .clone(),
+                engine: container_probe
+                    .expect("container probe is present in container mode")
+                    .engine
+                    .clone(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
             "ota doctor --mode container",
         ));
         return;
@@ -1896,18 +2023,17 @@ fn diagnose_command_version(
     });
 }
 
-fn container_apt_installability_failure(
+fn container_installability_failure(
     target_kind: ProvisioningTargetKind,
     display_name: &str,
     requirement: &str,
     container_probe: Option<&ContainerProbeContext>,
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
-) -> Option<AptProvisioningFailure> {
+) -> Option<ProvisioningFailureDiagnosis> {
     let container_probe = container_probe?;
     let action = provisioning_actions.iter().find(|action| {
-        action.source == "apt"
-            && action.target_kind == target_kind
+        action.target_kind == target_kind
             && action.name == display_name
             && action.requested_version == requirement
     })?;
@@ -1916,9 +2042,12 @@ fn container_apt_installability_failure(
         engine: container_probe.engine.clone(),
         lifecycle: Lifecycle::Ephemeral,
     };
-    match probe_apt_installability_with_target(action, contract_working_dir(contract_path), &target)
-    {
-        Err(ProvisioningBackendError::AptCommandFailed { failure, .. }) => Some(failure),
+    match probe_provisioning_installability_with_target(
+        action,
+        contract_working_dir(contract_path),
+        &target,
+    ) {
+        Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => Some(diagnosis),
         _ => None,
     }
 }

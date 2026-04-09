@@ -785,8 +785,8 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
     ) {
         Ok(outcome) => outcome,
         Err(
-            ProvisioningBackendError::CommandFailed { stderr, .. }
-            | ProvisioningBackendError::AptCommandFailed { stderr, .. },
+            ProvisioningBackendError::DiagnosedCommandFailed { stderr, .. }
+            | ProvisioningBackendError::CommandFailed { stderr, .. },
         ) if stderr.contains("Failed to fetch") || stderr.contains("Unable to locate package") => {
             eprintln!(
                 "skipping real container provisioning test: apt repository unavailable ({stderr})"

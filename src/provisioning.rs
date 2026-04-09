@@ -60,17 +60,20 @@ pub enum ProvisioningOutputMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AptProvisioningFailureKind {
+pub enum ProvisioningFailureKind {
+    BackendFailed,
     VersionUnavailable,
     PackageUnavailable,
     IndexUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AptProvisioningFailure {
-    pub package: String,
-    pub version: String,
-    pub kind: AptProvisioningFailureKind,
+pub struct ProvisioningFailureDiagnosis {
+    pub backend: String,
+    pub target_kind: ProvisioningTargetKind,
+    pub name: String,
+    pub requested_version: String,
+    pub kind: ProvisioningFailureKind,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -93,13 +96,13 @@ pub enum ProvisioningBackendError {
         stdout: String,
         stderr: String,
     },
-    #[error("apt provisioning command `{command}` exited with status {exit_code}")]
-    AptCommandFailed {
+    #[error("provisioning backend command `{command}` exited with status {exit_code}")]
+    DiagnosedCommandFailed {
         command: String,
         exit_code: i32,
         stdout: String,
         stderr: String,
-        failure: AptProvisioningFailure,
+        diagnosis: ProvisioningFailureDiagnosis,
     },
 }
 
@@ -344,6 +347,59 @@ impl BrewProvisioningBackend {
         }
         Some(command)
     }
+
+    fn probe_target(action: &ProvisioningAction) -> String {
+        let install_target = Self::install_target(action);
+        action
+            .source_config
+            .as_ref()
+            .and_then(|config| config.get("tap_name"))
+            .and_then(|value| value.as_str())
+            .map(|tap_name| format!("{tap_name}/{install_target}"))
+            .unwrap_or(install_target)
+    }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let probe_target = Self::probe_target(action);
+        (
+            String::from("brew"),
+            vec![
+                String::from("install"),
+                String::from("--dry-run"),
+                probe_target.clone(),
+            ],
+            format!("brew install --dry-run {probe_target}"),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("no available formula with the name")
+            || combined.contains("no formulae or casks found for")
+            || combined.contains("formula unavailable")
+            || combined.contains("cask unavailable")
+        {
+            if Self::install_target(action) != action.name {
+                ProvisioningFailureKind::VersionUnavailable
+            } else {
+                ProvisioningFailureKind::PackageUnavailable
+            }
+        } else {
+            return None;
+        };
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
+    }
 }
 
 impl PacmanProvisioningBackend {
@@ -469,18 +525,18 @@ impl AptProvisioningBackend {
         action: &ProvisioningAction,
         stdout: &str,
         stderr: &str,
-    ) -> Option<AptProvisioningFailure> {
+    ) -> Option<ProvisioningFailureDiagnosis> {
         let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
         let kind = if combined.contains("version '")
             && combined.contains("' for '")
             && combined.contains("' was not found")
         {
-            Some(AptProvisioningFailureKind::VersionUnavailable)
+            Some(ProvisioningFailureKind::VersionUnavailable)
         } else if combined.contains("unable to locate package")
             || combined.contains("has no installation candidate")
             || combined.contains("is not available")
         {
-            Some(AptProvisioningFailureKind::PackageUnavailable)
+            Some(ProvisioningFailureKind::PackageUnavailable)
         } else if combined.contains("failed to fetch")
             || combined.contains("some index files failed to download")
             || combined.contains("temporary failure resolving")
@@ -488,14 +544,16 @@ impl AptProvisioningBackend {
             || combined.contains("connection failed")
             || combined.contains("does not have a release file")
         {
-            Some(AptProvisioningFailureKind::IndexUnavailable)
+            Some(ProvisioningFailureKind::IndexUnavailable)
         } else {
             None
         }?;
 
-        Some(AptProvisioningFailure {
-            package: action.name.clone(),
-            version: action.requested_version.clone(),
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
             kind,
         })
     }
@@ -1390,15 +1448,6 @@ impl ProvisioningBackend for AptProvisioningBackend {
             stderr.push_str(&output.stderr);
 
             if output.exit_code != 0 {
-                if let Some(failure) = Self::classify_failure(action, &stdout, &stderr) {
-                    return Err(ProvisioningBackendError::AptCommandFailed {
-                        command: command_display,
-                        exit_code: output.exit_code,
-                        stdout,
-                        stderr,
-                        failure,
-                    });
-                }
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: command_display,
                     exit_code: output.exit_code,
@@ -2064,12 +2113,122 @@ pub fn apply_provisioning_request_with_target(
         let single_action_request = ProvisioningBackendRequest {
             actions: vec![action.clone()],
         };
-        let result = backend.apply(&single_action_request, working_dir, target, mode)?;
+        let result = match backend.apply(&single_action_request, working_dir, target, mode) {
+            Ok(result) => result,
+            Err(ProvisioningBackendError::CommandFailed {
+                command,
+                exit_code,
+                stdout,
+                stderr,
+            }) => {
+                return Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                    command,
+                    exit_code,
+                    diagnosis: classify_provisioning_failure(action, &stdout, &stderr)
+                        .unwrap_or_else(|| generic_failure_diagnosis(action)),
+                    stdout,
+                    stderr,
+                });
+            }
+            Err(error) => return Err(error),
+        };
         stdout.push_str(&result.stdout);
         stderr.push_str(&result.stderr);
     }
 
     Ok(ProvisioningBackendOutput { stdout, stderr })
+}
+
+fn classify_provisioning_failure(
+    action: &ProvisioningAction,
+    stdout: &str,
+    stderr: &str,
+) -> Option<ProvisioningFailureDiagnosis> {
+    match action.source.as_str() {
+        "apt" => AptProvisioningBackend::classify_failure(action, stdout, stderr),
+        "brew" => BrewProvisioningBackend::classify_failure(action, stdout, stderr),
+        _ => None,
+    }
+}
+
+fn generic_failure_diagnosis(action: &ProvisioningAction) -> ProvisioningFailureDiagnosis {
+    ProvisioningFailureDiagnosis {
+        backend: action.source.clone(),
+        target_kind: action.target_kind,
+        name: action.name.clone(),
+        requested_version: action.requested_version.clone(),
+        kind: ProvisioningFailureKind::BackendFailed,
+    }
+}
+
+pub fn probe_provisioning_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    let result = match action.source.as_str() {
+        "apt" => probe_apt_installability_with_target(action, working_dir, target),
+        "brew" => probe_brew_installability_with_target(action, working_dir, target),
+        _ => {
+            return Err(ProvisioningBackendError::UnsupportedSource {
+                provisioning_source: action.source.clone(),
+            });
+        }
+    };
+
+    match result {
+        Err(ProvisioningBackendError::CommandFailed {
+            command,
+            exit_code,
+            stdout,
+            stderr,
+        }) => Err(ProvisioningBackendError::DiagnosedCommandFailed {
+            command,
+            exit_code,
+            diagnosis: classify_provisioning_failure(action, &stdout, &stderr)
+                .unwrap_or_else(|| generic_failure_diagnosis(action)),
+            stdout,
+            stderr,
+        }),
+        other => other,
+    }
+}
+
+pub fn probe_brew_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "brew" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = BrewProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: command_display,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
 }
 
 pub fn probe_apt_installability_with_target(
@@ -2102,18 +2261,6 @@ pub fn probe_apt_installability_with_target(
 
     if output.exit_code == 0 {
         return Ok(());
-    }
-
-    if let Some(failure) =
-        AptProvisioningBackend::classify_failure(action, &output.stdout, &output.stderr)
-    {
-        return Err(ProvisioningBackendError::AptCommandFailed {
-            command: command_display,
-            exit_code: output.exit_code,
-            stdout: output.stdout,
-            stderr: output.stderr,
-            failure,
-        });
     }
 
     Err(ProvisioningBackendError::CommandFailed {
@@ -3316,13 +3463,14 @@ mod tests {
         );
 
         match result {
-            Err(ProvisioningBackendError::AptCommandFailed {
-                stderr, failure, ..
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
             }) => {
                 assert!(stderr.contains("Version '8.13.0' for 'curl' was not found"));
-                assert_eq!(failure.package, "curl");
-                assert_eq!(failure.version, "8.13.0");
-                assert_eq!(failure.kind, AptProvisioningFailureKind::VersionUnavailable);
+                assert_eq!(diagnosis.backend, "apt");
+                assert_eq!(diagnosis.name, "curl");
+                assert_eq!(diagnosis.requested_version, "8.13.0");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
             }
             other => panic!("expected apt version-unavailable failure, got {other:?}"),
         }
@@ -3365,7 +3513,7 @@ mod tests {
             approved_version: Some("1.7.1".to_string()),
         };
 
-        let result = probe_apt_installability_with_target(
+        let result = probe_provisioning_installability_with_target(
             &action,
             Path::new("."),
             &ProvisioningExecutionTarget::Container {
@@ -3376,15 +3524,77 @@ mod tests {
         );
 
         match result {
-            Err(ProvisioningBackendError::AptCommandFailed {
-                stderr, failure, ..
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
             }) => {
                 assert!(stderr.contains("Failed to fetch"));
-                assert_eq!(failure.package, "jq");
-                assert_eq!(failure.version, "1.7.1");
-                assert_eq!(failure.kind, AptProvisioningFailureKind::IndexUnavailable);
+                assert_eq!(diagnosis.backend, "apt");
+                assert_eq!(diagnosis.name, "jq");
+                assert_eq!(diagnosis.requested_version, "1.7.1");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::IndexUnavailable);
             }
             other => panic!("expected apt index-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_brew_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: "node".to_string(),
+            requested_version: "22".to_string(),
+            source: "brew".to_string(),
+            source_config: None,
+            approved_version: Some("22".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "linuxbrew/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
+            }) => {
+                assert!(stderr.contains("No available formula"));
+                assert_eq!(diagnosis.backend, "brew");
+                assert_eq!(diagnosis.name, "node");
+                assert_eq!(diagnosis.requested_version, "22");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected brew version-unavailable failure, got {other:?}"),
         }
 
         unsafe {

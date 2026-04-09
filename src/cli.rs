@@ -11676,6 +11676,62 @@ policies:
     }
 
     #[test]
+    fn doctor_container_mode_reports_brew_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container brew cannot install requested prerequisite: node"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing runtime: node"));
+    }
+
+    #[test]
     fn doctor_native_mode_keeps_host_failure_for_apt_backed_policy() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
@@ -12414,6 +12470,65 @@ policies:
         assert!(text.contains("Task output: E: Version '8.13.0' for 'curl' was not found"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing tool: curl"));
+    }
+
+    #[test]
+    fn up_container_mode_surfaces_generic_backend_failure_finding() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("PROVISION FAILED"));
+        assert!(text.contains("Container brew cannot install requested prerequisite: node"));
+        assert!(text.contains("Task output: Error: No available formula with the name"));
+        assert!(text.contains("node@22"));
+        assert!(text.contains("ota up --mode container"));
+        assert!(!text.contains("Missing runtime: node"));
     }
 
     #[test]
