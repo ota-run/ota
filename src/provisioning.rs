@@ -25,6 +25,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 
+use serde_json::Value as JsonValue;
 use serde_yaml::Value;
 use thiserror::Error;
 
@@ -206,6 +207,51 @@ impl MiseProvisioningBackend {
             }
         }
     }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        (
+            String::from("mise"),
+            vec![
+                String::from("ls-remote"),
+                String::from("--json"),
+                install_target.clone(),
+            ],
+            format!("mise ls-remote --json {install_target}"),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("tool not found")
+            || combined.contains("plugin not installed")
+            || combined.contains("unknown plugin")
+            || combined.contains("unknown tool")
+        {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("timed out")
+            || combined.contains("connection refused")
+            || combined.contains("could not resolve")
+            || combined.contains("failed to fetch")
+            || combined.contains("failed to download")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
+    }
 }
 
 impl AsdfProvisioningBackend {
@@ -213,6 +259,53 @@ impl AsdfProvisioningBackend {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
+    }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        (
+            String::from("asdf"),
+            vec![
+                String::from("list"),
+                String::from("all"),
+                install_target.clone(),
+                action.requested_version.clone(),
+            ],
+            format!(
+                "asdf list all {install_target} {}",
+                action.requested_version
+            ),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("no such plugin")
+            || combined.contains("plugin not found")
+            || combined.contains("unknown plugin")
+        {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("failed to download")
+            || combined.contains("could not resolve host")
+            || combined.contains("connection timed out")
+            || combined.contains("network is unreachable")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -228,6 +321,87 @@ impl SdkmanProvisioningBackend {
         format!(
             r#"if ! command -v sdk >/dev/null 2>&1 && [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]; then . "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1; fi; sdk {command} {install_target} {requested_version}"#
         )
+    }
+
+    fn list_command(install_target: &str) -> String {
+        format!(
+            r#"if ! command -v sdk >/dev/null 2>&1 && [ -f "$HOME/.sdkman/bin/sdkman-init.sh" ]; then . "$HOME/.sdkman/bin/sdkman-init.sh" >/dev/null 2>&1; fi; sdk list {install_target}"#
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("not a valid candidate")
+            || combined.contains("stop!") && combined.contains("valid candidate")
+        {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("internet not reachable")
+            || combined.contains("offline")
+            || combined.contains("network is unreachable")
+            || combined.contains("timed out")
+            || combined.contains("could not resolve host")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
+    }
+}
+
+impl UvProvisioningBackend {
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        (
+            String::from("uv"),
+            vec![
+                String::from("python"),
+                String::from("list"),
+                String::from("--managed-python"),
+                String::from("--all-versions"),
+                action.requested_version.clone(),
+            ],
+            format!(
+                "uv python list --managed-python --all-versions {}",
+                action.requested_version
+            ),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("failed to download")
+            || combined.contains("failed to fetch")
+            || combined.contains("dns error")
+            || combined.contains("network is unreachable")
+            || combined.contains("timed out")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -247,6 +421,55 @@ impl WingetProvisioningBackend {
             .map(|source_name| vec![String::from("--source"), source_name.to_string()])
             .unwrap_or_default()
     }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        let mut args = vec![
+            String::from("show"),
+            String::from("--id"),
+            install_target.clone(),
+            String::from("--exact"),
+            String::from("--versions"),
+        ];
+        let source_args = Self::source_args(action);
+        args.extend(source_args.clone());
+        let command = if source_args.is_empty() {
+            format!("winget show --id {install_target} --exact --versions")
+        } else {
+            format!(
+                "winget show --id {install_target} --exact --versions {}",
+                source_args.join(" ")
+            )
+        };
+        (String::from("winget"), args, command)
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("no package found matching input criteria") {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("failed when searching source")
+            || combined.contains("failed to open source")
+            || combined.contains("source data is corrupted")
+            || combined.contains("0x8a15000f")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
+    }
 }
 
 impl ChocoProvisioningBackend {
@@ -264,6 +487,53 @@ impl ChocoProvisioningBackend {
             .and_then(|value| value.as_str())
             .map(|feed| vec![String::from("--source"), feed.to_string()])
             .unwrap_or_default()
+    }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        let mut args = vec![
+            String::from("search"),
+            install_target.clone(),
+            String::from("--exact"),
+            String::from("--all-versions"),
+            String::from("--limit-output"),
+        ];
+        let source_args = Self::source_args(action);
+        args.extend(source_args.clone());
+        let command = if source_args.is_empty() {
+            format!("choco search {install_target} --exact --all-versions --limit-output")
+        } else {
+            format!(
+                "choco search {install_target} --exact --all-versions --limit-output {}",
+                source_args.join(" ")
+            )
+        };
+        (String::from("choco"), args, command)
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("unable to connect to source")
+            || combined.contains("failed to process request")
+            || combined.contains("the remote file either doesn't exist")
+            || combined.contains("response status code does not indicate success")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -307,6 +577,60 @@ impl ScoopProvisioningBackend {
             command.push_str(bucket_url);
         }
         Some(command)
+    }
+
+    fn probe_target(action: &ProvisioningAction) -> String {
+        action
+            .source_config
+            .as_ref()
+            .and_then(|config| config.get("bucket_name"))
+            .and_then(|value| value.as_str())
+            .map(|bucket_name| format!("{bucket_name}/{}", action.name))
+            .unwrap_or_else(|| action.name.clone())
+    }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let probe_target = Self::probe_target(action);
+        (
+            String::from("scoop"),
+            vec![String::from("cat"), probe_target.clone()],
+            format!("scoop cat {probe_target}"),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("couldn't find manifest")
+            || combined.contains("could not find manifest")
+            || combined.contains("manifest couldn't be found")
+            || combined.contains("app manifest does not exist")
+        {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if (combined.contains("bucket") && combined.contains("not found"))
+            || combined.contains("bucket isn't installed")
+            || combined.contains("bucket is not installed")
+            || combined.contains("couldn't find bucket")
+            || combined.contains("could not resolve host")
+            || combined.contains("failed to download")
+            || combined.contains("unable to connect")
+            || combined.contains("timed out")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -2212,8 +2536,13 @@ pub fn apply_provisioning_request_with_target(
                 return Err(ProvisioningBackendError::DiagnosedCommandFailed {
                     command,
                     exit_code,
-                    diagnosis: classify_provisioning_failure(action, &stdout, &stderr)
-                        .unwrap_or_else(|| generic_failure_diagnosis(action)),
+                    diagnosis: diagnose_failed_provisioning_action(
+                        action,
+                        working_dir,
+                        target,
+                        &stdout,
+                        &stderr,
+                    ),
                     stdout,
                     stderr,
                 });
@@ -2227,6 +2556,23 @@ pub fn apply_provisioning_request_with_target(
     Ok(ProvisioningBackendOutput { stdout, stderr })
 }
 
+fn diagnose_failed_provisioning_action(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+    stdout: &str,
+    stderr: &str,
+) -> ProvisioningFailureDiagnosis {
+    if let Some(diagnosis) = classify_provisioning_failure(action, stdout, stderr) {
+        return diagnosis;
+    }
+
+    match probe_provisioning_installability_with_target(action, working_dir, target) {
+        Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => diagnosis,
+        _ => generic_failure_diagnosis(action),
+    }
+}
+
 fn classify_provisioning_failure(
     action: &ProvisioningAction,
     stdout: &str,
@@ -2237,6 +2583,13 @@ fn classify_provisioning_failure(
         "brew" => BrewProvisioningBackend::classify_failure(action, stdout, stderr),
         "dnf" => DnfProvisioningBackend::classify_failure(action, stdout, stderr),
         "pacman" => PacmanProvisioningBackend::classify_failure(action, stdout, stderr),
+        "mise" => MiseProvisioningBackend::classify_failure(action, stdout, stderr),
+        "asdf" => AsdfProvisioningBackend::classify_failure(action, stdout, stderr),
+        "sdkman" => SdkmanProvisioningBackend::classify_failure(action, stdout, stderr),
+        "uv" => UvProvisioningBackend::classify_failure(action, stdout, stderr),
+        "winget" => WingetProvisioningBackend::classify_failure(action, stdout, stderr),
+        "choco" => ChocoProvisioningBackend::classify_failure(action, stdout, stderr),
+        "scoop" => ScoopProvisioningBackend::classify_failure(action, stdout, stderr),
         _ => None,
     }
 }
@@ -2261,6 +2614,13 @@ pub fn probe_provisioning_installability_with_target(
         "brew" => probe_brew_installability_with_target(action, working_dir, target),
         "dnf" => probe_dnf_installability_with_target(action, working_dir, target),
         "pacman" => probe_pacman_installability_with_target(action, working_dir, target),
+        "mise" => probe_mise_installability_with_target(action, working_dir, target),
+        "asdf" => probe_asdf_installability_with_target(action, working_dir, target),
+        "sdkman" => probe_sdkman_installability_with_target(action, working_dir, target),
+        "uv" => probe_uv_installability_with_target(action, working_dir, target),
+        "winget" => probe_winget_installability_with_target(action, working_dir, target),
+        "choco" => probe_choco_installability_with_target(action, working_dir, target),
+        "scoop" => probe_scoop_installability_with_target(action, working_dir, target),
         _ => {
             return Err(ProvisioningBackendError::UnsupportedSource {
                 provisioning_source: action.source.clone(),
@@ -2320,6 +2680,437 @@ pub fn probe_brew_installability_with_target(
         exit_code: output.exit_code,
         stdout: output.stdout,
         stderr: output.stderr,
+    })
+}
+
+pub fn probe_mise_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "mise" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = MiseProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    if json_or_text_output_contains_requested_version(&output.stdout, &action.requested_version) {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
+    })
+}
+
+pub fn probe_asdf_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "asdf" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = AsdfProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    if text_output_contains_requested_version(&output.stdout, &action.requested_version) {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
+    })
+}
+
+pub fn probe_sdkman_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "sdkman" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    if action.target_kind != ProvisioningTargetKind::Runtime {
+        return Err(ProvisioningBackendError::UnsupportedTargetKind {
+            backend: "sdkman",
+            target_kind: action.target_kind,
+        });
+    }
+
+    let install_target = SdkmanProvisioningBackend::install_target(action);
+    let command_display = format!("sdk list {install_target}");
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        "bash",
+        &[
+            "-c",
+            &SdkmanProvisioningBackend::list_command(&install_target),
+        ],
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if SdkmanProvisioningBackend::missing_sdk_command(&output) {
+        return Err(ProvisioningBackendError::MissingCommand {
+            command: String::from("sdk"),
+        });
+    }
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    if text_output_contains_requested_version(&output.stdout, &action.requested_version)
+        || text_output_contains_requested_version(&output.stderr, &action.requested_version)
+    {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
+    })
+}
+
+pub fn probe_uv_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "uv" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    if action.target_kind != ProvisioningTargetKind::Runtime {
+        return Err(ProvisioningBackendError::UnsupportedTargetKind {
+            backend: "uv",
+            target_kind: action.target_kind,
+        });
+    }
+
+    let (command, args, command_display) = UvProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    if text_output_contains_requested_version(&output.stdout, &action.requested_version)
+        || text_output_contains_requested_version(&output.stderr, &action.requested_version)
+    {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
+    })
+}
+
+pub fn probe_winget_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "winget" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = WingetProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    let combined = format!("{}\n{}", output.stdout, output.stderr);
+    if combined.contains(&action.requested_version) {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
+    })
+}
+
+pub fn probe_choco_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "choco" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = ChocoProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    let package_name = ChocoProvisioningBackend::install_target(action);
+    let mut saw_package = false;
+    for line in output.stdout.lines().map(str::trim) {
+        if line.is_empty() || line.eq_ignore_ascii_case("0 packages found.") {
+            continue;
+        }
+        let mut parts = line.split('|');
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let Some(version) = parts.next() else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case(package_name.as_str()) {
+            saw_package = true;
+            if version == action.requested_version {
+                return Ok(());
+            }
+        }
+    }
+
+    let kind = if saw_package {
+        ProvisioningFailureKind::VersionUnavailable
+    } else {
+        ProvisioningFailureKind::PackageUnavailable
+    };
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        },
+    })
+}
+
+pub fn probe_scoop_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "scoop" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = ScoopProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code != 0 {
+        return Err(ProvisioningBackendError::CommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+        });
+    }
+
+    let manifest_version = serde_json::from_str::<JsonValue>(&output.stdout)
+        .ok()
+        .and_then(|manifest| {
+            manifest
+                .get("version")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| scoop_manifest_version_from_text(&output.stdout));
+
+    if manifest_version.as_deref() == Some(action.requested_version.as_str()) {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::DiagnosedCommandFailed {
+        command: command_display,
+        exit_code: 1,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        diagnosis: ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind: ProvisioningFailureKind::VersionUnavailable,
+        },
     })
 }
 
@@ -2446,6 +3237,108 @@ struct ProvisioningCommandOutput {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn strip_ansi_sequences(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            while let Some(next) = chars.next() {
+                if ('@'..='~').contains(&next) {
+                    break;
+                }
+            }
+            continue;
+        }
+        output.push(ch);
+    }
+    output
+}
+
+fn scoop_manifest_version_from_text(value: &str) -> Option<String> {
+    let normalized = strip_ansi_sequences(value);
+    for line in normalized.lines() {
+        let trimmed = line.trim();
+        if !trimmed.to_ascii_lowercase().contains("version") {
+            continue;
+        }
+        let Some((_, version_part)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let version = version_part
+            .trim()
+            .trim_matches(',')
+            .trim_matches('"')
+            .trim_matches('\'');
+        if !version.is_empty() {
+            return Some(version.to_string());
+        }
+    }
+    None
+}
+
+fn version_matches_request(candidate: &str, request: &str) -> bool {
+    let candidate = candidate.trim();
+    if candidate == request {
+        return true;
+    }
+
+    [".", "-", "+", "_", " "]
+        .iter()
+        .any(|delimiter| candidate.starts_with(&format!("{request}{delimiter}")))
+}
+
+fn text_output_contains_requested_version(value: &str, request: &str) -> bool {
+    let normalized = strip_ansi_sequences(value);
+    normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .flat_map(|line| {
+            line.split(|ch: char| {
+                ch.is_whitespace()
+                    || matches!(ch, '|' | ',' | '[' | ']' | '(' | ')' | '*' | '>' | ':')
+            })
+        })
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .any(|token| version_matches_request(token, request))
+}
+
+fn collect_json_string_values(value: &JsonValue, values: &mut Vec<String>) {
+    match value {
+        JsonValue::String(text) => values.push(text.clone()),
+        JsonValue::Array(items) => {
+            for item in items {
+                collect_json_string_values(item, values);
+            }
+        }
+        JsonValue::Object(object) => {
+            if let Some(version) = object.get("version").and_then(JsonValue::as_str) {
+                values.push(version.to_string());
+            }
+            for item in object.values() {
+                collect_json_string_values(item, values);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn json_or_text_output_contains_requested_version(value: &str, request: &str) -> bool {
+    if let Ok(json) = serde_json::from_str::<JsonValue>(value) {
+        let mut values = Vec::new();
+        collect_json_string_values(&json, &mut values);
+        if values
+            .iter()
+            .any(|candidate| version_matches_request(candidate, request))
+        {
+            return true;
+        }
+    }
+    text_output_contains_requested_version(value, request)
 }
 
 fn shell_command(command: &str, args: &[&str]) -> String {
@@ -3647,6 +4540,70 @@ mod tests {
     }
 
     #[test]
+    fn apply_container_mise_request_refines_generic_install_failure_via_probe() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Runtime,
+                name: "node".to_string(),
+                requested_version: "22".to_string(),
+                source: "mise".to_string(),
+                source_config: None,
+                approved_version: Some("22".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request_with_target(
+            &request,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+            ProvisioningOutputMode::Capture,
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
+            }) => {
+                assert!(stderr.contains("mise install failed"));
+                assert_eq!(diagnosis.backend, "mise");
+                assert_eq!(diagnosis.name, "node");
+                assert_eq!(diagnosis.requested_version, "22");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected mise version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
     fn probes_container_apt_installability_reports_index_failure() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let shim_dir = TempDir::new().unwrap();
@@ -3883,6 +4840,412 @@ mod tests {
                 assert_eq!(diagnosis.kind, ProvisioningFailureKind::PackageUnavailable);
             }
             other => panic!("expected pacman package-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_winget_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Found Microsoft.VisualStudioCode' >&1\n  echo 'Version' >&1\n  echo '1.89.0' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "Microsoft.VisualStudioCode".to_string(),
+            requested_version: "1.88.0".to_string(),
+            source: "winget".to_string(),
+            source_config: None,
+            approved_version: Some("1.88.0".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "windows/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "winget");
+                assert_eq!(diagnosis.name, "Microsoft.VisualStudioCode");
+                assert_eq!(diagnosis.requested_version, "1.88.0");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected winget version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_choco_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'git|2.46.0' >&1\n  echo 'git|2.45.0' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "git".to_string(),
+            requested_version: "2.47.0".to_string(),
+            source: "choco".to_string(),
+            source_config: None,
+            approved_version: Some("2.47.0".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "windows/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "choco");
+                assert_eq!(diagnosis.name, "git");
+                assert_eq!(diagnosis.requested_version, "2.47.0");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected choco version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_scoop_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '{\"version\":\"0.10.0\"}\\n' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "neovim".to_string(),
+            requested_version: "0.10.1".to_string(),
+            source: "scoop".to_string(),
+            source_config: None,
+            approved_version: Some("0.10.1".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "windows/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "scoop");
+                assert_eq!(diagnosis.name, "neovim");
+                assert_eq!(diagnosis.requested_version, "0.10.1");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected scoop version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_mise_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: "node".to_string(),
+            requested_version: "22".to_string(),
+            source: "mise".to_string(),
+            source_config: None,
+            approved_version: Some("22".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "mise");
+                assert_eq!(diagnosis.name, "node");
+                assert_eq!(diagnosis.requested_version, "22");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected mise version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_asdf_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '21.0.0\\n21.1.0\\n' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: "node".to_string(),
+            requested_version: "22".to_string(),
+            source: "asdf".to_string(),
+            source_config: None,
+            approved_version: Some("22".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "asdf");
+                assert_eq!(diagnosis.name, "node");
+                assert_eq!(diagnosis.requested_version, "22");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected asdf version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_sdkman_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '================================================================================\\nAvailable Java Versions\\n================================================================================\\n     17.0.9-tem\\n     22.0.1-tem\\n' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: "java".to_string(),
+            requested_version: "21".to_string(),
+            source: "sdkman".to_string(),
+            source_config: None,
+            approved_version: Some("21".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "sdkman");
+                assert_eq!(diagnosis.name, "java");
+                assert_eq!(diagnosis.requested_version, "21");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected sdkman version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_uv_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'cpython-3.11.9-linux-x86_64-none\\n' >&1\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: "python".to_string(),
+            requested_version: "3.12".to_string(),
+            source: "uv".to_string(),
+            source_config: None,
+            approved_version: Some("3.12".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => {
+                assert_eq!(diagnosis.backend, "uv");
+                assert_eq!(diagnosis.name, "python");
+                assert_eq!(diagnosis.requested_version, "3.12");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected uv version-unavailable failure, got {other:?}"),
         }
 
         unsafe {

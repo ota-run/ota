@@ -98,3 +98,6 @@
 - Pattern: Backend-specific diagnosis work can drift into a one-adapter implementation if the command layer is patched before the shared provisioning taxonomy is finished.
 - Correction: Put the generic diagnosed-failure model in the provisioning layer first, then let command and doctor surfaces consume it; backend-specific subtype detail should hang off that shared path instead of replacing it.
 - Rule: When a premium failure surface is meant to apply across adapters, the canonical boundary must be generic before any adapter-specific wording is added.
+- Pattern: Public docs that enumerate the currently covered backends drift quickly once parity work continues adapter by adapter.
+- Correction: Once the implementation truly covers the shipped adapter family, describe the capability at the family level and only call out backend-specific nuance where it materially differs.
+- Rule: Prefer durable capability wording like "all shipped mutating provisioning adapters" over long backend lists once parity is real.

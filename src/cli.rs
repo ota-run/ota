@@ -11726,7 +11726,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container brew cannot install requested prerequisite: node"));
+        assert!(text.contains("Container brew cannot install pinned version: node"));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -11782,7 +11782,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container dnf cannot install requested prerequisite: jq"));
+        assert!(text.contains("Container dnf cannot install pinned version: jq"));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: jq"));
     }
@@ -11838,9 +11838,403 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container pacman cannot install requested prerequisite: jq"));
+        assert!(text.contains("Container pacman cannot locate required package: jq"));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: jq"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_winget_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  Microsoft.VisualStudioCode: "1.88.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    Microsoft.VisualStudioCode:
+      source: winget
+      approved_versions:
+        - "1.88.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"Microsoft.VisualStudioCode --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"winget\" >nul && echo %* | findstr /C:\"--versions\" >nul && (\r\n    echo Found Microsoft.VisualStudioCode\r\n    echo Version\r\n    echo 1.89.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"Microsoft.VisualStudioCode --version\"*) exit 1 ;;\n    *winget*--versions*) printf 'Found Microsoft.VisualStudioCode\\nVersion\\n1.89.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains(
+            "Container winget cannot install pinned version: Microsoft.VisualStudioCode"
+        ));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing tool: Microsoft.VisualStudioCode"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_choco_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  git: "2.47.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    git:
+      source: choco
+      approved_versions:
+        - "2.47.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"git --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"choco\" >nul && echo %* | findstr /C:\"search\" >nul && (\r\n    echo git^|2.46.0\r\n    echo git^|2.45.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"git --version\"*) exit 1 ;;\n    *choco*search*) printf 'git|2.46.0\\ngit|2.45.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container choco cannot install pinned version: git"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing tool: git"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_scoop_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  neovim: "0.10.1"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    neovim:
+      source: scoop
+      approved_versions:
+        - "0.10.1"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"neovim --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"scoop\" >nul && echo %* | findstr /C:\"cat\" >nul && (\r\n    echo {\"version\":\"0.10.0\"}\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"neovim --version\"*) exit 1 ;;\n    *scoop*cat*) printf '{\"version\":\"0.10.0\"}\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container scoop cannot install pinned version: neovim"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing tool: neovim"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_mise_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: mise
+      approved_versions:
+        - "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container mise cannot install pinned version: node"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing runtime: node"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_asdf_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: asdf
+      approved_versions:
+        - "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"asdf\" >nul && echo %* | findstr /C:\"list\" >nul && (\r\n    echo 21.0.0\r\n    echo 21.1.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *asdf*list*all*) printf '21.0.0\\n21.1.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container asdf cannot install pinned version: node"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing runtime: node"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_sdkman_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  java: "21"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    java:
+      source: sdkman
+      approved_versions:
+        - "21"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"java --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"sdk list java\" >nul && (\r\n    echo Available Java Versions\r\n    echo 17.0.9-tem\r\n    echo 22.0.1-tem\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"java --version\"*) exit 1 ;;\n    *\"sdk list java\"*) printf 'Available Java Versions\\n17.0.9-tem\\n22.0.1-tem\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container sdkman cannot install pinned version: java"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing runtime: java"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_uv_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  python: "3.12"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    python:
+      source: uv
+      approved_versions:
+        - "3.12"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"python --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"uv\" >nul && echo %* | findstr /C:\"python list\" >nul && (\r\n    echo cpython-3.11.9-linux-x86_64-none\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"python --version\"*) exit 1 ;;\n    *uv*python*list*) printf 'cpython-3.11.9-linux-x86_64-none\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container uv cannot install pinned version: python"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing runtime: python"));
     }
 
     #[test]
@@ -12636,9 +13030,67 @@ policies:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("PROVISION FAILED"));
-        assert!(text.contains("Container brew cannot install requested prerequisite: node"));
+        assert!(text.contains("Container brew cannot install pinned version: node"));
         assert!(text.contains("Task output: Error: No available formula with the name"));
         assert!(text.contains("node@22"));
+        assert!(text.contains("ota up --mode container"));
+        assert!(!text.contains("Missing runtime: node"));
+    }
+
+    #[test]
+    fn up_container_mode_refines_generic_runtime_backend_failure_via_probe() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+runtimes:
+  node: "22"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: mise
+      approved_versions:
+        - "22"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("PROVISION FAILED"));
+        assert!(text.contains("Container mise cannot install pinned version: node"));
+        assert!(text.contains("Task output: mise install failed"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
