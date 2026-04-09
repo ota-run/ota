@@ -80,3 +80,6 @@
 - Pattern: Adapter bootstrap lookup can silently fail if policy is queried with the raw missing executable (`sdk`) instead of the provisioning source (`sdkman`).
 - Correction: Derive bootstrap candidates from provisioning request sources and only fall back to the raw missing command when the request has no source information.
 - Rule: Bootstrap policy resolution belongs to adapter/source semantics, not shell command names.
+- Pattern: Global cleanup can silently lie if backend discovery treats a failed `docker ps` / `podman ps` query as “no stale containers found”.
+- Correction: Surface stale-clean backend query failures as command errors with the real engine output instead of collapsing them into an empty result.
+- Rule: Cleanup discovery must fail closed; when ota cannot inspect ownership safely, it must report the query failure, not success.
