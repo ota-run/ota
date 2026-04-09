@@ -74,3 +74,9 @@
 - Pattern: A missing adapter command can look like an ordinary provisioning command failure if the backend does not translate the shell symptom into a semantic missing-command error.
 - Correction: Detect the missing adapter command at the backend boundary and return `MissingCommand` so the approved bootstrap path can run and report the real bootstrap failure if it still fails.
 - Rule: When a backend depends on an adapter command, translate `command not found` into a semantic missing-command error before falling back to higher-level provisioning handling.
+- Pattern: Bootstrap findings become misleading when they hardcode guessed prerequisite failures instead of reflecting the actual bootstrap stderr.
+- Correction: Derive bootstrap `Why:` and prerequisite `Next:` text from the real bootstrap stderr when possible, and fall back to generic wording only when the stderr provides no concrete signal.
+- Rule: Premium failure output must be evidence-led; do not state a bootstrap root cause unless the backend output actually supports it.
+- Pattern: Adapter bootstrap lookup can silently fail if policy is queried with the raw missing executable (`sdk`) instead of the provisioning source (`sdkman`).
+- Correction: Derive bootstrap candidates from provisioning request sources and only fall back to the raw missing command when the request has no source information.
+- Rule: Bootstrap policy resolution belongs to adapter/source semantics, not shell command names.

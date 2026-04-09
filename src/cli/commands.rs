@@ -12315,56 +12315,111 @@ fn adapter_bootstrap_request_for_missing_backend(
     policy_pack.adapter_bootstrap_backend_request(&adapters)
 }
 
+fn bootstrap_failure_summary(request: &crate::policy_pack::ProvisioningBackendRequest) -> String {
+    match request.actions.as_slice() {
+        [action] => format!("Adapter bootstrap failed: {}", action.name),
+        _ => String::from("Adapter bootstrap failed"),
+    }
+}
+
+fn first_nonempty_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn extract_missing_backend_commands(stderr: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+
+    for line in stderr.lines().map(str::trim) {
+        let candidate = [": command not found", ": not found"]
+            .into_iter()
+            .find_map(|suffix| line.strip_suffix(suffix))
+            .and_then(|prefix| prefix.rsplit(':').next())
+            .map(str::trim)
+            .map(|command| command.trim_matches(|c| matches!(c, '`' | '"' | '\'')))
+            .filter(|command| !command.is_empty() && !command.contains(char::is_whitespace));
+
+        if let Some(command) = candidate {
+            if !commands.iter().any(|existing| existing == command) {
+                commands.push(command.to_string());
+            }
+        }
+    }
+
+    commands
+}
+
+fn format_backticked_list(values: &[String]) -> String {
+    let values = values
+        .iter()
+        .map(|value| format!("`{value}`"))
+        .collect::<Vec<_>>();
+
+    match values.as_slice() {
+        [] => String::new(),
+        [value] => value.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let mut prefix = values[..values.len() - 1].join(", ");
+            prefix.push_str(", and ");
+            prefix.push_str(values.last().expect("non-empty slice"));
+            prefix
+        }
+    }
+}
+
 fn bootstrap_failure_finding(
     request: &crate::policy_pack::ProvisioningBackendRequest,
     doctor_mode: DoctorMode,
+    stderr: &str,
 ) -> Finding {
-    let sdkman_bootstrap = request
-        .actions
-        .iter()
-        .any(|action| action.source == "sdkman-bootstrap" && action.name == "sdkman");
-
-    if sdkman_bootstrap {
-        let why = match doctor_mode {
-            DoctorMode::Container => String::from(
-                "sdk is not available in the container and bootstrap could not run (missing curl and zip)",
-            ),
-            DoctorMode::Native => String::from(
-                "sdk is not available on the host and bootstrap could not run (missing curl and zip)",
-            ),
-        };
-        let next = match doctor_mode {
-            DoctorMode::Container => String::from(
-                "install `curl` and `zip` in the container image, then rerun `ota up --mode container`",
-            ),
-            DoctorMode::Native => {
-                String::from("install `curl` and `zip` on the host, then rerun `ota up`")
-            }
-        };
-
-        return Finding {
-            severity: FindingSeverity::Error,
-            summary: String::from("Adapter bootstrap failed: sdkman"),
-            why,
-            next,
-        };
-    }
-
     let rerun = match doctor_mode {
         DoctorMode::Container => "ota up --mode container",
         DoctorMode::Native => "ota up",
     };
+    let environment = match doctor_mode {
+        DoctorMode::Container => "container",
+        DoctorMode::Native => "host",
+    };
+    let install_target = match doctor_mode {
+        DoctorMode::Container => "container image",
+        DoctorMode::Native => "host",
+    };
+    let source_label = match request.actions.as_slice() {
+        [action] if !action.source.trim().is_empty() => format!("`{}`", action.source),
+        _ => String::from("the approved bootstrap source"),
+    };
+    let missing_commands = extract_missing_backend_commands(stderr);
+
+    let (why, next) = if !missing_commands.is_empty() {
+        let commands = format_backticked_list(&missing_commands);
+        (
+            format!(
+                "{source_label} could not run because required commands are missing from the {environment}: {commands}"
+            ),
+            format!("install {commands} in the {install_target}, then rerun `{rerun}`"),
+        )
+    } else if let Some(line) = first_nonempty_line(stderr) {
+        (
+            format!("{source_label} could not run in the {environment}: `{line}`"),
+            format!("fix the bootstrap backend in the {install_target}, then rerun `{rerun}`"),
+        )
+    } else {
+        (
+            format!(
+                "{} could not complete in the selected execution environment",
+                describe_adapter_bootstrap_request(request)
+            ),
+            format!(
+                "install the bootstrap prerequisites in the selected execution environment, then rerun `{rerun}`"
+            ),
+        )
+    };
 
     Finding {
         severity: FindingSeverity::Error,
-        summary: String::from("Adapter bootstrap failed"),
-        why: format!(
-            "{} could not complete in the selected execution environment",
-            describe_adapter_bootstrap_request(request)
-        ),
-        next: format!(
-            "install the bootstrap prerequisites in the selected execution environment, then rerun `{rerun}`"
-        ),
+        summary: bootstrap_failure_summary(request),
+        why,
+        next,
     }
 }
 
@@ -13915,6 +13970,7 @@ policies:
                         }],
                     },
                     DoctorMode::Container,
+                    "bash: line 1: curl: command not found\nbash: line 1: zip: command not found",
                 ),
                 Finding {
                     severity: FindingSeverity::Error,
@@ -13952,7 +14008,7 @@ policies:
             None,
             None,
             None,
-            Some("bash: line 1: sdk: command not found"),
+            Some("bash: line 1: curl: command not found\nbash: line 1: zip: command not found"),
             Some(127),
         ));
 
@@ -13965,12 +14021,12 @@ policies:
 
         assert!(bootstrap_index < preflight_index);
         assert!(rendered.contains(
-            "Why: sdk is not available in the container and bootstrap could not run (missing curl and zip)"
+            "Why: `sdkman-bootstrap` could not run because required commands are missing from the container: `curl` and `zip`"
         ));
         assert!(rendered.contains(
             "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
         ));
-        assert!(rendered.contains("Task output: bash: line 1: sdk: command not found"));
+        assert!(rendered.contains("Task output: bash: line 1: curl: command not found"));
     }
 
     #[test]
@@ -17635,7 +17691,11 @@ fn execute_repo_up(
                                     let mut report = preflight;
                                     report.findings.insert(
                                         0,
-                                        bootstrap_failure_finding(&bootstrap_request, doctor_mode),
+                                        bootstrap_failure_finding(
+                                            &bootstrap_request,
+                                            doctor_mode,
+                                            &bootstrap_stderr,
+                                        ),
                                     );
                                     return Ok(RepoUpResult {
                                         ok: false,
