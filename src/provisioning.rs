@@ -3050,4 +3050,33 @@ mod tests {
             env::set_var("PATH", original_path);
         }
     }
+
+    #[test]
+    fn backend_registry_supports_all_shipped_provisioning_and_bootstrap_sources() {
+        for source in [
+            "mise",
+            "asdf",
+            "sdkman",
+            "uv",
+            "winget",
+            "choco",
+            "scoop",
+            "brew",
+            "apt",
+            "dnf",
+            "pacman",
+            "brew-bootstrap",
+            "asdf-bootstrap",
+            "mise-bootstrap",
+            "sdkman-bootstrap",
+            "uv-bootstrap",
+            "winget-bootstrap",
+            "choco-bootstrap",
+            "scoop-bootstrap",
+        ] {
+            let backend = backend_for_source(source)
+                .unwrap_or_else(|| panic!("missing backend registration for `{source}`"));
+            assert_eq!(backend.source(), source);
+        }
+    }
 }
