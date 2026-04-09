@@ -550,12 +550,7 @@ pub fn diagnose_preconditions_with_mode(
     contract_path: &Path,
     mode: DoctorMode,
 ) -> DoctorReport {
-    diagnose_contract_with_scope(
-        contract,
-        contract_path,
-        DoctorScope::Preconditions,
-        mode,
-    )
+    diagnose_contract_with_scope(contract, contract_path, DoctorScope::Preconditions, mode)
 }
 
 pub fn diagnose_checks_only(contract: &Contract, contract_path: &Path) -> DoctorReport {
@@ -1659,6 +1654,7 @@ fn diagnose_command_version(
     };
 
     let Some(actual) = actual else {
+        let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding {
             severity: if required {
                 FindingSeverity::Error
@@ -1666,25 +1662,29 @@ fn diagnose_command_version(
                 FindingSeverity::Warn
             },
             summary: format!("Missing {kind}: {display_name}"),
-            why: if mode == DoctorMode::Container {
-                format!(
-                    "{display_name} is declared in the contract but is not available inside the selected container image"
-                )
-            } else {
-                format!("{display_name} is declared in the contract but is not available on PATH")
+            why: match (mode, container_image) {
+                (DoctorMode::Container, Some(image)) => format!(
+                    "{display_name} is declared in the contract but is not available inside container image `{image}`"
+                ),
+                (DoctorMode::Container, None) => format!(
+                    "{display_name} is declared in the contract but is not available inside the configured container image"
+                ),
+                _ => format!("{display_name} is declared in the contract but is not available on PATH"),
             },
-            next: if mode == DoctorMode::Container {
-                format!(
+            next: match (mode, container_image) {
+                (DoctorMode::Container, Some(image)) => format!(
+                    "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` is available, then rerun `ota doctor --mode container`"
+                ),
+                (DoctorMode::Container, None) => format!(
                     "update `execution.backends.container.image` so `{display_name}` is available, then rerun `ota doctor --mode container`"
-                )
-            } else {
-                exact_remediation
+                ),
+                _ => exact_remediation
                     .map(|command| format!("run `{command}` and rerun `ota doctor`"))
                     .unwrap_or_else(|| {
                         format!(
                             "install {display_name} and make it available on PATH, then rerun `ota doctor`"
                         )
-                    })
+                    }),
             },
         });
         return;
@@ -1694,6 +1694,7 @@ fn diagnose_command_version(
         return;
     }
 
+    let container_image = container_probe.map(|probe| probe.image.as_str());
     findings.push(Finding {
         severity: if required {
             FindingSeverity::Error
@@ -1701,27 +1702,31 @@ fn diagnose_command_version(
             FindingSeverity::Warn
         },
         summary: format!("Version mismatch for {kind}: {display_name}"),
-        why: if mode == DoctorMode::Container {
-            format!(
-                "{display_name} resolved to `{actual}` inside the selected container image but the contract requires `{requirement}`"
-            )
-        } else {
-            format!(
+        why: match (mode, container_image) {
+            (DoctorMode::Container, Some(image)) => format!(
+                "{display_name} resolved to `{actual}` inside container image `{image}` but the contract requires `{requirement}`"
+            ),
+            (DoctorMode::Container, None) => format!(
+                "{display_name} resolved to `{actual}` inside the configured container image but the contract requires `{requirement}`"
+            ),
+            _ => format!(
                 "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
-            )
+            ),
         },
-        next: if mode == DoctorMode::Container {
-            format!(
+        next: match (mode, container_image) {
+            (DoctorMode::Container, Some(image)) => format!(
+                "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
+            ),
+            (DoctorMode::Container, None) => format!(
                 "update `execution.backends.container.image` so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
-            )
-        } else {
-            exact_remediation
+            ),
+            _ => exact_remediation
                 .map(|command| format!("run `{command}` and rerun `ota doctor`"))
                 .unwrap_or_else(|| {
                     format!(
                         "install a compatible {display_name} version that satisfies `{requirement}`, then rerun `ota doctor`"
                     )
-                })
+                }),
         },
     });
 }
@@ -2278,7 +2283,11 @@ tasks:
         }
         write_fake_command(
             &bin_dir,
-            if cfg!(windows) { "docker.cmd" } else { "docker" },
+            if cfg!(windows) {
+                "docker.cmd"
+            } else {
+                "docker"
+            },
             if cfg!(windows) {
                 "@echo off\r\nif \"%*\"==\"version\" echo Docker version 29.3.1\r\n"
             } else {

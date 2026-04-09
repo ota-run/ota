@@ -10776,6 +10776,54 @@ runtimes:
     }
 
     #[test]
+    fn doctor_container_mode_missing_runtime_mentions_configured_image() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  ci:
+    run: echo ci
+runtimes:
+  java: "21"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" exit /b 1\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Missing runtime: java"));
+        assert!(text.contains("inside container image"));
+        assert!(text.contains("`premium/test:latest`"));
+        assert!(text.contains(
+            "update `execution.backends.container.image` (currently `premium/test:latest`) so `java` is available"
+        ));
+    }
+
+    #[test]
     fn doctor_container_mode_skips_host_bound_readiness_checks() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
