@@ -232,9 +232,9 @@ fn download_installer(url: &str, path: &Path) -> CommandOutput {
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-        match pwsh.output() {
-            Ok(output) if output.status.success() => return command_output_to_string(output),
-            Ok(output) => return command_output_to_string(output),
+        return match pwsh.output() {
+            Ok(output) if output.status.success() => command_output_to_string(output),
+            Ok(output) => command_output_to_string(output),
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let mut powershell = Command::new("powershell");
                 powershell
@@ -248,10 +248,10 @@ fn download_installer(url: &str, path: &Path) -> CommandOutput {
                     ])
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
-                return run_command(powershell);
+                run_command(powershell)
             }
-            Err(error) => return CommandOutput::failure(error.to_string()),
-        }
+            Err(error) => CommandOutput::failure(error.to_string()),
+        };
     }
 
     let mut curl = Command::new("curl");
@@ -261,8 +261,8 @@ fn download_installer(url: &str, path: &Path) -> CommandOutput {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     match curl.output() {
-        Ok(output) if output.status.success() => return command_output_to_string(output),
-        Ok(output) => return command_output_to_string(output),
+        Ok(output) if output.status.success() => command_output_to_string(output),
+        Ok(output) => command_output_to_string(output),
         Err(error) if error.kind() == ErrorKind::NotFound => {
             let mut wget = Command::new("wget");
             wget.args(["-qO"])
@@ -270,9 +270,9 @@ fn download_installer(url: &str, path: &Path) -> CommandOutput {
                 .arg(url)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            return run_command(wget);
+            run_command(wget)
         }
-        Err(error) => return CommandOutput::failure(error.to_string()),
+        Err(error) => CommandOutput::failure(error.to_string()),
     }
 }
 

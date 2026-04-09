@@ -30,10 +30,10 @@ pub(crate) fn apply_workspace_doctor_filters(
     let mut repos = Vec::new();
 
     for mut repo in report.repos {
-        if let Some(target_repo) = filters.repo.as_deref() {
-            if repo.name != target_repo {
-                continue;
-            }
+        if let Some(target_repo) = filters.repo.as_deref()
+            && repo.name != target_repo
+        {
+            continue;
         }
 
         match filters.status {
@@ -43,16 +43,12 @@ pub(crate) fn apply_workspace_doctor_filters(
             _ => {}
         }
 
-        repo.findings = repo
-            .findings
-            .into_iter()
-            .filter(|finding| match filters.severity {
-                WorkspaceDoctorSeverityFilter::All => true,
-                WorkspaceDoctorSeverityFilter::Error => finding.severity == FindingSeverity::Error,
-                WorkspaceDoctorSeverityFilter::Warn => finding.severity == FindingSeverity::Warn,
-                WorkspaceDoctorSeverityFilter::Info => finding.severity == FindingSeverity::Info,
-            })
-            .collect();
+        repo.findings.retain(|finding| match filters.severity {
+            WorkspaceDoctorSeverityFilter::All => true,
+            WorkspaceDoctorSeverityFilter::Error => finding.severity == FindingSeverity::Error,
+            WorkspaceDoctorSeverityFilter::Warn => finding.severity == FindingSeverity::Warn,
+            WorkspaceDoctorSeverityFilter::Info => finding.severity == FindingSeverity::Info,
+        });
 
         if !matches!(filters.severity, WorkspaceDoctorSeverityFilter::All)
             && repo.findings.is_empty()

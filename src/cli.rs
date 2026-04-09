@@ -3861,13 +3861,10 @@ env:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains(&format!(
-            "DOCTOR {}",
-            compact_contract(&fixture.file_path())
-        )));
+        assert!(stdout.contains(&format!("DOCTOR {}", compact_contract(fixture.file_path()))));
         assert!(stdout.contains(&format!(
             "DOCTOR {} [member api]",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("NOT READY"));
@@ -4065,10 +4062,10 @@ env:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains(&format!("UP {}", compact_contract(&fixture.file_path()))));
+        assert!(stdout.contains(&format!("UP {}", compact_contract(fixture.file_path()))));
         assert!(stdout.contains(&format!(
             "UP {} [member api]",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
@@ -4195,7 +4192,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             strip_ansi(&output.stdout),
-            format!("Cleaned {}", compact_contract(&fixture.file_path()))
+            format!("Cleaned {}", compact_contract(fixture.file_path()))
         );
         assert!(fixture.dir.path().join("docker-log.txt").exists());
     }
@@ -4226,7 +4223,7 @@ tasks:
             strip_ansi(&output.stdout),
             format!(
                 "No cleanup needed for {}",
-                compact_contract(&fixture.file_path())
+                compact_contract(fixture.file_path())
             )
         );
     }
@@ -4571,11 +4568,11 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(&format!(
             "No cleanup needed for {}",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(stdout.contains(&format!(
             "No cleanup needed for {} [member api]",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(stdout.contains("\n\n"));
     }
@@ -6043,7 +6040,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("VALIDATE"));
         assert!(stdout.contains("VALID"));
-        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
+        assert!(stdout.contains(&compact_contract(fixture.file_path())));
     }
 
     #[test]
@@ -9177,10 +9174,10 @@ checks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains(&format!("CHECK {}", compact_contract(&fixture.file_path()))));
+        assert!(stdout.contains(&format!("CHECK {}", compact_contract(fixture.file_path()))));
         assert!(stdout.contains(&format!(
             "CHECK {} [member api]",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("NOT READY"));
@@ -9375,8 +9372,7 @@ tasks:
     fn up_reports_setup_failure_with_exit_code() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let bin_dir = TempDir::new().unwrap();
-        let contract = format!(
-            r#"
+        let contract = r#"
 version: 1
 project:
   name: ota
@@ -9389,7 +9385,7 @@ tasks:
   setup:
     run: exit 7
 "#
-        );
+        .to_string();
         let fixture = ContractFixture::new(&contract);
         let original_path = std::env::var_os("PATH");
         let mut path_entries = vec![bin_dir.path().to_path_buf()];
@@ -10794,19 +10790,19 @@ tasks:
             .and_then(YamlValue::as_mapping)
             .expect("tasks must exist");
         let test_safe = tasks
-            .get(&YamlValue::String(String::from("test")))
+            .get(YamlValue::String(String::from("test")))
             .and_then(YamlValue::as_mapping)
-            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .and_then(YamlValue::as_bool);
         let typecheck_safe = tasks
-            .get(&YamlValue::String(String::from("typecheck")))
+            .get(YamlValue::String(String::from("typecheck")))
             .and_then(YamlValue::as_mapping)
-            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .and_then(YamlValue::as_bool);
         let build_safe_present = tasks
-            .get(&YamlValue::String(String::from("build")))
+            .get(YamlValue::String(String::from("build")))
             .and_then(YamlValue::as_mapping)
-            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .is_some();
 
         assert_eq!(test_safe, Some(true));
@@ -10880,9 +10876,9 @@ project:
         let safe = yaml
             .get("tasks")
             .and_then(YamlValue::as_mapping)
-            .and_then(|tasks| tasks.get(&YamlValue::String(String::from("test"))))
+            .and_then(|tasks| tasks.get(YamlValue::String(String::from("test"))))
             .and_then(YamlValue::as_mapping)
-            .and_then(|task| task.get(&YamlValue::String(String::from("safe_for_agent"))))
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
             .and_then(YamlValue::as_bool);
         assert_eq!(safe, Some(true));
     }
@@ -10976,7 +10972,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("VALIDATE"));
         assert!(stdout.contains("VALID"));
-        assert!(stdout.contains(&compact_contract(&fixture.file_path())));
+        assert!(stdout.contains(&compact_contract(fixture.file_path())));
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("DEBUG command=validate"));
         assert!(stderr.contains(&format!(
@@ -11251,7 +11247,7 @@ tasks:
         assert_eq!(validate.exit_code, 0);
         assert!(validate_stdout.contains(&format!(
             "VALIDATE {}",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(validate_stdout.contains("VALID"));
         assert!(!validate_stdout.contains("\n---\n"));
@@ -11259,17 +11255,16 @@ tasks:
         let doctor = run_with(["ota", "doctor", fixture.path()]);
         let doctor_stdout = strip_ansi(&doctor.stdout);
         assert_eq!(doctor.exit_code, 0);
-        assert!(doctor_stdout.contains(&format!(
-            "DOCTOR {}",
-            compact_contract(&fixture.file_path())
-        )));
+        assert!(
+            doctor_stdout.contains(&format!("DOCTOR {}", compact_contract(fixture.file_path())))
+        );
         assert!(doctor_stdout.contains("READY"));
         assert!(!doctor_stdout.contains("\n---\n"));
 
         let up = run_with(["ota", "up", fixture.path()]);
         let up_stdout = strip_ansi(&up.stdout);
         assert_eq!(up.exit_code, 0);
-        assert!(up_stdout.contains(&format!("UP {}", compact_contract(&fixture.file_path()))));
+        assert!(up_stdout.contains(&format!("UP {}", compact_contract(fixture.file_path()))));
         assert!(up_stdout.contains("READY"));
         assert!(up_stdout.contains("Phase: post-setup diagnosis"));
         assert!(!up_stdout.contains("\n---\n"));
@@ -13159,10 +13154,7 @@ project:
         let output = run_with(["ota", "doctor", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains(&format!(
-            "DOCTOR {}",
-            compact_contract(&fixture.file_path())
-        )));
+        assert!(stdout.contains(&format!("DOCTOR {}", compact_contract(fixture.file_path()))));
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Primary Blocker"));
         assert!(stdout.contains("No tasks defined in contract"));
@@ -14481,7 +14473,7 @@ tasks:
         assert_eq!(doctor.exit_code, 1);
         assert!(doctor_stdout.contains(&format!(
             "DOCTOR {} [member api]",
-            compact_contract(&fixture.file_path())
+            compact_contract(fixture.file_path())
         )));
         assert!(doctor_stdout.contains("NOT READY"));
         assert!(doctor_stdout.contains("Missing environment variable: OTA_MEMBER_REQUIRED"));
@@ -15250,7 +15242,7 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(&format!(
             "WORKSPACE DOCTOR {}",
-            compact_workspace(&fixture.workspace_file())
+            compact_workspace(fixture.workspace_file())
         )));
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("No tasks defined in contract"));
@@ -15424,7 +15416,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains(&format!(
             "WORKSPACE UP {}",
-            compact_workspace(&fixture.workspace_file())
+            compact_workspace(fixture.workspace_file())
         )));
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("SUMMARY"));
@@ -15446,7 +15438,7 @@ repos:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains(&format!(
             "WORKSPACE UP {}",
-            compact_workspace(&fixture.workspace_file())
+            compact_workspace(fixture.workspace_file())
         )));
         assert!(stdout.contains("READY"));
         assert!(output.stderr.is_none());
