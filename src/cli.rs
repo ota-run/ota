@@ -11732,6 +11732,118 @@ policies:
     }
 
     #[test]
+    fn doctor_container_mode_reports_dnf_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  jq: "1.7.1"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    jq:
+      source: dnf
+      approved_versions:
+        - "1.7.1"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"jq --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"dnf\" >nul && echo %* | findstr /C:\"jq-1.7.1\" >nul && (\r\n    echo No match for argument: jq-1.7.1 1>&2\r\n    echo Error: Unable to find a match: jq-1.7.1 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"jq --version\"*) exit 1 ;;\n    *dnf*jq-1.7.1*) echo 'No match for argument: jq-1.7.1' >&2; echo 'Error: Unable to find a match: jq-1.7.1' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container dnf cannot install requested prerequisite: jq"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing tool: jq"));
+    }
+
+    #[test]
+    fn doctor_container_mode_reports_pacman_package_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  jq: "1.7.1"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    jq:
+      source: pacman
+      approved_versions:
+        - "1.7.1"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"jq --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"pacman\" >nul && echo %* | findstr /C:\"-Si\" >nul && (\r\n    echo error: target not found: jq 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"jq --version\"*) exit 1 ;;\n    *pacman*'-Si'*jq*) echo 'error: target not found: jq' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container pacman cannot install requested prerequisite: jq"));
+        assert!(text.contains("ota doctor --mode container"));
+        assert!(!text.contains("Missing tool: jq"));
+    }
+
+    #[test]
     fn doctor_native_mode_keeps_host_failure_for_apt_backed_policy() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(

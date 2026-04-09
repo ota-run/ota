@@ -600,7 +600,7 @@ ota doctor --member api --member web --json [PATH]
 - checks runtime and tool presence on `PATH`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
 - in container mode, ota also uses safe non-mutating installability probes for supported backends when policy-backed provisioning is declared
-- today that probe path is shipped for `apt` and `brew`
+- today that probe path is shipped for `apt`, `brew`, `dnf`, and `pacman`
 - in container mode, `apt` findings distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
 - in container mode, host-bound env, check, and service healthchecks are omitted so container diagnosis does not mix execution contexts
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
