@@ -20,8 +20,10 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 
 use serde_yaml::Value;
 use thiserror::Error;
@@ -46,6 +48,13 @@ pub enum ProvisioningExecutionTarget {
         engine: String,
         lifecycle: Lifecycle,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProvisioningOutputMode {
+    #[default]
+    Capture,
+    StreamAndCapture,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -77,6 +86,7 @@ pub trait ProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError>;
 }
 
@@ -588,8 +598,9 @@ fn bootstrap_source_version(
     working_dir: &Path,
     command: &str,
     version_args: &[&str],
+    mode: ProvisioningOutputMode,
 ) -> Result<Option<String>, ProvisioningBackendError> {
-    let output = execute_provisioning_command(target, working_dir, command, version_args)?;
+    let output = execute_provisioning_command(target, working_dir, command, version_args, mode)?;
     if output.exit_code != 0 {
         return Err(ProvisioningBackendError::CommandFailed {
             command: format!("{} {}", command, version_args.join(" ")),
@@ -621,8 +632,9 @@ fn apply_bootstrap_script(
     script: &str,
     target: &ProvisioningExecutionTarget,
     working_dir: &Path,
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    execute_provisioning_command(target, working_dir, "sh", &["-lc", script])
+    execute_provisioning_command(target, working_dir, "sh", &["-lc", script], mode)
 }
 
 fn ensure_bootstrap_source_version(
@@ -631,12 +643,13 @@ fn ensure_bootstrap_source_version(
     command: &str,
     version_args: &[&str],
     approved_versions: &[String],
+    mode: ProvisioningOutputMode,
 ) -> Result<(), ProvisioningBackendError> {
     if approved_versions.is_empty() {
         return Ok(());
     }
 
-    let version = bootstrap_source_version(target, working_dir, command, version_args)?;
+    let version = bootstrap_source_version(target, working_dir, command, version_args, mode)?;
     let Some(version) = version else {
         return Err(ProvisioningBackendError::CommandFailed {
             command: format!("{} {}", command, version_args.join(" ")),
@@ -674,6 +687,7 @@ impl ProvisioningBackend for MiseProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -695,6 +709,7 @@ impl ProvisioningBackend for MiseProvisioningBackend {
                 working_dir,
                 "mise",
                 &["install", &install_target],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -724,6 +739,7 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -745,6 +761,7 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
                 working_dir,
                 "asdf",
                 &["install", &install_target, &action.requested_version],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -774,6 +791,7 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -805,6 +823,7 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
                     "-c",
                     &Self::sdkman_command("install", &install_target, &action.requested_version),
                 ],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -840,6 +859,7 @@ impl ProvisioningBackend for UvProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -867,6 +887,7 @@ impl ProvisioningBackend for UvProvisioningBackend {
                 working_dir,
                 "uv",
                 &["python", "install", &action.requested_version],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -896,6 +917,7 @@ impl ProvisioningBackend for WingetProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -925,7 +947,8 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             ];
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(target, working_dir, "winget", &arg_refs)?;
+            let output =
+                execute_provisioning_command(target, working_dir, "winget", &arg_refs, mode)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -965,6 +988,7 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -992,7 +1016,8 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             ];
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(target, working_dir, "choco", &arg_refs)?;
+            let output =
+                execute_provisioning_command(target, working_dir, "choco", &arg_refs, mode)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1036,6 +1061,7 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1057,8 +1083,13 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
                     .iter()
                     .map(|value| value.as_str())
                     .collect::<Vec<_>>();
-                let output =
-                    execute_provisioning_command(target, working_dir, "scoop", &source_arg_refs)?;
+                let output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "scoop",
+                    &source_arg_refs,
+                    mode,
+                )?;
 
                 stdout.push_str(&output.stdout);
                 stderr.push_str(&output.stderr);
@@ -1080,6 +1111,7 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
                 working_dir,
                 "scoop",
                 &["install", &install_target],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -1109,6 +1141,7 @@ impl ProvisioningBackend for BrewProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1130,8 +1163,13 @@ impl ProvisioningBackend for BrewProvisioningBackend {
                     .iter()
                     .map(|value| value.as_str())
                     .collect::<Vec<_>>();
-                let output =
-                    execute_provisioning_command(target, working_dir, "brew", &source_arg_refs)?;
+                let output = execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "brew",
+                    &source_arg_refs,
+                    mode,
+                )?;
 
                 stdout.push_str(&output.stdout);
                 stderr.push_str(&output.stderr);
@@ -1153,6 +1191,7 @@ impl ProvisioningBackend for BrewProvisioningBackend {
                 working_dir,
                 "brew",
                 &["install", &install_target],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -1182,6 +1221,7 @@ impl ProvisioningBackend for PacmanProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1203,6 +1243,7 @@ impl ProvisioningBackend for PacmanProvisioningBackend {
                 working_dir,
                 "pacman",
                 &["-S", "--noconfirm", &install_target],
+                mode,
             )?;
 
             stdout.push_str(&output.stdout);
@@ -1232,6 +1273,7 @@ impl ProvisioningBackend for AptProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1252,7 +1294,8 @@ impl ProvisioningBackend for AptProvisioningBackend {
             let (command, args, command_display) =
                 Self::install_command(target, &install_target, &source_lines);
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(target, working_dir, &command, &arg_refs)?;
+            let output =
+                execute_provisioning_command(target, working_dir, &command, &arg_refs, mode)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1281,6 +1324,7 @@ impl ProvisioningBackend for DnfProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1303,7 +1347,7 @@ impl ProvisioningBackend for DnfProvisioningBackend {
             args.push(String::from("-y"));
             args.push(install_target.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
-            let output = execute_provisioning_command(target, working_dir, "dnf", &arg_refs)?;
+            let output = execute_provisioning_command(target, working_dir, "dnf", &arg_refs, mode)?;
 
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1337,6 +1381,7 @@ impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1358,7 +1403,8 @@ impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
                 });
             }
 
-            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            let output =
+                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -1380,6 +1426,7 @@ impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1397,6 +1444,7 @@ impl ProvisioningBackend for AsdfBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1418,7 +1466,8 @@ impl ProvisioningBackend for AsdfBootstrapProvisioningBackend {
                 });
             }
 
-            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            let output =
+                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -1440,6 +1489,7 @@ impl ProvisioningBackend for AsdfBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1457,6 +1507,7 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1478,7 +1529,8 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                 });
             }
 
-            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            let output =
+                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -1500,6 +1552,7 @@ impl ProvisioningBackend for MiseBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1517,6 +1570,7 @@ impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1538,7 +1592,8 @@ impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
                 });
             }
 
-            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            let output =
+                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -1563,6 +1618,7 @@ impl ProvisioningBackend for SdkmanBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1580,6 +1636,7 @@ impl ProvisioningBackend for UvBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1601,7 +1658,8 @@ impl ProvisioningBackend for UvBootstrapProvisioningBackend {
                 });
             }
 
-            let output = apply_bootstrap_script(Self::bootstrap_script(), target, working_dir)?;
+            let output =
+                apply_bootstrap_script(Self::bootstrap_script(), target, working_dir, mode)?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
 
@@ -1623,6 +1681,7 @@ impl ProvisioningBackend for UvBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1640,6 +1699,7 @@ impl ProvisioningBackend for WingetBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1672,6 +1732,7 @@ impl ProvisioningBackend for WingetBootstrapProvisioningBackend {
                     "-Command",
                     Self::bootstrap_script(),
                 ],
+                mode,
             )?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1694,6 +1755,7 @@ impl ProvisioningBackend for WingetBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1711,6 +1773,7 @@ impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1743,6 +1806,7 @@ impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
                     "-Command",
                     Self::bootstrap_script(),
                 ],
+                mode,
             )?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1765,6 +1829,7 @@ impl ProvisioningBackend for ChocoBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1782,6 +1847,7 @@ impl ProvisioningBackend for ScoopBootstrapProvisioningBackend {
         request: &ProvisioningBackendRequest,
         working_dir: &Path,
         target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
         let mut stdout = String::new();
         let mut stderr = String::new();
@@ -1814,6 +1880,7 @@ impl ProvisioningBackend for ScoopBootstrapProvisioningBackend {
                     "-Command",
                     Self::bootstrap_script(),
                 ],
+                mode,
             )?;
             stdout.push_str(&output.stdout);
             stderr.push_str(&output.stderr);
@@ -1836,6 +1903,7 @@ impl ProvisioningBackend for ScoopBootstrapProvisioningBackend {
                     .approved_version
                     .as_ref()
                     .map_or(&[], |value| std::slice::from_ref(value)),
+                mode,
             )?;
         }
 
@@ -1876,6 +1944,7 @@ pub fn apply_provisioning_request(
         request,
         working_dir,
         &ProvisioningExecutionTarget::Native,
+        ProvisioningOutputMode::Capture,
     )
 }
 
@@ -1883,6 +1952,7 @@ pub fn apply_provisioning_request_with_target(
     request: &ProvisioningBackendRequest,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -1896,7 +1966,7 @@ pub fn apply_provisioning_request_with_target(
         let single_action_request = ProvisioningBackendRequest {
             actions: vec![action.clone()],
         };
-        let result = backend.apply(&single_action_request, working_dir, target)?;
+        let result = backend.apply(&single_action_request, working_dir, target, mode)?;
         stdout.push_str(&result.stdout);
         stderr.push_str(&result.stderr);
     }
@@ -1929,28 +1999,113 @@ fn command_output(
     command: &str,
     args: &[&str],
     working_dir: &Path,
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    let output = Command::new(command)
-        .args(args)
-        .current_dir(working_dir)
-        .output()
-        .map_err(|_| ProvisioningBackendError::MissingCommand {
-            command: command.to_string(),
-        })?;
+    let mut child = Command::new(command);
+    child.args(args).current_dir(working_dir);
 
-    Ok(ProvisioningCommandOutput {
-        exit_code: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
+    match mode {
+        ProvisioningOutputMode::Capture => {
+            let output = child
+                .output()
+                .map_err(|_| ProvisioningBackendError::MissingCommand {
+                    command: command.to_string(),
+                })?;
+
+            Ok(ProvisioningCommandOutput {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            })
+        }
+        ProvisioningOutputMode::StreamAndCapture => {
+            let mut child = child
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|_| ProvisioningBackendError::MissingCommand {
+                    command: command.to_string(),
+                })?;
+
+            let stdout_handle = child
+                .stdout
+                .take()
+                .map(|stdout| thread::spawn(move || stream_and_capture(stdout, io::stdout())));
+            let stderr_handle = child
+                .stderr
+                .take()
+                .map(|stderr| thread::spawn(move || stream_and_capture(stderr, io::stderr())));
+
+            let status = child
+                .wait()
+                .map_err(|_| ProvisioningBackendError::MissingCommand {
+                    command: command.to_string(),
+                })?;
+
+            Ok(ProvisioningCommandOutput {
+                exit_code: status.code().unwrap_or(1),
+                stdout: join_stream_capture(stdout_handle).map_err(|message| {
+                    ProvisioningBackendError::CommandFailed {
+                        command: command.to_string(),
+                        exit_code: status.code().unwrap_or(1),
+                        stdout: String::new(),
+                        stderr: message,
+                    }
+                })?,
+                stderr: join_stream_capture(stderr_handle).map_err(|message| {
+                    ProvisioningBackendError::CommandFailed {
+                        command: command.to_string(),
+                        exit_code: status.code().unwrap_or(1),
+                        stdout: String::new(),
+                        stderr: message,
+                    }
+                })?,
+            })
+        }
+    }
+}
+
+fn stream_and_capture<R, W>(mut reader: R, mut sink: W) -> io::Result<String>
+where
+    R: Read,
+    W: Write,
+{
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        captured.extend_from_slice(&buffer[..read]);
+        let _ = sink.write_all(&buffer[..read]);
+        let _ = sink.flush();
+    }
+    Ok(String::from_utf8_lossy(&captured).into_owned())
+}
+
+fn join_stream_capture(
+    handle: Option<thread::JoinHandle<io::Result<String>>>,
+) -> Result<String, String> {
+    match handle {
+        Some(handle) => match handle.join() {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(error)) => Err(format!(
+                "failed to read streamed provisioning output: {error}"
+            )),
+            Err(_) => Err(String::from("streamed provisioning output thread panicked")),
+        },
+        None => Ok(String::new()),
+    }
 }
 
 fn container_command_output(
     engine: &str,
     args: &[&str],
     working_dir: &Path,
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    command_output(engine, args, working_dir)
+    command_output(engine, args, working_dir, mode)
 }
 
 fn run_container_command(
@@ -1960,6 +2115,7 @@ fn run_container_command(
     working_dir: &Path,
     command: &str,
     args: &[&str],
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
     let shell = shell_command(command, args);
     let workspace = format!("{}:/workspace", working_dir.display());
@@ -1982,11 +2138,16 @@ fn run_container_command(
                 &shell,
             ],
             working_dir,
+            mode,
         ),
         Lifecycle::Persistent => {
             let container_name = persistent_container_name(working_dir, image, engine);
-            let inspect =
-                container_command_output(engine, &["inspect", &container_name], working_dir)?;
+            let inspect = container_command_output(
+                engine,
+                &["inspect", &container_name],
+                working_dir,
+                ProvisioningOutputMode::Capture,
+            )?;
             if inspect.exit_code != 0 {
                 let status = container_command_output(
                     engine,
@@ -2006,13 +2167,18 @@ fn run_container_command(
                         "while true; do sleep 3600; done",
                     ],
                     working_dir,
+                    ProvisioningOutputMode::Capture,
                 )?;
                 if status.exit_code != 0 {
                     return Ok(status);
                 }
             } else {
-                let status =
-                    container_command_output(engine, &["start", &container_name], working_dir)?;
+                let status = container_command_output(
+                    engine,
+                    &["start", &container_name],
+                    working_dir,
+                    ProvisioningOutputMode::Capture,
+                )?;
                 if status.exit_code != 0 {
                     return Ok(status);
                 }
@@ -2022,6 +2188,7 @@ fn run_container_command(
                 engine,
                 &["exec", "-i", &container_name, "sh", "-lc", &shell],
                 working_dir,
+                mode,
             )
         }
     }
@@ -2032,14 +2199,15 @@ fn execute_provisioning_command(
     working_dir: &Path,
     command: &str,
     args: &[&str],
+    mode: ProvisioningOutputMode,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
     match target {
-        ProvisioningExecutionTarget::Native => command_output(command, args, working_dir),
+        ProvisioningExecutionTarget::Native => command_output(command, args, working_dir, mode),
         ProvisioningExecutionTarget::Container {
             image,
             engine,
             lifecycle,
-        } => run_container_command(engine, image, *lifecycle, working_dir, command, args),
+        } => run_container_command(engine, image, *lifecycle, working_dir, command, args, mode),
     }
 }
 
@@ -2177,8 +2345,13 @@ mod tests {
             lifecycle: Lifecycle::Ephemeral,
         };
 
-        let result =
-            apply_provisioning_request_with_target(&request, Path::new("."), &target).unwrap();
+        let result = apply_provisioning_request_with_target(
+            &request,
+            Path::new("."),
+            &target,
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
         assert!(result.stdout.is_empty());
         assert!(result.stderr.is_empty());
         let log_contents = fs::read_to_string(log).unwrap();
@@ -2190,6 +2363,15 @@ mod tests {
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn stream_and_capture_mirrors_and_collects_output() {
+        let mut sink = Vec::new();
+        let captured =
+            super::stream_and_capture(std::io::Cursor::new(b"streamed-output"), &mut sink).unwrap();
+        assert_eq!(captured, "streamed-output");
+        assert_eq!(String::from_utf8(sink).unwrap(), "streamed-output");
     }
 
     #[test]

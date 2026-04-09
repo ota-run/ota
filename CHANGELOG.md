@@ -26,7 +26,7 @@
 
 ## Unreleased
 
-- added `ota up --stream` for repo-level text runs so required service `start` commands and the `setup` task can expose raw live child output on demand while default `ota up` stays compact and keeps failed child output inside the final report.
+- added `ota up --stream` for repo-level text runs so provisioning, required service `start` commands, and the `setup` task can expose raw live child output on demand while default `ota up` stays compact and keeps failed child output inside the final report.
 
 ## 1.2.3
 

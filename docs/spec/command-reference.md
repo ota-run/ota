@@ -155,7 +155,7 @@ Current progress behavior:
 - quiet blocking commands show a delayed spinner in interactive terminals
 - `ota doctor` and `ota check` keep their own check/progress handling
 - `ota run` keeps streaming/progress-focused behavior instead of the shared spinner
-- `ota up` uses the shared spinner by default; `ota up --stream` opts into raw live service-start and setup output
+- `ota up` uses the shared spinner by default; `ota up --stream` opts into raw live provisioning, service-start, and setup output
 - `ota workspace doctor` uses the shared spinner
 - `ota workspace status` uses the shared spinner
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
@@ -176,7 +176,7 @@ Hosted validation guidance:
 - `1`: invalid contract, blocking readiness issue, protected write failure, or general command failure
 - `2`: CLI usage or argument parsing error
 - `ota run`: preserves child task exit codes on task failure
-- `ota up`: preserves service-start and setup task exit codes when those commands fail
+- `ota up`: preserves provisioning, service-start, and setup child exit codes when those commands fail
 
 The canonical registry is in [exit-codes.md](exit-codes.md).
 
@@ -807,7 +807,7 @@ Current behavior:
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
 - keeps child output compact by default and surfaces failed service/setup output inside the final report
-- `--stream` opts into raw live child output for required service `start` commands and the `setup` task
+- `--stream` opts into raw live child output for provisioning, required service `start` commands, and the `setup` task
 - `--stream` is text-only and is only supported for mutating `ota up`
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
 - `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists

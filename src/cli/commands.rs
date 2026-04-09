@@ -77,7 +77,8 @@ use crate::policy_pack::{
     LoadedOrgPolicyPack, load_org_policy_pack_auto, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
-    ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
+    ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningOutputMode,
+    apply_provisioning_request_with_target,
 };
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, StaleContainerOwnership,
@@ -18701,6 +18702,11 @@ fn execute_repo_up(
     let mut stderr = String::new();
     let mut provisioned_setup = false;
     let provisioning_target = provisioning_execution_target(contract, overrides);
+    let provisioning_output_mode = match mode {
+        RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
+        RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
+    };
+    let capture_phase_output = matches!(mode, RepoExecutionMode::Capture);
     let doctor_mode = up_doctor_mode(contract, overrides);
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
@@ -18736,10 +18742,13 @@ fn execute_repo_up(
                 &provisioning.request,
                 execution_dir,
                 &provisioning_target,
+                provisioning_output_mode,
             ) {
                 Ok(outcome) => {
-                    stdout.push_str(&outcome.stdout);
-                    stderr.push_str(&outcome.stderr);
+                    if capture_phase_output {
+                        stdout.push_str(&outcome.stdout);
+                        stderr.push_str(&outcome.stderr);
+                    }
                     preflight =
                         diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
                 }
@@ -18749,8 +18758,10 @@ fn execute_repo_up(
                     exit_code,
                     ..
                 }) => {
-                    stdout.push_str(&backend_stdout);
-                    stderr.push_str(&backend_stderr);
+                    if capture_phase_output {
+                        stdout.push_str(&backend_stdout);
+                        stderr.push_str(&backend_stderr);
+                    }
                     return Ok(RepoUpResult {
                         ok: false,
                         status: "PROVISION FAILED",
@@ -18795,10 +18806,13 @@ fn execute_repo_up(
                                 &bootstrap_request,
                                 execution_dir,
                                 &provisioning_target,
+                                provisioning_output_mode,
                             ) {
                                 Ok(outcome) => {
-                                    stdout.push_str(&outcome.stdout);
-                                    stderr.push_str(&outcome.stderr);
+                                    if capture_phase_output {
+                                        stdout.push_str(&outcome.stdout);
+                                        stderr.push_str(&outcome.stderr);
+                                    }
                                     bootstrapped = true;
                                 }
                                 Err(ProvisioningBackendError::CommandFailed {
@@ -18807,8 +18821,10 @@ fn execute_repo_up(
                                     exit_code,
                                     ..
                                 }) => {
-                                    stdout.push_str(&bootstrap_stdout);
-                                    stderr.push_str(&bootstrap_stderr);
+                                    if capture_phase_output {
+                                        stdout.push_str(&bootstrap_stdout);
+                                        stderr.push_str(&bootstrap_stderr);
+                                    }
                                     let mut report = preflight;
                                     let mut findings = bootstrap_failure_findings(
                                         &bootstrap_request,
@@ -18879,10 +18895,13 @@ fn execute_repo_up(
                             &provisioning.request,
                             execution_dir,
                             &provisioning_target,
+                            provisioning_output_mode,
                         ) {
                             Ok(outcome) => {
-                                stdout.push_str(&outcome.stdout);
-                                stderr.push_str(&outcome.stderr);
+                                if capture_phase_output {
+                                    stdout.push_str(&outcome.stdout);
+                                    stderr.push_str(&outcome.stderr);
+                                }
                                 preflight = diagnose_preconditions_with_mode(
                                     contract,
                                     resolved_path,
@@ -18895,8 +18914,10 @@ fn execute_repo_up(
                                 exit_code,
                                 ..
                             }) => {
-                                stdout.push_str(&backend_stdout);
-                                stderr.push_str(&backend_stderr);
+                                if capture_phase_output {
+                                    stdout.push_str(&backend_stdout);
+                                    stderr.push_str(&backend_stderr);
+                                }
                                 return Ok(RepoUpResult {
                                     ok: false,
                                     status: "PROVISION FAILED",
