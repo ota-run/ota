@@ -521,6 +521,7 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
             contract,
             contract_path,
             Some(loaded_policy_ref),
+            current_os(),
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
@@ -621,7 +622,11 @@ fn diagnose_contract_with_scope(
     };
     let provisioning_actions = loaded_policy
         .as_ref()
-        .map(|loaded| loaded.pack.selected_provisioning_actions(contract))
+        .map(|loaded| {
+            loaded
+                .pack
+                .selected_provisioning_actions_for_os(policy_target_os_for_mode(mode), contract)
+        })
         .unwrap_or_default();
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
@@ -651,6 +656,7 @@ fn diagnose_contract_with_scope(
             contract,
             contract_path,
             loaded_policy.as_ref(),
+            policy_target_os_for_mode(mode),
             &mut findings,
         );
         adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy.as_ref(), &mut findings);
@@ -1150,6 +1156,7 @@ fn diagnose_org_policy(
     contract: &Contract,
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
+    policy_os: &str,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
     let Some(loaded_policy) = loaded_policy else {
@@ -1163,8 +1170,9 @@ fn diagnose_org_policy(
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
     if missing_sections.is_empty() && missing_files.is_empty() {
-        let provisioning_plan = policy_pack.provisioning_plan(contract);
-        let provisioning_request = policy_pack.provisioning_backend_request(contract);
+        let provisioning_plan = policy_pack.provisioning_plan_for_os(policy_os, contract);
+        let provisioning_request =
+            policy_pack.provisioning_backend_request_for_os(policy_os, contract);
 
         if !policy_pack.policies.provisioning.is_empty() {
             let mut sources = Vec::new();
@@ -1186,7 +1194,7 @@ fn diagnose_org_policy(
             }
 
             let matched_targets: Vec<String> = policy_pack
-                .selected_provisioning_actions(contract)
+                .selected_provisioning_actions_for_os(policy_os, contract)
                 .into_iter()
                 .map(|entry| {
                     format!(
@@ -1251,6 +1259,28 @@ fn diagnose_org_policy(
     });
 
     None
+}
+
+fn policy_target_os_for_mode(mode: DoctorMode) -> &'static str {
+    match mode {
+        DoctorMode::Native => current_os(),
+        DoctorMode::Container => "linux",
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn current_os() -> &'static str {
+    "windows"
+}
+
+#[cfg(target_os = "macos")]
+fn current_os() -> &'static str {
+    "macos"
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn current_os() -> &'static str {
+    "linux"
 }
 
 fn format_source_config_summary(
@@ -2336,6 +2366,63 @@ tasks:
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn container_mode_uses_linux_policy_sources_for_provisioning() {
+        let tempdir = TempDir::new().unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        let policy_dir = tempdir.path().join(".ota");
+        fs::create_dir_all(&policy_dir).unwrap();
+
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: brew
+      approved_versions:
+        - "8.13.0"
+      platforms:
+        macos:
+          source: brew
+          approved_versions:
+            - "8.13.0"
+        linux:
+          source: apt
+          approved_versions:
+            - "8.13.0"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: jdxcode/mise:latest
+runtimes:
+  curl: 8.13.0
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_preconditions_with_mode(&contract, &contract_path, DoctorMode::Container);
+
+        let provisioning = report
+            .provisioning
+            .expect("expected provisioning diagnostics in container mode");
+        assert_eq!(provisioning.request.actions.len(), 1);
+        assert_eq!(provisioning.request.actions[0].source, "apt");
     }
 
     #[test]

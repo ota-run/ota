@@ -16208,13 +16208,17 @@ fn source_config_summary(
     )
 }
 
-fn execution_policy_lines(contract: &Contract, contract_path: &Path) -> Vec<String> {
+fn execution_policy_lines(
+    contract: &Contract,
+    contract_path: &Path,
+    backend: Backend,
+) -> Vec<String> {
     let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return Vec::new();
     };
 
     policy_pack
-        .selected_provisioning_actions(contract)
+        .selected_provisioning_actions_for_os(policy_target_os_for_backend(backend), contract)
         .into_iter()
         .map(|action| {
             let mut line = format!(
@@ -16227,6 +16231,13 @@ fn execution_policy_lines(contract: &Contract, contract_path: &Path) -> Vec<Stri
             line
         })
         .collect()
+}
+
+fn policy_target_os_for_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Container => "linux",
+        Backend::Native | Backend::Remote => current_os(),
+    }
 }
 
 fn run_execution_receipt(
@@ -16288,7 +16299,7 @@ fn run_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
-        policy: execution_policy_lines(contract, contract_path),
+        policy: execution_policy_lines(contract, contract_path, backend),
         steps,
         blocked: Vec::new(),
         summary: ExecutionReceiptSummary {
@@ -18053,7 +18064,7 @@ fn repo_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
-        policy: execution_policy_lines(contract, path),
+        policy: execution_policy_lines(contract, path, backend),
         steps,
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
