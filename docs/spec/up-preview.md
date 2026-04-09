@@ -99,10 +99,10 @@ Plan
  » provision `curl` `8.7.1` via `apt`
  » skip `jq`; already satisfies contract
 
-Blocked by
- ◉ ERROR  Adapter bootstrap failed: sdkman
- Why: required commands are missing from the container: `curl` and `zip`
- Next: install `curl` and `zip` in the container image, then rerun `ota up --dry-run --mode container`
+➤ Primary Blocker
+Adapter bootstrap failed: sdkman
+Why: required commands are missing from the container: `curl` and `zip`
+Next: install `curl` and `zip` in the container image, then rerun `ota up --dry-run --mode container`
 
 Dry run only
  » no provisioning executed
