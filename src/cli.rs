@@ -276,6 +276,9 @@ enum Commands {
         /// Preview the selected up plan without mutating repo or execution state.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
+        /// Stream raw live service-start and setup output in text mode.
+        #[arg(long, action = ArgAction::SetTrue)]
+        stream: bool,
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -983,7 +986,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
             | Commands::Tasks { .. }
             | Commands::Clean { .. }
             | Commands::Services { .. }
-            | Commands::Up { .. }
+            | Commands::Up { stream: false, .. }
             | Commands::Doctor { .. }
             | Commands::Check { .. }
             | Commands::Diff { .. }
@@ -1286,6 +1289,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Up {
             json,
             dry_run,
+            stream,
             backend,
             lifecycle,
             ephemeral,
@@ -1307,6 +1311,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
             dry_run,
+            stream,
             receipt,
         ),
         Commands::Clean {
@@ -5840,6 +5845,22 @@ tasks:
             path: None,
             json: false,
             dry_run: false,
+            stream: false,
+            backend: None,
+            lifecycle: None,
+            ephemeral: false,
+            receipt: false,
+            member: Vec::new(),
+        }));
+    }
+
+    #[test]
+    fn up_stream_disables_command_spinner() {
+        assert!(!super::command_supports_spinner(&super::Commands::Up {
+            path: None,
+            json: false,
+            dry_run: false,
+            stream: true,
             backend: None,
             lifecycle: None,
             ephemeral: false,
@@ -9398,6 +9419,34 @@ tasks:
     }
 
     #[test]
+    fn up_captures_setup_failure_output_in_compact_report() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: provisioned-tool
+    kind: precondition
+    severity: error
+    run: provisioned-tool --version
+tasks:
+  setup:
+    run: printf setup-stdout && printf setup-stderr >&2 && exit 7
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("SETUP FAILED"));
+        assert!(stdout.contains("Task output:"));
+        assert!(stdout.contains("setup-stdout"));
+        assert!(stdout.contains("setup-stderr"));
+    }
+
+    #[test]
     #[cfg(unix)]
     fn up_runs_setup_before_preconditions_fail() {
         let _guard = ENV_MUTEX.lock().unwrap();
@@ -9828,6 +9877,44 @@ tasks:
         assert!(!stdout.contains("start service `postgres`"));
         assert!(stdout.contains("start service `redis`"));
         assert!(stdout.contains("verify service `redis` readiness"));
+    }
+
+    #[test]
+    fn up_rejects_stream_with_json() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", "--stream", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap()),
+            "`--stream` is only supported for text output"
+        );
+    }
+
+    #[test]
+    fn up_rejects_stream_with_dry_run() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--dry-run", "--stream", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap()),
+            "`--stream` is only supported for mutating `ota up`"
+        );
     }
 
     #[test]

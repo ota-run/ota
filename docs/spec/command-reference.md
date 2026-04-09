@@ -154,7 +154,8 @@ Current progress behavior:
 
 - quiet blocking commands show a delayed spinner in interactive terminals
 - `ota doctor` and `ota check` keep their own check/progress handling
-- `ota run` and `ota up` keep streaming/progress-focused behavior instead of the shared spinner
+- `ota run` keeps streaming/progress-focused behavior instead of the shared spinner
+- `ota up` uses the shared spinner by default; `ota up --stream` opts into raw live service-start and setup output
 - `ota workspace doctor` uses the shared spinner
 - `ota workspace status` uses the shared spinner
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
@@ -771,6 +772,7 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
+ota up --stream [PATH]
 ota up --dry-run [PATH]
 ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
@@ -804,6 +806,9 @@ Current behavior:
 - reports `provisioning` when early setup ran but the repo is still not ready
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
+- keeps child output compact by default and surfaces failed service/setup output inside the final report
+- `--stream` opts into raw live child output for required service `start` commands and the `setup` task
+- `--stream` is text-only and is only supported for mutating `ota up`
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
 - `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files

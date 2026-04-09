@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added `ota up --stream` for repo-level text runs so required service `start` commands and the `setup` task can expose raw live child output on demand while default `ota up` stays compact and keeps failed child output inside the final report.
+
 ## 1.2.3
 
 - improved `ota clean --stale` so it keeps querying available container engines, surfaces engine query failures, and removes exited ota-managed containers without silently treating daemon or permission errors as an empty stale set.

@@ -4097,6 +4097,7 @@ pub fn up(
     format: OutputFormat,
     debug: bool,
     dry_run: bool,
+    stream: bool,
     show_receipt: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
@@ -4107,6 +4108,33 @@ pub fn up(
             ),
             debug,
             vec![String::from("DEBUG command=up")],
+        );
+    }
+    if stream && matches!(format, OutputFormat::Json) {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for text output"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=up"),
+                String::from("DEBUG stream=true"),
+            ],
+        );
+    }
+    if stream && dry_run {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--stream` is only supported for mutating `ota up`"),
+                2,
+            ),
+            debug,
+            vec![
+                String::from("DEBUG command=up"),
+                String::from("DEBUG stream=true"),
+                String::from("DEBUG dry_run=true"),
+            ],
         );
     }
 
@@ -4127,10 +4155,16 @@ pub fn up(
     let mut debug_lines = vec![
         String::from("DEBUG command=up"),
         format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG stream={stream}"),
     ];
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
+    let execution_mode = if stream {
+        RepoExecutionMode::Stream
+    } else {
+        RepoExecutionMode::Capture
+    };
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
@@ -4147,7 +4181,7 @@ pub fn up(
                         overrides,
                         None,
                         dry_run,
-                        RepoExecutionMode::Stream,
+                        execution_mode,
                     ) {
                         Ok(result) => result,
                         Err(error) => return CommandOutput::failure(error),
@@ -4208,7 +4242,7 @@ pub fn up(
                                 overrides,
                                 None,
                                 dry_run,
-                                RepoExecutionMode::Stream,
+                                execution_mode,
                             ) {
                                 Ok(result) => result,
                                 Err(error) => return CommandOutput::failure(error),
@@ -4252,7 +4286,7 @@ pub fn up(
                         overrides,
                         None,
                         dry_run,
-                        RepoExecutionMode::Stream,
+                        execution_mode,
                     ) {
                         Ok(result) => render_up_result(
                             &path_display,
@@ -4314,7 +4348,7 @@ pub fn up(
                         overrides,
                         None,
                         dry_run,
-                        RepoExecutionMode::Stream,
+                        execution_mode,
                     ) {
                         Ok(result) => result,
                         Err(error) => return CommandOutput::failure(error),
@@ -16432,7 +16466,7 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         result.service_command.as_deref(),
         result.task.as_deref(),
         result.task_command.as_deref(),
-        Some(result.stderr.as_ref()),
+        phase_output_text(&result.stdout, &result.stderr).as_deref(),
         result.exit_code,
     )
 }
@@ -16566,6 +16600,18 @@ fn render_up_preview_text(
 
 fn render_backticked_preview_value(value: &str) -> String {
     render_backticked_text(value, None)
+}
+
+fn phase_output_text(stdout: &str, stderr: &str) -> Option<String> {
+    let stdout = stdout.trim_end();
+    let stderr = stderr.trim_end();
+
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => None,
+        (false, true) => Some(stdout.to_string()),
+        (true, false) => Some(stderr.to_string()),
+        (false, false) => Some(format!("{stdout}\n{stderr}")),
+    }
 }
 
 fn render_up_section_from_parts(
@@ -18603,6 +18649,46 @@ fn preview_receipt(
     )
 }
 
+fn run_up_setup_task(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    policy_env: Option<&BTreeMap<String, String>>,
+    mode: RepoExecutionMode,
+) -> Result<CommandRunResult, String> {
+    match mode {
+        RepoExecutionMode::Stream => run_task_with_progress_and_args_and_overrides_with_policy(
+            contract,
+            resolved_path,
+            "setup",
+            true,
+            &[],
+            overrides,
+            policy_env,
+        )
+        .map(|outcome| CommandRunResult {
+            exit_code: outcome.exit_code,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+        .map_err(render_run_error),
+        RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
+            contract,
+            resolved_path,
+            "setup",
+            &[],
+            overrides,
+            policy_env,
+        )
+        .map(|outcome| CommandRunResult {
+            exit_code: outcome.exit_code,
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+        })
+        .map_err(render_run_error),
+    }
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -18899,40 +18985,7 @@ fn execute_repo_up(
             // The backend fixed the missing prerequisites; fall through to the normal flow.
         } else if contract.tasks.contains_key("setup") {
             let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
-            let run_result = match mode {
-                RepoExecutionMode::Stream => {
-                    run_task_captured_with_args_with_overrides_with_policy(
-                        contract,
-                        resolved_path,
-                        "setup",
-                        &[],
-                        overrides,
-                        policy_env,
-                    )
-                    .map(|outcome| CommandRunResult {
-                        exit_code: outcome.exit_code,
-                        stdout: outcome.stdout,
-                        stderr: outcome.stderr,
-                    })
-                }
-                RepoExecutionMode::Capture => {
-                    run_task_captured_with_args_with_overrides_with_policy(
-                        contract,
-                        resolved_path,
-                        "setup",
-                        &[],
-                        overrides,
-                        policy_env,
-                    )
-                    .map(|outcome| CommandRunResult {
-                        exit_code: outcome.exit_code,
-                        stdout: outcome.stdout,
-                        stderr: outcome.stderr,
-                    })
-                }
-            };
-
-            match run_result {
+            match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
                 Ok(outcome) if outcome.exit_code != 0 => {
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
@@ -19006,7 +19059,7 @@ fn execute_repo_up(
                     }
                     provisioned_setup = true;
                 }
-                Err(error) => return Err(render_run_error(error)),
+                Err(error) => return Err(error),
             }
         } else {
             return Ok(RepoUpResult {
@@ -19162,36 +19215,7 @@ fn execute_repo_up(
 
     if contract.tasks.contains_key("setup") && !provisioned_setup {
         let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
-        let run_result = match mode {
-            RepoExecutionMode::Stream => run_task_captured_with_args_with_overrides_with_policy(
-                contract,
-                resolved_path,
-                "setup",
-                &[],
-                overrides,
-                policy_env,
-            )
-            .map(|outcome| CommandRunResult {
-                exit_code: outcome.exit_code,
-                stdout: outcome.stdout,
-                stderr: outcome.stderr,
-            }),
-            RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
-                contract,
-                resolved_path,
-                "setup",
-                &[],
-                overrides,
-                policy_env,
-            )
-            .map(|outcome| CommandRunResult {
-                exit_code: outcome.exit_code,
-                stdout: outcome.stdout,
-                stderr: outcome.stderr,
-            }),
-        };
-
-        match run_result {
+        match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
             Ok(outcome) if outcome.exit_code != 0 => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
@@ -19231,7 +19255,7 @@ fn execute_repo_up(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
             }
-            Err(error) => return Err(render_run_error(error)),
+            Err(error) => return Err(error),
         }
     }
 
