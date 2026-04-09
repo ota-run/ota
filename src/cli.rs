@@ -2182,7 +2182,7 @@ case "$command" in
     host_dir=$(cat "$state_dir/$name.path")
     printf "exec\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    exec /bin/sh -lc "$3"
+    exec /bin/sh -c "$3"
     ;;
   run)
     detached=0
@@ -2241,13 +2241,13 @@ case "$command" in
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
-    if [ "$1" = "-lc" ]; then
-      exec /bin/sh -lc "$2"
+    if [ "$1" = "-c" ]; then
+      exec /bin/sh -c "$2"
     fi
-    if [ "$1" = "sh" ] && [ "$2" = "-lc" ]; then
-      exec /bin/sh -lc "$3"
+    if [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      exec /bin/sh -c "$3"
     fi
-    exec /bin/sh -lc "$1"
+    exec /bin/sh -c "$1"
     ;;
   rm)
     shift
@@ -7061,7 +7061,7 @@ runtimes:
         let docker_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  shift\n  while [ \"$#\" -gt 1 ]; do\n    if [ \"$1\" = \"-lc\" ]; then\n      echo unsupported >&2\n      exit 1\n    fi\n    if [ \"$1\" = \"-c\" ] && [ \"$2\" = \"node --version\" ]; then\n      echo 'v22.0.0'\n      exit 0\n    fi\n    shift\n  done\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -9549,6 +9549,7 @@ tasks:
         assert_eq!(json["phase"], "preview");
         assert_eq!(json["execution"]["backend"], "native");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
+        assert!(json["execution"].get("image").is_none());
         assert_eq!(json["execution"]["task"], "setup");
         assert!(
             json["plan"]["actions"]
@@ -9558,6 +9559,129 @@ tasks:
                 .any(|value| value == "run task `setup`")
         );
         assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+      engines: [docker]
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+tools:
+  cargo: "*"
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" exit /b 1\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--dry-run", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Image: `rust:1.94-bookworm`"));
+        assert!(stdout.contains("rerun `ota up --dry-run --mode container`"));
+        assert!(!stdout.contains("rerun `ota doctor --mode container`"));
+    }
+
+    #[test]
+    fn up_dry_run_container_json_includes_execution_image() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+      engines: [docker]
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo ok\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo ok\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let output = run_with([
+            "ota",
+            "up",
+            "--json",
+            "--dry-run",
+            "--mode",
+            "container",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["execution"]["backend"], "container");
+        assert_eq!(json["execution"]["image"], "rust:1.94-bookworm");
+    }
+
+    #[test]
+    fn up_dry_run_service_preview_distinguishes_start_from_readiness_checks() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    healthcheck: exit 0
+  redis:
+    required: true
+    start: docker compose up -d redis
+    healthcheck: exit 0
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--dry-run", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("verify service `postgres` readiness"));
+        assert!(!stdout.contains("start service `postgres`"));
+        assert!(stdout.contains("start service `redis`"));
+        assert!(stdout.contains("verify service `redis` readiness"));
     }
 
     #[test]
