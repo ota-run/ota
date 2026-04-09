@@ -89,3 +89,6 @@
 - Pattern: Global stale cleanup can fail unnecessarily if one available engine is down even though another available engine can still report and remove stale ota containers.
 - Correction: Treat `ota clean --stale` as best-effort across accessible engines; only fail when no engine can be queried or stale removal itself fails.
 - Rule: Global stale cleanup should prefer partial success over total failure when at least one engine can still be queried and cleaned safely.
+- Pattern: Coarse per-engine progress lines can become noisy when the command already has an interactive spinner and the user did not ask for stream output.
+- Correction: Keep the spinner for interactive stale cleanup, but do not stream engine-scan lines by default.
+- Rule: Default interactive progress should be lightweight; reserve explicit streaming text for commands that already expose `--stream` or similar.

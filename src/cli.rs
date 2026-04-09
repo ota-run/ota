@@ -981,6 +981,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
         command,
         Commands::Validate { .. }
             | Commands::Tasks { .. }
+            | Commands::Clean { .. }
             | Commands::Services { .. }
             | Commands::Up { .. }
             | Commands::Doctor { .. }
@@ -5834,6 +5835,17 @@ tasks:
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
+        }));
+    }
+
+    #[test]
+    fn clean_uses_command_spinner() {
+        assert!(super::command_supports_spinner(&super::Commands::Clean {
+            stale: false,
+            dry_run: false,
+            json: false,
+            member: Vec::new(),
+            path: None,
         }));
     }
 

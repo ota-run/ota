@@ -4420,37 +4420,40 @@ pub fn clean(
         }
 
         return finalize_debug(
-            match clean_stale_execution(dry_run) {
-                Ok(report) => {
-                    let matched_count = report.containers.len();
-                    let engines = report.engines;
-                    let containers = report.containers;
-                    match format {
-                        OutputFormat::Text => {
-                            CommandOutput::success(render_stale_clean_text(&containers, dry_run))
+            {
+                match clean_stale_execution(dry_run) {
+                    Ok(report) => {
+                        let matched_count = report.containers.len();
+                        let engines = report.engines;
+                        let containers = report.containers;
+                        match format {
+                            OutputFormat::Text => CommandOutput::success(render_stale_clean_text(
+                                &containers,
+                                dry_run,
+                            )),
+                            OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                                "ok": true,
+                                "scope": "stale",
+                                "dry_run": dry_run,
+                                "engines": engines,
+                                "summary": {
+                                    "matched_count": matched_count,
+                                    "removed_count": if dry_run { 0 } else { matched_count },
+                                    "would_remove_count": if dry_run { matched_count } else { 0 }
+                                },
+                                "containers": containers.iter().map(|container| json!({
+                                    "engine": container.engine,
+                                    "name": container.name,
+                                    "ownership": match container.ownership {
+                                        StaleContainerOwnership::Label => "label",
+                                        StaleContainerOwnership::LegacyName => "legacy_name"
+                                    }
+                                })).collect::<Vec<_>>()
+                            }))),
                         }
-                        OutputFormat::Json => CommandOutput::success(to_json_value(json!({
-                            "ok": true,
-                            "scope": "stale",
-                            "dry_run": dry_run,
-                            "engines": engines,
-                            "summary": {
-                                "matched_count": matched_count,
-                                "removed_count": if dry_run { 0 } else { matched_count },
-                                "would_remove_count": if dry_run { matched_count } else { 0 }
-                            },
-                            "containers": containers.iter().map(|container| json!({
-                                "engine": container.engine,
-                                "name": container.name,
-                                "ownership": match container.ownership {
-                                    StaleContainerOwnership::Label => "label",
-                                    StaleContainerOwnership::LegacyName => "legacy_name"
-                                }
-                            })).collect::<Vec<_>>()
-                        }))),
                     }
+                    Err(error) => CommandOutput::failure(error.to_string()),
                 }
-                Err(error) => CommandOutput::failure(error.to_string()),
             },
             debug,
             debug_lines,
