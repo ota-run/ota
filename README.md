@@ -34,7 +34,7 @@ ota is open infrastructure for repo readiness, not another task runner or packag
   <img src="docs/assets/ota-social-card.png" alt="ota social card showing repo readiness and doctor output" width="1280" />
 </div>
 
-Doctor first, contract second.
+<div align="center"><strong>DOCTOR FIRST, CONTRACT SECOND.</strong></div>
 
 ## What problem ota solves
 
@@ -110,7 +110,7 @@ See [docs/installation.md](docs/installation.md) for mirror/CDN overrides and so
 
 ## Quickstart
 
-Doctor first, contract second.
+**DOCTOR FIRST, CONTRACT SECOND.**
 
 Choose the path that matches the repo.
 
