@@ -25,9 +25,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -36,6 +40,168 @@ use crate::execution::{
     available_container_engines, container_engine_candidates, selected_container_engine,
 };
 use crate::schema::{Backend, Contract, EnvRequirement, ExtensionKind, Lifecycle, TaskSpec};
+
+#[derive(Clone)]
+pub(crate) struct StreamPhaseNotifier {
+    saw_output: Arc<AtomicBool>,
+    shown: Arc<AtomicBool>,
+}
+
+impl StreamPhaseNotifier {
+    fn mark_output_started(&self) {
+        if !self.saw_output.swap(true, Ordering::Relaxed) && self.shown.load(Ordering::Relaxed) {
+            clear_stream_phase_line();
+        }
+    }
+}
+
+pub(crate) struct StreamPhaseLoader {
+    stop: Arc<AtomicBool>,
+    shown: Arc<AtomicBool>,
+    saw_output: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl StreamPhaseLoader {
+    pub(crate) fn start(label: &str) -> Option<Self> {
+        if !should_show_stream_phase_loader() {
+            return None;
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let shown = Arc::new(AtomicBool::new(false));
+        let saw_output = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread_shown = Arc::clone(&shown);
+        let thread_saw_output = Arc::clone(&saw_output);
+        let label = label.to_string();
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(120));
+            if thread_stop.load(Ordering::Relaxed) || thread_saw_output.load(Ordering::Relaxed) {
+                return;
+            }
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut index = 0usize;
+            let mut stderr = io::stderr();
+            while !thread_stop.load(Ordering::Relaxed) && !thread_saw_output.load(Ordering::Relaxed)
+            {
+                thread_shown.store(true, Ordering::Relaxed);
+                let frame = frames[index % frames.len()];
+                let _ = write!(stderr, "\r🦦 {frame} {label}...");
+                let _ = stderr.flush();
+                index += 1;
+                thread::sleep(Duration::from_millis(160));
+            }
+        });
+
+        Some(Self {
+            stop,
+            shown,
+            saw_output,
+            handle: Some(handle),
+        })
+    }
+
+    pub(crate) fn notifier(&self) -> StreamPhaseNotifier {
+        StreamPhaseNotifier {
+            saw_output: Arc::clone(&self.saw_output),
+            shown: Arc::clone(&self.shown),
+        }
+    }
+
+    pub(crate) fn stop(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        if self.shown.load(Ordering::Relaxed) {
+            clear_stream_phase_line();
+        }
+    }
+}
+
+fn should_show_stream_phase_loader() -> bool {
+    io::stderr().is_terminal()
+        && env::var_os("OTA_PLAIN_MODE").is_none()
+        && env::var_os("OTA_JSON_MODE").is_none()
+}
+
+fn clear_stream_phase_line() {
+    let mut stderr = io::stderr();
+    let _ = write!(stderr, "\r\x1b[2K\r");
+    let _ = stderr.flush();
+}
+
+pub(crate) fn stream_reader_to_sink<R, W>(
+    mut reader: R,
+    mut sink: W,
+    notifier: Option<StreamPhaseNotifier>,
+    capture: bool,
+) -> io::Result<String>
+where
+    R: Read,
+    W: Write,
+{
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        if let Some(notifier) = notifier.as_ref() {
+            notifier.mark_output_started();
+        }
+        if capture {
+            captured.extend_from_slice(&buffer[..read]);
+        }
+        let _ = sink.write_all(&buffer[..read]);
+        let _ = sink.flush();
+    }
+    Ok(String::from_utf8_lossy(&captured).into_owned())
+}
+
+pub(crate) fn join_stream_reader(
+    handle: Option<thread::JoinHandle<io::Result<String>>>,
+) -> io::Result<String> {
+    match handle {
+        Some(handle) => match handle.join() {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::other("stream reader thread panicked")),
+        },
+        None => Ok(String::new()),
+    }
+}
+
+pub(crate) fn run_streaming_command_with_loader(
+    command: &mut Command,
+    label: &str,
+) -> io::Result<i32> {
+    let loader = StreamPhaseLoader::start(label);
+    let notifier = loader.as_ref().map(|loader| loader.notifier());
+    let mut child = command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let stdout_notifier = notifier.clone();
+    let stdout_handle = child.stdout.take().map(|stdout| {
+        thread::spawn(move || stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, false))
+    });
+    let stderr_notifier = notifier;
+    let stderr_handle = child.stderr.take().map(|stderr| {
+        thread::spawn(move || stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false))
+    });
+
+    let status = child.wait()?;
+    let _ = join_stream_reader(stdout_handle)?;
+    let _ = join_stream_reader(stderr_handle)?;
+    if let Some(loader) = loader {
+        loader.stop();
+    }
+    Ok(status.code().unwrap_or(1))
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -945,21 +1111,31 @@ fn execute_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     match backend {
         ResolvedExecutionBackend::Native => match mode {
-            TaskExecutionMode::Stream { .. } => {
-                let status = shell_command(command)
-                    .current_dir(working_dir)
-                    .envs(env_overrides.iter())
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status()
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?;
+            TaskExecutionMode::Stream { emit_progress } => {
+                let mut process = shell_command(command);
+                process.current_dir(working_dir).envs(env_overrides.iter());
+                let exit_code = if emit_progress {
+                    run_streaming_command_with_loader(&mut process, &format!("Running {task_name}"))
+                        .map_err(|source| RunError::SpawnFailed {
+                            task: task_name.to_string(),
+                            source,
+                        })?
+                } else {
+                    process
+                        .stdin(Stdio::inherit())
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .status()
+                        .map_err(|source| RunError::SpawnFailed {
+                            task: task_name.to_string(),
+                            source,
+                        })?
+                        .code()
+                        .unwrap_or(1)
+                };
 
                 Ok(TaskCommandOutput {
-                    exit_code: status.code().unwrap_or(1),
+                    exit_code,
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -1315,17 +1491,28 @@ fn execute_remote_task_command(
                 eprintln!("RUN {task_name}");
             }
 
-            let exit_code = remote_command
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
+            let exit_code = if emit_progress {
+                run_streaming_command_with_loader(
+                    &mut remote_command,
+                    &format!("Running {task_name}"),
+                )
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?
-                .code()
-                .unwrap_or(1);
+            } else {
+                remote_command
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?
+                    .code()
+                    .unwrap_or(1)
+            };
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -1435,7 +1622,7 @@ fn execute_backend_provider_task_command(
                 .envs(provider_env.iter())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::inherit())
+                .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
@@ -1452,20 +1639,40 @@ fn execute_backend_provider_task_command(
                     })?;
             }
 
-            let mut stdout = String::new();
-            if let Some(mut child_stdout) = child.stdout.take() {
-                child_stdout.read_to_string(&mut stdout).map_err(|source| {
-                    RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    }
-                })?;
-            }
+            let loader = emit_progress
+                .then(|| StreamPhaseLoader::start(&format!("Running {task_name}")))
+                .flatten();
+            let notifier = loader.as_ref().map(|loader| loader.notifier());
+            let stdout_notifier = notifier.clone();
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || {
+                    stream_reader_to_sink(stdout, io::sink(), stdout_notifier, true)
+                })
+            });
+            let stderr_notifier = notifier;
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || {
+                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false)
+                })
+            });
 
             let status = child.wait().map_err(|source| RunError::SpawnFailed {
                 task: task_name.to_string(),
                 source,
             })?;
+
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let _ = join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            if let Some(loader) = loader {
+                loader.stop();
+            }
             if !status.success() {
                 return Err(RunError::BackendProviderExitedNonZero {
                     task: task_name.to_string(),
@@ -1853,18 +2060,15 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let status = container
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-                .map_err(|source| RunError::SpawnFailed {
-                    task: task_name.to_string(),
-                    source,
-                })?;
+            let exit_code =
+                run_streaming_command_with_loader(&mut container, &format!("Running {task_name}"))
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
 
             Ok(TaskCommandOutput {
-                exit_code: status.code().unwrap_or(1),
+                exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
                 target: None,
@@ -2107,18 +2311,15 @@ fn exec_persistent_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let status = container
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
-                .map_err(|source| RunError::SpawnFailed {
-                    task: task_name.to_string(),
-                    source,
-                })?;
+            let exit_code =
+                run_streaming_command_with_loader(&mut container, &format!("Running {task_name}"))
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
 
             Ok(TaskCommandOutput {
-                exit_code: status.code().unwrap_or(1),
+                exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
                 target: Some(container_name.to_string()),

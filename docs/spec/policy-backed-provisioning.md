@@ -82,6 +82,10 @@ The built-in mutating adapters currently support:
 - `dnf` for Fedora and RHEL-style package installs
 - `pacman` for Arch package installs, with package-name installs in the current backend
 
+For container-backed execution, Linux policy pins must still be installable in the selected image.
+Declaring `source: apt` is not enough on its own if that image's configured apt sources cannot
+provide the pinned package or version.
+
 Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
 `source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, or `source: pacman` when they are
 meant to flow through the shipped backends.
