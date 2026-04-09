@@ -771,6 +771,8 @@ Prepare a repo for use with minimal prior knowledge.
 ```bash
 ota up [PATH]
 ota up --json [PATH]
+ota up --dry-run [PATH]
+ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
@@ -786,6 +788,7 @@ Current behavior:
 - runs blocking precondition checks
 - when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
+- `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
@@ -802,12 +805,10 @@ Current behavior:
 - includes setup exit code details when the `setup` task fails
 - includes service start exit code details when a required service start command fails
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
-
-Planned preview extension:
-
-- `ota up --dry-run` is reserved for a read-only execution-plan preview and is not shipped yet
-- the proposed contract lives in [up-preview.md](up-preview.md)
-- until that preview ships, use `ota doctor` for blockers and `ota explain` for ordered remediation
+- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
+- `--dry-run` never provisions, starts services, runs setup, or writes repo files
+- `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
+- the detailed preview contract lives in [up-preview.md](up-preview.md)
 
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 

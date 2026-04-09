@@ -24,7 +24,7 @@
 
 # Up Preview
 
-Status: proposed, not yet shipped.
+Status: shipped.
 
 This document defines the proposed read-only preview surface for repo preparation:
 
@@ -43,7 +43,7 @@ ota up --dry-run --mode native [PATH]
 ota up --dry-run --member api [PATH]
 ```
 
-`ota up --dry-run` should:
+`ota up --dry-run`:
 
 - require `ota.yaml`
 - resolve the same contract path and monorepo member selection as normal `ota up`
@@ -76,33 +76,32 @@ planner with different backend or provisioning resolution.
 
 ## Text output
 
-The text surface should stay premium and concise, using the existing `up` hierarchy.
+The text surface stays premium and concise, using the existing `up` hierarchy.
 
-Suggested shape:
+Current shape:
 
 ```text
 🦦 UP PREVIEW ./ota.yaml
 
 ➤ NOT READY
 
+❖ Mode: dry-run (no write)
+
 Execution
- » Mode: `container`
+ » Backend: `container`
  » Lifecycle: `persistent`
  » Target: `ota-a6be4471a4598386`
- » Task: `provisioning`
- » Backend: `container`
+ » Task: `setup`
 
 Plan
  » provision `java` `21` via `sdkman`
  » provision `curl` `8.7.1` via `apt`
- » reuse persistent container backend
  » skip `jq`; already satisfies contract
 
 Blocked by
- » adapter bootstrap for `sdkman` is not available in the selected environment
-
-Next
- » install the bootstrap prerequisites in the container image, then rerun `ota up --mode container`
+ ◉ ERROR  Adapter bootstrap failed: sdkman
+ Why: required commands are missing from the container: `curl` and `zip`
+ Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`
 
 Dry run only
  » no provisioning executed
@@ -112,10 +111,11 @@ Dry run only
 
 Required text fields:
 
-- selected `Mode`
+- preview mode line: `Mode: dry-run (no write)`
+- selected `Backend`
 - selected `Lifecycle` when one exists
 - selected `Target` when one exists
-- effective `Task` or `Scope`
+- effective `Task` when `setup` would run
 - the ordered action plan
 - the first actionable blocker, when one exists
 - an explicit dry-run note that nothing mutated
@@ -124,7 +124,6 @@ The preview should show:
 
 - actions ota would attempt
 - actions ota would skip because the current state already satisfies them
-- whether persistent backend state would be reused or created
 - whether service start would be attempted before `setup`
 
 The preview should not:
@@ -135,8 +134,8 @@ The preview should not:
 
 ## JSON output
 
-`ota up --dry-run --json` should mirror the real planner state directly instead of forcing
-automation to scrape text.
+`ota up --dry-run --json` mirrors the real planner state directly instead of forcing automation to
+scrape text.
 
 Suggested shape:
 
@@ -145,47 +144,31 @@ Suggested shape:
   "ok": false,
   "path": "./ota.yaml",
   "dry_run": true,
+  "status": "NOT READY",
+  "phase": "preview",
   "execution": {
     "backend": "container",
-    "mode": "container",
     "lifecycle": "persistent",
     "target": "ota-a6be4471a4598386",
-    "task": "provisioning"
+    "task": "setup"
   },
   "plan": {
     "actions": [
-      {
-        "kind": "provision",
-        "subject": "java",
-        "version": "21",
-        "source": "sdkman"
-      },
-      {
-        "kind": "provision",
-        "subject": "curl",
-        "version": "8.7.1",
-        "source": "apt"
-      },
-      {
-        "kind": "reuse_backend",
-        "backend": "container",
-        "target": "ota-a6be4471a4598386"
-      }
+      "provision `java` `21` via `sdkman`",
+      "provision `curl` `8.7.1` via `apt`",
+      "run task `setup`",
+      "re-check repo readiness"
     ],
-    "skips": [
-      {
-        "kind": "already_satisfied",
-        "subject": "jq",
-        "reason": "already satisfies contract"
-      }
+    "skipped": [
+      "skip `jq`; already satisfies the contract"
     ]
   },
   "blockers": [
     {
-      "code": "OTA_ADAPTER_BOOTSTRAP_FAILED",
       "summary": "Adapter bootstrap failed: sdkman",
-      "why": "adapter bootstrap for missing adapter `sdkman` via approved source `sdkman-bootstrap` could not complete in the selected execution environment",
-      "next": "install the bootstrap prerequisites in the container image, then rerun `ota up --mode container`"
+      "severity": "error",
+      "why": "required commands are missing from the container: `curl` and `zip`",
+      "next": "install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
     }
   ]
 }
@@ -196,30 +179,31 @@ Required JSON fields:
 - `ok`
 - `path`
 - `dry_run`
+- `status`
+- `phase`
 - `execution`
 - `plan.actions`
-- `plan.skips`
+- `plan.skipped`
 - `blockers`
 
 `execution` should record:
 
 - `backend`
-- `mode`
 - `lifecycle` when present
 - `target` when present
-- `task` or `scope`
+- `task` when `setup` would run
 
-`plan.actions[]` should be deterministic and ordered the same way the real `up` flow would attempt
-them.
+`plan.actions[]` is deterministic and ordered the same way the real `up` flow would attempt the
+next mutating work.
 
-`plan.skips[]` should only include actions whose skip reason ota can prove from current state.
+`plan.skipped[]` only includes actions whose skip reason ota can prove from current state.
 
-`blockers[]` should use the same stable finding codes and `why` / `next` semantics as the rest of
-ota’s machine-readable surfaces.
+`blockers[]` uses the same finding shape and `why` / `next` semantics as the rest of ota’s
+machine-readable surfaces.
 
 ## Exit codes
 
-Planned exit code contract:
+Exit code contract:
 
 - `0` when the preview is actionable and unblocked
 - `1` when the preview identifies a blocking condition that would stop `ota up`

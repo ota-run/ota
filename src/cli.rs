@@ -273,6 +273,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Preview the selected up plan without mutating repo or execution state.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -283,7 +286,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
         ephemeral: bool,
         /// Include the execution receipt in text output.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long)]
@@ -1281,6 +1284,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Up {
             json,
+            dry_run,
             backend,
             lifecycle,
             ephemeral,
@@ -1301,6 +1305,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             &member,
             format_from_json(json),
             debug,
+            dry_run,
             receipt,
         ),
         Commands::Clean {
@@ -1742,7 +1747,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
         Commands::Agents { .. } => AGENTS_SUGGESTION,
         Commands::Check { .. } => "run `ota check` to review readiness",
-        Commands::Up { .. } => "run `ota doctor` to review readiness before `ota up`",
+        Commands::Up { .. } => {
+            "run `ota up --dry-run` to preview preparation, or `ota doctor` to review readiness"
+        }
         Commands::Clean { .. } => "ota clean --help",
         Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
         Commands::Uninstall => "run `ota uninstall --help` to inspect uninstall options",
@@ -3980,6 +3987,49 @@ project:
     }
 
     #[test]
+    fn up_dry_run_json_reports_root_monorepo_preview_with_members() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf ready > ready.txt
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["status"], "READY");
+        assert_eq!(json["phase"], "preview");
+        assert!(json["execution"]["task"] == "setup");
+        let members = json["members"].as_array().unwrap();
+        assert_eq!(members[0]["member"], "api");
+        assert_eq!(members[0]["dry_run"], true);
+        assert_eq!(members[0]["phase"], "preview");
+        assert!(!fixture.dir.path().join("ready.txt").is_file());
+        assert!(!fixture.dir.path().join("api").join("ready.txt").is_file());
+    }
+
+    #[test]
     fn up_text_reports_root_monorepo_summary_with_members() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -5660,6 +5710,7 @@ tasks:
         assert!(super::command_supports_spinner(&super::Commands::Up {
             path: None,
             json: false,
+            dry_run: false,
             backend: None,
             lifecycle: None,
             ephemeral: false,
@@ -9441,6 +9492,72 @@ tasks:
         assert_eq!(json["status"], "READY");
         assert_eq!(json["phase"], "post-setup diagnosis");
         assert!(json["findings"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn up_dry_run_text_reports_plan_without_mutating_repo() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--dry-run", "."]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("UP PREVIEW"));
+        assert!(stdout.contains("Mode: dry-run (no write)"));
+        assert!(stdout.contains("Plan"));
+        assert!(stdout.contains("run task `setup`"));
+        assert!(stdout.contains("Dry run only"));
+        assert!(!stdout.contains("Blocked by"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_dry_run_json_reports_execution_plan_without_mutation() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["status"], "READY");
+        assert_eq!(json["phase"], "preview");
+        assert_eq!(json["execution"]["backend"], "native");
+        assert_eq!(json["execution"]["lifecycle"], "ephemeral");
+        assert_eq!(json["execution"]["task"], "setup");
+        assert!(
+            json["plan"]["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "run task `setup`")
+        );
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
     }
 
     #[test]

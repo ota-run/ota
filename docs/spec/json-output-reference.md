@@ -1043,10 +1043,47 @@ Example contract-validation failure (before `up` execution starts):
 }
 ```
 
-Planned preview extension:
+`ota up --dry-run --json` is the read-only execution-plan preview surface for `ota up`.
 
-- `ota up --dry-run --json` is not part of the shipped JSON contract yet
-- the proposed preview shape lives in [up-preview.md](up-preview.md)
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "dry_run": true,
+  "status": "READY",
+  "phase": "preview",
+  "execution": {
+    "backend": "native",
+    "lifecycle": "ephemeral",
+    "task": "setup"
+  },
+  "plan": {
+    "actions": [
+      "run task `setup`",
+      "re-check repo readiness"
+    ]
+  }
+}
+```
+
+Current preview JSON fields:
+
+- `ok`
+- `path`
+- `dry_run`
+- `status`
+- `phase` (`preview`)
+- `execution.backend`
+- `execution.lifecycle` when one is selected
+- `execution.target` when a persistent backend target exists
+- `execution.task` when `up` would run `setup`
+- `plan.actions`
+- `plan.skipped`
+- `blockers`
+
+Use `ota up --dry-run --json` when you need the selected backend and lifecycle plus the action and
+skip plan without provisioning, starting services, or writing repo files. See
+[up-preview.md](up-preview.md) for the preview contract.
 
 ## `ota detect --json`
 

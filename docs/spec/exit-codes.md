@@ -54,6 +54,8 @@ This document records the current command exit-code contract for the shipped ota
 
 ## `ota up`
 
+- `ota up --dry-run`: `0` when the preview is actionable and unblocked
+- `ota up --dry-run`: `1` when the preview identifies a blocking condition
 - `0` when the repo reaches `READY`
 - service-start child exit code when a required service `start` command fails
 - setup task child exit code when `setup` fails

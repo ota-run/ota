@@ -304,16 +304,25 @@ fn check_schema_includes_member_grouping() {
 #[test]
 fn up_schema_includes_member_grouping() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
-    let runtime_properties = &schema["oneOf"][0]["properties"];
-    let member_properties = &runtime_properties["members"]["items"]["properties"];
-    let validate_failure_ref = schema["oneOf"][1]["$ref"]
+    let preview_properties = &schema["oneOf"][0]["properties"];
+    let runtime_properties = &schema["oneOf"][1]["properties"];
+    let runtime_member_properties =
+        &runtime_properties["members"]["items"]["oneOf"][0]["properties"];
+    let preview_member_properties =
+        &runtime_properties["members"]["items"]["oneOf"][1]["properties"];
+    let validate_failure_ref = schema["oneOf"][2]["$ref"]
         .as_str()
         .expect("up schema should include validate failure shape");
 
+    assert!(preview_properties.get("dry_run").is_some());
+    assert!(preview_properties.get("execution").is_some());
+    assert!(preview_properties.get("plan").is_some());
     assert!(runtime_properties.get("members").is_some());
-    assert!(member_properties.get("member").is_some());
-    assert!(member_properties.get("status").is_some());
-    assert!(member_properties.get("phase").is_some());
+    assert!(runtime_member_properties.get("member").is_some());
+    assert!(runtime_member_properties.get("status").is_some());
+    assert!(runtime_member_properties.get("phase").is_some());
+    assert!(preview_member_properties.get("dry_run").is_some());
+    assert!(preview_member_properties.get("plan").is_some());
     assert_eq!(validate_failure_ref, "./validate.json#/oneOf/1");
 }
 
