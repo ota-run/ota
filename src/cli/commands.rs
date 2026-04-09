@@ -45,7 +45,8 @@ use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
     diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
-    diagnose_preconditions, diagnose_service, diagnose_services_only,
+    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
+    diagnose_services_only,
 };
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
@@ -13453,6 +13454,7 @@ tasks:
         assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert_eq!(text.matches("Next:").count(), 1);
+        assert!(text.contains("ota doctor --mode container"));
     }
 
     #[test]
@@ -15482,6 +15484,7 @@ fn render_up_section_from_parts(
     stderr: Option<&str>,
     exit_code: Option<i32>,
 ) -> String {
+    let doctor_mode = doctor_mode_from_backend(backend);
     let mut stdout = format!(
         "{}\n\n{}\n{} {phase}",
         format_command_header("UP", path),
@@ -15547,7 +15550,10 @@ fn render_up_section_from_parts(
         if group.findings.len() == 1 {
             let finding = group.findings[0];
             let why = render_backticked_text(&finding.why, contract_path);
-            let next = render_backticked_text(&finding.next, contract_path);
+            let next = render_backticked_text(
+                &rewrite_doctor_mode_command(&finding.next, doctor_mode),
+                contract_path,
+            );
             stdout.push_str("\n\n");
             stdout.push_str(&format!(
                 "{}  {}\n{} {}\n{} {}",
@@ -15561,10 +15567,22 @@ fn render_up_section_from_parts(
             continue;
         }
 
-        stdout.push_str(&render_grouped_doctor_findings(&group, contract_path, None));
+        stdout.push_str(&render_grouped_doctor_findings(
+            &group,
+            contract_path,
+            doctor_mode,
+        ));
     }
 
     stdout
+}
+
+fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
+    match backend.map(|backend| backend.trim()) {
+        Some("container") => Some(DoctorMode::Container),
+        Some("native") => Some(DoctorMode::Native),
+        _ => None,
+    }
 }
 
 fn setup_failure_output_label(stderr: &str) -> &'static str {
@@ -17329,6 +17347,13 @@ fn provisioning_execution_target(
     }
 }
 
+fn up_doctor_mode(overrides: ExecutionOverrides) -> DoctorMode {
+    match overrides.backend {
+        Some(Backend::Container) => DoctorMode::Container,
+        _ => DoctorMode::Native,
+    }
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -17340,8 +17365,9 @@ fn execute_repo_up(
     let mut stderr = String::new();
     let mut provisioned_setup = false;
     let provisioning_target = provisioning_execution_target(contract, overrides);
+    let doctor_mode = up_doctor_mode(overrides);
     let execution_dir = contract_working_dir(resolved_path);
-    let mut preflight = diagnose_preconditions(contract, resolved_path);
+    let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
     if !preflight.ok {
         if let Some(provisioning) = preflight.provisioning.as_ref() {
             match apply_provisioning_request_with_target(
@@ -17352,7 +17378,8 @@ fn execute_repo_up(
                 Ok(outcome) => {
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
-                    preflight = diagnose_preconditions(contract, resolved_path);
+                    preflight =
+                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
                 }
                 Err(ProvisioningBackendError::CommandFailed {
                     stdout: backend_stdout,
@@ -17481,7 +17508,11 @@ fn execute_repo_up(
                             Ok(outcome) => {
                                 stdout.push_str(&outcome.stdout);
                                 stderr.push_str(&outcome.stderr);
-                                preflight = diagnose_preconditions(contract, resolved_path);
+                                preflight = diagnose_preconditions_with_mode(
+                                    contract,
+                                    resolved_path,
+                                    doctor_mode,
+                                );
                             }
                             Err(ProvisioningBackendError::CommandFailed {
                                 stdout: backend_stdout,
@@ -17649,7 +17680,8 @@ fn execute_repo_up(
                 Ok(outcome) => {
                     stdout.push_str(&outcome.stdout);
                     stderr.push_str(&outcome.stderr);
-                    let refreshed = diagnose_preconditions(contract, resolved_path);
+                    let refreshed =
+                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
                     if !refreshed.ok {
                         return Ok(RepoUpResult {
                             ok: false,
