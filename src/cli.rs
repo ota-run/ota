@@ -2263,6 +2263,28 @@ exit 1
     }
 
     #[cfg(unix)]
+    fn install_fake_empty_container_engine(path: &std::path::Path, name: &str) {
+        fs::write(
+            path,
+            format!(
+                r#"#!/bin/sh
+case "$1" in
+  --version|version)
+    printf '{name} version 1.0.0\n'
+    exit 0
+    ;;
+  info|ps)
+    exit 0
+    ;;
+esac
+exit 1
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[cfg(unix)]
     fn install_fake_cargo(path: &std::path::Path) {
         fs::write(
             path,
@@ -4084,11 +4106,7 @@ tasks:
         .unwrap();
 
         let original_path = std::env::var_os("PATH");
-        let mut path_entries = vec![bin_dir.clone()];
-        if let Some(existing) = original_path.as_ref() {
-            path_entries.extend(std::env::split_paths(existing));
-        }
-        let joined_path = std::env::join_paths(path_entries).unwrap();
+        let joined_path = std::env::join_paths([bin_dir.clone()]).unwrap();
         unsafe {
             std::env::set_var("PATH", &joined_path);
         }
@@ -4152,11 +4170,16 @@ tasks:
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_path = bin_dir.join("docker");
         install_fake_docker(&docker_path);
+        let podman_path = bin_dir.join("podman");
+        install_fake_empty_container_engine(&podman_path, "podman");
         {
             use std::os::unix::fs::PermissionsExt;
             let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
             permissions.set_mode(0o755);
             fs::set_permissions(&docker_path, permissions).unwrap();
+            let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&podman_path, permissions).unwrap();
         }
 
         let state_dir = bin_dir.join("docker-state");
@@ -4216,11 +4239,16 @@ tasks:
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_path = bin_dir.join("docker");
         install_fake_docker(&docker_path);
+        let podman_path = bin_dir.join("podman");
+        install_fake_empty_container_engine(&podman_path, "podman");
         {
             use std::os::unix::fs::PermissionsExt;
             let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
             permissions.set_mode(0o755);
             fs::set_permissions(&docker_path, permissions).unwrap();
+            let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&podman_path, permissions).unwrap();
         }
 
         let state_dir = bin_dir.join("docker-state");
@@ -4276,6 +4304,68 @@ tasks:
         assert_eq!(output.exit_code, 2);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("`ota clean --stale` is global"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_stale_fails_when_container_engine_query_fails() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new_dir();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  printf "Docker version 29.3.1, build deadbeef\n"
+  exit 0
+fi
+if [ "$1" = "ps" ]; then
+  printf "Docker daemon is not running\n" >&2
+  exit 1
+fi
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 1
+"#,
+        );
+        let podman_path = bin_dir.join("podman");
+        install_fake_empty_container_engine(&podman_path, "podman");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&podman_path, permissions).unwrap();
+        }
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", "--stale"]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("could not list stale ota containers"));
+        assert!(stderr.contains("Docker daemon is not running"));
     }
 
     #[test]

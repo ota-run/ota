@@ -71,6 +71,8 @@ pub enum RunError {
         "task `{task}` requires one of the supported container execution backend CLIs to be available on PATH: {engines}"
     )]
     MissingContainerBackendCli { task: String, engines: String },
+    #[error("container backend `{engine}` could not list stale ota containers: {details}")]
+    StaleContainerQueryFailed { engine: String, details: String },
     #[error("could not compose environment variable `{name}` as a PATH: {source}")]
     InvalidPathComposition {
         name: String,
@@ -747,7 +749,21 @@ fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTa
 fn container_ps_names(engine: &str, args: &[&str]) -> Result<Vec<String>, RunError> {
     let output = container_command_output(engine, args, None, "clean")?;
     if output.exit_code != 0 {
-        return Ok(Vec::new());
+        let details = if !output.stderr.trim().is_empty() {
+            output.stderr.trim().to_string()
+        } else if !output.stdout.trim().is_empty() {
+            output.stdout.trim().to_string()
+        } else {
+            format!(
+                "`{engine} {}` exited with status {}",
+                args.join(" "),
+                output.exit_code
+            )
+        };
+        return Err(RunError::StaleContainerQueryFailed {
+            engine: engine.to_string(),
+            details,
+        });
     }
 
     Ok(output
