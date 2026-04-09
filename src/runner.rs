@@ -32,7 +32,9 @@ use std::process::{Command, Stdio};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
-use crate::execution::{container_engine_candidates, selected_container_engine};
+use crate::execution::{
+    available_container_engines, container_engine_candidates, selected_container_engine,
+};
 use crate::schema::{Backend, Contract, EnvRequirement, ExtensionKind, Lifecycle, TaskSpec};
 
 #[derive(Debug, thiserror::Error)]
@@ -207,6 +209,28 @@ pub struct ExecutionOverrides {
     pub backend: Option<Backend>,
     pub lifecycle: Option<Lifecycle>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StaleContainerOwnership {
+    Label,
+    LegacyName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleContainerCleanupTarget {
+    pub engine: String,
+    pub name: String,
+    pub ownership: StaleContainerOwnership,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleContainerCleanupReport {
+    pub engines: Vec<String>,
+    pub containers: Vec<StaleContainerCleanupTarget>,
+}
+
+const OTA_MANAGED_CONTAINER_LABEL: &str = "dev.ota.managed=true";
+const OTA_PERSISTENT_CONTAINER_LABEL: &str = "dev.ota.lifecycle=persistent";
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -644,6 +668,95 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
         }
         _ => Ok(false),
     }
+}
+
+pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupReport, RunError> {
+    let engines = available_container_engines();
+    let mut containers = Vec::new();
+
+    for engine in &engines {
+        containers.extend(list_stale_ota_containers(engine)?);
+    }
+
+    if !dry_run {
+        for container in &containers {
+            let _ = remove_persistent_container(&container.engine, &container.name, "clean")?;
+        }
+    }
+
+    Ok(StaleContainerCleanupReport {
+        engines,
+        containers,
+    })
+}
+
+fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTarget>, RunError> {
+    let mut containers = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for name in container_ps_names(
+        engine,
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            &format!("label={OTA_MANAGED_CONTAINER_LABEL}"),
+            "--filter",
+            "status=exited",
+            "--filter",
+            "status=dead",
+            "--format",
+            "{{.Names}}",
+        ],
+    )? {
+        if seen.insert(name.clone()) {
+            containers.push(StaleContainerCleanupTarget {
+                engine: engine.to_string(),
+                name,
+                ownership: StaleContainerOwnership::Label,
+            });
+        }
+    }
+
+    for name in container_ps_names(
+        engine,
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            "status=exited",
+            "--filter",
+            "status=dead",
+            "--format",
+            "{{.Names}}",
+        ],
+    )? {
+        if !name.starts_with("ota-") || !seen.insert(name.clone()) {
+            continue;
+        }
+        containers.push(StaleContainerCleanupTarget {
+            engine: engine.to_string(),
+            name,
+            ownership: StaleContainerOwnership::LegacyName,
+        });
+    }
+
+    Ok(containers)
+}
+
+fn container_ps_names(engine: &str, args: &[&str]) -> Result<Vec<String>, RunError> {
+    let output = container_command_output(engine, args, None, "clean")?;
+    if output.exit_code != 0 {
+        return Ok(Vec::new());
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1871,6 +1984,10 @@ fn create_persistent_container(
             "-d",
             "--name",
             container_name,
+            "--label",
+            OTA_MANAGED_CONTAINER_LABEL,
+            "--label",
+            OTA_PERSISTENT_CONTAINER_LABEL,
             "--entrypoint",
             "sh",
             "-v",
@@ -3158,6 +3275,16 @@ tasks:
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(log.matches("run-persistent").count(), 1);
         assert_eq!(log.matches("exec").count(), 2);
+        let container_name =
+            persistent_container_name(fixture.dir.path(), "ghcr.io/ota/test:latest", "docker");
+        let labels = fs::read_to_string(
+            bin_dir
+                .join("docker-state")
+                .join(format!("{container_name}.labels")),
+        )
+        .unwrap();
+        assert!(labels.contains(super::OTA_MANAGED_CONTAINER_LABEL));
+        assert!(labels.contains(super::OTA_PERSISTENT_CONTAINER_LABEL));
     }
 
     #[cfg(unix)]
@@ -3733,6 +3860,53 @@ case "$command" in
   info)
     exit 0
     ;;
+  ps)
+    label_filter=""
+    want_stale=0
+    format=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -a)
+          shift
+          ;;
+        --filter)
+          case "$2" in
+            label=*)
+              label_filter="${2#label=}"
+              ;;
+            status=exited|status=dead)
+              want_stale=1
+              ;;
+          esac
+          shift 2
+          ;;
+        --format)
+          format="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    for path_file in "$state_dir"/*.path; do
+      [ -e "$path_file" ] || continue
+      name=$(basename "$path_file" .path)
+      if [ "$want_stale" = "1" ] && [ -f "$state_dir/$name.running" ]; then
+        continue
+      fi
+      if [ -n "$label_filter" ]; then
+        [ -f "$state_dir/$name.labels" ] || continue
+        grep -Fx "$label_filter" "$state_dir/$name.labels" >/dev/null || continue
+      fi
+      if [ "$format" = "{{.Names}}" ]; then
+        printf "%s\n" "$name"
+      else
+        printf "%s\n" "$name"
+      fi
+    done
+    exit 0
+    ;;
   inspect)
     if [ "$1" = "-f" ]; then
       format="$2"
@@ -3792,6 +3966,7 @@ case "$command" in
     detached=0
     mount=""
     name=""
+    labels=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -3806,6 +3981,11 @@ case "$command" in
           ;;
         --name)
           name="$2"
+          shift 2
+          ;;
+        --label)
+          labels="${labels}${2}
+"
           shift 2
           ;;
         -v)
@@ -3831,6 +4011,9 @@ case "$command" in
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
       : > "$state_dir/$name.running"
+      if [ -n "$labels" ]; then
+        printf "%s" "$labels" > "$state_dir/$name.labels"
+      fi
       printf "run-persistent\n" >> "$host_dir/docker-log.txt"
       exit 0
     fi
@@ -3853,6 +4036,7 @@ case "$command" in
     rm -f "$state_dir/$name.path"
     rm -f "$state_dir/$name.running"
     rm -f "$state_dir/$name.no-start-revive"
+    rm -f "$state_dir/$name.labels"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
   ;;

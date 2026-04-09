@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added `ota clean --stale` with `--dry-run` and `--json` so exited ota-managed containers can be previewed or removed across repos without requiring an `ota.yaml`, while keeping plain `ota clean` scoped to the current repo contract.
+- started labeling new persistent ota containers for ownership-safe stale cleanup and kept a legacy `ota-*` name fallback so older containers remain discoverable.
 - added a first-class `Adapter bootstrap failed: sdkman` finding to container-mode `ota up` so the bootstrap boundary is explicit while preserving the real backend stderr and the container-specific rerun hint.
 - made `ota up` bootstrap failure findings derive their `Why:` and prerequisite `Next:` text from the real bootstrap stderr instead of hardcoded root-cause guesses, and enabled the shared command spinner for repo-level `ota up` so slow provisioning paths show progress.
 
