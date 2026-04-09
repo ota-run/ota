@@ -1,4 +1,4 @@
-🦦 ota v1.2.2
+🦦 ota v1.2.3
 Diagnose, prepare, and run repos from one explicit contract.
 Doctor first, contract second.
 
