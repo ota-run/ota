@@ -970,6 +970,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
         Commands::Validate { .. }
             | Commands::Tasks { .. }
             | Commands::Services { .. }
+            | Commands::Up { .. }
             | Commands::Doctor { .. }
             | Commands::Check { .. }
             | Commands::Diff { .. }
@@ -5333,6 +5334,19 @@ tasks:
                 channel: None,
             }
         ));
+    }
+
+    #[test]
+    fn up_uses_command_spinner() {
+        assert!(super::command_supports_spinner(&super::Commands::Up {
+            path: None,
+            json: false,
+            backend: None,
+            lifecycle: None,
+            ephemeral: false,
+            receipt: false,
+            member: Vec::new(),
+        }));
     }
 
     #[test]
