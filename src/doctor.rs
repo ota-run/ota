@@ -542,11 +542,19 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
 }
 
 pub fn diagnose_preconditions(contract: &Contract, contract_path: &Path) -> DoctorReport {
+    diagnose_preconditions_with_mode(contract, contract_path, DoctorMode::Native)
+}
+
+pub fn diagnose_preconditions_with_mode(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+) -> DoctorReport {
     diagnose_contract_with_scope(
         contract,
         contract_path,
         DoctorScope::Preconditions,
-        DoctorMode::Native,
+        mode,
     )
 }
 
@@ -2169,8 +2177,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
-        diagnose_contract, diagnose_preconditions, tool_executable_name, version_matches,
+        DoctorMode, FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
+        diagnose_contract, diagnose_preconditions, diagnose_preconditions_with_mode,
+        tool_executable_name, version_matches,
     };
 
     #[cfg(unix)]
@@ -2254,6 +2263,70 @@ tasks:
             report.findings[0].summary,
             "Ephemeral lifecycle is advisory only in V1"
         );
+    }
+
+    #[test]
+    fn preconditions_in_container_mode_skip_host_bound_env_checks() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let tempdir = TempDir::new().unwrap();
+        let bin_dir = tempdir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", bin_dir.display(), original_path);
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "docker.cmd" } else { "docker" },
+            if cfg!(windows) {
+                "@echo off\r\nif \"%*\"==\"version\" echo Docker version 29.3.1\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"version\" ]; then echo 'Docker version 29.3.1'; fi\n"
+            },
+        );
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: jdxcode/mise:latest
+env:
+  OTA_CONTAINER_ONLY_REQUIRED:
+    required: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions_with_mode(
+            &contract,
+            Path::new("ota.yaml"),
+            DoctorMode::Container,
+        );
+
+        assert!(report.ok, "findings={:?}", report.findings);
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.summary.contains("Missing environment variable")),
+            "unexpected host-bound env finding: {:?}",
+            report.findings
+        );
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
     }
 
     #[test]
