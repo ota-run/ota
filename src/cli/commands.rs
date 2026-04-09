@@ -12548,7 +12548,7 @@ mod tests {
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_up_result,
         render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
-        stylize_text_failure, workspace_refresh_command,
+        stylize_text_failure, up_doctor_mode, workspace_refresh_command,
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{DetectComparison, DetectComparisonRemoval};
@@ -12559,6 +12559,7 @@ mod tests {
     };
     use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
+    use crate::schema::Backend;
     use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
     use tempfile::TempDir;
 
@@ -14393,6 +14394,43 @@ policies:
         assert!(rendered.contains(
             "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
         ));
+    }
+
+    #[test]
+    fn up_doctor_mode_uses_effective_execution_preference() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: container-first
+execution:
+  preferred: container
+  supported:
+    - native
+    - container
+  lifecycle: persistent
+  backends:
+    container:
+      image: jdxcode/mise:latest
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            up_doctor_mode(&contract, ExecutionOverrides::default()),
+            DoctorMode::Container
+        );
+        assert_eq!(
+            up_doctor_mode(
+                &contract,
+                ExecutionOverrides {
+                    backend: Some(Backend::Native),
+                    ..ExecutionOverrides::default()
+                }
+            ),
+            DoctorMode::Native
+        );
     }
 
     #[test]
@@ -17955,10 +17993,10 @@ fn provisioning_execution_target(
     }
 }
 
-fn up_doctor_mode(overrides: ExecutionOverrides) -> DoctorMode {
-    match overrides.backend {
-        Some(Backend::Container) => DoctorMode::Container,
-        _ => DoctorMode::Native,
+fn up_doctor_mode(contract: &Contract, overrides: ExecutionOverrides) -> DoctorMode {
+    match effective_execution(contract, overrides).0 {
+        Backend::Container => DoctorMode::Container,
+        Backend::Native | Backend::Remote => DoctorMode::Native,
     }
 }
 
@@ -17973,7 +18011,7 @@ fn execute_repo_up(
     let mut stderr = String::new();
     let mut provisioned_setup = false;
     let provisioning_target = provisioning_execution_target(contract, overrides);
-    let doctor_mode = up_doctor_mode(overrides);
+    let doctor_mode = up_doctor_mode(contract, overrides);
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
     if !preflight.ok {
