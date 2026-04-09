@@ -33,7 +33,8 @@ use tempfile::TempDir;
 use ota::parser::load_contract;
 use ota::policy_pack::load_org_policy_pack_auto;
 use ota::provisioning::{
-    ProvisioningBackendError, ProvisioningExecutionTarget, apply_provisioning_request_with_target,
+    ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningOutputMode,
+    apply_provisioning_request_with_target,
 };
 use ota::validator::validate_contract;
 
@@ -776,7 +777,12 @@ fn provisioning_request_installs_real_tool_inside_container_on_real_command_path
         lifecycle: ota::schema::Lifecycle::Persistent,
     };
 
-    let outcome = match apply_provisioning_request_with_target(&request, fixture.path(), &target) {
+    let outcome = match apply_provisioning_request_with_target(
+        &request,
+        fixture.path(),
+        &target,
+        ProvisioningOutputMode::Capture,
+    ) {
         Ok(outcome) => outcome,
         Err(ProvisioningBackendError::CommandFailed { stderr, .. })
             if stderr.contains("Failed to fetch")
@@ -852,6 +858,7 @@ fn provisioning_request_uses_real_linux_mirror_policy_on_real_command_path() {
         &request,
         fixture.path(),
         &ProvisioningExecutionTarget::Native,
+        ProvisioningOutputMode::Capture,
     )
     .expect("provisioning request should apply");
     assert!(outcome.stderr.is_empty());
