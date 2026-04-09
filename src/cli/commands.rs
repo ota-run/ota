@@ -44,9 +44,9 @@ use crate::contract_drift::{
 use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
-    container_apt_failure_finding, diagnose_checks_only, diagnose_contract,
-    diagnose_contract_in_mode, diagnose_policy_review, diagnose_preconditions,
-    diagnose_preconditions_with_mode, diagnose_service, diagnose_services_only,
+    diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
+    diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
+    diagnose_services_only, provisioning_installability_finding,
 };
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
@@ -77,8 +77,8 @@ use crate::policy_pack::{
     LoadedOrgPolicyPack, load_org_policy_pack_auto, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
-    ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningOutputMode,
-    apply_provisioning_request_with_target,
+    ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
+    ProvisioningOutputMode, apply_provisioning_request_with_target,
 };
 use crate::runner::{
     EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, StaleContainerOwnership,
@@ -12809,6 +12809,40 @@ fn prepend_finding_if_missing(findings: &mut Vec<Finding>, finding: Finding) {
     findings.insert(0, finding);
 }
 
+fn rerun_up_command_for_target(target: &ProvisioningExecutionTarget) -> &'static str {
+    match target {
+        ProvisioningExecutionTarget::Container { .. } => "ota up --mode container",
+        ProvisioningExecutionTarget::Native => "ota up",
+    }
+}
+
+fn up_provisioning_failure_finding(
+    diagnosis: &ProvisioningFailureDiagnosis,
+    target: &ProvisioningExecutionTarget,
+) -> Finding {
+    provisioning_installability_finding(diagnosis, target, rerun_up_command_for_target(target))
+}
+
+fn prepend_up_provisioning_failure_finding(
+    findings: &mut Vec<Finding>,
+    diagnosis: &ProvisioningFailureDiagnosis,
+    target: &ProvisioningExecutionTarget,
+) {
+    let dependency_prefix = match diagnosis.target_kind {
+        crate::policy_pack::ProvisioningTargetKind::Runtime => "runtime",
+        crate::policy_pack::ProvisioningTargetKind::Tool => "tool",
+    };
+    let missing_summary = format!("Missing {dependency_prefix}: {}", diagnosis.name);
+    let mismatch_summary = format!(
+        "Version mismatch for {dependency_prefix}: {}",
+        diagnosis.name
+    );
+    findings.retain(|finding| {
+        finding.summary != missing_summary && finding.summary != mismatch_summary
+    });
+    prepend_finding_if_missing(findings, up_provisioning_failure_finding(diagnosis, target));
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -18768,30 +18802,22 @@ fn execute_repo_up(
                     preflight =
                         diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
                 }
-                Err(ProvisioningBackendError::AptCommandFailed {
+                Err(ProvisioningBackendError::DiagnosedCommandFailed {
                     stdout: backend_stdout,
                     stderr: backend_stderr,
                     exit_code,
-                    failure,
+                    diagnosis,
                     ..
-                }) if doctor_mode == DoctorMode::Container => {
+                }) => {
                     if capture_phase_output {
                         stdout.push_str(&backend_stdout);
                         stderr.push_str(&backend_stderr);
                     }
                     let mut report = preflight;
-                    prepend_finding_if_missing(
+                    prepend_up_provisioning_failure_finding(
                         &mut report.findings,
-                        container_apt_failure_finding(
-                            &failure,
-                            match &provisioning_target {
-                                ProvisioningExecutionTarget::Container { image, .. } => {
-                                    Some(image.as_str())
-                                }
-                                ProvisioningExecutionTarget::Native => None,
-                            },
-                            "ota up --mode container",
-                        ),
+                        &diagnosis,
+                        &provisioning_target,
                     );
                     return Ok(RepoUpResult {
                         ok: false,
@@ -18820,20 +18846,12 @@ fn execute_repo_up(
                         stderr,
                     });
                 }
-                Err(
-                    ProvisioningBackendError::CommandFailed {
-                        stdout: backend_stdout,
-                        stderr: backend_stderr,
-                        exit_code,
-                        ..
-                    }
-                    | ProvisioningBackendError::AptCommandFailed {
-                        stdout: backend_stdout,
-                        stderr: backend_stderr,
-                        exit_code,
-                        ..
-                    },
-                ) => {
+                Err(ProvisioningBackendError::CommandFailed {
+                    stdout: backend_stdout,
+                    stderr: backend_stderr,
+                    exit_code,
+                    ..
+                }) => {
                     if capture_phase_output {
                         stdout.push_str(&backend_stdout);
                         stderr.push_str(&backend_stderr);
@@ -18892,13 +18910,13 @@ fn execute_repo_up(
                                     bootstrapped = true;
                                 }
                                 Err(
-                                    ProvisioningBackendError::CommandFailed {
+                                    ProvisioningBackendError::DiagnosedCommandFailed {
                                         stdout: bootstrap_stdout,
                                         stderr: bootstrap_stderr,
                                         exit_code,
                                         ..
                                     }
-                                    | ProvisioningBackendError::AptCommandFailed {
+                                    | ProvisioningBackendError::CommandFailed {
                                         stdout: bootstrap_stdout,
                                         stderr: bootstrap_stderr,
                                         exit_code,
@@ -18992,31 +19010,22 @@ fn execute_repo_up(
                                     doctor_mode,
                                 );
                             }
-                            Err(ProvisioningBackendError::AptCommandFailed {
+                            Err(ProvisioningBackendError::DiagnosedCommandFailed {
                                 stdout: backend_stdout,
                                 stderr: backend_stderr,
                                 exit_code,
-                                failure,
+                                diagnosis,
                                 ..
-                            }) if doctor_mode == DoctorMode::Container => {
+                            }) => {
                                 if capture_phase_output {
                                     stdout.push_str(&backend_stdout);
                                     stderr.push_str(&backend_stderr);
                                 }
                                 let mut report = preflight;
-                                prepend_finding_if_missing(
+                                prepend_up_provisioning_failure_finding(
                                     &mut report.findings,
-                                    container_apt_failure_finding(
-                                        &failure,
-                                        match &provisioning_target {
-                                            ProvisioningExecutionTarget::Container {
-                                                image,
-                                                ..
-                                            } => Some(image.as_str()),
-                                            ProvisioningExecutionTarget::Native => None,
-                                        },
-                                        "ota up --mode container",
-                                    ),
+                                    &diagnosis,
+                                    &provisioning_target,
                                 );
                                 return Ok(RepoUpResult {
                                     ok: false,
@@ -19045,23 +19054,15 @@ fn execute_repo_up(
                                     stderr,
                                 });
                             }
-                            Err(
-                                ProvisioningBackendError::CommandFailed {
-                                    stdout: backend_stdout,
-                                    stderr: backend_stderr,
-                                    exit_code,
-                                    ..
-                                }
-                                | ProvisioningBackendError::AptCommandFailed {
-                                    stdout: backend_stdout,
-                                    stderr: backend_stderr,
-                                    exit_code,
-                                    ..
-                                },
-                            ) => {
+                            Err(ProvisioningBackendError::CommandFailed {
+                                stdout: bootstrap_stdout,
+                                stderr: bootstrap_stderr,
+                                exit_code,
+                                ..
+                            }) => {
                                 if capture_phase_output {
-                                    stdout.push_str(&backend_stdout);
-                                    stderr.push_str(&backend_stderr);
+                                    stdout.push_str(&bootstrap_stdout);
+                                    stderr.push_str(&bootstrap_stderr);
                                 }
                                 return Ok(RepoUpResult {
                                     ok: false,

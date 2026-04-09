@@ -80,6 +80,9 @@
 - Pattern: Adapter bootstrap lookup can silently fail if policy is queried with the raw missing executable (`sdk`) instead of the provisioning source (`sdkman`).
 - Correction: Derive bootstrap candidates from provisioning request sources and only fall back to the raw missing command when the request has no source information.
 - Rule: Bootstrap policy resolution belongs to adapter/source semantics, not shell command names.
+- Pattern: Fixing one backend's installability failure in isolation creates uneven trust if other adapters can fail the same way but still fall back to generic stderr.
+- Correction: When a provisioning failure is classified into a user-facing root cause, define the classification model once and apply it across all adapters that can surface the same failure class.
+- Rule: Backend-specific trust fixes must be designed as shared taxonomy, not one-off backend patches, unless the product explicitly scopes the behavior to a single adapter family.
 - Pattern: Global cleanup can silently lie if backend discovery treats a failed `docker ps` / `podman ps` query as “no stale containers found”.
 - Correction: Surface stale-clean backend query failures as command errors with the real engine output instead of collapsing them into an empty result.
 - Rule: Cleanup discovery must fail closed; when ota cannot inspect ownership safely, it must report the query failure, not success.
@@ -92,3 +95,6 @@
 - Pattern: Coarse per-engine progress lines can become noisy when the command already has an interactive spinner and the user did not ask for stream output.
 - Correction: Keep the spinner for interactive stale cleanup, but do not stream engine-scan lines by default.
 - Rule: Default interactive progress should be lightweight; reserve explicit streaming text for commands that already expose `--stream` or similar.
+- Pattern: Backend-specific diagnosis work can drift into a one-adapter implementation if the command layer is patched before the shared provisioning taxonomy is finished.
+- Correction: Put the generic diagnosed-failure model in the provisioning layer first, then let command and doctor surfaces consume it; backend-specific subtype detail should hang off that shared path instead of replacing it.
+- Rule: When a premium failure surface is meant to apply across adapters, the canonical boundary must be generic before any adapter-specific wording is added.

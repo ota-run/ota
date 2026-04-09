@@ -27,7 +27,7 @@
 ## Unreleased
 
 - added `ota up --stream` for repo-level text runs so provisioning, required service `start` commands, and the `setup` task can expose raw live child output on demand while default `ota up` stays compact and keeps failed child output inside the final report.
-- added typed Linux/container `apt` diagnosis so `ota doctor --mode container` and `ota up --mode container` can distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the selected image cannot satisfy an `apt`-backed policy pin.
+- added backend-aware provisioning diagnosis so `ota up` now surfaces higher-level installability failures across the shipped adapters while preserving raw backend output, and `ota doctor --mode container` now uses safe non-mutating installability probes for `apt` and `brew`, with richer `apt` classification for pinned-version unavailable, package unavailable, and apt-index/source failures.
 
 ## 1.2.3
 
