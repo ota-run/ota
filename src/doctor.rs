@@ -39,7 +39,11 @@ use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
     ProvisioningPlan, ProvisioningTargetKind, load_org_policy_pack_auto_details,
 };
-use crate::provisioning::render_provisioning_action_command;
+use crate::provisioning::{
+    AptProvisioningFailure, AptProvisioningFailureKind, ProvisioningBackendError,
+    ProvisioningExecutionTarget, probe_apt_installability_with_target,
+    render_provisioning_action_command,
+};
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
     ServiceSpec,
@@ -120,6 +124,63 @@ struct ContainerProbeContext {
     engine: String,
 }
 
+pub(crate) fn container_apt_failure_finding(
+    failure: &AptProvisioningFailure,
+    image: Option<&str>,
+    rerun_command: &str,
+) -> Finding {
+    let image_hint = image
+        .map(|value| format!(" (currently `{value}`)"))
+        .unwrap_or_default();
+
+    match failure.kind {
+        AptProvisioningFailureKind::VersionUnavailable => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container apt cannot install pinned package version: {}",
+                failure.package
+            ),
+            why: format!(
+                "the Linux/container target requests `{} {}`, but the configured apt sources do not provide that version",
+                failure.package, failure.version
+            ),
+            next: format!(
+                "update the selected container image{image_hint} or its apt sources, or relax the Linux/container version pin for `{}`, then rerun `{rerun_command}`",
+                failure.package
+            ),
+        },
+        AptProvisioningFailureKind::PackageUnavailable => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container apt cannot locate required package: {}",
+                failure.package
+            ),
+            why: format!(
+                "the Linux/container target requests `{}`, but the configured apt sources do not provide that package",
+                failure.package
+            ),
+            next: format!(
+                "update the selected container image{image_hint} or its apt sources so `{}` is available, then rerun `{rerun_command}`",
+                failure.package
+            ),
+        },
+        AptProvisioningFailureKind::IndexUnavailable => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Container apt cannot refresh configured sources: {}",
+                failure.package
+            ),
+            why: format!(
+                "the Linux/container target could not refresh apt indexes, so ota could not verify or install `{} {}`",
+                failure.package, failure.version
+            ),
+            next: format!(
+                "fix apt repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
+            ),
+        },
+    }
+}
+
 impl Finding {
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
         match self.summary.as_str() {
@@ -192,6 +253,15 @@ impl Finding {
             s if s.starts_with("Missing runtime: ") => "OTA_RUNTIME_MISSING",
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            s if s.starts_with("Container apt cannot install pinned package version: ") => {
+                "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Container apt cannot locate required package: ") => {
+                "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            }
+            s if s.starts_with("Container apt cannot refresh configured sources: ") => {
+                "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            }
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
             "Adapter bootstrap sources are declared" => {
@@ -221,6 +291,9 @@ impl Finding {
             | "OTA_RUNTIME_MISSING"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING" => "environment",
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => "provisioning",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
             | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "policy",
@@ -247,6 +320,9 @@ impl Finding {
             | "OTA_RUNTIME_MISSING"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING" => "host",
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => "container_target",
             "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => {
                 "remote_backend"
             }
@@ -343,6 +419,30 @@ impl Finding {
                 "the required runtime or tool was not available".to_string(),
                 "the required runtime or tool is available on PATH".to_string(),
                 "host".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
+                "the configured container apt sources do not provide the pinned package version"
+                    .to_string(),
+                "the configured container apt sources provide the pinned package version"
+                    .to_string(),
+                "container_apt".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE" => (
+                "the configured container apt sources do not provide the requested package"
+                    .to_string(),
+                "the configured container apt sources provide the requested package".to_string(),
+                "container_apt".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => (
+                "the configured container apt sources could not refresh indexes".to_string(),
+                "the configured container apt sources refresh successfully".to_string(),
+                "container_apt".to_string(),
                 String::new(),
                 String::new(),
             ),
@@ -1684,6 +1784,23 @@ fn diagnose_command_version(
     };
 
     let Some(actual) = actual else {
+        if mode == DoctorMode::Container
+            && let Some(failure) = container_apt_installability_failure(
+                target_kind,
+                display_name,
+                requirement,
+                container_probe,
+                contract_path,
+                provisioning_actions,
+            )
+        {
+            findings.push(container_apt_failure_finding(
+                &failure,
+                container_probe.map(|probe| probe.image.as_str()),
+                "ota doctor --mode container",
+            ));
+            return;
+        }
         let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding {
             severity: if required {
@@ -1724,6 +1841,24 @@ fn diagnose_command_version(
         return;
     }
 
+    if mode == DoctorMode::Container
+        && let Some(failure) = container_apt_installability_failure(
+            target_kind,
+            display_name,
+            requirement,
+            container_probe,
+            contract_path,
+            provisioning_actions,
+        )
+    {
+        findings.push(container_apt_failure_finding(
+            &failure,
+            container_probe.map(|probe| probe.image.as_str()),
+            "ota doctor --mode container",
+        ));
+        return;
+    }
+
     let container_image = container_probe.map(|probe| probe.image.as_str());
     findings.push(Finding {
         severity: if required {
@@ -1759,6 +1894,33 @@ fn diagnose_command_version(
                 }),
         },
     });
+}
+
+fn container_apt_installability_failure(
+    target_kind: ProvisioningTargetKind,
+    display_name: &str,
+    requirement: &str,
+    container_probe: Option<&ContainerProbeContext>,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+) -> Option<AptProvisioningFailure> {
+    let container_probe = container_probe?;
+    let action = provisioning_actions.iter().find(|action| {
+        action.source == "apt"
+            && action.target_kind == target_kind
+            && action.name == display_name
+            && action.requested_version == requirement
+    })?;
+    let target = ProvisioningExecutionTarget::Container {
+        image: container_probe.image.clone(),
+        engine: container_probe.engine.clone(),
+        lifecycle: Lifecycle::Ephemeral,
+    };
+    match probe_apt_installability_with_target(action, contract_working_dir(contract_path), &target)
+    {
+        Err(ProvisioningBackendError::AptCommandFailed { failure, .. }) => Some(failure),
+        _ => None,
+    }
 }
 
 fn command_version_in_container(engine: &str, image: &str, name: &str) -> Option<String> {

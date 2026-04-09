@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::io::{self, Read, Write};
+use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -31,7 +31,9 @@ use thiserror::Error;
 use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
 };
-use crate::runner::persistent_container_name;
+use crate::runner::{
+    StreamPhaseLoader, join_stream_reader, persistent_container_name, stream_reader_to_sink,
+};
 use crate::schema::Lifecycle;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +59,20 @@ pub enum ProvisioningOutputMode {
     StreamAndCapture,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AptProvisioningFailureKind {
+    VersionUnavailable,
+    PackageUnavailable,
+    IndexUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AptProvisioningFailure {
+    pub package: String,
+    pub version: String,
+    pub kind: AptProvisioningFailureKind,
+}
+
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProvisioningBackendError {
     #[error("unsupported provisioning source `{provisioning_source}`")]
@@ -76,6 +92,14 @@ pub enum ProvisioningBackendError {
         exit_code: i32,
         stdout: String,
         stderr: String,
+    },
+    #[error("apt provisioning command `{command}` exited with status {exit_code}")]
+    AptCommandFailed {
+        command: String,
+        exit_code: i32,
+        stdout: String,
+        stderr: String,
+        failure: AptProvisioningFailure,
     },
 }
 
@@ -409,6 +433,71 @@ impl AptProvisioningBackend {
                 )
             }
         }
+    }
+
+    fn probe_command(
+        install_target: &str,
+        source_lines: &[String],
+    ) -> (String, Vec<String>, String) {
+        if source_lines.is_empty() {
+            let shell_script = format!(
+                "apt-get {} update >/dev/null && apt-get {} install -s -y {install_target}",
+                Self::apt_options(),
+                Self::apt_options()
+            );
+            return (
+                String::from("sh"),
+                vec![String::from("-lc"), shell_script],
+                format!("apt-get install -s -y {install_target}"),
+            );
+        }
+
+        let sources_list = source_lines.join("\n");
+        let shell_script = format!(
+            "set -e; tmpdir=$(mktemp -d); cat > \"$tmpdir/sources.list\" <<'EOF'\n{sources_list}\nEOF\napt-get {} -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" update >/dev/null && apt-get {} -o Dir::Etc::sourcelist=\"$tmpdir/sources.list\" -o Dir::Etc::sourceparts=\"-\" install -s -y {install_target}",
+            Self::apt_options(),
+            Self::apt_options()
+        );
+        (
+            String::from("sh"),
+            vec![String::from("-lc"), shell_script],
+            format!("apt-get install -s -y {install_target} using source_config.sources_list"),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<AptProvisioningFailure> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("version '")
+            && combined.contains("' for '")
+            && combined.contains("' was not found")
+        {
+            Some(AptProvisioningFailureKind::VersionUnavailable)
+        } else if combined.contains("unable to locate package")
+            || combined.contains("has no installation candidate")
+            || combined.contains("is not available")
+        {
+            Some(AptProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("failed to fetch")
+            || combined.contains("some index files failed to download")
+            || combined.contains("temporary failure resolving")
+            || combined.contains("could not resolve")
+            || combined.contains("connection failed")
+            || combined.contains("does not have a release file")
+        {
+            Some(AptProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(AptProvisioningFailure {
+            package: action.name.clone(),
+            version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -1301,6 +1390,15 @@ impl ProvisioningBackend for AptProvisioningBackend {
             stderr.push_str(&output.stderr);
 
             if output.exit_code != 0 {
+                if let Some(failure) = Self::classify_failure(action, &stdout, &stderr) {
+                    return Err(ProvisioningBackendError::AptCommandFailed {
+                        command: command_display,
+                        exit_code: output.exit_code,
+                        stdout,
+                        stderr,
+                        failure,
+                    });
+                }
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: command_display,
                     exit_code: output.exit_code,
@@ -1974,6 +2072,58 @@ pub fn apply_provisioning_request_with_target(
     Ok(ProvisioningBackendOutput { stdout, stderr })
 }
 
+pub fn probe_apt_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "apt" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let install_target = AptProvisioningBackend::install_target(action);
+    let source_lines = AptProvisioningBackend::source_lines(action);
+    let (command, args, command_display) =
+        AptProvisioningBackend::probe_command(&install_target, &source_lines);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    if let Some(failure) =
+        AptProvisioningBackend::classify_failure(action, &output.stdout, &output.stderr)
+    {
+        return Err(ProvisioningBackendError::AptCommandFailed {
+            command: command_display,
+            exit_code: output.exit_code,
+            stdout: output.stdout,
+            stderr: output.stderr,
+            failure,
+        });
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: command_display,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProvisioningCommandOutput {
     exit_code: i32,
@@ -2019,6 +2169,8 @@ fn command_output(
             })
         }
         ProvisioningOutputMode::StreamAndCapture => {
+            let loader = StreamPhaseLoader::start("Provisioning");
+            let notifier = loader.as_ref().map(|loader| loader.notifier());
             let mut child = child
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -2027,14 +2179,18 @@ fn command_output(
                     command: command.to_string(),
                 })?;
 
-            let stdout_handle = child
-                .stdout
-                .take()
-                .map(|stdout| thread::spawn(move || stream_and_capture(stdout, io::stdout())));
-            let stderr_handle = child
-                .stderr
-                .take()
-                .map(|stderr| thread::spawn(move || stream_and_capture(stderr, io::stderr())));
+            let stdout_notifier = notifier.clone();
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || {
+                    stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, true)
+                })
+            });
+            let stderr_notifier = notifier;
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || {
+                    stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true)
+                })
+            });
 
             let status = child
                 .wait()
@@ -2042,60 +2198,30 @@ fn command_output(
                     command: command.to_string(),
                 })?;
 
+            if let Some(loader) = loader {
+                loader.stop();
+            }
+
             Ok(ProvisioningCommandOutput {
                 exit_code: status.code().unwrap_or(1),
-                stdout: join_stream_capture(stdout_handle).map_err(|message| {
+                stdout: join_stream_reader(stdout_handle).map_err(|error| {
                     ProvisioningBackendError::CommandFailed {
                         command: command.to_string(),
                         exit_code: status.code().unwrap_or(1),
                         stdout: String::new(),
-                        stderr: message,
+                        stderr: format!("failed to read streamed provisioning output: {error}"),
                     }
                 })?,
-                stderr: join_stream_capture(stderr_handle).map_err(|message| {
+                stderr: join_stream_reader(stderr_handle).map_err(|error| {
                     ProvisioningBackendError::CommandFailed {
                         command: command.to_string(),
                         exit_code: status.code().unwrap_or(1),
                         stdout: String::new(),
-                        stderr: message,
+                        stderr: format!("failed to read streamed provisioning output: {error}"),
                     }
                 })?,
             })
         }
-    }
-}
-
-fn stream_and_capture<R, W>(mut reader: R, mut sink: W) -> io::Result<String>
-where
-    R: Read,
-    W: Write,
-{
-    let mut captured = Vec::new();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        let read = reader.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        captured.extend_from_slice(&buffer[..read]);
-        let _ = sink.write_all(&buffer[..read]);
-        let _ = sink.flush();
-    }
-    Ok(String::from_utf8_lossy(&captured).into_owned())
-}
-
-fn join_stream_capture(
-    handle: Option<thread::JoinHandle<io::Result<String>>>,
-) -> Result<String, String> {
-    match handle {
-        Some(handle) => match handle.join() {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(error)) => Err(format!(
-                "failed to read streamed provisioning output: {error}"
-            )),
-            Err(_) => Err(String::from("streamed provisioning output thread panicked")),
-        },
-        None => Ok(String::new()),
     }
 }
 
@@ -2368,8 +2494,13 @@ mod tests {
     #[test]
     fn stream_and_capture_mirrors_and_collects_output() {
         let mut sink = Vec::new();
-        let captured =
-            super::stream_and_capture(std::io::Cursor::new(b"streamed-output"), &mut sink).unwrap();
+        let captured = stream_reader_to_sink(
+            std::io::Cursor::new(b"streamed-output"),
+            &mut sink,
+            None,
+            true,
+        )
+        .unwrap();
         assert_eq!(captured, "streamed-output");
         assert_eq!(String::from_utf8(sink).unwrap(), "streamed-output");
     }
@@ -3132,6 +3263,129 @@ mod tests {
         assert!(log_contents.contains("install"));
         assert!(log_contents.contains("-y"));
         assert!(log_contents.contains("jq=1.7"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_container_apt_request_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "curl".to_string(),
+                requested_version: "8.13.0".to_string(),
+                source: "apt".to_string(),
+                source_config: None,
+                approved_version: Some("8.13.0".to_string()),
+            }],
+        };
+
+        let result = apply_provisioning_request_with_target(
+            &request,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "debian:bookworm-slim".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+            ProvisioningOutputMode::Capture,
+        );
+
+        match result {
+            Err(ProvisioningBackendError::AptCommandFailed {
+                stderr, failure, ..
+            }) => {
+                assert!(stderr.contains("Version '8.13.0' for 'curl' was not found"));
+                assert_eq!(failure.package, "curl");
+                assert_eq!(failure.version, "8.13.0");
+                assert_eq!(failure.kind, AptProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected apt version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_apt_installability_reports_index_failure() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "jq".to_string(),
+            requested_version: "1.7.1".to_string(),
+            source: "apt".to_string(),
+            source_config: None,
+            approved_version: Some("1.7.1".to_string()),
+        };
+
+        let result = probe_apt_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "debian:bookworm-slim".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::AptCommandFailed {
+                stderr, failure, ..
+            }) => {
+                assert!(stderr.contains("Failed to fetch"));
+                assert_eq!(failure.package, "jq");
+                assert_eq!(failure.version, "1.7.1");
+                assert_eq!(failure.kind, AptProvisioningFailureKind::IndexUnavailable);
+            }
+            other => panic!("expected apt index-unavailable failure, got {other:?}"),
+        }
 
         unsafe {
             env::set_var("PATH", original_path);

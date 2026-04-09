@@ -599,6 +599,8 @@ ota doctor --member api --member web --json [PATH]
 - `kubectl` targets not starting with `pod/`
 - checks runtime and tool presence on `PATH`
 - in container mode, runtime and tool findings are evaluated against the selected container image instead of the host PATH
+- in container mode, when a Linux/container policy pin uses `apt`, ota also probes whether the selected image's configured apt sources can actually provide that pinned package or version
+- in container mode, apt-backed findings now distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
 - in container mode, host-bound env, check, and service healthchecks are omitted so container diagnosis does not mix execution contexts
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
@@ -790,6 +792,7 @@ Current behavior:
 - runs blocking precondition checks
 - when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
+- when container/Linux provisioning uses `apt`, ota classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures while still preserving the raw backend stdout/stderr in the failure output
 - `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
 - runs explicit `services.<name>.start` commands for required services before setup
 - starts required services, and required-service dependencies, in declared dependency order

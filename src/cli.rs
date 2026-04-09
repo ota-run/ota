@@ -11618,6 +11618,119 @@ runtimes:
     }
 
     #[test]
+    fn doctor_container_mode_reports_apt_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  curl: "8.13.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: apt
+      approved_versions:
+        - "8.13.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"curl --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"curl --version\"*) exit 1 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Container apt cannot install pinned package version: curl"));
+        assert!(text.contains("Image:"));
+        assert!(text.contains("`premium/test:latest`"));
+        assert!(text.contains("relax the Linux/container version pin for `curl`"));
+        assert!(!text.contains("Missing tool: curl"));
+    }
+
+    #[test]
+    fn doctor_native_mode_keeps_host_failure_for_apt_backed_policy() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: native-host
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  yq: "4.52.5"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    yq:
+      source: apt
+      approved_versions:
+        - "4.52.5"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nexit /b 0\r\n"
+        } else {
+            "#!/bin/sh\nexit 0\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = bin_dir.as_os_str().to_os_string();
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Missing tool: yq"));
+        assert!(!text.contains("Container apt cannot"));
+    }
+
+    #[test]
     fn doctor_container_mode_skips_host_bound_readiness_checks() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
@@ -12243,6 +12356,64 @@ tools:
 
         assert_eq!(output.exit_code, 1);
         assert_text_snapshot("explain_narrow_premium.txt", &strip_ansi(&output.stdout));
+    }
+
+    #[test]
+    fn up_container_mode_surfaces_apt_version_unavailable_finding() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  curl: "8.13.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: apt
+      approved_versions:
+        - "8.13.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"curl --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"curl --version\"*) exit 1 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--mode", "container", "."]);
+
+        assert_eq!(output.exit_code, 100);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("PROVISION FAILED"));
+        assert!(text.contains("Container apt cannot install pinned package version: curl"));
+        assert!(text.contains("Task output: E: Version '8.13.0' for 'curl' was not found"));
+        assert!(text.contains("ota up --mode container"));
+        assert!(!text.contains("Missing tool: curl"));
     }
 
     #[test]
