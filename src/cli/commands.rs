@@ -10816,6 +10816,7 @@ fn render_primary_finding_text(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DoctorFindingGroupKind {
     ToolingVersion,
+    AdapterBootstrap,
     EnvironmentValue,
     ContractDrift,
     PolicySurface,
@@ -10905,6 +10906,7 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
         | "OTA_RUNTIME_MISSING"
         | "OTA_TOOL_VERSION_MISMATCH"
         | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
@@ -10958,6 +10960,7 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
         | "OTA_RUNTIME_MISSING"
         | "OTA_TOOL_VERSION_MISMATCH"
         | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
@@ -11003,6 +11006,9 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
         | "OTA_RUNTIME_MISSING"
         | "OTA_TOOL_VERSION_MISMATCH"
         | "OTA_TOOL_MISSING" => DoctorFindingGroupKind::ToolingVersion,
+        _ if summary.starts_with("Adapter bootstrap failed: ") => {
+            DoctorFindingGroupKind::AdapterBootstrap
+        }
         "OTA_ENV_MISSING" | "OTA_ENV_INVALID" => DoctorFindingGroupKind::EnvironmentValue,
         "OTA_CONTRACT_DRIFT" => DoctorFindingGroupKind::ContractDrift,
         "OTA_POLICY_PACK_VIOLATION"
@@ -11116,6 +11122,7 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
             String::from("Install required runtimes and tools")
         }
         DoctorFindingGroupKind::ToolingVersion => String::from("Fix version mismatches"),
+        DoctorFindingGroupKind::AdapterBootstrap => String::from("Adapter bootstrap failed"),
         DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
             String::from("Set missing environment variables")
         }
@@ -11151,6 +11158,10 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
         DoctorFindingGroupKind::ToolingVersion => {
             String::from("one or more runtime or tool entries do not match the contract")
         }
+        DoctorFindingGroupKind::AdapterBootstrap => findings
+            .first()
+            .map(|finding| compact_backticked_paths(&finding.why))
+            .unwrap_or_else(|| String::from("one or more adapter bootstrap paths failed")),
         DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
             String::from("one or more required environment variables are not set")
         }
@@ -11212,6 +11223,10 @@ fn doctor_finding_group_next(
         DoctorFindingGroupKind::ToolingVersion => {
             String::from("install compatible runtimes and tools, then rerun `ota doctor`")
         }
+        DoctorFindingGroupKind::AdapterBootstrap => findings
+            .first()
+            .map(|finding| compact_backticked_paths(&finding.next))
+            .unwrap_or_else(|| String::from("rerun `ota up`")),
         DoctorFindingGroupKind::EnvironmentValue if has_missing_env && !has_invalid_env => {
             String::from("set the listed environment variables, then rerun `ota doctor`")
         }
@@ -11304,6 +11319,14 @@ fn doctor_finding_group_item_text(
                     format!("{subject} resolved `{observed}`, requires `{expected}`{command_hint}")
                 }
                 _ => format!("{subject}{command_hint}"),
+            }
+        }
+        DoctorFindingGroupKind::AdapterBootstrap => {
+            let subject = subject.trim();
+            if let Some((adapter, source)) = subject.split_once(" via ") {
+                format!("`{}` via `{}`", adapter.trim(), source.trim())
+            } else {
+                format!("`{subject}`")
             }
         }
         DoctorFindingGroupKind::ContractDrift => subject.to_string(),
@@ -11508,6 +11531,9 @@ fn explain_group_next(group: &DoctorFindingGroup<'_>) -> String {
 
 fn explain_group_item_text(group: &DoctorFindingGroup<'_>, finding: &Finding) -> String {
     match group.kind {
+        DoctorFindingGroupKind::AdapterBootstrap => {
+            doctor_finding_group_item_text(&group.kind, finding, false)
+        }
         DoctorFindingGroupKind::ToolingVersion => {
             doctor_finding_group_item_text(&group.kind, finding, false)
         }
@@ -12315,13 +12341,6 @@ fn adapter_bootstrap_request_for_missing_backend(
     policy_pack.adapter_bootstrap_backend_request(&adapters)
 }
 
-fn bootstrap_failure_summary(request: &crate::policy_pack::ProvisioningBackendRequest) -> String {
-    match request.actions.as_slice() {
-        [action] => format!("Adapter bootstrap failed: {}", action.name),
-        _ => String::from("Adapter bootstrap failed"),
-    }
-}
-
 fn first_nonempty_line(text: &str) -> Option<&str> {
     text.lines().map(str::trim).find(|line| !line.is_empty())
 }
@@ -12367,11 +12386,11 @@ fn format_backticked_list(values: &[String]) -> String {
     }
 }
 
-fn bootstrap_failure_finding(
+fn bootstrap_failure_findings(
     request: &crate::policy_pack::ProvisioningBackendRequest,
     doctor_mode: DoctorMode,
     stderr: &str,
-) -> Finding {
+) -> Vec<Finding> {
     let rerun = match doctor_mode {
         DoctorMode::Container => "ota up --mode container",
         DoctorMode::Native => "ota up",
@@ -12384,23 +12403,17 @@ fn bootstrap_failure_finding(
         DoctorMode::Container => "container image",
         DoctorMode::Native => "host",
     };
-    let source_label = match request.actions.as_slice() {
-        [action] if !action.source.trim().is_empty() => format!("`{}`", action.source),
-        _ => String::from("the approved bootstrap source"),
-    };
     let missing_commands = extract_missing_backend_commands(stderr);
 
     let (why, next) = if !missing_commands.is_empty() {
         let commands = format_backticked_list(&missing_commands);
         (
-            format!(
-                "{source_label} could not run because required commands are missing from the {environment}: {commands}"
-            ),
+            format!("required commands are missing from the {environment}: {commands}"),
             format!("install {commands} in the {install_target}, then rerun `{rerun}`"),
         )
     } else if let Some(line) = first_nonempty_line(stderr) {
         (
-            format!("{source_label} could not run in the {environment}: `{line}`"),
+            format!("bootstrap backend failed in the {environment}: `{line}`"),
             format!("fix the bootstrap backend in the {install_target}, then rerun `{rerun}`"),
         )
     } else {
@@ -12415,12 +12428,32 @@ fn bootstrap_failure_finding(
         )
     };
 
-    Finding {
-        severity: FindingSeverity::Error,
-        summary: bootstrap_failure_summary(request),
-        why,
-        next,
+    if request.actions.is_empty() {
+        return vec![Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Adapter bootstrap failed"),
+            why,
+            next,
+        }];
     }
+
+    request
+        .actions
+        .iter()
+        .map(|action| Finding {
+            severity: FindingSeverity::Error,
+            summary: if request.actions.len() > 1 && !action.source.trim().is_empty() {
+                format!(
+                    "Adapter bootstrap failed: {} via {}",
+                    action.name, action.source
+                )
+            } else {
+                format!("Adapter bootstrap failed: {}", action.name)
+            },
+            why: why.clone(),
+            next: next.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -12432,7 +12465,7 @@ mod tests {
 
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
-        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_finding,
+        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, execute_repo_up,
         render_detect_comparison_section, render_execution_receipt_summary_block,
@@ -13956,8 +13989,8 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
-            findings: vec![
-                bootstrap_failure_finding(
+            findings: {
+                let mut findings = bootstrap_failure_findings(
                     &ProvisioningBackendRequest {
                         actions: vec![ProvisioningAction {
                             kind: ProvisioningActionKind::SelectSource,
@@ -13971,8 +14004,8 @@ policies:
                     },
                     DoctorMode::Container,
                     "bash: line 1: curl: command not found\nbash: line 1: zip: command not found",
-                ),
-                Finding {
+                );
+                findings.push(Finding {
                     severity: FindingSeverity::Error,
                     summary: String::from("Install required runtimes and tools (7)"),
                     why: String::from(
@@ -13981,8 +14014,8 @@ policies:
                     next: String::from(
                         "install or align the listed runtimes and tools, then rerun `ota doctor --mode container`",
                     ),
-                },
-                Finding {
+                });
+                findings.push(Finding {
                     severity: FindingSeverity::Info,
                     summary: String::from(
                         "Host-bound readiness checks are not evaluated in container mode",
@@ -13993,8 +14026,9 @@ policies:
                     next: String::from(
                         "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
                     ),
-                },
-            ],
+                });
+                findings
+            },
         };
 
         let rendered = strip_ansi_codes(&render_up_section_from_parts(
@@ -14020,13 +14054,72 @@ policies:
             .expect("preflight finding");
 
         assert!(bootstrap_index < preflight_index);
-        assert!(rendered.contains(
-            "Why: `sdkman-bootstrap` could not run because required commands are missing from the container: `curl` and `zip`"
-        ));
+        assert!(rendered.contains("required commands are missing from the container:"));
+        assert!(rendered.contains("`curl` and `zip`"));
         assert!(rendered.contains(
             "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
         ));
         assert!(rendered.contains("Task output: bash: line 1: curl: command not found"));
+    }
+
+    #[test]
+    fn up_groups_multiple_adapter_bootstrap_failures_into_concise_list() {
+        let findings = bootstrap_failure_findings(
+            &ProvisioningBackendRequest {
+                actions: vec![
+                    ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("brew"),
+                        requested_version: String::from("4.4"),
+                        source: String::from("brew-bootstrap"),
+                        source_config: None,
+                        approved_version: None,
+                    },
+                    ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("sdkman"),
+                        requested_version: String::from("1.0"),
+                        source: String::from("sdkman-bootstrap"),
+                        source_config: None,
+                        approved_version: None,
+                    },
+                ],
+            },
+            DoctorMode::Container,
+            "bash: line 1: curl: command not found\nbash: line 1: zip: command not found",
+        );
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings,
+        };
+
+        let rendered = strip_ansi_codes(&render_up_section_from_parts(
+            "./ota.yaml",
+            None,
+            "PROVISION FAILED",
+            "provisioning",
+            &report,
+            Some("container"),
+            None,
+            None,
+            None,
+            None,
+            Some("bash: line 1: curl: command not found\nbash: line 1: zip: command not found"),
+            Some(127),
+        ));
+
+        assert!(rendered.contains("ERROR  Adapter bootstrap failed (2)"));
+        assert!(rendered.contains("required commands are missing from the container:"));
+        assert!(rendered.contains("`curl` and `zip`"));
+        assert!(rendered.contains("» `brew` via `brew-bootstrap`"));
+        assert!(rendered.contains("» `sdkman` via `sdkman-bootstrap`"));
+        assert!(rendered.contains(
+            "Next: install `curl` and `zip` in the container image, then rerun `ota up --mode container`"
+        ));
     }
 
     #[test]
@@ -17689,14 +17782,13 @@ fn execute_repo_up(
                                     stdout.push_str(&bootstrap_stdout);
                                     stderr.push_str(&bootstrap_stderr);
                                     let mut report = preflight;
-                                    report.findings.insert(
-                                        0,
-                                        bootstrap_failure_finding(
-                                            &bootstrap_request,
-                                            doctor_mode,
-                                            &bootstrap_stderr,
-                                        ),
+                                    let mut findings = bootstrap_failure_findings(
+                                        &bootstrap_request,
+                                        doctor_mode,
+                                        &bootstrap_stderr,
                                     );
+                                    findings.extend(report.findings);
+                                    report.findings = findings;
                                     return Ok(RepoUpResult {
                                         ok: false,
                                         status: "PROVISION FAILED",
