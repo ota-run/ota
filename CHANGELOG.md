@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+## 1.2.3
+
+- improved `ota clean --stale` so it keeps querying available container engines, surfaces engine query failures, and removes exited ota-managed containers without silently treating daemon or permission errors as an empty stale set.
+- tightened stale-cleanup output and container-engine simulation coverage so older `ota-*` containers stay discoverable and the cleanup path stays explicit about what it matched or removed.
+
 ## 1.2.2
 
 - added `ota up --dry-run` with text and JSON preview output so operators can review the selected backend, lifecycle, target, planned provisioning/setup work, current skips, and first blocker before ota mutates repo or execution state.
