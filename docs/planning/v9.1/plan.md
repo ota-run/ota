@@ -32,6 +32,7 @@ Source direction:
 - [Docs clarity](../../spec/docs-clarity-spec.md)
 - [Command reference](../../spec/command-reference.md)
 - [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
+- [Up preview](../../spec/up-preview.md)
 
 V9.1 theme:
 
@@ -49,6 +50,7 @@ This slice is the public-adoption hardening pass before `v1.0.0`.
 - more actionable remediation text from `doctor` and `explain`
 - backend-aware diagnosis for container-first repos
 - a read-only policy review command surface
+- a read-only `ota up --dry-run` preview tied to the real repo-preparation path
 - stronger starter contract inference for common repo workflows
 - `AGENTS.md` export or sync from `ota.yaml`
 
@@ -113,6 +115,28 @@ Output contract:
 - when the repo asks for an unapproved runtime or source, `ota policy review` should point to `ota.yaml`
 - when the policy pack is missing an approved source or required rule, `ota policy review` should point to `.ota/org-policy.yaml`
 - both commands should keep JSON output stable and read-only
+
+1. Repo preparation preview
+
+- add `ota up --dry-run` as the read-only execution-plan preview for repo readiness
+- keep the preview on `up` instead of introducing a separate planning command
+- require `ota.yaml` and reuse the same backend, lifecycle, target, provisioning, service, and setup resolution as real `ota up`
+- show what `up` would attempt, what it would skip, and the first blocker that would stop execution
+- keep the preview read-only: no provisioning, no service start, no file writes, no task execution, and no persistent backend mutation
+
+Proposed command contract:
+
+- `ota up --dry-run` previews the exact `up` plan for the selected repo or member
+- `ota up --dry-run --json` mirrors the same execution, action, skip, and blocker state in machine-readable form
+- `ota up --dry-run` respects `--mode`, `--lifecycle`, `--ephemeral`, and `--member` the same way `ota up` does
+- `ota up --dry-run` does not replace `doctor` or `explain`; it answers what `up` would do right now
+
+Output contract:
+
+- text output keeps the premium `up` hierarchy with `Execution`, `Plan`, `Blocked by`, `Next`, and an explicit dry-run note
+- JSON output includes `dry_run`, `execution`, `plan.actions`, `plan.skips`, and `blockers`
+- exit code is `0` when the preview is actionable and unblocked, `1` when `up` would be blocked, and `1` on load or validation failure
+- the preview must stay deterministic and reuse the real `up` planning path instead of inventing a second planner
 
 1. Starter contract quality
 

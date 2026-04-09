@@ -803,6 +803,12 @@ Current behavior:
 - includes service start exit code details when a required service start command fails
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
 
+Planned preview extension:
+
+- `ota up --dry-run` is reserved for a read-only execution-plan preview and is not shipped yet
+- the proposed contract lives in [up-preview.md](up-preview.md)
+- until that preview ships, use `ota doctor` for blockers and `ota explain` for ordered remediation
+
 This is the onboarding command. It is intentionally narrower than a general-purpose environment orchestrator.
 
 ## `ota self-update`
@@ -981,8 +987,10 @@ Current behavior:
 - when the effective execution mode is `container` with `lifecycle: persistent`, removes the named persistent container for that repo
 - `ota clean --stale` does not require `ota.yaml`; it scans available local container engines for exited ota-managed containers from any repo
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
+- if a local container engine cannot answer `ps`, stale cleanup fails with a query error instead of pretending no stale containers exist
 - `ota clean --stale --dry-run` previews stale containers without removing them
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
+- `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
 - remote backends do not currently define cleanup semantics; they report `NO CLEANUP NEEDED`
 - reports `NO CLEANUP NEEDED` when there is no persistent container state to remove
 - does not stop services or perform workspace-wide cleanup

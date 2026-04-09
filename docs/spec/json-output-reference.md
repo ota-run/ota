@@ -1043,13 +1043,19 @@ Example contract-validation failure (before `up` execution starts):
 }
 ```
 
+Planned preview extension:
+
+- `ota up --dry-run --json` is not part of the shipped JSON contract yet
+- the proposed preview shape lives in [up-preview.md](up-preview.md)
+
 ## `ota detect --json`
 
 ## `ota clean --stale --json`
 
 `ota clean --stale --json` is contract-free. It reports exited ota-managed containers that match
 the local cleanup scan and tells automation whether the command removed them or only previewed
-them.
+them. If a local container engine cannot answer `ps`, ota returns a cleanup error instead of this
+success shape.
 
 ```json
 {
