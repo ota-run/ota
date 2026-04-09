@@ -4190,7 +4190,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert_eq!(
             strip_ansi(&output.stdout),
-            format!("CLEANED {}", compact_contract(&fixture.file_path()))
+            format!("Cleaned {}", compact_contract(&fixture.file_path()))
         );
         assert!(fixture.dir.path().join("docker-log.txt").exists());
     }
@@ -4220,7 +4220,7 @@ tasks:
         assert_eq!(
             strip_ansi(&output.stdout),
             format!(
-                "NO CLEANUP NEEDED {}",
+                "No cleanup needed for {}",
                 compact_contract(&fixture.file_path())
             )
         );
@@ -4298,7 +4298,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("DRY RUN stale ota-managed containers (2)"));
+        assert!(stdout.contains("Dry run stale ota-managed containers (2)"));
         assert!(stdout.contains("ota-labelled"));
         assert!(stdout.contains("ota-legacy"));
         assert!(state_dir.join("ota-labelled.path").exists());
@@ -4533,7 +4533,7 @@ exit 1
 
         assert_eq!(output.exit_code, 0);
         let stdout = normalize_inline_whitespace(&strip_ansi(&output.stdout));
-        assert!(stdout.contains("CLEANED stale ota-managed containers (1)"));
+        assert!(stdout.contains("Cleaned stale ota-managed containers (1)"));
         assert!(stdout.contains("ota-test-stale"));
     }
 
@@ -4565,11 +4565,11 @@ project:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(&format!(
-            "NO CLEANUP NEEDED {}",
+            "No cleanup needed for {}",
             compact_contract(&fixture.file_path())
         )));
         assert!(stdout.contains(&format!(
-            "NO CLEANUP NEEDED {} [member api]",
+            "No cleanup needed for {} [member api]",
             compact_contract(&fixture.file_path())
         )));
         assert!(stdout.contains("\n\n"));
