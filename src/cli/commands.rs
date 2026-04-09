@@ -8992,6 +8992,67 @@ fn append_wrapped_labeled_text<F, K>(
     }
 }
 
+fn render_container_image_finding_text(
+    why: &str,
+    next: &str,
+    doctor_mode: Option<DoctorMode>,
+) -> (String, String, Option<String>) {
+    if doctor_mode != Some(DoctorMode::Container) {
+        return (why.to_string(), next.to_string(), None);
+    }
+
+    let (display_why, why_image) = strip_container_image_from_why(why);
+    let (display_next, next_image) = strip_container_image_from_next(next);
+
+    (display_why, display_next, why_image.or(next_image))
+}
+
+fn strip_container_image_from_why(value: &str) -> (String, Option<String>) {
+    let marker = "inside container image `";
+    let Some(start) = value.find(marker) else {
+        return (value.to_string(), None);
+    };
+    let image_start = start + marker.len();
+    let Some(image_end_rel) = value[image_start..].find('`') else {
+        return (value.to_string(), None);
+    };
+    let image_end = image_start + image_end_rel;
+    let image = value[image_start..image_end].to_string();
+    let stripped = format!(
+        "{}inside the configured container image{}",
+        &value[..start],
+        &value[image_end + 1..]
+    );
+    (stripped, Some(image))
+}
+
+fn strip_container_image_from_next(value: &str) -> (String, Option<String>) {
+    let marker = " (currently `";
+    let Some(start) = value.find(marker) else {
+        return (value.to_string(), None);
+    };
+    let image_start = start + marker.len();
+    let Some(image_end_rel) = value[image_start..].find('`') else {
+        return (value.to_string(), None);
+    };
+    let image_end = image_start + image_end_rel;
+    let image = value[image_start..image_end].to_string();
+    let remainder = value[image_end + 1..]
+        .strip_prefix(')')
+        .unwrap_or(&value[image_end + 1..]);
+    let stripped = format!("{}{}", &value[..start], remainder);
+    (stripped, Some(image))
+}
+
+fn append_container_image_detail(output: &mut String, image: &str, indent: &str) {
+    output.push_str(&format!(
+        "\n{indent} {}  {} {}",
+        summary_bullet(),
+        paint_key("Image:"),
+        paint_backticked_code(image)
+    ));
+}
+
 fn append_wrapped_detail<F>(
     output: &mut String,
     label: &str,
@@ -10647,6 +10708,8 @@ fn render_report_section(
     for group in grouped_findings {
         if group.findings.len() == 1 {
             let finding = group.findings[0];
+            let (display_why, display_next, container_image) =
+                render_container_image_finding_text(&finding.why, &finding.next, doctor_mode);
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -10666,10 +10729,13 @@ fn render_report_section(
                     render_finding_summary(finding.severity, &finding.summary),
                     source_block,
                 ));
+                if let Some(image) = container_image.as_deref() {
+                    append_container_image_detail(&mut stdout, image, "");
+                }
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &rewrite_doctor_mode_command(&finding.next, doctor_mode),
+                    &rewrite_doctor_mode_command(&display_next, doctor_mode),
                     "",
                     84,
                     true,
@@ -10687,17 +10753,20 @@ fn render_report_section(
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Why:",
-                    &finding.why,
+                    &display_why,
                     "",
                     84,
                     false,
                     |key| finding_detail_key(finding.severity, key),
                     |value| render_backticked_text(value, contract_path),
                 );
+                if let Some(image) = container_image.as_deref() {
+                    append_container_image_detail(&mut stdout, image, "");
+                }
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &rewrite_doctor_mode_command(&finding.next, doctor_mode),
+                    &rewrite_doctor_mode_command(&display_next, doctor_mode),
                     "",
                     84,
                     true,
@@ -10770,6 +10839,8 @@ fn render_primary_finding_text(
     contract_path: Option<&Path>,
 ) -> String {
     let mut stdout = String::new();
+    let (display_why, display_next, container_image) =
+        render_container_image_finding_text(why, next, doctor_mode);
     let (marker, title_color, title) = match severity {
         FindingSeverity::Error => (
             primary_error_marker(),
@@ -10794,7 +10865,7 @@ fn render_primary_finding_text(
         append_wrapped_labeled_text(
             &mut stdout,
             "Why:",
-            why,
+            &display_why,
             "",
             84,
             false,
@@ -10802,10 +10873,13 @@ fn render_primary_finding_text(
             |value| render_backticked_text(value, contract_path),
         );
     }
+    if let Some(image) = container_image.as_deref() {
+        append_container_image_detail(&mut stdout, image, "");
+    }
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
-        &rewrite_doctor_mode_command(next, doctor_mode),
+        &rewrite_doctor_mode_command(&display_next, doctor_mode),
         "",
         84,
         true,
@@ -13770,6 +13844,105 @@ tasks:
                 "repair `./.ota/org-policy.yaml` and re-run `ota doctor --mode container`"
             )
         );
+    }
+
+    #[test]
+    fn doctor_text_container_primary_blocker_renders_image_detail_line() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing runtime: java"),
+                why: String::from(
+                    "java is declared in the contract but is not available inside container image `jdxcode/mise:latest`",
+                ),
+                next: String::from(
+                    "update `execution.backends.container.image` (currently `jdxcode/mise:latest`) so `java` is available, then rerun `ota doctor --mode container`",
+                ),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(super::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing runtime: java"),
+                why: String::from(
+                    "java is declared in the contract but is not available inside container image `jdxcode/mise:latest`",
+                ),
+                next: String::from(
+                    "update `execution.backends.container.image` (currently `jdxcode/mise:latest`) so `java` is available, then rerun `ota doctor --mode container`",
+                ),
+            }),
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            Some(DoctorMode::Container),
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains(
+            "Why: java is declared in the contract but is not available inside the configured container image"
+        ));
+        assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
+        assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
+        assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
+    }
+
+    #[test]
+    fn doctor_text_container_single_finding_renders_image_detail_line() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing runtime: java"),
+                why: String::from(
+                    "java is declared in the contract but is not available inside container image `jdxcode/mise:latest`",
+                ),
+                next: String::from(
+                    "update `execution.backends.container.image` (currently `jdxcode/mise:latest`) so `java` is available, then rerun `ota doctor --mode container`",
+                ),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            Some(DoctorMode::Container),
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains(
+            "Why: java is declared in the contract but is not available inside the configured container image"
+        ));
+        assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
+        assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
+        assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
     }
 
     #[test]
