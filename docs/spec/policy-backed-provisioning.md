@@ -85,9 +85,9 @@ The built-in mutating adapters currently support:
 For container-backed execution, policy pins must still be installable in the selected image.
 Ota now surfaces backend-aware provisioning failures across the shipped adapters, and container
 doctor uses safe non-mutating installability probes for the supported backends in that path.
-Today those probes ship for `apt` and `brew`. `apt` additionally distinguishes pinned-version
-unavailable, package unavailable, and apt index/source failures when backend evidence supports
-that classification.
+Today those probes ship for `apt`, `brew`, `dnf`, and `pacman`. `apt` additionally distinguishes
+pinned-version unavailable, package unavailable, and apt index/source failures when backend
+evidence supports that classification.
 
 Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
 `source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, or `source: pacman` when they are

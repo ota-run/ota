@@ -408,6 +408,45 @@ impl PacmanProvisioningBackend {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
         }
     }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        (
+            String::from("pacman"),
+            vec![String::from("-Si"), install_target.clone()],
+            format!("pacman -Si {install_target}"),
+        )
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("target not found")
+            || (combined.contains("package") && combined.contains("was not found"))
+        {
+            Some(ProvisioningFailureKind::PackageUnavailable)
+        } else if combined.contains("failed retrieving file")
+            || combined.contains("failed to synchronize all databases")
+            || combined.contains("could not resolve host")
+            || combined.contains("download library error")
+            || combined.contains("failed to update")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
+    }
 }
 
 impl AptProvisioningBackend {
@@ -585,6 +624,55 @@ impl DnfProvisioningBackend {
             String::from("--enablerepo"),
             repo_id.to_string(),
         ]
+    }
+
+    fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
+        let install_target = Self::install_target(action);
+        let source_args = Self::source_args(action);
+        let mut args = source_args.clone();
+        args.push(String::from("list"));
+        args.push(String::from("available"));
+        args.push(install_target.clone());
+        let command = if source_args.is_empty() {
+            format!("dnf list available {install_target}")
+        } else {
+            format!(
+                "dnf {} list available {install_target}",
+                source_args.join(" ")
+            )
+        };
+        (String::from("dnf"), args, command)
+    }
+
+    fn classify_failure(
+        action: &ProvisioningAction,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<ProvisioningFailureDiagnosis> {
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+        let kind = if combined.contains("no match for argument")
+            || combined.contains("unable to find a match")
+            || combined.contains("no matching packages to list")
+        {
+            Some(ProvisioningFailureKind::VersionUnavailable)
+        } else if combined.contains("failed to download metadata for repo")
+            || combined.contains("cannot download repomd.xml")
+            || combined.contains("all mirrors were tried")
+            || combined.contains("curl error")
+            || combined.contains("couldn't resolve host name")
+        {
+            Some(ProvisioningFailureKind::IndexUnavailable)
+        } else {
+            None
+        }?;
+
+        Some(ProvisioningFailureDiagnosis {
+            backend: action.source.clone(),
+            target_kind: action.target_kind,
+            name: action.name.clone(),
+            requested_version: action.requested_version.clone(),
+            kind,
+        })
     }
 }
 
@@ -2147,6 +2235,8 @@ fn classify_provisioning_failure(
     match action.source.as_str() {
         "apt" => AptProvisioningBackend::classify_failure(action, stdout, stderr),
         "brew" => BrewProvisioningBackend::classify_failure(action, stdout, stderr),
+        "dnf" => DnfProvisioningBackend::classify_failure(action, stdout, stderr),
+        "pacman" => PacmanProvisioningBackend::classify_failure(action, stdout, stderr),
         _ => None,
     }
 }
@@ -2169,6 +2259,8 @@ pub fn probe_provisioning_installability_with_target(
     let result = match action.source.as_str() {
         "apt" => probe_apt_installability_with_target(action, working_dir, target),
         "brew" => probe_brew_installability_with_target(action, working_dir, target),
+        "dnf" => probe_dnf_installability_with_target(action, working_dir, target),
+        "pacman" => probe_pacman_installability_with_target(action, working_dir, target),
         _ => {
             return Err(ProvisioningBackendError::UnsupportedSource {
                 provisioning_source: action.source.clone(),
@@ -2210,6 +2302,80 @@ pub fn probe_brew_installability_with_target(
     }
 
     let (command, args, command_display) = BrewProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: command_display,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+pub fn probe_pacman_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "pacman" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = PacmanProvisioningBackend::probe_command(action);
+    let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
+    let output = execute_provisioning_command(
+        target,
+        working_dir,
+        &command,
+        &arg_refs,
+        ProvisioningOutputMode::Capture,
+    )?;
+
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: command_display,
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+pub fn probe_dnf_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "dnf" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    let (command, args, command_display) = DnfProvisioningBackend::probe_command(action);
     let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
     let output = execute_provisioning_command(
         target,
@@ -3595,6 +3761,128 @@ mod tests {
                 assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
             }
             other => panic!("expected brew version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_dnf_installability_reports_version_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'No match for argument: jq-1.7.1' >&2\n  echo 'Error: Unable to find a match: jq-1.7.1' >&2\n  exit 1\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "jq".to_string(),
+            requested_version: "1.7.1".to_string(),
+            source: "dnf".to_string(),
+            source_config: None,
+            approved_version: Some("1.7.1".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "fedora/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
+            }) => {
+                assert!(stderr.contains("Unable to find a match"));
+                assert_eq!(diagnosis.backend, "dnf");
+                assert_eq!(diagnosis.name, "jq");
+                assert_eq!(diagnosis.requested_version, "1.7.1");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::VersionUnavailable);
+            }
+            other => panic!("expected dnf version-unavailable failure, got {other:?}"),
+        }
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn probes_container_pacman_installability_reports_package_unavailable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        fs::write(
+            &docker,
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'error: target not found: jq' >&2\n  exit 1\nfi\nexit 1\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&docker).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&docker, perms).unwrap();
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path());
+        }
+
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "jq".to_string(),
+            requested_version: "1.7.1".to_string(),
+            source: "pacman".to_string(),
+            source_config: None,
+            approved_version: Some("1.7.1".to_string()),
+        };
+
+        let result = probe_provisioning_installability_with_target(
+            &action,
+            Path::new("."),
+            &ProvisioningExecutionTarget::Container {
+                image: "archlinux/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+
+        match result {
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stderr, diagnosis, ..
+            }) => {
+                assert!(stderr.contains("target not found"));
+                assert_eq!(diagnosis.backend, "pacman");
+                assert_eq!(diagnosis.name, "jq");
+                assert_eq!(diagnosis.requested_version, "1.7.1");
+                assert_eq!(diagnosis.kind, ProvisioningFailureKind::PackageUnavailable);
+            }
+            other => panic!("expected pacman package-unavailable failure, got {other:?}"),
         }
 
         unsafe {
