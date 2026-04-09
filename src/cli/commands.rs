@@ -4615,7 +4615,7 @@ fn render_stale_clean_text(
     dry_run: bool,
 ) -> String {
     if containers.is_empty() {
-        return String::from("No cleanup needed for stale ota-managed containers");
+        return String::from("No stale ota-managed containers to clean");
     }
 
     let mut stdout = if dry_run {
