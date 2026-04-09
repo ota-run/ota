@@ -778,6 +778,38 @@ pub struct UpStatus<'a> {
     pub exit_code: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UpPreviewExecution {
+    pub backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UpPreviewPlan {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpPreviewStatus<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub dry_run: bool,
+    pub status: &'a str,
+    pub phase: &'a str,
+    pub execution: UpPreviewExecution,
+    pub plan: UpPreviewPlan,
+    #[serde(skip_serializing_if = "<[Finding]>::is_empty")]
+    pub blockers: &'a [Finding],
+}
+
 impl CommandOutput {
     pub fn success(stdout: String) -> Self {
         Self {

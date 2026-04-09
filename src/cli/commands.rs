@@ -59,14 +59,15 @@ use crate::output::{
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
     PolicyReviewSuccess, PolicyReviewSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -4095,6 +4096,7 @@ pub fn up(
     members: &[String],
     format: OutputFormat,
     debug: bool,
+    dry_run: bool,
     show_receipt: bool,
 ) -> CommandOutput {
     if let Some(duplicate) = duplicate_member(members) {
@@ -4144,6 +4146,7 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
+                        dry_run,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -4204,6 +4207,7 @@ pub fn up(
                                 &member_target.contract_path,
                                 overrides,
                                 None,
+                                dry_run,
                                 RepoExecutionMode::Stream,
                             ) {
                                 Ok(result) => result,
@@ -4220,16 +4224,8 @@ pub fn up(
                                 &member_result,
                                 show_receipt,
                             ));
-                            member_results.push(json!({
-                                "member": member,
-                                "ok": member_result.ok,
-                                "status": member_result.status,
-                                "phase": member_result.phase,
-                                "findings": member_result.report.findings,
-                                "service": member_result.service,
-                                "task": member_result.task,
-                                "exit_code": member_result.exit_code,
-                            }));
+                            member_results
+                                .push(up_member_result_json_value(member, &member_result));
                         }
                     }
 
@@ -4239,22 +4235,15 @@ pub fn up(
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
-                        OutputFormat::Json => CommandOutput {
-                            stdout: to_json_value(json!({
-                                "ok": overall_ok,
-                                "path": path_display,
-                                "status": root_result.status,
-                                "phase": root_result.phase,
-                                "findings": root_result.report.findings,
-                                "receipt": root_result.receipt,
-                                "service": root_result.service,
-                                "task": root_result.task,
-                                "exit_code": root_result.exit_code,
-                                "members": member_results,
-                            })),
-                            stderr: None,
-                            exit_code: if overall_ok { 0 } else { 1 },
-                        },
+                        OutputFormat::Json => {
+                            let mut root_value = up_result_json_value(&path_display, &root_result);
+                            root_value["members"] = JsonValue::Array(member_results);
+                            CommandOutput {
+                                stdout: to_json_value(root_value),
+                                stderr: None,
+                                exit_code: if overall_ok { 0 } else { 1 },
+                            }
+                        }
                     }
                 } else {
                     match execute_repo_up(
@@ -4262,6 +4251,7 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
+                        dry_run,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => render_up_result(
@@ -4323,6 +4313,7 @@ pub fn up(
                         &target.contract_path,
                         overrides,
                         None,
+                        dry_run,
                         RepoExecutionMode::Stream,
                     ) {
                         Ok(result) => result,
@@ -4336,16 +4327,7 @@ pub fn up(
                         &result,
                         show_receipt,
                     ));
-                    member_results.push(json!({
-                        "member": member,
-                        "ok": result.ok,
-                        "status": result.status,
-                        "phase": result.phase,
-                        "findings": result.report.findings,
-                        "service": result.service,
-                        "task": result.task,
-                        "exit_code": result.exit_code,
-                    }));
+                    member_results.push(up_member_result_json_value(member, &result));
                 }
 
                 match format {
@@ -4358,6 +4340,7 @@ pub fn up(
                         stdout: to_json_value(json!({
                             "ok": overall_ok,
                             "path": path_display,
+                            "dry_run": dry_run,
                             "members": member_results,
                             "status": "MULTI",
                             "phase": "aggregate",
@@ -12365,6 +12348,20 @@ fn render_up_result(
     format: OutputFormat,
     show_receipt: bool,
 ) -> CommandOutput {
+    if let Some(preview) = result.preview.as_ref() {
+        return render_up_preview_result(
+            path,
+            text_path,
+            result.status,
+            result.phase,
+            &preview.execution,
+            &preview.plan,
+            &preview.blockers,
+            result.report.ok,
+            format,
+        );
+    }
+
     match format {
         OutputFormat::Text => {
             let mut stdout = render_up_section(text_path, &result);
@@ -12399,6 +12396,93 @@ fn render_up_result(
             false,
             format,
         ),
+    }
+}
+
+fn render_up_preview_result(
+    path: &str,
+    text_path: &str,
+    status: &str,
+    phase: &str,
+    execution: &UpPreviewExecution,
+    plan: &UpPreviewPlan,
+    blockers: &[Finding],
+    ready: bool,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => CommandOutput {
+            stdout: render_up_preview_text(text_path, status, execution, plan, blockers),
+            stderr: None,
+            exit_code: if ready { 0 } else { 1 },
+        },
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&UpPreviewStatus {
+                ok: ready,
+                path,
+                dry_run: true,
+                status,
+                phase,
+                execution: execution.clone(),
+                plan: plan.clone(),
+                blockers,
+            }),
+            stderr: None,
+            exit_code: if ready { 0 } else { 1 },
+        },
+    }
+}
+
+fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
+    if let Some(preview) = result.preview.as_ref() {
+        json!({
+            "ok": result.ok,
+            "path": path,
+            "dry_run": true,
+            "status": result.status,
+            "phase": result.phase,
+            "execution": preview.execution,
+            "plan": preview.plan,
+            "blockers": preview.blockers,
+        })
+    } else {
+        json!({
+            "ok": result.ok,
+            "path": path,
+            "status": result.status,
+            "phase": result.phase,
+            "findings": result.report.findings,
+            "receipt": result.receipt,
+            "service": result.service,
+            "task": result.task,
+            "exit_code": result.exit_code,
+        })
+    }
+}
+
+fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue {
+    if let Some(preview) = result.preview.as_ref() {
+        json!({
+            "member": member,
+            "ok": result.ok,
+            "dry_run": true,
+            "status": result.status,
+            "phase": result.phase,
+            "execution": preview.execution,
+            "plan": preview.plan,
+            "blockers": preview.blockers,
+        })
+    } else {
+        json!({
+            "member": member,
+            "ok": result.ok,
+            "status": result.status,
+            "phase": result.phase,
+            "findings": result.report.findings,
+            "service": result.service,
+            "task": result.task,
+            "exit_code": result.exit_code,
+        })
     }
 }
 
@@ -12649,7 +12733,7 @@ mod tests {
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
-        compact_contract_file_path_relative_to, compact_path_relative_to,
+        build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, execute_repo_up,
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_up_result,
@@ -12661,7 +12745,7 @@ mod tests {
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
-        ProvisioningBackendRequest, ProvisioningTargetKind,
+        ProvisioningBackendRequest, ProvisioningPlan, ProvisioningTargetKind,
     };
     use crate::provisioning::apply_provisioning_request;
     use crate::runner::ExecutionOverrides;
@@ -13396,6 +13480,7 @@ tasks:
                 adapter_bootstrap: None,
                 findings: Vec::new(),
             },
+            preview: None,
             receipt,
             service: None,
             service_command: None,
@@ -13419,6 +13504,93 @@ tasks:
 
         assert!(text.contains("UP SUMMARY"));
         assert!(text.contains("Task:       build"));
+    }
+
+    #[test]
+    fn up_preview_plan_lists_provisioning_actions_and_skips() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+runtimes:
+  java: "21"
+tools:
+  node: "22"
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(crate::doctor::ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![
+                        ProvisioningAction {
+                            kind: ProvisioningActionKind::SelectSource,
+                            target_kind: ProvisioningTargetKind::Runtime,
+                            name: String::from("java"),
+                            requested_version: String::from("21"),
+                            source: String::from("sdkman"),
+                            source_config: None,
+                            approved_version: Some(String::from("21")),
+                        },
+                        ProvisioningAction {
+                            kind: ProvisioningActionKind::SelectSource,
+                            target_kind: ProvisioningTargetKind::Tool,
+                            name: String::from("node"),
+                            requested_version: String::from("22"),
+                            source: String::from("brew"),
+                            source_config: None,
+                            approved_version: Some(String::from("22")),
+                        },
+                    ],
+                },
+            }),
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing runtime: java"),
+                why: String::from("java is declared in the contract but is not available"),
+                next: String::from("install `java` and rerun `ota doctor`"),
+            }],
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert!(
+            preview
+                .plan
+                .actions
+                .contains(&String::from("provision `java` `21` via `sdkman`"))
+        );
+        assert!(
+            preview
+                .plan
+                .skipped
+                .contains(&String::from("skip `node`; already satisfies the contract"))
+        );
+        assert!(
+            preview
+                .plan
+                .actions
+                .contains(&String::from("run task `setup`"))
+        );
+        assert!(
+            preview
+                .plan
+                .actions
+                .contains(&String::from("re-check repo readiness"))
+        );
     }
 
     #[test]
@@ -14318,6 +14490,7 @@ policies:
             contract_path.as_path(),
             ExecutionOverrides::default(),
             None,
+            false,
             RepoExecutionMode::Capture,
         )
         .unwrap();
@@ -16192,6 +16365,16 @@ fn render_up_text(
 }
 
 fn render_up_section(path: &str, result: &RepoUpResult) -> String {
+    if let Some(preview) = result.preview.as_ref() {
+        return render_up_preview_text(
+            path,
+            result.status,
+            &preview.execution,
+            &preview.plan,
+            &preview.blockers,
+        );
+    }
+
     render_up_section_from_parts(
         path,
         Some(Path::new(path)),
@@ -16209,6 +16392,10 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
 }
 
 fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receipt: bool) -> String {
+    if result.preview.is_some() {
+        return render_up_section(path, result);
+    }
+
     let mut stdout = render_up_section(path, result);
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(&result.receipt));
@@ -16220,6 +16407,138 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
         "UP SUMMARY",
     ));
     stdout
+}
+
+fn render_up_preview_text(
+    path: &str,
+    status: &str,
+    execution: &UpPreviewExecution,
+    plan: &UpPreviewPlan,
+    blockers: &[Finding],
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}\n\n{}",
+        format_command_header("UP PREVIEW", path),
+        render_status_line(status),
+        format_mode_line("dry-run (no write)")
+    );
+
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Execution")));
+    stdout.push_str(&format!(
+        " {}  {} {}",
+        detail_arrow(),
+        paint_key("Backend:"),
+        execution.backend
+    ));
+    if let Some(lifecycle) = execution.lifecycle.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Lifecycle:"),
+            lifecycle
+        ));
+    }
+    if let Some(target) = execution.target.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Target:"),
+            paint_backticked_code(target)
+        ));
+    }
+    if let Some(task) = execution.task.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Task:"),
+            paint_backticked_code(task)
+        ));
+    }
+
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
+    if plan.actions.is_empty() {
+        stdout.push_str(&format!("\n {}  none", detail_arrow()));
+    } else {
+        for action in &plan.actions {
+            append_wrapped_bullet_text(
+                &mut stdout,
+                detail_arrow(),
+                action,
+                " ",
+                84,
+                render_backticked_preview_value,
+            );
+        }
+    }
+
+    if !plan.skipped.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Skipped")));
+        for skipped in &plan.skipped {
+            append_wrapped_bullet_text(
+                &mut stdout,
+                detail_arrow(),
+                skipped,
+                " ",
+                84,
+                render_backticked_preview_value,
+            );
+        }
+    }
+
+    if let Some(blocker) = blockers.first() {
+        let (display_why, display_next, container_image) = render_container_image_finding_text(
+            &blocker.why,
+            &blocker.next,
+            doctor_mode_from_backend(Some(execution.backend.as_str())),
+        );
+        stdout.push_str(&format!("\n\n{}\n", paint_section_title("Blocked by")));
+        stdout.push_str(&format!(
+            " {}  {}",
+            render_severity(blocker.severity),
+            render_finding_summary(blocker.severity, &blocker.summary)
+        ));
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Why:",
+            &display_why,
+            "",
+            84,
+            false,
+            |key| finding_detail_key(blocker.severity, key),
+            render_backticked_preview_value,
+        );
+        if let Some(image) = container_image.as_deref() {
+            append_container_image_detail(&mut stdout, image, "");
+        }
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Next:",
+            &rewrite_doctor_mode_command(
+                &display_next,
+                doctor_mode_from_backend(Some(execution.backend.as_str())),
+            ),
+            "",
+            84,
+            true,
+            |key| finding_detail_key(blocker.severity, key),
+            render_backticked_preview_value,
+        );
+    }
+
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Dry run only")));
+    for line in [
+        "no provisioning executed",
+        "no services started",
+        "no repo files changed",
+    ] {
+        stdout.push_str(&format!("\n {}  {}", detail_arrow(), line));
+    }
+
+    stdout
+}
+
+fn render_backticked_preview_value(value: &str) -> String {
+    render_backticked_text(value, None)
 }
 
 fn render_up_section_from_parts(
@@ -17563,6 +17882,7 @@ struct RepoUpResult {
     status: &'static str,
     phase: &'static str,
     report: DoctorReport,
+    preview: Option<RepoUpPreview>,
     receipt: ExecutionReceipt,
     service: Option<String>,
     service_command: Option<String>,
@@ -17571,6 +17891,13 @@ struct RepoUpResult {
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
+}
+
+#[derive(Debug, Clone)]
+struct RepoUpPreview {
+    execution: UpPreviewExecution,
+    plan: UpPreviewPlan,
+    blockers: Vec<Finding>,
 }
 
 struct WorkspaceUpReport {
@@ -18106,11 +18433,134 @@ fn up_doctor_mode(contract: &Contract, overrides: ExecutionOverrides) -> DoctorM
     }
 }
 
+fn provisionable_target_keys(findings: &[Finding]) -> BTreeSet<String> {
+    findings
+        .iter()
+        .filter_map(provisionable_target_key_for_finding)
+        .collect()
+}
+
+fn provisionable_target_key_for_finding(finding: &Finding) -> Option<String> {
+    if let Some(name) = finding.summary.strip_prefix("Missing runtime: ") {
+        return Some(format!("runtime:{}", name.trim()));
+    }
+    if let Some(name) = finding
+        .summary
+        .strip_prefix("Version mismatch for runtime: ")
+    {
+        return Some(format!("runtime:{}", name.trim()));
+    }
+    if let Some(name) = finding.summary.strip_prefix("Missing tool: ") {
+        return Some(format!("tool:{}", name.trim()));
+    }
+    finding
+        .summary
+        .strip_prefix("Version mismatch for tool: ")
+        .map(|name| format!("tool:{}", name.trim()))
+}
+
+fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> String {
+    format!(
+        "{}:{}",
+        action.target_kind.to_string().to_ascii_lowercase(),
+        action.name.trim()
+    )
+}
+
+fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningAction) -> String {
+    let version = action
+        .approved_version
+        .as_deref()
+        .unwrap_or(action.requested_version.as_str());
+    format!(
+        "provision `{}` `{}` via `{}`",
+        action.name, version, action.source
+    )
+}
+
+fn render_up_preview_skip_action(action: &crate::policy_pack::ProvisioningAction) -> String {
+    format!("skip `{}`; already satisfies the contract", action.name)
+}
+
+fn build_up_preview(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    preflight: &DoctorReport,
+) -> RepoUpPreview {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    let target = execution_target(contract, resolved_path, backend, lifecycle);
+    let mut actions = Vec::new();
+    let mut skipped = Vec::new();
+    let missing_targets = provisionable_target_keys(&preflight.findings);
+
+    if let Some(provisioning) = preflight.provisioning.as_ref() {
+        for action in &provisioning.request.actions {
+            if missing_targets.contains(&provisioning_action_key(action)) {
+                actions.push(render_up_preview_provision_action(action));
+            } else {
+                skipped.push(render_up_preview_skip_action(action));
+            }
+        }
+    }
+
+    for service_name in service_start_order(contract) {
+        actions.push(format!("start service `{service_name}`"));
+    }
+
+    if contract.tasks.contains_key("setup") {
+        actions.push(String::from("run task `setup`"));
+    }
+
+    actions.push(String::from("re-check repo readiness"));
+
+    RepoUpPreview {
+        execution: UpPreviewExecution {
+            backend: format_backend(backend).to_string(),
+            lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+            target,
+            task: contract
+                .tasks
+                .contains_key("setup")
+                .then(|| String::from("setup")),
+        },
+        plan: UpPreviewPlan { actions, skipped },
+        blockers: preflight
+            .findings
+            .iter()
+            .filter(|finding| finding.severity == FindingSeverity::Error)
+            .cloned()
+            .collect(),
+    }
+}
+
+fn preview_receipt(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    status: &'static str,
+    findings: &[Finding],
+) -> ExecutionReceipt {
+    repo_execution_receipt(
+        resolved_path,
+        contract,
+        overrides,
+        status,
+        "preview",
+        None,
+        contract.tasks.contains_key("setup").then_some("setup"),
+        findings,
+        None,
+        findings.first().map(|finding| finding.next.clone()),
+    )
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     policy_env: Option<&BTreeMap<String, String>>,
+    dry_run: bool,
     mode: RepoExecutionMode,
 ) -> Result<RepoUpResult, String> {
     let mut stdout = String::new();
@@ -18120,6 +18570,32 @@ fn execute_repo_up(
     let doctor_mode = up_doctor_mode(contract, overrides);
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+    if dry_run {
+        let status = if preflight.ok { "READY" } else { "NOT READY" };
+        let preview = build_up_preview(contract, resolved_path, overrides, &preflight);
+        let receipt = preview_receipt(
+            contract,
+            resolved_path,
+            overrides,
+            status,
+            &preview.blockers,
+        );
+        return Ok(RepoUpResult {
+            ok: preflight.ok,
+            status,
+            phase: "preview",
+            report: preflight,
+            preview: Some(preview),
+            receipt,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
     if !preflight.ok {
         if let Some(provisioning) = preflight.provisioning.as_ref() {
             match apply_provisioning_request_with_target(
@@ -18145,6 +18621,7 @@ fn execute_repo_up(
                         ok: false,
                         status: "PROVISION FAILED",
                         phase: "provisioning",
+                        preview: None,
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
@@ -18210,6 +18687,7 @@ fn execute_repo_up(
                                         ok: false,
                                         status: "PROVISION FAILED",
                                         phase: "provisioning",
+                                        preview: None,
                                         receipt: repo_execution_receipt(
                                             resolved_path,
                                             contract,
@@ -18289,6 +18767,7 @@ fn execute_repo_up(
                                     ok: false,
                                     status: "PROVISION FAILED",
                                     phase: "provisioning",
+                                    preview: None,
                                     receipt: repo_execution_receipt(
                                         resolved_path,
                                         contract,
@@ -18413,6 +18892,7 @@ fn execute_repo_up(
                         ok: false,
                         status: "SETUP FAILED",
                         phase: "setup",
+                        preview: None,
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
@@ -18450,6 +18930,7 @@ fn execute_repo_up(
                             ok: false,
                             status: "NOT READY",
                             phase: "provisioning",
+                            preview: None,
                             receipt: repo_execution_receipt(
                                 resolved_path,
                                 contract,
@@ -18484,6 +18965,7 @@ fn execute_repo_up(
                 ok: false,
                 status: "NOT READY",
                 phase: "preconditions",
+                preview: None,
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
@@ -18531,6 +19013,7 @@ fn execute_repo_up(
                         ok: false,
                         status: "SERVICE START FAILED",
                         phase: "services",
+                        preview: None,
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
@@ -18568,6 +19051,7 @@ fn execute_repo_up(
                 ok: false,
                 status: "NOT READY",
                 phase: "services",
+                preview: None,
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
@@ -18601,6 +19085,7 @@ fn execute_repo_up(
             ok: false,
             status: "NOT READY",
             phase: "services",
+            preview: None,
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
@@ -18666,6 +19151,7 @@ fn execute_repo_up(
                     ok: false,
                     status: "SETUP FAILED",
                     phase: "setup",
+                    preview: None,
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
@@ -18706,6 +19192,7 @@ fn execute_repo_up(
         ok: report.ok,
         status: if report.ok { "READY" } else { "NOT READY" },
         phase: "post-setup diagnosis",
+        preview: None,
         receipt: repo_execution_receipt(
             resolved_path,
             contract,
@@ -19712,6 +20199,7 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 &target.contract_path,
                 ExecutionOverrides::default(),
                 Some(&repo.policy_env),
+                false,
                 mode,
             ) {
                 Ok(result) => WorkspaceRepoUpReport {

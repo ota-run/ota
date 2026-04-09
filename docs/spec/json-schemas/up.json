@@ -6,13 +6,101 @@
     {
       "type": "object",
       "additionalProperties": false,
+      "required": ["ok", "path", "dry_run", "status", "phase", "execution", "plan"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "dry_run": { "const": true },
+        "status": { "type": "string" },
+        "phase": { "const": "preview" },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend"],
+          "properties": {
+            "backend": { "type": "string" },
+            "lifecycle": { "type": "string" },
+            "target": { "type": "string" },
+            "task": { "type": "string" }
+          }
+        },
+        "plan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["actions"],
+          "properties": {
+            "actions": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "skipped": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member", "ok", "dry_run", "status", "phase", "execution", "plan"],
+            "properties": {
+              "member": { "type": "string" },
+              "ok": { "type": "boolean" },
+              "dry_run": { "const": true },
+              "status": { "type": "string" },
+              "phase": { "const": "preview" },
+              "execution": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["backend"],
+                "properties": {
+                  "backend": { "type": "string" },
+                  "lifecycle": { "type": "string" },
+                  "target": { "type": "string" },
+                  "task": { "type": "string" }
+                }
+              },
+              "plan": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["actions"],
+                "properties": {
+                  "actions": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "skipped": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  }
+                }
+              },
+              "blockers": {
+                "type": "array",
+                "items": { "$ref": "./shared.json#/$defs/finding" }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["ok", "path", "status", "phase", "findings"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
+        "dry_run": { "type": "boolean" },
         "status": { "type": "string" },
         "phase": {
-          "enum": ["preconditions", "services", "setup", "post-setup diagnosis"]
+          "enum": ["preconditions", "services", "setup", "post-setup diagnosis", "aggregate"]
         },
         "findings": {
           "type": "array",
@@ -24,22 +112,68 @@
         "members": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["member", "ok", "status", "phase", "findings"],
-            "properties": {
-              "member": { "type": "string" },
-              "ok": { "type": "boolean" },
-              "status": { "type": "string" },
-              "phase": { "type": "string" },
-              "findings": {
-                "type": "array",
-                "items": { "$ref": "./shared.json#/$defs/finding" }
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["member", "ok", "status", "phase", "findings"],
+                "properties": {
+                  "member": { "type": "string" },
+                  "ok": { "type": "boolean" },
+                  "status": { "type": "string" },
+                  "phase": { "type": "string" },
+                  "findings": {
+                    "type": "array",
+                    "items": { "$ref": "./shared.json#/$defs/finding" }
+                  },
+                  "service": { "type": "string" },
+                  "task": { "type": "string" },
+                  "exit_code": { "type": "integer" }
+                }
               },
-              "service": { "type": "string" },
-              "task": { "type": "string" },
-              "exit_code": { "type": "integer" }
-            }
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["member", "ok", "dry_run", "status", "phase", "execution", "plan"],
+                "properties": {
+                  "member": { "type": "string" },
+                  "ok": { "type": "boolean" },
+                  "dry_run": { "const": true },
+                  "status": { "type": "string" },
+                  "phase": { "const": "preview" },
+                  "execution": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["backend"],
+                    "properties": {
+                      "backend": { "type": "string" },
+                      "lifecycle": { "type": "string" },
+                      "target": { "type": "string" },
+                      "task": { "type": "string" }
+                    }
+                  },
+                  "plan": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["actions"],
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "skipped": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  },
+                  "blockers": {
+                    "type": "array",
+                    "items": { "$ref": "./shared.json#/$defs/finding" }
+                  }
+                }
+              }
+            ]
           }
         }
       }
