@@ -9599,7 +9599,13 @@ tools:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("➤ Primary Blocker"));
+        assert!(!stdout.contains("Blocked by"));
         assert!(stdout.contains("Image: `rust:1.94-bookworm`"));
+        assert!(stdout.contains(
+            "Why: cargo is declared in the contract but is not available inside the configured"
+        ));
+        assert!(!stdout.contains("container image"));
         assert!(stdout.contains("rerun `ota up --dry-run --mode container`"));
         assert!(!stdout.contains("rerun `ota doctor --mode container`"));
     }

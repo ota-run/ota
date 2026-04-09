@@ -9108,7 +9108,7 @@ fn strip_container_image_from_why(value: &str) -> (String, Option<String>) {
     let image_end = image_start + image_end_rel;
     let image = value[image_start..image_end].to_string();
     let stripped = format!(
-        "{}inside the configured container image{}",
+        "{}inside the configured{}",
         &value[..start],
         &value[image_end + 1..]
     );
@@ -10919,13 +10919,14 @@ fn render_check_ready_next(contract_path: Option<&Path>) -> String {
     ])
 }
 
-fn render_primary_finding_text(
+fn render_primary_finding_text_with_next_rewriter(
     severity: FindingSeverity,
     summary: &str,
     why: &str,
     next: &str,
     doctor_mode: Option<DoctorMode>,
     contract_path: Option<&Path>,
+    rewrite_next: fn(&str, Option<DoctorMode>) -> String,
 ) -> String {
     let mut stdout = String::new();
     let (display_why, display_next, container_image) =
@@ -10968,7 +10969,7 @@ fn render_primary_finding_text(
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
-        &rewrite_doctor_mode_command(&display_next, doctor_mode),
+        &rewrite_next(&display_next, doctor_mode),
         "",
         84,
         true,
@@ -10976,6 +10977,25 @@ fn render_primary_finding_text(
         |value| render_backticked_text(value, contract_path),
     );
     stdout
+}
+
+fn render_primary_finding_text(
+    severity: FindingSeverity,
+    summary: &str,
+    why: &str,
+    next: &str,
+    doctor_mode: Option<DoctorMode>,
+    contract_path: Option<&Path>,
+) -> String {
+    render_primary_finding_text_with_next_rewriter(
+        severity,
+        summary,
+        why,
+        next,
+        doctor_mode,
+        contract_path,
+        rewrite_doctor_mode_command,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16506,43 +16526,16 @@ fn render_up_preview_text(
     }
 
     if let Some(blocker) = blockers.first() {
-        let (display_why, display_next, container_image) = render_container_image_finding_text(
+        stdout.push_str("\n\n");
+        stdout.push_str(&render_primary_finding_text_with_next_rewriter(
+            blocker.severity,
+            &blocker.summary,
             &blocker.why,
             &blocker.next,
             doctor_mode_from_backend(Some(execution.backend.as_str())),
-        );
-        stdout.push_str(&format!("\n\n{}\n", paint_section_title("Blocked by")));
-        stdout.push_str(&format!(
-            " {}  {}",
-            render_severity(blocker.severity),
-            render_finding_summary(blocker.severity, &blocker.summary)
+            None,
+            rewrite_up_preview_next_command,
         ));
-        append_wrapped_labeled_text(
-            &mut stdout,
-            "Why:",
-            &display_why,
-            "",
-            84,
-            false,
-            |key| finding_detail_key(blocker.severity, key),
-            render_backticked_preview_value,
-        );
-        if let Some(image) = container_image.as_deref() {
-            append_container_image_detail(&mut stdout, image, "");
-        }
-        append_wrapped_labeled_text(
-            &mut stdout,
-            "Next:",
-            &rewrite_up_preview_next_command(
-                &display_next,
-                doctor_mode_from_backend(Some(execution.backend.as_str())),
-            ),
-            "",
-            84,
-            true,
-            |key| finding_detail_key(blocker.severity, key),
-            render_backticked_preview_value,
-        );
     }
 
     stdout.push_str(&format!("\n\n{}", paint_section_title("Dry run only")));
