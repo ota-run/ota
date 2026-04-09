@@ -4416,14 +4416,24 @@ fi
 exit 1
 "#,
         );
-        let podman_path = bin_dir.join("podman");
-        install_fake_empty_container_engine(&podman_path, "podman");
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&podman_path, permissions).unwrap();
-        }
+        write_fake_command(
+            &bin_dir,
+            "podman",
+            r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  printf "podman version 5.0.0\n"
+  exit 0
+fi
+if [ "$1" = "ps" ]; then
+  printf "Podman daemon is not running\n" >&2
+  exit 1
+fi
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 1
+"#,
+        );
 
         let original_path = std::env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];

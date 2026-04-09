@@ -676,10 +676,14 @@ pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupRepor
     let engines = available_container_engines();
     let mut containers = Vec::new();
     let mut query_error = None;
+    let mut queried_engines = 0usize;
 
     for engine in &engines {
         match list_stale_ota_containers(engine) {
-            Ok(found) => containers.extend(found),
+            Ok(found) => {
+                queried_engines += 1;
+                containers.extend(found);
+            }
             Err(error) => {
                 query_error.get_or_insert(error);
             }
@@ -692,7 +696,7 @@ pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupRepor
         }
     }
 
-    if containers.is_empty() && query_error.is_some() {
+    if queried_engines == 0 && query_error.is_some() {
         return Err(query_error.expect("query_error is set when containers are empty"));
     }
 
