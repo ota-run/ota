@@ -11389,7 +11389,8 @@ fn doctor_finding_group_item_text(
             if matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING") {
                 return format!("{subject} is missing{command_hint}");
             }
-            let tokens = backticked_tokens(&finding.why);
+            let (display_why, _) = strip_container_image_from_why(&finding.why);
+            let tokens = backticked_tokens(&display_why);
             match tokens.as_slice() {
                 [observed, expected, ..] => {
                     format!("{subject} resolved `{observed}`, requires `{expected}`{command_hint}")
@@ -13893,11 +13894,14 @@ tasks:
         ));
 
         assert!(text.contains(
-            "Why: java is declared in the contract but is not available inside the configured container image"
+            "Why: java is declared in the contract but is not available inside the configured"
         ));
         assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
+        assert!(text.contains(
+            "Next: update `execution.backends.container.image` so `java` is available, then rerun"
+        ));
     }
 
     #[test]
@@ -13938,11 +13942,14 @@ tasks:
         ));
 
         assert!(text.contains(
-            "Why: java is declared in the contract but is not available inside the configured container image"
+            "Why: java is declared in the contract but is not available inside the configured"
         ));
         assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
+        assert!(text.contains(
+            "Next: update `execution.backends.container.image` so `java` is available, then rerun"
+        ));
     }
 
     #[test]
