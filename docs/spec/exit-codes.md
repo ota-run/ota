@@ -54,6 +54,13 @@ This document records the current command exit-code contract for the shipped ota
 
 ## `ota up`
 
+`ota up` has two layers of exit codes:
+
+- Ota-level readiness failures return `1`
+- child-process failures are preserved when Ota actually runs a service `start` command or the `setup` task
+
+That means `0` is reserved for the overall command succeeding and the repo reaching `READY`. A child command can succeed and Ota can still return `1` later if the repo does not become ready.
+
 - `ota up --dry-run`: `0` when the preview is actionable and unblocked
 - `ota up --dry-run`: `1` when the preview identifies a blocking condition
 - `0` when the repo reaches `READY`
