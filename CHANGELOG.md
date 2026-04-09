@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added a first-class `Adapter bootstrap failed: sdkman` finding to container-mode `ota up` so the bootstrap boundary is explicit while preserving the real backend stderr and the container-specific rerun hint.
+
 ## 1.2.1
 
 - added `ota doctor --mode container` so readiness can be diagnosed against the declared container execution boundary instead of only the host context.
