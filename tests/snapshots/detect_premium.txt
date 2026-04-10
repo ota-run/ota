@@ -4,18 +4,20 @@
 
 Existing contract comparison:
 ✦  project.name: would update `existing` -> `ota-web`
+    Source: package.json#name [high]
 ✦  runtimes.node: would add `22`
+    Source: .nvmrc [high]
 ✦  tools.pnpm: would add `10.1.0`
+    Source: package.json#packageManager [high]
 ✦  tasks.dev.run: would add `pnpm dev`
+    Source: package.json#scripts.dev [high]
 
 Existing contract drift:
 Impact:
   • 1 tool removal
 
 ◉ WARN  Review tool drift (1 removal across 1 tool)
-Why: Current repo signals no longer support the tool entries below in the existing
-  contract. `ota detect --merge` will not remove them automatically; review rewrite if
-  you want to drop stale entries.
+Why: Current repo signals no longer support the tool entries below in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries.
 
 ✦  Tool `cargo`
   » remove `1.78`

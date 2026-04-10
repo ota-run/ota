@@ -49,6 +49,7 @@ The receipt is meant to answer:
 
 The receipt applies to execution and mutation surfaces such as:
 
+- `ota receipt`
 - `ota run`
 - `ota up`
 - workspace execution flows
@@ -75,12 +76,12 @@ The receipt includes:
 - `next`
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
-`lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota run`, `ota up`, and
-workspace execution flows. Repo receipts now also include a `Policy:` section when
-policy-backed provisioning is present, listing the selected source and any backend-
-specific source config. On failure, the normal text output keeps `Why` and `Next`
-before the trailing summary block. The receipt keeps the structured summary data for
-JSON and optional receipt output.
+`lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`, `ota run`,
+`ota up`, and workspace execution flows. Repo receipts now also include a `Policy:`
+section when policy-backed provisioning is present, listing the selected source and
+any backend-specific source config. On failure, the normal text output keeps `Why`
+and `Next` before the trailing summary block. The receipt keeps the structured
+summary data for JSON and optional receipt output.
 
 Future policy-backed provisioning receipts should additionally be able to record:
 
@@ -113,4 +114,5 @@ Future policy-backed provisioning receipts should additionally be able to record
 - `detect` infers contract data
 - `diff` compares contract meaning
 - `explain` turns findings into a remediation plan
-- `receipt` records what execution actually did
+- `receipt` captures a read-only repo or workspace artifact for the current state
+- execution receipts on `run` and `up` record what ota actually executed

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- hardened premium text wrapping so `Why:` lines, detail lines, and detect drift bullets stop inserting premature newlines and now rely on real terminal width instead of stale formatter caps.
+- enriched existing-contract `ota detect` comparisons with stable `provenance_key` labels and direct detector `source`/`confidence` evidence in both JSON and premium text output.
+- added `ota receipt` as a read-only repo receipt artifact with `--json` and `--mode`, reusing the existing execution-receipt model for CI and audit workflows without mutating repo state.
+
 ## 1.3.1
 
 - refreshed the premium doctor plain-text snapshot so the advisory ephemeral-lifecycle warning stays stable in the release gate.

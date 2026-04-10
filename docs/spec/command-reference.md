@@ -767,6 +767,49 @@ JSON output:
 - `findings`
 - monorepo root summaries include grouped per-member results in `members`
 
+## `ota receipt`
+
+Capture the current repo readiness scan as a read-only receipt artifact for CI or archival use.
+
+```bash
+ota receipt [PATH]
+ota receipt --json [PATH]
+ota receipt --mode container [PATH]
+ota receipt --member api [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- `--member <name>` captures the merged monorepo member contract instead of the root contract
+- validates the contract first
+- runs repo readiness diagnosis in the selected execution context
+- includes repo contract drift findings from the same `ota detect` comparison path used by `ota doctor`
+- captures the current repo state as an execution receipt with one `readiness` step
+- never provisions, runs tasks, starts services, or writes repo state
+- `--json` returns a repo receipt artifact with `mode: "receipt"`
+
+Text output:
+
+- header: `RECEIPT <path>`
+- prints the receipt steps, summary, env sources, policy lines, and blocked items when present
+
+JSON output:
+
+- `ok`
+- `path`
+- `mode: "receipt"`
+- `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
+- `receipt`
+- `findings`
+
+Current non-goals:
+
+- mutating repo state
+- replacing `ota doctor` as the full readiness explanation surface
+- retaining historical receipt state inside ota itself
+- monorepo multi-member roll-up beyond the selected resolved contract target
+
 ## `ota up`
 
 Prepare a repo for use with minimal prior knowledge.
@@ -1085,6 +1128,7 @@ Dry-run behavior:
 - prints per-field provenance
 - prints per-field confidence
 - when `ota.yaml` already exists, text output leads with the existing-contract comparison and drift review before the inferred contract details
+- existing-contract add/update lines include the detector source and confidence for the proposed value
 - when `ota.yaml` already exists and only drift is present, text output says there are no additive detected changes and points users at merge vs rewrite review
 - does not write anything
 
@@ -1107,6 +1151,7 @@ Current merge-preview behavior:
 - it requires an existing `ota.yaml`
 - it does not write
 - it reuses the comparison preview instead of applying changes, including stale contract fields that no longer match repo reality
+- JSON comparison entries carry stable ownership/provenance labels; add/update entries also carry direct detector source and confidence
 - task drift in text output is grouped by task name instead of raw dotted paths
 - when both kinds are present, task drift splits command removals from `safe_for_agent` removals
 - task drift text starts with a compact summary showing affected task count and removal counts by kind

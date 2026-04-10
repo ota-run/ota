@@ -58,16 +58,16 @@ use crate::output::{
     EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
     ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
     ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    PolicyReviewSuccess, PolicyReviewSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptSuccess, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan,
+    UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3474,6 +3474,81 @@ pub fn check(
     )
 }
 
+pub fn receipt(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    mode: DoctorMode,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=receipt")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let debug_lines = vec![
+        String::from("DEBUG command=receipt"),
+        format!("DEBUG contract_path={path_display}"),
+        format!("DEBUG mode={}", mode.as_str()),
+    ];
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let mut report =
+                    diagnose_contract_in_mode(&target.contract, &target.contract_path, mode);
+                append_contract_drift_findings(
+                    &target.contract,
+                    &target.contract_path,
+                    &mut report.findings,
+                );
+                let receipt =
+                    repo_readiness_receipt(&target.contract_path, &target.contract, mode, &report);
+                render_repo_receipt(
+                    &text_path_display,
+                    &path_display,
+                    &RepoReceiptReport {
+                        receipt,
+                        findings: report.findings,
+                    },
+                    format,
+                )
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
 pub fn extensions(
     path: Option<&Path>,
     file_override: Option<&Path>,
@@ -4826,7 +4901,7 @@ pub fn detect(
                         )),
                     };
                 }
-                let comparison = compare_detected_contract(&contract_path, &report.contract);
+                let comparison = compare_detected_contract(&contract_path, &report);
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
                 let comparison =
                     selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
@@ -7315,7 +7390,7 @@ fn write_detected_merge(
 
     let comparison = DetectComparison {
         existing_contract: true,
-        changes: collect_detect_changes(&existing_contract, &report.contract),
+        changes: collect_detect_changes(&existing_contract, &report.contract, &report.inferences),
         removals: collect_detect_removals(&existing_contract, &report.contract),
         error: None,
     };
@@ -7472,6 +7547,9 @@ fn write_detected_merge(
                 detected: change.detected.clone(),
                 ownership: change.ownership.clone(),
                 provenance: change.provenance.clone(),
+                provenance_key: change.provenance_key.clone(),
+                source: change.source.clone(),
+                confidence: change.confidence,
             });
         }
     }
@@ -7532,8 +7610,7 @@ fn write_detected_merge(
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let post_write_comparison =
-                    compare_detected_contract(&contract_path, &report.contract);
+                let post_write_comparison = compare_detected_contract(&contract_path, &report);
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
@@ -7549,8 +7626,7 @@ fn write_detected_merge(
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => {
-                let post_write_comparison =
-                    compare_detected_contract(&contract_path, &report.contract);
+                let post_write_comparison = compare_detected_contract(&contract_path, &report);
                 CommandOutput::success(to_json(&DetectSuccess {
                     ok: true,
                     path: &path_display,
@@ -7597,7 +7673,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
             };
         }
     };
-    let comparison = compare_detected_contract(&contract_path, &report.contract);
+    let comparison = compare_detected_contract(&contract_path, &report);
 
     let yaml = match serde_yaml::to_string(&report.contract) {
         Ok(yaml) => yaml,
@@ -7992,7 +8068,7 @@ fn render_init(
 
 fn compare_detected_contract(
     contract_path: &Path,
-    detected: &crate::detector::DetectContract,
+    report: &DetectReport,
 ) -> Option<DetectComparison> {
     if !contract_path.exists() {
         return None;
@@ -8001,8 +8077,8 @@ fn compare_detected_contract(
     match load_contract(contract_path) {
         Ok(existing) => Some(DetectComparison {
             existing_contract: true,
-            changes: collect_detect_changes(&existing, detected),
-            removals: collect_detect_removals(&existing, detected),
+            changes: collect_detect_changes(&existing, &report.contract, &report.inferences),
+            removals: collect_detect_removals(&existing, &report.contract),
             error: None,
         }),
         Err(error) => Some(DetectComparison {
@@ -8149,6 +8225,9 @@ fn render_detect_comparison_section(
                 )),
                 _ => {}
             }
+            if let Some(detail) = render_detect_comparison_source_detail(change) {
+                stdout.push_str(&format!("\n    {detail}"));
+            }
         }
     }
 
@@ -8159,6 +8238,18 @@ fn render_detect_comparison_section(
         ));
         render_detect_removals_section(stdout, &comparison.removals, mode);
     }
+}
+
+fn render_detect_comparison_source_detail(change: &DetectComparisonChange) -> Option<String> {
+    let source = change.source.as_deref()?;
+    let mut detail = format!("{} {}", paint_key("Source:"), source);
+    if let Some(confidence) = change.confidence {
+        detail.push(' ');
+        detail.push('[');
+        detail.push_str(&render_confidence(confidence));
+        detail.push(']');
+    }
+    Some(detail)
 }
 
 fn render_detect_removals_section(
@@ -12544,7 +12635,7 @@ mod tests {
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
-        compact_policy_path_relative_to_contract, execute_repo_up,
+        compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
         render_detect_comparison_section, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_up_result,
         render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
@@ -12847,18 +12938,21 @@ mod tests {
                     existing: String::from("./scripts/bump-version.sh"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.setup.run"),
                     existing: String::from("cargo fetch"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
@@ -12867,12 +12961,14 @@ mod tests {
                     ),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.doctor-annotations.run"),
@@ -12881,24 +12977,28 @@ mod tests {
                     ),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tools.node"),
                     existing: String::from("22"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("runtimes.java"),
                     existing: String::from("21"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("services.postgres.provider"),
                     existing: String::from("docker-compose"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
             ],
             error: None,
@@ -12963,12 +13063,14 @@ mod tests {
                     existing: String::from("cargo fetch"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
@@ -12977,12 +13079,14 @@ mod tests {
                     ),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
                     ownership: None,
                     provenance: None,
+                    provenance_key: None,
                 },
             ],
             error: None,
@@ -13019,6 +13123,7 @@ mod tests {
                 existing: String::from("cargo fetch"),
                 ownership: None,
                 provenance: None,
+                provenance_key: None,
             }],
             error: None,
         };
@@ -14203,6 +14308,18 @@ tasks:
         assert!(rendered.contains("Env sources:"));
         assert!(rendered.contains("OTA_TEST_SECRET"));
         assert!(rendered.contains("(task)"));
+    }
+
+    #[test]
+    fn doctor_mode_execution_overrides_select_expected_backend() {
+        assert_eq!(
+            doctor_mode_execution_overrides(DoctorMode::Native).backend,
+            Some(crate::schema::Backend::Native)
+        );
+        assert_eq!(
+            doctor_mode_execution_overrides(DoctorMode::Container).backend,
+            Some(crate::schema::Backend::Container)
+        );
     }
 
     #[test]
@@ -17796,6 +17913,11 @@ struct WorkspaceStatusReport {
     repos: Vec<WorkspaceRepoStatusReport>,
 }
 
+struct RepoReceiptReport {
+    receipt: ExecutionReceipt,
+    findings: Vec<Finding>,
+}
+
 struct WorkspaceReceiptReport {
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoStatusReport>,
@@ -17866,6 +17988,48 @@ fn execution_receipt_step(
     }
 }
 
+fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
+    ExecutionOverrides {
+        backend: Some(match mode {
+            DoctorMode::Native => Backend::Native,
+            DoctorMode::Container => Backend::Container,
+        }),
+        lifecycle: None,
+    }
+}
+
+fn repo_readiness_receipt(
+    contract_path: &Path,
+    contract: &Contract,
+    mode: DoctorMode,
+    report: &DoctorReport,
+) -> ExecutionReceipt {
+    let mut receipt = repo_execution_receipt(
+        contract_path,
+        contract,
+        doctor_mode_execution_overrides(mode),
+        if report.ok { "READY" } else { "NOT READY" },
+        "readiness",
+        None,
+        None,
+        &report.findings,
+        None,
+        report
+            .findings
+            .iter()
+            .find(|finding| finding.severity == FindingSeverity::Error)
+            .or_else(|| report.findings.first())
+            .map(|finding| rewrite_doctor_mode_command(&finding.next, Some(mode))),
+    );
+    receipt.blocked = report
+        .findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .map(|finding| finding.summary.clone())
+        .collect();
+    receipt
+}
+
 fn repo_execution_receipt(
     path: &Path,
     contract: &Contract,
@@ -17923,6 +18087,42 @@ fn repo_execution_receipt(
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
         next,
+    }
+}
+
+fn render_repo_receipt(
+    text_path: &str,
+    json_path: &str,
+    report: &RepoReceiptReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format!(
+                "\n{}\n{}",
+                format_command_header("RECEIPT", text_path),
+                render_execution_receipt_text(&report.receipt)
+            );
+            stdout.push('\n');
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if report.receipt.ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&ReceiptSuccess {
+                ok: report.receipt.ok,
+                path: json_path,
+                mode: "receipt",
+                summary: report.receipt.summary,
+                receipt: report.receipt.clone(),
+                findings: &report.findings,
+            }),
+            stderr: None,
+            exit_code: if report.receipt.ok { 0 } else { 1 },
+        },
     }
 }
 

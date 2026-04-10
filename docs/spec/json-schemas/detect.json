@@ -30,7 +30,10 @@
                   "existing": { "type": "string" },
                   "detected": { "type": "string" },
                   "ownership": { "enum": ["repo_contract", "repo_signals"] },
-                  "provenance": { "type": "string" }
+                  "provenance": { "type": "string" },
+                  "provenance_key": { "enum": ["repo_signals"] },
+                  "source": { "type": "string" },
+                  "confidence": { "enum": ["low", "medium", "high"] }
                 }
               }
             },
@@ -44,7 +47,8 @@
                   "field": { "type": "string" },
                   "existing": { "type": "string" },
                   "ownership": { "enum": ["repo_contract"] },
-                  "provenance": { "type": "string" }
+                  "provenance": { "type": "string" },
+                  "provenance_key": { "enum": ["repo_signals"] }
                 }
               }
             },
