@@ -2113,7 +2113,7 @@ services:
     assert_eq!(json["findings"][1]["severity"], "warn");
     assert_eq!(
         json["findings"][1]["summary"],
-        "Ephemeral lifecycle is advisory only in V1"
+        "Ephemeral lifecycle is advisory in native mode"
     );
 }
 

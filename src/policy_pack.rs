@@ -821,7 +821,10 @@ struct WorkspacePolicySourceWorkspace {
 fn find_workspace_policy_pack_location(
     contract_path: &Path,
 ) -> Result<Option<String>, LoadPolicyPackError> {
-    let mut current = Some(contract_path.parent().unwrap_or_else(|| Path::new(".")));
+    let Some(search_root) = ancestor_search_root(contract_path) else {
+        return Ok(None);
+    };
+    let mut current = Some(search_root);
 
     while let Some(dir) = current {
         let candidate = dir.join(DEFAULT_WORKSPACE_FILE);
@@ -927,8 +930,22 @@ fn is_remote_policy_source(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")
 }
 
+fn ancestor_search_root(contract_path: &Path) -> Option<&Path> {
+    if contract_path.is_relative() && !contract_path.exists() {
+        let synthetic_bare_reference = contract_path
+            .parent()
+            .map(|parent| parent.as_os_str().is_empty())
+            .unwrap_or(true);
+        if synthetic_bare_reference {
+            return None;
+        }
+    }
+
+    Some(contract_path.parent().unwrap_or_else(|| Path::new(".")))
+}
+
 fn find_org_policy_pack_path(contract_path: &Path) -> Option<PathBuf> {
-    let mut current = Some(contract_path.parent().unwrap_or_else(|| Path::new(".")));
+    let mut current = Some(ancestor_search_root(contract_path)?);
 
     while let Some(dir) = current {
         let candidate = dir.join(".ota").join("org-policy.yaml");
@@ -965,7 +982,7 @@ fn section_present(contract: &crate::schema::Contract, section: &str) -> bool {
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::thread;
     use std::{env, fs};
 
@@ -980,6 +997,30 @@ mod tests {
 
     fn write_contract(dir: &TempDir, body: &str) {
         fs::write(dir.path().join("ota.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn ignores_ancestor_lookup_for_missing_bare_relative_contract_reference() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original = env::current_dir().unwrap();
+        let fixture = TempDir::new().unwrap();
+        env::set_current_dir(fixture.path()).unwrap();
+
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+"#,
+        )
+        .unwrap();
+
+        let loaded = load_org_policy_pack_auto(Path::new("ota.yaml")).unwrap();
+        assert!(loaded.is_none());
+
+        env::set_current_dir(original).unwrap();
     }
 
     #[test]
