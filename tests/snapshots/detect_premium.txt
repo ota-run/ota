@@ -10,17 +10,7 @@ Existing contract comparison:
 
 Existing contract drift:
 Impact:
-  • 1 task affected
-  • 1 command removal
   • 1 tool removal
-
-◉ WARN  Review task command drift (1 removal across 1 task)
-Why: Current repo signals no longer support the commands below in the existing contract.
-  `ota detect --merge` will not remove them automatically; review rewrite if you want
-  to drop stale entries.
-
-✦  Task `build`
-  » remove command `cargo build`
 
 ◉ WARN  Review tool drift (1 removal across 1 tool)
 Why: Current repo signals no longer support the tool entries below in the existing

@@ -27,6 +27,10 @@ use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
 use crate::schema::Contract;
 
+const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
+const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
+const DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE: &str = "repo_signals";
+
 pub(crate) fn append_contract_drift_findings(
     contract: &Contract,
     contract_path: &Path,
@@ -96,6 +100,31 @@ fn compact_display_path(path: &Path) -> String {
             }
         })
         .unwrap_or_else(|_| path.display().to_string())
+}
+
+fn detect_change_ownership(existing: Option<&str>) -> String {
+    if existing.is_some() {
+        String::from(DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP)
+    } else {
+        String::from(DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP)
+    }
+}
+
+fn detect_change_provenance() -> String {
+    String::from(DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE)
+}
+
+fn push_detect_removal(
+    removals: &mut Vec<DetectComparisonRemoval>,
+    field: String,
+    existing: String,
+) {
+    removals.push(DetectComparisonRemoval {
+        field,
+        existing,
+        ownership: Some(String::from(DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP)),
+        provenance: Some(detect_change_provenance()),
+    });
 }
 
 pub(crate) fn collect_detect_changes(
@@ -212,27 +241,30 @@ pub(crate) fn collect_detect_removals(
     let mut removals = Vec::new();
 
     if detected.project.is_none() {
-        removals.push(DetectComparisonRemoval {
-            field: String::from("project.name"),
-            existing: existing.project.name.clone(),
-        });
+        push_detect_removal(
+            &mut removals,
+            String::from("project.name"),
+            existing.project.name.clone(),
+        );
     }
 
     for (name, requirement) in &existing.runtimes {
         if !detected.runtimes.contains_key(name) {
-            removals.push(DetectComparisonRemoval {
-                field: format!("runtimes.{name}"),
-                existing: requirement.version().to_string(),
-            });
+            push_detect_removal(
+                &mut removals,
+                format!("runtimes.{name}"),
+                requirement.version().to_string(),
+            );
         }
     }
 
     for (name, requirement) in &existing.tools {
         if !detected.tools.contains_key(name) {
-            removals.push(DetectComparisonRemoval {
-                field: format!("tools.{name}"),
-                existing: requirement.version().to_string(),
-            });
+            push_detect_removal(
+                &mut removals,
+                format!("tools.{name}"),
+                requirement.version().to_string(),
+            );
         }
     }
 
@@ -243,44 +275,48 @@ pub(crate) fn collect_detect_removals(
                 .and_then(|value| value.provider.as_ref())
                 .is_none()
         {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.provider"),
-                existing: service.provider.as_deref().unwrap_or_default().to_string(),
-            });
+            push_detect_removal(
+                &mut removals,
+                format!("services.{name}.provider"),
+                service.provider.as_deref().unwrap_or_default().to_string(),
+            );
         }
         if service.start.is_some()
             && detected_service
                 .and_then(|value| value.start.as_ref())
                 .is_none()
         {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.start"),
-                existing: service.start.as_deref().unwrap_or_default().to_string(),
-            });
+            push_detect_removal(
+                &mut removals,
+                format!("services.{name}.start"),
+                service.start.as_deref().unwrap_or_default().to_string(),
+            );
         }
         if service.stop.is_some()
             && detected_service
                 .and_then(|value| value.stop.as_ref())
                 .is_none()
         {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.stop"),
-                existing: service.stop.as_deref().unwrap_or_default().to_string(),
-            });
+            push_detect_removal(
+                &mut removals,
+                format!("services.{name}.stop"),
+                service.stop.as_deref().unwrap_or_default().to_string(),
+            );
         }
         if service.healthcheck.is_some()
             && detected_service
                 .and_then(|value| value.healthcheck.as_ref())
                 .is_none()
         {
-            removals.push(DetectComparisonRemoval {
-                field: format!("services.{name}.healthcheck"),
-                existing: service
+            push_detect_removal(
+                &mut removals,
+                format!("services.{name}.healthcheck"),
+                service
                     .healthcheck
                     .as_deref()
                     .unwrap_or_default()
                     .to_string(),
-            });
+            );
         }
     }
 
@@ -303,12 +339,16 @@ fn push_detect_change(
             status: "add",
             existing: None,
             detected: detected.to_string(),
+            ownership: Some(detect_change_ownership(None)),
+            provenance: Some(detect_change_provenance()),
         }),
         Some(existing) if existing != detected => changes.push(DetectComparisonChange {
             field: field.to_string(),
             status: "update",
             existing: Some(existing.to_string()),
             detected: detected.to_string(),
+            ownership: Some(detect_change_ownership(Some(existing))),
+            provenance: Some(detect_change_provenance()),
         }),
         Some(_) => {}
     }
@@ -390,5 +430,7 @@ services:
         let removals = collect_detect_removals(&existing, &detected);
         assert_eq!(removals.len(), 1);
         assert_eq!(removals[0].field, "services.postgres.provider");
+        assert_eq!(removals[0].ownership.as_deref(), Some("repo_contract"));
+        assert_eq!(removals[0].provenance.as_deref(), Some("repo_signals"));
     }
 }

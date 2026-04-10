@@ -28,7 +28,9 @@
                   "field": { "type": "string" },
                   "status": { "enum": ["add", "update"] },
                   "existing": { "type": "string" },
-                  "detected": { "type": "string" }
+                  "detected": { "type": "string" },
+                  "ownership": { "enum": ["repo_contract", "repo_signals"] },
+                  "provenance": { "type": "string" }
                 }
               }
             },
@@ -40,7 +42,9 @@
                 "required": ["field", "existing"],
                 "properties": {
                   "field": { "type": "string" },
-                  "existing": { "type": "string" }
+                  "existing": { "type": "string" },
+                  "ownership": { "enum": ["repo_contract"] },
+                  "provenance": { "type": "string" }
                 }
               }
             },

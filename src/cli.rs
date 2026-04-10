@@ -10222,6 +10222,14 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["comparison"]["existing_contract"], true);
         assert_eq!(json["comparison"]["changes"][0]["field"], "project.name");
+        assert_eq!(
+            json["comparison"]["changes"][0]["ownership"],
+            "repo_contract"
+        );
+        assert_eq!(
+            json["comparison"]["changes"][0]["provenance"],
+            "repo_signals"
+        );
     }
 
     #[test]
@@ -10259,12 +10267,16 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["comparison"]["existing_contract"], true);
+        assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 1);
         assert_eq!(json["comparison"]["removals"][0]["field"], "tools.cargo");
         assert_eq!(
-            json["comparison"]["removals"][1]["field"],
-            "tasks.build.run"
+            json["comparison"]["removals"][0]["ownership"],
+            "repo_contract"
         );
-        assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            json["comparison"]["removals"][0]["provenance"],
+            "repo_signals"
+        );
     }
 
     #[test]
