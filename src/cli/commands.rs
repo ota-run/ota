@@ -7974,7 +7974,7 @@ fn render_init(
             path: &path_display,
             written: false,
             mode,
-            config: &report.contract,
+            config: &bootstrap_contract,
             inferred: &report.inferences,
         })),
     }
@@ -8035,6 +8035,9 @@ fn starter_agent_from_detected_contract(
     }
 
     let writable_paths = starter_agent_writable_paths(root);
+    if writable_paths.is_empty() {
+        return None;
+    }
     let entrypoint = contract
         .tasks
         .contains_key("setup")
@@ -8079,11 +8082,6 @@ fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
             writable_paths.push(candidate.to_string());
         }
     }
-
-    if writable_paths.is_empty() {
-        writable_paths.push(String::from("."));
-    }
-
     writable_paths
 }
 

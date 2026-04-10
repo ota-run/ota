@@ -20,9 +20,10 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use ota::parser::load_contract;
+use ota::parser::{load_contract, parse_contract_str};
 use ota::validator::validate_contract;
 use ota::workspace::{load_workspace_contract, validate_workspace_contract};
 
@@ -49,6 +50,33 @@ fn workspace_example_paths() -> Vec<PathBuf> {
         root.join("workspace-basic").join("ota.workspace.yaml"),
         root.join("workspace-acquire").join("ota.workspace.yaml"),
     ]
+}
+
+fn yaml_fenced_blocks(markdown: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = Vec::new();
+    let mut in_yaml_block = false;
+
+    for line in markdown.lines() {
+        if !in_yaml_block {
+            if line.trim() == "```yaml" {
+                in_yaml_block = true;
+                current.clear();
+            }
+            continue;
+        }
+
+        if line.trim() == "```" {
+            blocks.push(current.join("\n"));
+            current.clear();
+            in_yaml_block = false;
+            continue;
+        }
+
+        current.push(line.to_string());
+    }
+
+    blocks
 }
 
 #[test]
@@ -81,4 +109,41 @@ fn shipped_workspace_examples_load_and_validate() {
             );
         });
     }
+}
+
+#[test]
+fn hosted_validation_contract_examples_load_and_validate() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec")
+        .join("hosted-validation-workflow.md");
+    let markdown = fs::read_to_string(&path).expect("hosted validation doc should load");
+    let mut validated = 0;
+
+    for block in yaml_fenced_blocks(&markdown) {
+        if !block.trim_start().starts_with("version:") {
+            continue;
+        }
+
+        let contract = parse_contract_str(&path, &block).unwrap_or_else(|error| {
+            panic!(
+                "hosted validation example in `{}` should parse: {error}",
+                path.display()
+            );
+        });
+
+        validate_contract(&contract).unwrap_or_else(|error| {
+            panic!(
+                "hosted validation example in `{}` should validate: {error}",
+                path.display()
+            );
+        });
+
+        validated += 1;
+    }
+
+    assert!(
+        validated > 0,
+        "hosted validation doc should contain at least one contract example"
+    );
 }

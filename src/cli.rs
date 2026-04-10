@@ -8434,6 +8434,7 @@ agent:
   }
 }"#,
         );
+        fs::create_dir_all(fixture.dir.path().join("src")).unwrap();
 
         let output = run_with(["ota", "init", fixture.path()]);
 
@@ -8584,6 +8585,61 @@ agent:
         assert_eq!(json["ok"], true);
         assert_eq!(json["written"], false);
         assert_eq!(json["mode"], "blank");
+    }
+
+    #[test]
+    fn init_json_dry_run_includes_derived_agent_defaults() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": {
+    "setup": "pnpm install",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("src")).unwrap();
+
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["config"]["agent"]["entrypoint"], "setup");
+        assert_eq!(json["config"]["agent"]["default_task"], "test");
+        assert_eq!(json["config"]["agent"]["safe_tasks"][0], "setup");
+        assert_eq!(json["config"]["agent"]["safe_tasks"][1], "test");
+        assert_eq!(json["config"]["agent"]["verify_after_changes"][0], "test");
+        assert_eq!(json["config"]["agent"]["writable_paths"][0], "src");
+        assert_eq!(
+            json["config"]["agent"]["bootstrap"]["ota"]["sh"],
+            "curl -fsSL https://dist.ota.run/install.sh | sh"
+        );
+    }
+
+    #[test]
+    fn init_json_dry_run_omits_agent_when_safe_writable_paths_cannot_be_inferred() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": {
+    "setup": "pnpm install",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["config"].get("agent").is_none() || json["config"]["agent"].is_null(),
+            "starter preview should omit agent guidance when writable paths cannot be inferred safely"
+        );
     }
 
     #[test]

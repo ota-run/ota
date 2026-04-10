@@ -284,28 +284,6 @@ pub(crate) fn collect_detect_removals(
         }
     }
 
-    for (name, task) in &existing.tasks {
-        let detected_task = detected.tasks.get(name);
-        let existing_run = task.default_execution_body().map(str::to_string);
-        if let Some(existing_run) = existing_run {
-            if detected_task.is_none() {
-                removals.push(DetectComparisonRemoval {
-                    field: format!("tasks.{name}.run"),
-                    existing: existing_run,
-                });
-            }
-        }
-
-        if task.safe_for_agent
-            && detected_task.is_none_or(|detected_task| !detected_task.safe_for_agent)
-        {
-            removals.push(DetectComparisonRemoval {
-                field: format!("tasks.{name}.safe_for_agent"),
-                existing: String::from("true"),
-            });
-        }
-    }
-
     removals
 }
 
@@ -333,5 +311,84 @@ fn push_detect_change(
             detected: detected.to_string(),
         }),
         Some(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detector::{DetectContract, DetectProject, DetectService, DetectTask};
+    use crate::parser::parse_contract_str;
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    #[test]
+    fn collect_detect_removals_does_not_remove_task_fields_on_detector_silence() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: cargo fetch
+    safe_for_agent: true
+  ci:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            ..DetectContract::default()
+        };
+
+        let removals = collect_detect_removals(&existing, &detected);
+        assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn collect_detect_removals_keeps_positive_non_task_removals() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    provider: docker-compose
+"#,
+        )
+        .unwrap();
+
+        let mut services = BTreeMap::new();
+        services.insert(
+            String::from("postgres"),
+            DetectService {
+                provider: None,
+                start: None,
+                stop: None,
+                healthcheck: None,
+            },
+        );
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            services,
+            tasks: BTreeMap::<String, DetectTask>::new(),
+            ..DetectContract::default()
+        };
+
+        let removals = collect_detect_removals(&existing, &detected);
+        assert_eq!(removals.len(), 1);
+        assert_eq!(removals[0].field, "services.postgres.provider");
     }
 }

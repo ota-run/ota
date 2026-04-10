@@ -959,6 +959,10 @@ counts from checks-only output.
 When task inference is confident enough to write, `config.tasks.<name>.notes` may also be
 present and point at the matching `ota run <task>` command.
 
+In dry-run preview mode, `config` matches the starter contract ota would review or write,
+including derived starter defaults such as a minimal `agent` block when ota can infer one
+safely.
+
 Failure example:
 
 ```json

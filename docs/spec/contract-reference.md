@@ -772,10 +772,10 @@ Current validation rules:
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 
 Starter contracts commonly use a minimal default AI-agent block when the detector has enough
-confidence to write one. The block is stored under `agent`, and it gives an AI agent the safe
-paths and tasks it should use first. That default usually includes `setup` as the entrypoint when
-present, `test` as the verification task when present, `test` in `verify_after_changes` when
-present, `ota.yaml` in `protected_paths`, and a short note pointing at the matching
+confidence to write one and can infer safe writable paths. The block is stored under `agent`, and
+it gives an AI agent the safe paths and tasks it should use first. That default usually includes
+`setup` as the entrypoint when present, `test` as the verification task when present, `test` in
+`verify_after_changes` when present, `ota.yaml` in `protected_paths`, and a short note pointing at the matching
 `ota run <task>` command. When `ota` itself should be installable by an agent, the starter block
 can also include an approved `bootstrap.ota` entry with the shell and PowerShell install
 commands.

@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed `ota init --json --dry-run` so the machine-readable preview now matches the reviewed starter contract, including derived starter defaults such as a safe minimal `agent` block when ota can infer one.
+- tightened starter agent generation to fail closed on writable paths: when ota cannot infer safe writable paths, it now omits the generated `agent` block instead of granting repo-wide writes with `writable_paths: [.]`.
+- tightened detect drift removals so task commands and `safe_for_agent` entries are no longer suggested for removal on detector silence alone.
+- fixed the hosted-validation workflow doc so the shipped `ota.yaml` Postgres example now matches the actual service contract schema.
+
 ## 1.2.4
 
 - added `ota up --stream` for repo-level text runs so provisioning, required service `start` commands, and the `setup` task can expose raw live child output on demand while default `ota up` stays compact and keeps failed child output inside the final report.
