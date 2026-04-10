@@ -710,7 +710,7 @@ pub(crate) fn render_workspace_receipt(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "\n{}\n{}",
+                "{}\n{}",
                 format_command_header("WORKSPACE RECEIPT", path),
                 render_execution_receipt_text(&report.receipt)
             );
