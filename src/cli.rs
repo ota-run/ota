@@ -7193,7 +7193,7 @@ tasks:
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
         assert_eq!(
             json["summary"]["primary_blocker"]["summary"],
-            "Ephemeral lifecycle is advisory only in V1"
+            "Ephemeral lifecycle is advisory in native mode"
         );
         assert_eq!(json["mode"], "native");
         assert_eq!(json["execution"]["preferred"], "remote");
@@ -9415,7 +9415,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("Primary Finding"));
-        assert!(stdout.contains("Ephemeral lifecycle is advisory only in V1"));
+        assert!(stdout.contains("Ephemeral lifecycle is advisory in native mode"));
     }
 
     #[test]
@@ -12480,6 +12480,7 @@ agent:
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("80"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "--mode", "container", "."]);
@@ -12487,6 +12488,10 @@ agent:
         assert_eq!(output.exit_code, 0);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Host-bound readiness checks are not evaluated in container mode"));
+        assert!(text.contains(
+            "Why: container mode checks the execution image; env requirements, checks, service healthchecks remain host-bound and would mix contexts"
+        ));
+        assert!(!text.contains("execution image;\n  env requirements"));
         assert!(!text.contains("Version mismatch for runtime: node"));
         assert!(!text.contains("Missing environment variable: OTA_CONTAINER_MODE_REQUIRED"));
         assert!(!text.contains("Check failed: failing-check"));
