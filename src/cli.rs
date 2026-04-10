@@ -3113,6 +3113,7 @@ policies:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let steps = json["steps"].as_array().unwrap();
         assert_eq!(steps[0]["provenance"], "org policy");
+        assert_eq!(steps[0]["provenance_key"], "org_policy");
 
         let text = run_with(["ota", "explain", fixture.path().to_str().unwrap()]);
         let stdout = strip_ansi(&text.stdout);
@@ -3178,6 +3179,10 @@ policies:
         ]);
         let parsed: Value = serde_json::from_str(&json.stdout).unwrap();
         assert_eq!(parsed["repos"][0]["steps"][0]["provenance"], "org policy");
+        assert_eq!(
+            parsed["repos"][0]["steps"][0]["provenance_key"],
+            "org_policy"
+        );
     }
 
     #[test]
@@ -6538,6 +6543,7 @@ version = "0.1.0"
                         .unwrap_or_default()
                         .starts_with("Contract drift:")
                         && finding["ownership"] == "repo_contract"
+                        && finding["provenance_key"] == "repo_signals"
                         && finding["provenance"]
                             .as_str()
                             .unwrap_or_default()

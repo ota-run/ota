@@ -11688,6 +11688,7 @@ fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
             why: finding.why.clone(),
             next: finding.next.clone(),
             provenance: finding.provenance(),
+            provenance_key: finding.provenance_key(),
         })
         .collect()
 }

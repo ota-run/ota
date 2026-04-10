@@ -171,6 +171,7 @@ fn shared_finding_schema_includes_optional_policy_context() {
     assert!(finding.get("evidence").is_some());
     assert!(finding.get("ownership").is_some());
     assert!(finding.get("provenance").is_some());
+    assert!(finding.get("provenance_key").is_some());
     assert!(finding.get("policy_outcome").is_some());
     assert!(finding.get("policy_reason").is_some());
     assert!(finding.get("policy_source").is_some());
@@ -281,6 +282,7 @@ fn explain_schema_includes_step_provenance() {
     let step = &schema["properties"]["steps"]["items"]["properties"];
 
     assert!(step.get("provenance").is_some());
+    assert!(step.get("provenance_key").is_some());
 }
 
 #[test]
@@ -290,6 +292,7 @@ fn workspace_explain_schema_includes_step_provenance() {
         &schema["properties"]["repos"]["items"]["properties"]["steps"]["items"]["properties"];
 
     assert!(step.get("provenance").is_some());
+    assert!(step.get("provenance_key").is_some());
 }
 
 #[test]

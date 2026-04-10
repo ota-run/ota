@@ -361,6 +361,9 @@ Finding objects always include stable identity fields:
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
+When a stable machine-oriented provenance label is available, finding objects may also include
+`provenance_key`, such as `org_policy` or `repo_signals`, while `provenance` remains the
+human-readable label.
 
 When the repo declares runtimes or tools and policy provides approved sources for them,
 `ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
@@ -411,6 +414,7 @@ warning findings that describe the drift and point back to `ota detect --merge -
 comparison preview. Drift findings also include optional `ownership` and `provenance` fields so
 CI and editors can classify the mismatch as a repo-contract issue and trace the source of the
 comparison.
+When that drift provenance is present, `provenance_key` is `repo_signals`.
 
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
@@ -545,7 +549,8 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
 
 ## `ota explain --json`
 
-Explain steps may also include `provenance` when the underlying finding carries policy or drift context.
+Explain steps may also include `provenance` and `provenance_key` when the underlying finding
+carries policy or drift context.
 
 ```json
 {
@@ -565,7 +570,8 @@ Explain steps may also include `provenance` when the underlying finding carries 
       "summary": "No tasks defined in contract",
       "why": "...",
       "next": "...",
-      "provenance": "org policy"
+      "provenance": "org policy",
+      "provenance_key": "org_policy"
     }
   ]
 }
@@ -573,7 +579,8 @@ Explain steps may also include `provenance` when the underlying finding carries 
 
 ## `ota workspace explain --json`
 
-Workspace explain steps may also include `provenance` when the underlying finding carries policy or drift context.
+Workspace explain steps may also include `provenance` and `provenance_key` when the underlying
+finding carries policy or drift context.
 
 ```json
 {
@@ -609,7 +616,8 @@ Workspace explain steps may also include `provenance` when the underlying findin
           "summary": "No tasks defined in contract",
           "why": "...",
           "next": "...",
-          "provenance": "org policy"
+          "provenance": "org policy",
+          "provenance_key": "org_policy"
         }
       ]
     }

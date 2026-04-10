@@ -104,6 +104,7 @@ struct PolicyFindingContext<'a> {
 struct DriftFindingContext<'a> {
     ownership: &'a str,
     provenance: &'a str,
+    provenance_key: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -784,6 +785,7 @@ impl Finding {
             Some(DriftFindingContext {
                 ownership: "repo_contract",
                 provenance: "repo signals were compared against the declared contract with `ota detect`",
+                provenance_key: "repo_signals",
             })
         } else {
             None
@@ -798,6 +800,15 @@ impl Finding {
         self.drift_context()
             .map(|context| context.provenance.to_string())
     }
+
+    pub(crate) fn provenance_key(&self) -> Option<String> {
+        if self.policy_context().is_some() {
+            return Some(String::from("org_policy"));
+        }
+
+        self.drift_context()
+            .map(|context| context.provenance_key.to_string())
+    }
 }
 
 impl Serialize for Finding {
@@ -809,7 +820,7 @@ impl Serialize for Finding {
         let drift = self.drift_context();
         let mut state = serializer.serialize_struct(
             "Finding",
-            8 + policy.map(|_| 5).unwrap_or_default() + drift.map(|_| 2).unwrap_or_default(),
+            8 + policy.map(|_| 6).unwrap_or_default() + drift.map(|_| 3).unwrap_or_default(),
         )?;
 
         state.serialize_field("code", self.code())?;
@@ -827,11 +838,13 @@ impl Serialize for Finding {
             state.serialize_field("policy_source", policy.source)?;
             state.serialize_field("install_scope", policy.install_scope)?;
             state.serialize_field("mutation_allowed", &policy.mutation_allowed)?;
+            state.serialize_field("provenance_key", "org_policy")?;
         }
 
         if let Some(drift) = drift {
             state.serialize_field("ownership", drift.ownership)?;
             state.serialize_field("provenance", drift.provenance)?;
+            state.serialize_field("provenance_key", drift.provenance_key)?;
         }
 
         state.end()
