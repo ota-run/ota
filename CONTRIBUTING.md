@@ -24,4 +24,42 @@
 
 # Contributing
 
-Ota does not accept external code contributions.
+ota is maintainer-led and does not currently accept external code contributions.
+
+That is a governance choice, not a signal that outside feedback is unwanted. The most useful
+external input right now is issue-quality feedback that helps harden the public contract and the
+trust-sensitive command surfaces.
+
+## What to send
+
+- bug reports with a concrete reproduction
+- feature requests tied to a real repo or operator workflow
+- docs feedback where wording, examples, or guidance are unclear
+- fixture ideas or example repos that expose important edge cases
+
+Use the GitHub issue templates when possible so the report is actionable.
+
+## What not to send
+
+- external code pull requests
+- speculative refactors without a concrete operator problem
+- product-positioning changes that are not grounded in the shipped contract and docs
+
+## Why pull requests are closed
+
+Ota treats the contract, diagnosis model, JSON output, and readiness semantics as trust-critical
+product surfaces. The project is currently kept under strict maintainer stewardship so those
+surfaces can evolve coherently while the public contract hardens.
+
+## If you want to help anyway
+
+- open a bug with a failing repo shape
+- file docs corrections or examples that are misleading
+- propose a feature with exact operator value and trade-offs
+- point out contract drift, output ambiguity, or trust leaks
+
+## Related pages
+
+- [docs/policy/governance.md](docs/policy/governance.md)
+- [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md)
+- [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md)

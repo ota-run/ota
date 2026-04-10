@@ -24,8 +24,18 @@
 
 # Support and Enterprise
 
-ota’s open core stays Apache 2.0. Commercial value should come from separate offerings around the
-core rather than from confusing the public contract.
+ota’s open core stays Apache 2.0 and remains the public source of truth for the CLI contract,
+repo/workspace schemas, JSON output, and docs.
+
+Enterprise direction should extend that core, not replace it or hide it behind a separate product
+truth.
+
+## Open core first
+
+- the public CLI and contract stay usable without paid infrastructure
+- repo and workspace schemas remain part of the open core
+- JSON output and docs remain public integration surfaces
+- governance stays explicit and maintainer-led rather than pretending the enterprise layer owns the product truth
 
 ## Good enterprise candidates
 
@@ -34,6 +44,16 @@ core rather than from confusing the public contract.
 - organization policy packs and approvals
 - support, onboarding, and migration services
 - compliance retention and reporting
+
+## Enterprise teaser
+
+The likely serious enterprise path is not “more commands hidden behind a paywall.” It is:
+
+- hosted policy distribution and approval workflows
+- fleet-level readiness visibility across repos and workspaces
+- audit history, retention, and operator reporting
+- private integrations for internal infrastructure
+- commercial support and rollout help
 
 ## Keep separate from the core
 
