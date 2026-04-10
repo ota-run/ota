@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 
 use ota::parser::{load_contract, parse_contract_str};
 use ota::validator::validate_contract;
-use ota::workspace::{load_workspace_contract, validate_workspace_contract};
+use ota::workspace::{
+    load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
+};
 
 fn example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
@@ -79,6 +81,44 @@ fn yaml_fenced_blocks(markdown: &str) -> Vec<String> {
     blocks
 }
 
+enum DocContractKind {
+    Repo,
+    Workspace,
+}
+
+fn canonical_docs_contract_examples() -> Vec<(PathBuf, DocContractKind)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec");
+    vec![
+        (root.join("contract-reference.md"), DocContractKind::Repo),
+        (
+            root.join("hosted-validation-workflow.md"),
+            DocContractKind::Repo,
+        ),
+        (
+            root.join("execution-and-dockerfiles.md"),
+            DocContractKind::Repo,
+        ),
+        (
+            root.join("workspace-reference.md"),
+            DocContractKind::Workspace,
+        ),
+    ]
+}
+
+fn is_full_repo_contract_example(block: &str) -> bool {
+    let trimmed = block.trim_start();
+    trimmed.starts_with("version:") && trimmed.lines().any(|line| line.trim() == "project:")
+}
+
+fn is_full_workspace_contract_example(block: &str) -> bool {
+    let trimmed = block.trim_start();
+    trimmed.starts_with("version:")
+        && trimmed.lines().any(|line| line.trim() == "workspace:")
+        && trimmed.lines().any(|line| line.trim() == "repos:")
+}
+
 #[test]
 fn shipped_examples_load_and_validate() {
     for path in example_paths() {
@@ -112,38 +152,66 @@ fn shipped_workspace_examples_load_and_validate() {
 }
 
 #[test]
-fn hosted_validation_contract_examples_load_and_validate() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("docs")
-        .join("spec")
-        .join("hosted-validation-workflow.md");
-    let markdown = fs::read_to_string(&path).expect("hosted validation doc should load");
-    let mut validated = 0;
+fn canonical_docs_contract_examples_load_and_validate() {
+    for (path, kind) in canonical_docs_contract_examples() {
+        let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "docs example file `{}` should load: {error}",
+                path.display()
+            )
+        });
+        let mut validated = 0;
 
-    for block in yaml_fenced_blocks(&markdown) {
-        if !block.trim_start().starts_with("version:") {
-            continue;
+        for block in yaml_fenced_blocks(&markdown) {
+            match kind {
+                DocContractKind::Repo => {
+                    if !is_full_repo_contract_example(&block) {
+                        continue;
+                    }
+
+                    let contract = parse_contract_str(&path, &block).unwrap_or_else(|error| {
+                        panic!(
+                            "repo contract example in `{}` should parse: {error}",
+                            path.display()
+                        );
+                    });
+
+                    validate_contract(&contract).unwrap_or_else(|error| {
+                        panic!(
+                            "repo contract example in `{}` should validate: {error}",
+                            path.display()
+                        );
+                    });
+                }
+                DocContractKind::Workspace => {
+                    if !is_full_workspace_contract_example(&block) {
+                        continue;
+                    }
+
+                    let contract =
+                        parse_workspace_contract_str(&path, &block).unwrap_or_else(|error| {
+                            panic!(
+                                "workspace contract example in `{}` should parse: {error}",
+                                path.display()
+                            );
+                        });
+
+                    validate_workspace_contract(&path, &contract).unwrap_or_else(|error| {
+                        panic!(
+                            "workspace contract example in `{}` should validate: {error}",
+                            path.display()
+                        );
+                    });
+                }
+            }
+
+            validated += 1;
         }
 
-        let contract = parse_contract_str(&path, &block).unwrap_or_else(|error| {
-            panic!(
-                "hosted validation example in `{}` should parse: {error}",
-                path.display()
-            );
-        });
-
-        validate_contract(&contract).unwrap_or_else(|error| {
-            panic!(
-                "hosted validation example in `{}` should validate: {error}",
-                path.display()
-            );
-        });
-
-        validated += 1;
+        assert!(
+            validated > 0,
+            "docs file `{}` should contain at least one full contract example",
+            path.display()
+        );
     }
-
-    assert!(
-        validated > 0,
-        "hosted validation doc should contain at least one contract example"
-    );
 }
