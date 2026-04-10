@@ -4,17 +4,16 @@
 
 Plan
  1. Fix version mismatches (2)
-  Why: one or more runtime or tool
-    entries do not match the
-    contract
+  Why: one or more runtime or tool entries do
+    not match the contract
   » node resolved `24.14.1`, requires `22`
     Next: install a compatible node version that satisfies `22`, then rerun `ota doctor`
   » npm resolved `24.14.1`, requires `10`
     Next: install a compatible npm version that satisfies `10`, then rerun `ota doctor`
 
  2. Review contract drift (2)
-  Why: repo signals no longer match
-    the declared contract
+  Why: repo signals no longer match the declared
+    contract
   » `runtimes.node` is no longer detected
   » `tools.npm` is no longer detected
   Next:
