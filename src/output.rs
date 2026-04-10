@@ -235,6 +235,8 @@ pub struct ExplainStep {
     pub next: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

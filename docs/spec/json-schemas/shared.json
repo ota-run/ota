@@ -58,6 +58,12 @@
           ]
         },
         "provenance": { "type": "string" },
+        "provenance_key": {
+          "enum": [
+            "org_policy",
+            "repo_signals"
+          ]
+        },
         "policy_outcome": {
           "enum": [
             "satisfied",

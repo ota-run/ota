@@ -66,7 +66,10 @@
           "summary": { "type": "string" },
           "why": { "type": "string" },
           "next": { "type": "string" },
-          "provenance": { "type": "string" }
+          "provenance": { "type": "string" },
+          "provenance_key": {
+            "enum": ["org_policy", "repo_signals"]
+          }
         }
       }
     }
