@@ -8947,6 +8947,10 @@ fn display_wrap_width(fallback_max_width: usize, reserve: usize) -> usize {
     terminal_width.clamp(24, fallback_max_width)
 }
 
+fn labeled_wrap_reserve(indent: &str, label: &str) -> usize {
+    indent.chars().count() + label.chars().count() + 1
+}
+
 fn append_wrapped_labeled_text<F, K>(
     output: &mut String,
     label: &str,
@@ -8970,7 +8974,11 @@ fn append_wrapped_labeled_text<F, K>(
         return;
     }
 
-    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 18);
+    let wrapped = wrap_display_tokens_for_terminal(
+        value,
+        fallback_max_width,
+        labeled_wrap_reserve(indent, label),
+    );
     if wrapped.is_empty() {
         output.push_str(&format!("\n{indent}{} -", render_key(label)));
         return;
@@ -9046,10 +9054,15 @@ fn strip_container_image_from_next(value: &str) -> (String, Option<String>) {
     (stripped, Some(image))
 }
 
-fn append_container_image_detail(output: &mut String, image: &str, indent: &str) {
+fn append_container_image_detail(
+    output: &mut String,
+    image: &str,
+    indent: &str,
+    severity: FindingSeverity,
+) {
     output.push_str(&format!(
-        "\n{indent} {}  {} {}",
-        summary_bullet(),
+        "\n{indent}  {} {} {}",
+        finding_detail_bullet(severity),
         paint_key("Image:"),
         paint_backticked_code(image)
     ));
@@ -9065,7 +9078,11 @@ fn append_wrapped_detail<F>(
 ) where
     F: Fn(&str) -> String,
 {
-    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 18);
+    let wrapped = wrap_display_tokens_for_terminal(
+        value,
+        fallback_max_width,
+        labeled_wrap_reserve(indent, label),
+    );
     if wrapped.is_empty() {
         output.push_str(&format!("\n{indent}{} -", paint_key(label)));
         return;
@@ -10552,6 +10569,8 @@ fn render_extensions_text(extensions: &BTreeMap<String, ExtensionSpec>) -> Strin
     stdout
 }
 
+const DOCTOR_DETAIL_WRAP_WIDTH: usize = 120;
+
 fn render_report_text(
     command: &str,
     path: &str,
@@ -10689,14 +10708,14 @@ fn render_report_section(
                     source_block,
                 ));
                 if let Some(image) = container_image.as_deref() {
-                    append_container_image_detail(&mut stdout, image, "");
+                    append_container_image_detail(&mut stdout, image, "", finding.severity);
                 }
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
                     &rewrite_doctor_mode_command(&display_next, doctor_mode),
                     "",
-                    84,
+                    DOCTOR_DETAIL_WRAP_WIDTH,
                     true,
                     |key| finding_detail_key(finding.severity, key),
                     |value| render_backticked_text(value, contract_path),
@@ -10714,20 +10733,20 @@ fn render_report_section(
                     "Why:",
                     &display_why,
                     "",
-                    84,
+                    DOCTOR_DETAIL_WRAP_WIDTH,
                     false,
                     |key| finding_detail_key(finding.severity, key),
                     |value| render_backticked_text(value, contract_path),
                 );
                 if let Some(image) = container_image.as_deref() {
-                    append_container_image_detail(&mut stdout, image, "");
+                    append_container_image_detail(&mut stdout, image, "", finding.severity);
                 }
                 append_wrapped_labeled_text(
                     &mut stdout,
                     "Next:",
                     &rewrite_doctor_mode_command(&display_next, doctor_mode),
                     "",
-                    84,
+                    DOCTOR_DETAIL_WRAP_WIDTH,
                     true,
                     |key| finding_detail_key(finding.severity, key),
                     |value| render_backticked_text(value, contract_path),
@@ -10827,21 +10846,21 @@ fn render_primary_finding_text_with_next_rewriter(
             "Why:",
             &display_why,
             "",
-            84,
+            DOCTOR_DETAIL_WRAP_WIDTH,
             false,
             paint_key,
             |value| render_backticked_text(value, contract_path),
         );
     }
     if let Some(image) = container_image.as_deref() {
-        append_container_image_detail(&mut stdout, image, "");
+        append_container_image_detail(&mut stdout, image, "", severity);
     }
     append_wrapped_labeled_text(
         &mut stdout,
         "Next:",
         &rewrite_next(&display_next, doctor_mode),
         "",
-        84,
+        DOCTOR_DETAIL_WRAP_WIDTH,
         true,
         paint_key,
         |value| render_backticked_text(value, contract_path),
@@ -11127,16 +11146,21 @@ fn render_grouped_doctor_findings(
             "Why:",
             &doctor_finding_group_why(&group.kind, &group.findings),
             "",
-            84,
+            DOCTOR_DETAIL_WRAP_WIDTH,
             false,
             paint_key,
             |value| render_backticked_text(value, contract_path),
         );
     }
     for item in display_items {
-        append_wrapped_bullet_text(&mut stdout, summary_bullet(), &item, "  ", 84, |value| {
-            render_backticked_text(value, contract_path)
-        });
+        append_wrapped_bullet_text(
+            &mut stdout,
+            finding_detail_bullet(group.severity),
+            &item,
+            "  ",
+            84,
+            |value| render_backticked_text(value, contract_path),
+        );
     }
     if let Some(source) = group
         .findings
@@ -11154,7 +11178,7 @@ fn render_grouped_doctor_findings(
         "Next:",
         &doctor_finding_group_next(&group.kind, &group.findings, doctor_mode),
         "",
-        84,
+        DOCTOR_DETAIL_WRAP_WIDTH,
         true,
         |key| finding_detail_key(group.severity, key),
         |value| render_backticked_text(value, contract_path),
@@ -13980,7 +14004,7 @@ tasks:
         assert!(text.contains(
             "Why: java is declared in the contract but is not available inside the configured"
         ));
-        assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
+        assert!(text.contains("  » Image: `jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
         assert!(text.contains(
@@ -14028,7 +14052,7 @@ tasks:
         assert!(text.contains(
             "Why: java is declared in the contract but is not available inside the configured"
         ));
-        assert!(text.contains("»  Image: `jdxcode/mise:latest`"));
+        assert!(text.contains("  » Image: `jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
         assert!(text.contains(
@@ -17111,6 +17135,14 @@ fn append_markdown_table(
     }
 }
 
+fn severity_color(severity: FindingSeverity) -> &'static str {
+    match severity {
+        FindingSeverity::Error => "1;31",
+        FindingSeverity::Warn => "1;33",
+        FindingSeverity::Info => "1;36",
+    }
+}
+
 fn render_severity(severity: FindingSeverity) -> String {
     if plain_mode() {
         return match severity {
@@ -17120,11 +17152,19 @@ fn render_severity(severity: FindingSeverity) -> String {
         };
     }
 
-    match severity {
-        FindingSeverity::Error => format!("{} {}", paint("◉", "1;31"), paint("ERROR", "1;31")),
-        FindingSeverity::Warn => format!("{} {}", paint("◉", "1;33"), paint("WARN", "1;33")),
-        FindingSeverity::Info => format!("{} {}", paint("◉", "1;36"), paint("INFO", "1;36")),
-    }
+    let color = severity_color(severity);
+    format!(
+        "{} {}",
+        paint("◉", color),
+        paint(
+            match severity {
+                FindingSeverity::Error => "ERROR",
+                FindingSeverity::Warn => "WARN",
+                FindingSeverity::Info => "INFO",
+            },
+            color
+        )
+    )
 }
 
 fn render_finding_summary(severity: FindingSeverity, summary: &str) -> String {
@@ -17390,6 +17430,14 @@ fn summary_bullet() -> String {
         String::from("-")
     } else {
         paint("»", "1;38;2;125;255;212")
+    }
+}
+
+fn finding_detail_bullet(severity: FindingSeverity) -> String {
+    if plain_mode() {
+        String::from("-")
+    } else {
+        paint("»", severity_color(severity))
     }
 }
 

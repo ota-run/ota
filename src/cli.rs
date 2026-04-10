@@ -2512,6 +2512,25 @@ exec /bin/sh -lc "$1"
         value.replace("\r\n", "\n").trim_end().to_string()
     }
 
+    fn normalize_snapshot_dynamic_fields(name: &str, value: &str) -> String {
+        if name != "help_root.txt" {
+            return value.to_string();
+        }
+
+        value
+            .lines()
+            .enumerate()
+            .map(|(index, line)| {
+                if index == 0 && line.starts_with("🦦 ota v") {
+                    String::from("🦦 ota v<VERSION>")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn snapshot_file(name: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
@@ -2528,13 +2547,14 @@ exec /bin/sh -lc "$1"
     }
 
     fn assert_text_snapshot(name: &str, actual: &str) {
-        let normalized = normalize_snapshot_text(actual);
+        let normalized = normalize_snapshot_dynamic_fields(name, &normalize_snapshot_text(actual));
         if should_update_snapshots() {
             fs::write(snapshot_file(name), &normalized).expect("write snapshot");
             return;
         }
         let expected = fs::read_to_string(snapshot_file(name)).expect("read snapshot");
-        assert_eq!(normalized, normalize_snapshot_text(&expected));
+        let expected = normalize_snapshot_dynamic_fields(name, &normalize_snapshot_text(&expected));
+        assert_eq!(normalized, expected);
     }
 
     fn assert_text_snapshot_for_dir(name: &str, actual: &str, dir: &std::path::Path) {
@@ -11763,6 +11783,7 @@ policies:
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("140"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "--mode", "container", "."]);
@@ -11770,7 +11791,11 @@ policies:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Container apt cannot install pinned package version: curl"));
-        assert!(text.contains("Image:"));
+        assert!(text.contains(
+            "Why: the Linux/container target requests `curl 8.13.0`, but the configured apt sources do not provide that version"
+        ));
+        assert!(text.contains("\n  » Image: `premium/test:latest`"));
+        assert!(!text.contains("configured apt sources do\n  not provide"));
         assert!(text.contains("`premium/test:latest`"));
         assert!(text.contains("relax the Linux/container version pin for `curl`"));
         assert!(!text.contains("Missing tool: curl"));
