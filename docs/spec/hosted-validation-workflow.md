@@ -157,6 +157,8 @@ jobs:
 ## Example with ota-provisioned Postgres
 
 In this shape, the repo contract owns the database service and the CI job stays thin.
+The repo is expected to carry the matching Compose definition; ota only models and runs the
+service boundary declared in `ota.yaml`.
 
 ```yaml
 version: 1
@@ -165,15 +167,11 @@ project:
 
 services:
   postgres:
-    image: postgres:16
-    env:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: app
-    ports:
-      - 5432:5432
-    healthcheck:
-      command: pg_isready -U postgres
+    required: true
+    provider: docker-compose
+    start: docker compose up -d postgres
+    stop: docker compose stop postgres
+    healthcheck: pg_isready -h localhost -p 5432
 
 env:
   DATABASE_URL:
@@ -211,8 +209,8 @@ jobs:
         run: ota run test
 ```
 
-In this model, ota starts and validates the service declared in `ota.yaml`; the runner does not
-duplicate the Postgres setup.
+In this model, ota starts and validates the Compose service declared in `ota.yaml`; the runner
+does not duplicate the Postgres setup.
 
 Example PR policy:
 

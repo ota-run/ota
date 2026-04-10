@@ -663,7 +663,7 @@ Current behavior:
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
-- when the detected tasks are confident enough, the starter contract may also include a minimal `agent` block and review notes; see [`contract-reference.md`](contract-reference.md) for the `agent` field semantics
+- when the detected tasks are confident enough and ota can infer safe writable paths, the starter contract may also include a minimal `agent` block and review notes; see [`contract-reference.md`](contract-reference.md) for the `agent` field semantics
 
 Modes:
 
