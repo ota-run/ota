@@ -4066,6 +4066,7 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
+        assert!(!stdout.starts_with('\n'));
         assert!(stdout.contains("RECEIPT "));
         assert!(stdout.contains("Steps:"));
         assert!(stdout.contains("1. READY  readiness"));
@@ -4210,6 +4211,20 @@ env:
                 .display()
                 .to_string()
         );
+    }
+
+    #[test]
+    fn workspace_receipt_text_renders_header_without_leading_blank_line() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "receipt", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(!stdout.starts_with('\n'));
+        assert!(stdout.contains("WORKSPACE RECEIPT "));
+        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("Summary"));
     }
 
     #[test]

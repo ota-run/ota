@@ -18099,7 +18099,7 @@ fn render_repo_receipt(
     match format {
         OutputFormat::Text => {
             let mut stdout = format!(
-                "\n{}\n{}",
+                "{}\n{}",
                 format_command_header("RECEIPT", text_path),
                 render_execution_receipt_text(&report.receipt)
             );
