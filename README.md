@@ -28,14 +28,6 @@
 
 # `ota`
 
-ota is maintainer-led open infrastructure for repo readiness. The core CLI, contracts, JSON output,
-and docs are public under Apache 2.0, while roadmap stewardship and future enterprise offerings stay
-operated by Ota.
-
-ota is not another task runner or package manager. It gives every repo one explicit contract for
-what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents
-can answer why a repo is or is not runnable without guesswork.
-
 <div align="center">
   <img src="docs/assets/ota-social-card.png" alt="ota social card showing repo readiness and doctor output" width="1280" />
 </div>
@@ -50,6 +42,10 @@ Most repos fail the same way:
 - new contributors guess which tools, versions, and paths they need
 - CI and local setup drift apart
 - diagnosis happens too late, after the repo already feels broken
+
+ota is not another task runner or package manager. It gives every repo one explicit contract for
+what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents
+can answer why a repo is or is not runnable without guesswork.
 
 ota fixes that by making readiness explicit and machine-readable:
 
@@ -238,9 +234,12 @@ The goal is not hidden automation. The goal is deterministic, inspectable repo r
 
 ## Open Source and Governance
 
+ota is maintainer-led open infrastructure for repo readiness. The core CLI, contracts, JSON output,
+and docs are public under Apache 2.0, while roadmap stewardship and future enterprise offerings stay
+operated by Ota.
+
 ota is open source, but it is not positioned as a community-governed codebase.
 
-- the core CLI, repo/workspace contracts, JSON output, docs, and examples are public under Apache 2.0
 - governance is maintainer-led by Ota so the contract, diagnosis model, and machine-readable surfaces stay coherent
 - issues, bug reports, docs feedback, and real-repo examples are welcome
 - external code contributions are not currently accepted
