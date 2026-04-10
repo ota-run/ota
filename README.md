@@ -28,7 +28,13 @@
 
 # `ota`
 
-ota is open infrastructure for repo readiness, not another task runner or package manager. It gives every repo one explicit contract for what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents can answer why a repo is or is not runnable without guesswork.
+ota is maintainer-led open infrastructure for repo readiness. The core CLI, contracts, JSON output,
+and docs are public under Apache 2.0, while roadmap stewardship and future enterprise offerings stay
+operated by Ota.
+
+ota is not another task runner or package manager. It gives every repo one explicit contract for
+what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents
+can answer why a repo is or is not runnable without guesswork.
 
 <div align="center">
   <img src="docs/assets/ota-social-card.png" alt="ota social card showing repo readiness and doctor output" width="1280" />
@@ -229,6 +235,18 @@ ota.yaml
 ```
 
 The goal is not hidden automation. The goal is deterministic, inspectable repo readiness.
+
+## Open Source and Governance
+
+ota is open source, but it is not positioned as a community-governed codebase.
+
+- the core CLI, repo/workspace contracts, JSON output, docs, and examples are public under Apache 2.0
+- governance is maintainer-led by Ota so the contract, diagnosis model, and machine-readable surfaces stay coherent
+- issues, bug reports, docs feedback, and real-repo examples are welcome
+- external code contributions are not currently accepted
+
+See [docs/policy/governance.md](docs/policy/governance.md) for the governance model and
+[CONTRIBUTING.md](CONTRIBUTING.md) for the current contribution policy.
 
 ## What ota does today
 
@@ -503,13 +521,31 @@ Current planning state:
 - Archived local UX hardening slice: [docs/planning/v5-ux-hardening.md](docs/planning/v5-ux-hardening.md)
 - V5 mutation controls and caching: [docs/spec/mutation-controls-and-caching.md](docs/spec/mutation-controls-and-caching.md)
 
+## Enterprise Direction
+
+Enterprise work is planned as a layer around the open core, not as a different contract truth.
+
+- the open core remains the public CLI, repo/workspace schemas, JSON output, and documentation
+- enterprise value should come from hosted policy, audit, fleet coordination, private adapters,
+  onboarding, and support
+- the public contract should stay usable on its own and should not become a thin wrapper around a paid control plane
+
+See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md) for the current
+enterprise boundary and likely future commercial surfaces.
+
 ## Contribution policy
 
-ota does not accept external code contributions. See [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md) for the open-core and enterprise boundary.
+ota is maintainer-led. External code contributions are not currently accepted.
 
-Use the GitHub issue templates for bug reports, feature requests, and docs feedback.
+Use the GitHub issue templates for bug reports, feature requests, docs feedback, and real-repo
+reproductions.
 
-See [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md) for the current support and enterprise boundary.
+Read:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) for the current contribution workflow
+- [docs/policy/governance.md](docs/policy/governance.md) for project governance
+- [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md) for the open-core and commercial boundary
+- [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md) for support and enterprise direction
 
 Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 
@@ -529,6 +565,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 
 ### Core concepts
 - [Philosophy](docs/philosophy.md)
+- [Governance](docs/policy/governance.md)
 - [Compatibility policy](docs/spec/compatibility-policy.md)
 - [Support policy](docs/spec/support-policy.md)
 

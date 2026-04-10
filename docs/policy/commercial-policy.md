@@ -24,7 +24,8 @@
 
 # Commercial Policy
 
-ota is open source under Apache 2.0. The commercial model stays separate from the core codebase.
+ota is open source under Apache 2.0 and governed as a maintainer-led open-core project. The
+commercial model stays separate from the core codebase and should not blur the public contract.
 
 ## What is open
 
@@ -44,6 +45,7 @@ ota is open source under Apache 2.0. The commercial model stays separate from th
 - commercial packaging and enterprise offerings
 
 See [brand-policy.md](brand-policy.md) for the brand usage boundary.
+See [governance.md](governance.md) for the project governance model.
 
 ## Monetization boundary
 
