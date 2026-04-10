@@ -23,7 +23,7 @@
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-use crate::detector::{DetectContract, Inference};
+use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::policy_env_values;
@@ -642,6 +642,16 @@ pub struct WorkspaceReceiptSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReceiptSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: ExecutionReceiptSummary,
+    pub receipt: ExecutionReceipt,
+    pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoRunReport {
     pub name: String,
     pub path: String,
@@ -760,6 +770,12 @@ pub struct DetectComparisonChange {
     pub ownership: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<Confidence>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -770,6 +786,8 @@ pub struct DetectComparisonRemoval {
     pub ownership: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

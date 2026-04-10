@@ -249,6 +249,21 @@ enum Commands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(display_order = 11)]
+    /// Capture a read-only repo receipt for audit and automation.
+    Receipt {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Capture the receipt in a specific execution context.
+        #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
+        mode: DoctorModeArg,
+        /// Run the command against one monorepo member declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
     #[command(display_order = 15)]
     /// List staged extension descriptors from an Ota contract.
     Extensions {
@@ -959,6 +974,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
         &cli.command,
         Commands::Doctor { .. }
             | Commands::Check { .. }
+            | Commands::Receipt { .. }
             | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Workspace {
@@ -989,6 +1005,7 @@ fn command_supports_spinner(command: &Commands) -> bool {
             | Commands::Up { stream: false, .. }
             | Commands::Doctor { .. }
             | Commands::Check { .. }
+            | Commands::Receipt { .. }
             | Commands::Diff { .. }
             | Commands::Extensions { .. }
             | Commands::Init { .. }
@@ -1262,6 +1279,19 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             &member,
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Receipt {
+            json,
+            mode,
+            member,
+            path,
+        } => commands::receipt(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            mode.into(),
             format_from_json(json),
             debug,
         ),
@@ -1753,6 +1783,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Init { .. } => "preview the starter contract with `ota init --dry-run`",
         Commands::Agents { .. } => AGENTS_SUGGESTION,
         Commands::Check { .. } => "run `ota check` to review readiness",
+        Commands::Receipt { .. } => {
+            "run `ota doctor` to inspect readiness findings before capturing a repo receipt"
+        }
         Commands::Up { .. } => {
             "run `ota up --dry-run` to preview preparation, or `ota doctor` to review readiness"
         }
@@ -1905,6 +1938,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Init { json, .. }
         | Commands::Agents { json, .. }
         | Commands::Check { json, .. }
+        | Commands::Receipt { json, .. }
         | Commands::Up { json, .. }
         | Commands::Detect { json, .. }
         | Commands::Policy {
@@ -1954,6 +1988,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Init { .. } => "ota init",
         Commands::Agents { .. } => "ota agents",
         Commands::Check { .. } => "ota check",
+        Commands::Receipt { .. } => "ota receipt",
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
@@ -4012,6 +4047,169 @@ project:
         assert_eq!(members[0]["status"], "READY");
         assert!(fixture.dir.path().join("ready.txt").is_file());
         assert!(fixture.dir.path().join("api").join("ready.txt").is_file());
+    }
+
+    #[test]
+    fn receipt_text_renders_repo_receipt_header() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("RECEIPT "));
+        assert!(stdout.contains("Steps:"));
+        assert!(stdout.contains("1. READY  readiness"));
+        assert!(stdout.contains("Summary"));
+    }
+
+    #[test]
+    fn receipt_json_reports_blocked_repo_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: blocked-receipt
+tools:
+  ota-missing-tool-for-receipt-test: "1"
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["mode"], "receipt");
+        assert_eq!(json["receipt"]["scope"], "repo");
+        assert_eq!(json["receipt"]["steps"][0]["label"], "readiness");
+        assert_eq!(
+            json["receipt"]["blocked"][0],
+            "Missing tool: ota-missing-tool-for-receipt-test"
+        );
+        assert_eq!(
+            json["findings"][0]["summary"],
+            "Missing tool: ota-missing-tool-for-receipt-test"
+        );
+    }
+
+    #[test]
+    fn receipt_json_reports_native_backend_for_ready_repo() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: native-receipt
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "receipt");
+        assert_eq!(json["receipt"]["backend"], "native");
+    }
+
+    #[test]
+    fn receipt_text_reports_selected_monorepo_member() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--member", "api", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("[member api]"));
+        assert!(stdout.contains("1. READY  readiness"));
+    }
+
+    #[test]
+    fn receipt_json_reports_selected_monorepo_member_findings() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+env:
+  OTA_MEMBER_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--member",
+            "api",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(
+            json["findings"][0]["summary"],
+            "Missing environment variable: OTA_MEMBER_REQUIRED"
+        );
+        assert_eq!(
+            json["receipt"]["contract"],
+            fixture
+                .dir
+                .path()
+                .join("api")
+                .join("ota.yaml")
+                .display()
+                .to_string()
+        );
     }
 
     #[test]
@@ -10256,6 +10454,15 @@ project:
             json["comparison"]["changes"][0]["provenance"],
             "repo_signals"
         );
+        assert_eq!(
+            json["comparison"]["changes"][0]["provenance_key"],
+            "repo_signals"
+        );
+        assert_eq!(
+            json["comparison"]["changes"][0]["source"],
+            "package.json#name"
+        );
+        assert_eq!(json["comparison"]["changes"][0]["confidence"], "high");
     }
 
     #[test]
@@ -10303,6 +10510,35 @@ tasks:
             json["comparison"]["removals"][0]["provenance"],
             "repo_signals"
         );
+        assert_eq!(
+            json["comparison"]["removals"][0]["provenance_key"],
+            "repo_signals"
+        );
+    }
+
+    #[test]
+    fn detect_dry_run_existing_contract_comparison_shows_source_and_confidence() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0"
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("project.name: would update `existing` -> `ota-web`"));
+        assert!(stdout.contains("Source: package.json#name [high]"));
     }
 
     #[test]

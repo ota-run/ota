@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use crate::detector::detect_repo;
+use crate::detector::{Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
 use crate::schema::Contract;
@@ -30,6 +30,7 @@ use crate::schema::Contract;
 const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
 const DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE: &str = "repo_signals";
+const DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE_KEY: &str = "repo_signals";
 
 pub(crate) fn append_contract_drift_findings(
     contract: &Contract,
@@ -41,9 +42,10 @@ pub(crate) fn append_contract_drift_findings(
         return;
     };
 
-    for change in collect_detect_changes(contract, &detect_report.contract)
-        .into_iter()
-        .filter(|change| change.status == "update")
+    for change in
+        collect_detect_changes(contract, &detect_report.contract, &detect_report.inferences)
+            .into_iter()
+            .filter(|change| change.status == "update")
     {
         let existing = change.existing.unwrap_or_default();
         findings.push(Finding {
@@ -114,6 +116,10 @@ fn detect_change_provenance() -> String {
     String::from(DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE)
 }
 
+fn detect_change_provenance_key() -> String {
+    String::from(DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE_KEY)
+}
+
 fn push_detect_removal(
     removals: &mut Vec<DetectComparisonRemoval>,
     field: String,
@@ -124,18 +130,25 @@ fn push_detect_removal(
         existing,
         ownership: Some(String::from(DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP)),
         provenance: Some(detect_change_provenance()),
+        provenance_key: Some(detect_change_provenance_key()),
     });
 }
 
 pub(crate) fn collect_detect_changes(
     existing: &Contract,
     detected: &crate::detector::DetectContract,
+    inferences: &[Inference],
 ) -> Vec<DetectComparisonChange> {
     let mut changes = Vec::new();
+    let inference_index = inferences
+        .iter()
+        .map(|inference| (inference.field.as_str(), inference))
+        .collect::<std::collections::BTreeMap<_, _>>();
 
     if let Some(project) = detected.project.as_ref() {
         push_detect_change(
             &mut changes,
+            &inference_index,
             "project.name",
             Some(existing.project.name.as_str()),
             Some(project.name.as_str()),
@@ -145,6 +158,7 @@ pub(crate) fn collect_detect_changes(
     for (name, value) in &detected.runtimes {
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("runtimes.{name}"),
             existing
                 .runtimes
@@ -157,6 +171,7 @@ pub(crate) fn collect_detect_changes(
     for (name, value) in &detected.tools {
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("tools.{name}"),
             existing
                 .tools
@@ -169,6 +184,7 @@ pub(crate) fn collect_detect_changes(
     for (name, service) in &detected.services {
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("services.{name}.provider"),
             existing
                 .services
@@ -178,6 +194,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("services.{name}.start"),
             existing
                 .services
@@ -187,6 +204,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("services.{name}.stop"),
             existing
                 .services
@@ -196,6 +214,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("services.{name}.healthcheck"),
             existing
                 .services
@@ -216,6 +235,7 @@ pub(crate) fn collect_detect_changes(
                 });
         push_detect_change(
             &mut changes,
+            &inference_index,
             &format!("tasks.{name}.run"),
             existing_value,
             Some(task.run.as_str()),
@@ -224,6 +244,7 @@ pub(crate) fn collect_detect_changes(
             let existing_safe = existing.tasks.get(name).map(|task| task.safe_for_agent);
             push_detect_change(
                 &mut changes,
+                &inference_index,
                 &format!("tasks.{name}.safe_for_agent"),
                 existing_safe.map(|value| if value { "true" } else { "false" }),
                 Some("true"),
@@ -325,6 +346,7 @@ pub(crate) fn collect_detect_removals(
 
 fn push_detect_change(
     changes: &mut Vec<DetectComparisonChange>,
+    inference_index: &std::collections::BTreeMap<&str, &Inference>,
     field: &str,
     existing: Option<&str>,
     detected: Option<&str>,
@@ -332,6 +354,7 @@ fn push_detect_change(
     let Some(detected) = detected else {
         return;
     };
+    let inference = inference_index.get(field);
 
     match existing {
         None => changes.push(DetectComparisonChange {
@@ -341,6 +364,9 @@ fn push_detect_change(
             detected: detected.to_string(),
             ownership: Some(detect_change_ownership(None)),
             provenance: Some(detect_change_provenance()),
+            provenance_key: Some(detect_change_provenance_key()),
+            source: inference.map(|value| value.source.clone()),
+            confidence: inference.map(|value| value.confidence),
         }),
         Some(existing) if existing != detected => changes.push(DetectComparisonChange {
             field: field.to_string(),
@@ -349,6 +375,9 @@ fn push_detect_change(
             detected: detected.to_string(),
             ownership: Some(detect_change_ownership(Some(existing))),
             provenance: Some(detect_change_provenance()),
+            provenance_key: Some(detect_change_provenance_key()),
+            source: inference.map(|value| value.source.clone()),
+            confidence: inference.map(|value| value.confidence),
         }),
         Some(_) => {}
     }

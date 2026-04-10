@@ -19,6 +19,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
+- [json-schemas/receipt.json](json-schemas/receipt.json)
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
@@ -52,6 +53,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
 - use `ota workspace check --json` when you want checks-only workspace readiness with a roll-up summary
+- use `ota receipt --json` when you want a read-only repo receipt artifact
 - use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
 - use `ota workspace receipt --json` when you want a read-only workspace receipt artifact
@@ -69,6 +71,7 @@ human text output:
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
 - `ota workspace check --json`: use the top-level `summary` and per-repo findings
+- `ota receipt --json`: use the top-level `summary`, `receipt`, and `findings`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
@@ -1098,6 +1101,63 @@ Use `ota up --dry-run --json` when you need the selected backend and lifecycle p
 skip plan without provisioning, starting services, or writing repo files. See
 [up-preview.md](up-preview.md) for the preview contract.
 
+## `ota receipt --json`
+
+`ota receipt --json` is the read-only repo receipt artifact. It runs the same readiness scan as
+repo diagnosis in the selected execution context, packages the result as an execution receipt, and
+keeps the findings array alongside the receipt for CI and archival consumers. Contract
+load/validation failures still emit the shared `ValidateFailure` JSON shape on stdout.
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "receipt",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 1
+  },
+  "receipt": {
+    "ok": true,
+    "path": "/abs/path/to/ota.yaml",
+    "scope": "repo",
+    "contract": "/abs/path/to/ota.yaml",
+    "backend": "native",
+    "steps": [
+      {
+        "order": 1,
+        "label": "readiness",
+        "status": "READY"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "findings": []
+}
+```
+
+Current receipt JSON fields:
+
+- `ok`
+- `path`
+- `mode` (`receipt`)
+- `summary`
+- `receipt`
+- `findings`
+
+When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
+member contract path while the readiness findings reflect the merged member target.
+
+Use `ota receipt --json` when you need a deterministic repo-local artifact for the current
+readiness state without provisioning, starting services, or writing repo files.
+
 ## `ota detect --json`
 
 ## `ota clean --stale --json`
@@ -1149,7 +1209,9 @@ success shape.
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields
 - `comparison.removals[*].ownership` is `repo_contract` because those entries describe stale declared contract data
-- `comparison.*.provenance` is currently `repo_signals`, meaning the comparison came from live repo inspection rather than manual mutation
+- `comparison.*.provenance` preserves the stable machine label `repo_signals`
+- `comparison.*.provenance_key` is the stable machine label `repo_signals`
+- `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
 - `comparison` may include lower-confidence add candidates that remain preview-only
 
 ```json
@@ -1169,7 +1231,10 @@ success shape.
         "existing": "existing",
         "detected": "ota-web",
         "ownership": "repo_contract",
-        "provenance": "repo_signals"
+        "provenance": "repo_signals",
+        "provenance_key": "repo_signals",
+        "source": "package.json#name",
+        "confidence": "high"
       }
     ],
     "removals": [
@@ -1177,7 +1242,8 @@ success shape.
         "field": "tools.cargo",
         "existing": "1.78",
         "ownership": "repo_contract",
-        "provenance": "repo_signals"
+        "provenance": "repo_signals",
+        "provenance_key": "repo_signals"
       }
     ]
   },

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/receipt.json",
+  "title": "ota receipt --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "mode", "summary", "receipt", "findings"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "mode": { "const": "receipt" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error_count", "warn_count", "info_count", "step_count"],
+          "properties": {
+            "error_count": { "type": "integer", "minimum": 0 },
+            "warn_count": { "type": "integer", "minimum": 0 },
+            "info_count": { "type": "integer", "minimum": 0 },
+            "step_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "path", "scope", "contract", "steps", "summary"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "path": { "type": "string" },
+            "scope": { "const": "repo" },
+            "contract": { "type": "string" },
+            "workspace": { "type": "string" },
+            "backend": { "type": "string" },
+            "lifecycle": { "type": "string" },
+            "target": { "type": "string" },
+            "acquired": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "env_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "value", "source"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "value": { "type": "string" },
+                  "source": { "type": "string" }
+                }
+              }
+            },
+            "policy": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["order", "label", "status"],
+                "properties": {
+                  "order": { "type": "integer", "minimum": 1 },
+                  "label": { "type": "string" },
+                  "status": { "type": "string" },
+                  "detail": { "type": "string" },
+                  "exit_code": { "type": "integer" }
+                }
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["error_count", "warn_count", "info_count", "step_count"],
+              "properties": {
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 },
+                "step_count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "next": { "type": "string" }
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error_count"],
+          "properties": {
+            "error_count": { "type": "integer" }
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "error": { "type": "string" }
+      },
+      "anyOf": [
+        { "required": ["errors"] },
+        { "required": ["error"] }
+      ]
+    }
+  ]
+}

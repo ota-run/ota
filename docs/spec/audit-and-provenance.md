@@ -51,6 +51,12 @@ Audit and provenance support:
 The current shipped output already uses per-field provenance in detection and diagnosis.
 V5 extends that idea to org policy and template-derived behavior.
 
+Current shipped detect comparison output also carries stable ownership/provenance labels for
+existing-contract review, and add/update entries include direct detector source and confidence so
+automation does not need to reconstruct that evidence from separate arrays. On that detect
+comparison surface, `provenance` remains the shipped stable label `repo_signals`, with
+`provenance_key` available alongside it for the same machine-oriented classification.
+
 The intended provenance categories are:
 
 - repo-declared

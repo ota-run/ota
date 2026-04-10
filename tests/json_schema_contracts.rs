@@ -115,11 +115,33 @@ fn detect_schema_includes_comparison_preview() {
     assert!(comparison.get("removals").is_some());
     assert!(change.get("ownership").is_some());
     assert!(change.get("provenance").is_some());
+    assert!(change.get("provenance_key").is_some());
+    assert!(change.get("source").is_some());
+    assert!(change.get("confidence").is_some());
     assert!(removal.get("ownership").is_some());
     assert!(removal.get("provenance").is_some());
+    assert!(removal.get("provenance_key").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(failure.get("next").is_some());
+}
+
+#[test]
+fn receipt_schema_includes_receipt_and_findings() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let success_summary = &success["summary"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert!(success.get("mode").is_some());
+    assert!(success.get("receipt").is_some());
+    assert!(success.get("findings").is_some());
+    assert!(success_summary.get("error_count").is_some());
+    assert!(success_summary.get("warn_count").is_some());
+    assert!(success_summary.get("info_count").is_some());
+    assert!(success_summary.get("step_count").is_some());
+    assert!(failure.get("errors").is_some());
+    assert!(failure.get("error").is_some());
 }
 
 #[test]
