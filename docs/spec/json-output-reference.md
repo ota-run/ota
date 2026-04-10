@@ -1139,6 +1139,9 @@ success shape.
 - `written: false` when there was nothing eligible to add
 - `comparison` describing detected adds and updates against the existing contract
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
+- `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields
+- `comparison.removals[*].ownership` is `repo_contract` because those entries describe stale declared contract data
+- `comparison.*.provenance` is currently `repo_signals`, meaning the comparison came from live repo inspection rather than manual mutation
 - `comparison` may include lower-confidence add candidates that remain preview-only
 
 ```json
@@ -1156,17 +1159,17 @@ success shape.
         "field": "project.name",
         "status": "update",
         "existing": "existing",
-        "detected": "ota-web"
+        "detected": "ota-web",
+        "ownership": "repo_contract",
+        "provenance": "repo_signals"
       }
     ],
     "removals": [
       {
         "field": "tools.cargo",
-        "existing": "1.78"
-      },
-      {
-        "field": "tasks.build.run",
-        "existing": "cargo build"
+        "existing": "1.78",
+        "ownership": "repo_contract",
+        "provenance": "repo_signals"
       }
     ]
   },

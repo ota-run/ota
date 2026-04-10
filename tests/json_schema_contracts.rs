@@ -108,9 +108,15 @@ fn detect_schema_includes_comparison_preview() {
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
     let comparison = &success["comparison"]["properties"];
+    let change = &comparison["changes"]["items"]["properties"];
+    let removal = &comparison["removals"]["items"]["properties"];
 
     assert!(success.get("comparison").is_some());
     assert!(comparison.get("removals").is_some());
+    assert!(change.get("ownership").is_some());
+    assert!(change.get("provenance").is_some());
+    assert!(removal.get("ownership").is_some());
+    assert!(removal.get("provenance").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(failure.get("next").is_some());

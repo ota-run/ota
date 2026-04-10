@@ -754,12 +754,20 @@ pub struct DetectComparisonChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub existing: Option<String>,
     pub detected: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DetectComparisonRemoval {
     pub field: String,
     pub existing: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

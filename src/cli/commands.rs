@@ -41,7 +41,7 @@ use super::{AnnotationFormat, AnnotationMode};
 use crate::contract_drift::{
     append_contract_drift_findings, collect_detect_changes, collect_detect_removals,
 };
-use crate::detector::{Confidence, DetectProject, DetectReport, Inference, detect_repo};
+use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
     diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
@@ -87,10 +87,7 @@ use crate::runner::{
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{
-    AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, Backend, Contract,
-    EnvRequirement, ExtensionSpec, TaskSpec,
-};
+use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -99,8 +96,10 @@ use crate::workspace::{
     ordered_workspace_repo_refs, parse_workspace_contract_str, validate_workspace_contract,
 };
 
+mod init_starter;
 mod workspace_diagnostics;
 mod workspace_output;
+use self::init_starter::{apply_starter_contract_defaults, bootstrap_init_contract};
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
     render_workspace_doctor_text, render_workspace_explain_text,
@@ -7462,6 +7461,8 @@ fn write_detected_merge(
                 status: change.status,
                 existing: change.existing.clone(),
                 detected: change.detected.clone(),
+                ownership: change.ownership.clone(),
+                provenance: change.provenance.clone(),
             });
         }
     }
@@ -7978,129 +7979,6 @@ fn render_init(
             inferred: &report.inferences,
         })),
     }
-}
-
-fn bootstrap_init_contract(report: &DetectReport) -> crate::detector::DetectContract {
-    let mut contract = report.contract.clone();
-    apply_starter_contract_defaults(&mut contract, &report.root);
-    contract
-}
-
-fn apply_starter_contract_defaults(contract: &mut crate::detector::DetectContract, root: &Path) {
-    if contract.project.is_none()
-        && let Some(name) = directory_name_for_root(root)
-    {
-        contract.project = Some(DetectProject { name });
-    }
-    if let Some(agent) = contract.agent.as_mut() {
-        if agent.bootstrap.is_none() {
-            agent.bootstrap = Some(starter_agent_bootstrap());
-        }
-    } else {
-        contract.agent = starter_agent_from_detected_contract(contract, root);
-    }
-}
-
-fn starter_agent_bootstrap() -> AgentBootstrapConfig {
-    AgentBootstrapConfig {
-        ota: Some(AgentBootstrapTargetConfig {
-            note: Some(String::from(
-                "Only install ota if it is missing and installation is approved.",
-            )),
-            sh: Some(String::from(
-                "curl -fsSL https://dist.ota.run/install.sh | sh",
-            )),
-            powershell: Some(String::from("irm https://dist.ota.run/install.ps1 | iex")),
-        }),
-    }
-}
-
-fn starter_agent_from_detected_contract(
-    contract: &crate::detector::DetectContract,
-    root: &Path,
-) -> Option<AgentConfig> {
-    let mut safe_tasks = Vec::new();
-    for task_name in ["setup", "test"] {
-        if contract.tasks.contains_key(task_name) {
-            safe_tasks.push(task_name.to_string());
-        }
-    }
-    for (task_name, task) in &contract.tasks {
-        if task.safe_for_agent && !safe_tasks.iter().any(|safe| safe == task_name) {
-            safe_tasks.push(task_name.clone());
-        }
-    }
-    if safe_tasks.is_empty() {
-        return None;
-    }
-
-    let writable_paths = starter_agent_writable_paths(root);
-    if writable_paths.is_empty() {
-        return None;
-    }
-    let entrypoint = contract
-        .tasks
-        .contains_key("setup")
-        .then(|| String::from("setup"));
-    let default_task = if contract.tasks.contains_key("test") {
-        Some(String::from("test"))
-    } else {
-        safe_tasks.first().cloned()
-    };
-    let verify_after_changes = if contract.tasks.contains_key("test") {
-        vec![String::from("test")]
-    } else {
-        Vec::new()
-    };
-
-    let mut notes =
-        String::from("Use `ota validate` before changes and `ota doctor` after edits.\n");
-    if let Some(task_name) = default_task
-        .as_deref()
-        .or(entrypoint.as_deref())
-        .or_else(|| safe_tasks.first().map(String::as_str))
-    {
-        notes.push_str(&format!("Use `ota run {task_name}` to verify changes.\n"));
-    }
-
-    Some(AgentConfig {
-        entrypoint,
-        default_task,
-        safe_tasks,
-        verify_after_changes,
-        writable_paths,
-        protected_paths: vec![String::from("ota.yaml")],
-        bootstrap: Some(starter_agent_bootstrap()),
-        notes: Some(notes),
-    })
-}
-
-fn starter_agent_writable_paths(root: &Path) -> Vec<String> {
-    let mut writable_paths = Vec::new();
-    for candidate in ["src", "tests", "docs"] {
-        if root.join(candidate).is_dir() {
-            writable_paths.push(candidate.to_string());
-        }
-    }
-    writable_paths
-}
-
-fn directory_name_for_root(root: &Path) -> Option<String> {
-    if let Some(name) = root.file_name().and_then(|name| name.to_str())
-        && !name.is_empty()
-        && name != "."
-    {
-        return Some(name.to_string());
-    }
-
-    std::env::current_dir()
-        .ok()
-        .and_then(|cwd| {
-            cwd.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.to_string())
-        })
-        .filter(|name| !name.is_empty())
 }
 
 fn compare_detected_contract(
@@ -13144,42 +13022,60 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.bump-version.run"),
                     existing: String::from("./scripts/bump-version.sh"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.setup.run"),
                     existing: String::from("cargo fetch"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
                     existing: String::from(
                         "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.doctor-annotations.run"),
                     existing: String::from(
                         "ota doctor --json . | ota annotations --mode doctor --format \"${OTA_INPUT_RENDER_FORMAT}\" --input -",
                     ),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tools.node"),
                     existing: String::from("22"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("runtimes.java"),
                     existing: String::from("21"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("services.postgres.provider"),
                     existing: String::from("docker-compose"),
+                    ownership: None,
+                    provenance: None,
                 },
             ],
             error: None,
@@ -13242,20 +13138,28 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.setup.run"),
                     existing: String::from("cargo fetch"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.run"),
                     existing: String::from(
                         "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
+                    ownership: None,
+                    provenance: None,
                 },
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
+                    ownership: None,
+                    provenance: None,
                 },
             ],
             error: None,
@@ -13290,6 +13194,8 @@ mod tests {
             removals: vec![DetectComparisonRemoval {
                 field: String::from("tasks.setup.run"),
                 existing: String::from("cargo fetch"),
+                ownership: None,
+                provenance: None,
             }],
             error: None,
         };

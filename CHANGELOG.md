@@ -29,7 +29,9 @@
 - fixed `ota init --json --dry-run` so the machine-readable preview now matches the reviewed starter contract, including derived starter defaults such as a safe minimal `agent` block when ota can infer one.
 - tightened starter agent generation to fail closed on writable paths: when ota cannot infer safe writable paths, it now omits the generated `agent` block instead of granting repo-wide writes with `writable_paths: [.]`.
 - tightened detect drift removals so task commands and `safe_for_agent` entries are no longer suggested for removal on detector silence alone.
+- added explicit detect-comparison `ownership` and `provenance` fields in JSON so editors and CI can distinguish repo-signal add candidates from stale repo-contract drift without re-deriving that boundary from prose.
 - fixed the hosted-validation workflow doc so the shipped `ota.yaml` Postgres example now matches the actual service contract schema.
+- added broader docs example validation so the canonical repo and workspace reference pages are now exercised by the shipped contract validators in test.
 
 ## 1.2.4
 
