@@ -71,6 +71,10 @@ policies:
       source: brew-bootstrap
       approved_versions:
         - "4.4"
+    choco:
+      source: choco-bootstrap
+      approved_versions:
+        - "2.0.0"
     mise:
       source: mise-bootstrap
       approved_versions:
@@ -124,8 +128,16 @@ policies:
   adapter_bootstrap:
     brew:
       source: brew-bootstrap
+      approved_versions:
+        - "4.4"
+    choco:
+      source: choco-bootstrap
+      approved_versions:
+        - "2.0.0"
     sdkman:
       source: sdkman-bootstrap
+      approved_versions:
+        - "1.0"
   provisioning:
     node:
       source: brew
@@ -140,6 +152,7 @@ policies:
 In that example:
 
 - `brew-bootstrap` installs `brew` first when it is missing
+- `choco-bootstrap` installs `choco` first when it is missing
 - `sdkman-bootstrap` installs `sdkman` first when it is missing
 - repo provisioning then uses the approved source managers to install the declared tools and runtimes
 

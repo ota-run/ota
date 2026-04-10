@@ -79,6 +79,10 @@ policies:
           source: apt
           approved_versions:
             - "8.7.1"
+        windows:
+          source: choco
+          approved_versions:
+            - "8.7.1"
     jq:
       source: brew
       approved_versions:
@@ -90,6 +94,10 @@ policies:
             - "1.7.1"
         linux:
           source: apt
+          approved_versions:
+            - "1.7.1"
+        windows:
+          source: choco
           approved_versions:
             - "1.7.1"
     java:
@@ -105,6 +113,10 @@ policies:
           source: sdkman
           approved_versions:
             - "21"
+        windows:
+          source: choco
+          approved_versions:
+            - "21"
     maven:
       source: brew
       approved_versions:
@@ -116,6 +128,10 @@ policies:
             - "3.9.9"
         linux:
           source: apt
+          approved_versions:
+            - "3.9.9"
+        windows:
+          source: choco
           approved_versions:
             - "3.9.9"
     node:
@@ -131,6 +147,10 @@ policies:
           source: apt
           approved_versions:
             - "22"
+        windows:
+          source: choco
+          approved_versions:
+            - "22"
     yq:
       source: brew
       approved_versions:
@@ -144,11 +164,19 @@ policies:
           source: apt
           approved_versions:
             - "4.52.5"
+        windows:
+          source: choco
+          approved_versions:
+            - "4.52.5"
   adapter_bootstrap:
     brew:
       source: brew-bootstrap
       approved_versions:
         - "4.4"
+    choco:
+      source: choco-bootstrap
+      approved_versions:
+        - "2.0.0"
     sdkman:
       source: sdkman-bootstrap
       approved_versions:
