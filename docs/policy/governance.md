@@ -1,0 +1,78 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Governance
+
+ota is maintainer-led open infrastructure.
+
+The core is open source under Apache 2.0, but governance is not community-run in the usual
+“open PRs drive the roadmap” sense. Ota stewards the contract, command semantics, JSON output,
+diagnosis model, and release direction so the product stays coherent and trustworthy.
+
+## What is open
+
+- the CLI
+- the repo and workspace contracts
+- the JSON output and public docs
+- examples, specs, and the contract-first readiness model
+
+## Governance model
+
+- roadmap and release direction are maintained by Ota
+- schema, JSON, and command-surface changes are treated as product-level decisions
+- trust-sensitive behavior such as `doctor`, `detect`, `init`, `up`, and agent guidance is kept under strict maintainer review
+- the public core should stay useful on its own, without requiring a hosted control plane
+
+## Participation that is welcome
+
+- bug reports with concrete reproduction steps
+- feature requests tied to real repo/operator pain
+- docs feedback and clarity issues
+- example repos and fixture ideas that expose real-world edge cases
+- extension, adapter, and ecosystem feedback
+
+## Participation that is not currently accepted
+
+- external code pull requests
+- drive-by schema changes without maintainer review
+- unofficial forks presented as the upstream project
+
+## Why the project is run this way
+
+Ota is trying to become trusted infrastructure, not just a useful script. That means:
+
+- contract and JSON stability matter
+- diagnosis must stay honest
+- onboarding flows must stay deterministic
+- policy and enterprise boundaries must stay explicit
+
+Maintainer-led governance is the current mechanism for keeping those boundaries clean while the
+public contract hardens.
+
+## Related policy pages
+
+- [CONTRIBUTING.md](../../CONTRIBUTING.md)
+- [commercial-policy.md](commercial-policy.md)
+- [support-and-enterprise.md](support-and-enterprise.md)
+- [brand-policy.md](brand-policy.md)
