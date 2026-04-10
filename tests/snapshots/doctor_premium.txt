@@ -23,7 +23,6 @@ Agent
  »  Writable paths: `src`, `docs`
  »  Protected paths: `ota.yaml`, `Cargo.lock`
 
-◉ WARN  Ephemeral lifecycle is advisory only in V1
-Why: the contract requests `execution.lifecycle: ephemeral`, but current Ota execution remains shell-native and does not
-  create isolated temporary environments
-Next: treat `ephemeral` as a portability hint for now; do not rely on isolation or automatic cleanup in V1
+◉ WARN  Ephemeral lifecycle is advisory in native mode
+Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.
+Next: use `ota run <task>` for isolated execution; use `ota up` for readiness only

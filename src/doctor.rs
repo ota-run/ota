@@ -394,10 +394,8 @@ impl Finding {
     pub(crate) fn code(&self) -> &'static str {
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
-            "Ephemeral lifecycle is only enforced for backend-backed task execution" => {
-                "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
-            }
-            "Ephemeral lifecycle is advisory only in V1" => "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
+            "Ephemeral lifecycle is execution-only" => "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
+            "Ephemeral lifecycle is advisory in native mode" => "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
             s if s.starts_with("Missing execution backend CLI: ") => "OTA_BACKEND_CLI_MISSING",
             s if s.starts_with("Missing container execution backend CLI: ") => {
                 "OTA_CONTAINER_BACKEND_CLI_MISSING"
@@ -1115,25 +1113,23 @@ fn diagnose_lifecycle(contract: &Contract, findings: &mut Vec<Finding>) {
     if execution.preferred == Some(Backend::Container) {
         findings.push(Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from(
-                "Ephemeral lifecycle is only enforced for backend-backed task execution",
-            ),
+            summary: String::from("Ephemeral lifecycle is execution-only"),
             why: String::from(
-                "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
+                "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
             ),
             next: String::from(
-                "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
+                "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
             ),
         });
     } else {
         findings.push(Finding {
             severity: FindingSeverity::Warn,
-            summary: String::from("Ephemeral lifecycle is advisory only in V1"),
+            summary: String::from("Ephemeral lifecycle is advisory in native mode"),
             why: String::from(
-                "the contract requests `execution.lifecycle: ephemeral`, but current Ota execution remains shell-native and does not create isolated temporary environments",
+                "`execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.",
             ),
             next: String::from(
-                "treat `ephemeral` as a portability hint for now; do not rely on isolation or automatic cleanup in V1",
+                "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
             ),
         });
     }
@@ -1282,12 +1278,17 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
         skipped.push("service healthchecks");
     }
 
+    let verb = if skipped.len() == 1 {
+        "remains"
+    } else {
+        "remain"
+    };
     let skipped = skipped.join(", ");
     Finding {
         severity: FindingSeverity::Info,
         summary: String::from("Host-bound readiness checks are not evaluated in container mode"),
         why: format!(
-            "container diagnosis currently inspects the execution image, backend availability, runtimes, and tools; {skipped} still run against the host or current working directory and would mix contexts"
+            "container mode checks the execution image; {skipped} {verb} host-bound and would mix contexts"
         ),
         next: String::from(
             "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
@@ -2758,7 +2759,7 @@ tasks:
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(
             report.findings[0].summary,
-            "Ephemeral lifecycle is advisory only in V1"
+            "Ephemeral lifecycle is advisory in native mode"
         );
     }
 
@@ -2912,10 +2913,7 @@ tasks:
         let warning = report
             .findings
             .iter()
-            .find(|finding| {
-                finding.summary
-                    == "Ephemeral lifecycle is only enforced for backend-backed task execution"
-            })
+            .find(|finding| finding.summary == "Ephemeral lifecycle is execution-only")
             .expect("expected lifecycle warning for container+ephemeral configuration");
         assert_eq!(warning.severity, FindingSeverity::Warn);
     }

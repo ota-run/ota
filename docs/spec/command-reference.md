@@ -605,7 +605,7 @@ ota doctor --member api --member web --json [PATH]
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
-- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolated execution applies to `ota run`, `ota up`, and the `setup` phase of `ota up`, with `--ephemeral` as the shorthand for the fresh-container path
+- warns when `execution.lifecycle: ephemeral` is declared and clarifies that current isolation applies to `ota run <task>` and the setup step inside `ota up`; diagnosis, healthchecks, and full repo cleanup are not ephemeral yet, and `--ephemeral` remains the shorthand for a fresh task-execution path when supported
 - reports contract drift as warning findings when repo signals no longer match the declared
   contract, and still preserves the most important blocker first
 - tags contract-drift findings with repo-contract ownership and provenance so consumers can

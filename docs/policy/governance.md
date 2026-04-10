@@ -75,4 +75,5 @@ public contract hardens.
 - [CONTRIBUTING.md](../../CONTRIBUTING.md)
 - [commercial-policy.md](commercial-policy.md)
 - [support-and-enterprise.md](support-and-enterprise.md)
+- [org-policy.md](org-policy.md)
 - [brand-policy.md](brand-policy.md)

@@ -457,6 +457,10 @@ fn strip_ansi_codes(input: &str) -> String {
     out
 }
 
+fn visible_display_width(value: &str) -> usize {
+    strip_ansi_codes(value).chars().count()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MissingContractContext {
     Repo,
@@ -8545,21 +8549,23 @@ fn render_detect_named_drift_concise_group(
 }
 
 fn render_detect_command_removal(command: &str) -> String {
-    let wrapped = wrap_display_tokens_for_terminal(command, 72, 22);
+    let bullet = summary_bullet();
+    let action = paint_muted_action("remove command");
+    let wrapped = wrap_display_tokens_for_terminal(
+        command,
+        72,
+        2 + visible_display_width(&bullet) + 1 + visible_display_width(&action) + 1,
+    );
     if wrapped.len() == 1 {
         return format!(
             "\n  {} {} {}",
-            summary_bullet(),
-            paint_muted_action("remove command"),
+            bullet,
+            action,
             paint_backticked_code(&wrapped[0])
         );
     }
 
-    let mut out = format!(
-        "\n  {} {}",
-        summary_bullet(),
-        paint_muted_action("remove command")
-    );
+    let mut out = format!("\n  {} {}", bullet, action);
     for line in wrapped {
         out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
     }
@@ -8567,17 +8573,23 @@ fn render_detect_command_removal(command: &str) -> String {
 }
 
 fn render_detect_field_removal(action: &str, value: &str) -> String {
-    let wrapped = wrap_display_tokens_for_terminal(value, 72, 22);
+    let bullet = summary_bullet();
+    let action_label = paint_muted_action(action);
+    let wrapped = wrap_display_tokens_for_terminal(
+        value,
+        72,
+        2 + visible_display_width(&bullet) + 1 + visible_display_width(&action_label) + 1,
+    );
     if wrapped.len() <= 1 {
         return format!(
             "\n  {} {} {}",
-            summary_bullet(),
-            paint_muted_action(action),
+            bullet,
+            action_label,
             paint_backticked_code(value)
         );
     }
 
-    let mut out = format!("\n  {} {}", summary_bullet(), paint_muted_action(action));
+    let mut out = format!("\n  {} {}", bullet, action_label);
     for line in wrapped {
         out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
     }
@@ -8938,17 +8950,21 @@ fn wrap_display_tokens_for_terminal(
 }
 
 fn display_wrap_width(fallback_max_width: usize, reserve: usize) -> usize {
-    let terminal_width = env::var("COLUMNS")
+    env::var("COLUMNS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > reserve + 24)
         .map(|value| value.saturating_sub(reserve))
-        .unwrap_or(fallback_max_width);
-    terminal_width.clamp(24, fallback_max_width)
+        .unwrap_or(fallback_max_width)
+        .max(24)
 }
 
 fn labeled_wrap_reserve(indent: &str, label: &str) -> usize {
     indent.chars().count() + label.chars().count() + 1
+}
+
+fn bullet_wrap_reserve(indent: &str, bullet: &str) -> usize {
+    indent.chars().count() + visible_display_width(bullet) + 1
 }
 
 fn append_wrapped_labeled_text<F, K>(
@@ -8964,7 +8980,7 @@ fn append_wrapped_labeled_text<F, K>(
     F: Fn(&str) -> String,
     K: Fn(&str) -> String,
 {
-    if label == "Next:" {
+    if label == "Next:" || label == "Why:" {
         let rendered = render_value(value);
         if rendered.is_empty() {
             output.push_str(&format!("\n{indent}{} -", render_key(label)));
@@ -9073,29 +9089,18 @@ fn append_wrapped_detail<F>(
     label: &str,
     value: &str,
     indent: &str,
-    fallback_max_width: usize,
+    _fallback_max_width: usize,
     render_value: F,
 ) where
     F: Fn(&str) -> String,
 {
-    let wrapped = wrap_display_tokens_for_terminal(
-        value,
-        fallback_max_width,
-        labeled_wrap_reserve(indent, label),
-    );
-    if wrapped.is_empty() {
+    let rendered = render_value(value);
+    if rendered.is_empty() {
         output.push_str(&format!("\n{indent}{} -", paint_key(label)));
         return;
     }
 
-    output.push_str(&format!(
-        "\n{indent}{} {}",
-        paint_key(label),
-        render_value(&wrapped[0])
-    ));
-    for line in wrapped.iter().skip(1) {
-        output.push_str(&format!("\n{indent}  {}", render_value(line)));
-    }
+    output.push_str(&format!("\n{indent}{} {}", paint_key(label), rendered));
 }
 
 fn append_wrapped_bullet_text<F>(
@@ -9108,7 +9113,11 @@ fn append_wrapped_bullet_text<F>(
 ) where
     F: Fn(&str) -> String,
 {
-    let wrapped = wrap_display_tokens_for_terminal(value, fallback_max_width, indent.len() + 6);
+    let wrapped = wrap_display_tokens_for_terminal(
+        value,
+        fallback_max_width,
+        bullet_wrap_reserve(indent, &bullet),
+    );
     if wrapped.is_empty() {
         output.push_str(&format!("\n{indent}{bullet} -"));
         return;
@@ -9171,7 +9180,7 @@ fn explain_next_lines(value: &str, indent: &str, fallback_max_width: usize) -> O
     lines.extend(wrap_display_tokens_for_terminal(
         remainder,
         fallback_max_width,
-        indent.len() + 8,
+        indent.chars().count() + 2,
     ));
     Some(lines)
 }
@@ -13807,20 +13816,24 @@ tasks:
 
     #[test]
     fn doctor_text_primary_finding_uses_bold_title_without_summary_label() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let original_columns = env::var_os("COLUMNS");
+        unsafe {
+            env::set_var("COLUMNS", "80");
+        }
+
         let report = DoctorReport {
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
-                summary: String::from(
-                    "Ephemeral lifecycle is only enforced for backend-backed task execution",
-                ),
+                summary: String::from("Ephemeral lifecycle is execution-only"),
                 why: String::from(
-                    "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
+                    "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
                 ),
                 next: String::from(
-                    "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
+                    "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
                 ),
             }],
         };
@@ -13832,14 +13845,12 @@ tasks:
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
                 severity: FindingSeverity::Error,
-                summary: String::from(
-                    "Ephemeral lifecycle is only enforced for backend-backed task execution",
-                ),
+                summary: String::from("Ephemeral lifecycle is execution-only"),
                 why: String::from(
-                    "the contract requests `execution.lifecycle: ephemeral`; it applies to `ota run` and the `setup` step of `ota up`, but not to healthchecks, diagnosis, or full repo teardown",
+                    "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
                 ),
                 next: String::from(
-                    "use `ota run` or the `setup` phase of `ota up` for isolated task execution; do not rely on `ota up` for full ephemeral cleanup yet",
+                    "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
                 ),
             }),
         };
@@ -13855,13 +13866,26 @@ tasks:
             Some(&summary),
         ));
 
+        match original_columns {
+            Some(value) => unsafe {
+                env::set_var("COLUMNS", value);
+            },
+            None => unsafe {
+                env::remove_var("COLUMNS");
+            },
+        }
+
         assert!(text.contains("➤ Primary Blocker"));
-        assert!(
-            text.contains("Ephemeral lifecycle is only enforced for backend-backed task execution")
-        );
-        assert!(!text.contains(
-            "Summary Ephemeral lifecycle is only enforced for backend-backed task execution"
+        assert!(text.contains("Ephemeral lifecycle is execution-only"));
+        assert!(text.contains(
+            "Why: `execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered."
         ));
+        assert!(
+            !text.contains(
+                "Why: `execution.lifecycle: ephemeral` only applies to task execution.\n"
+            )
+        );
+        assert!(!text.contains("Summary Ephemeral lifecycle is execution-only"));
     }
 
     #[test]
@@ -14403,7 +14427,7 @@ policies:
                         "Host-bound readiness checks are not evaluated in container mode",
                     ),
                     why: String::from(
-                        "container diagnosis currently inspects the execution image, backend availability, runtimes, and tools; service healthchecks still run against the host or current working directory and would mix contexts",
+                        "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
                     ),
                     next: String::from(
                         "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
@@ -16646,7 +16670,7 @@ fn render_execution_receipt_summary_block(
             String::from("using a fresh container image for this run")
         }
         ("native", Some("ephemeral")) => String::from(
-            "running on the host environment; `execution.lifecycle: ephemeral` is advisory only in V1",
+            "running on the host environment; `execution.lifecycle: ephemeral` is advisory in native mode only",
         ),
         ("native", _) => String::from("running on the host environment"),
         (other, _) => format!("executing through the `{other}` backend"),
