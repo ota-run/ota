@@ -8459,6 +8459,38 @@ agent:
     }
 
     #[test]
+    fn init_omits_agent_block_when_no_known_writable_dirs_exist() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": {
+    "setup": "pnpm install",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+
+        let preview = run_with(["ota", "init", "--dry-run", fixture.path()]);
+
+        assert_eq!(preview.exit_code, 0);
+        let preview_stdout = strip_ansi(&preview.stdout);
+        assert!(!preview_stdout.contains("\nagent:\n"));
+        assert!(!preview_stdout.contains("writable_paths:"));
+        assert!(!preview_stdout.contains("\n  - .\n"));
+
+        let write = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(write.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(!written.contains("\nagent:\n"));
+        assert!(!written.contains("writable_paths:"));
+        assert!(!written.contains("\n- .\n"));
+    }
+
+    #[test]
     fn init_writes_medium_confidence_starter_when_it_is_valid() {
         let fixture = ContractFixture::new_dir();
         fixture.write("go.mod", "module github.com/ota/go-service\n\ngo 1.24.0\n");
