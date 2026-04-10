@@ -96,9 +96,14 @@ use crate::workspace::{
     ordered_workspace_repo_refs, parse_workspace_contract_str, validate_workspace_contract,
 };
 
+mod explain_output;
 mod init_starter;
 mod workspace_diagnostics;
 mod workspace_output;
+use self::explain_output::{
+    explain_action_count, explain_steps, explain_summary, render_explain_steps_text,
+    workspace_explain_repos, workspace_explain_summary,
+};
 use self::init_starter::{apply_starter_contract_defaults, bootstrap_init_contract};
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
@@ -10230,49 +10235,6 @@ fn verdict_rank(verdict: DoctorVerdict) -> usize {
     }
 }
 
-fn workspace_explain_summary(
-    report: &crate::workspace::WorkspaceDoctorReport,
-) -> WorkspaceExplainSummary {
-    let mut summary = WorkspaceExplainSummary {
-        repo_count: report.repos.len(),
-        ..WorkspaceExplainSummary::default()
-    };
-
-    for repo in &report.repos {
-        if repo.ok {
-            summary.ready_count += 1;
-        } else {
-            summary.not_ready_count += 1;
-        }
-
-        let repo_summary = explain_summary_from_findings(&repo.findings);
-        summary.error_count += repo_summary.error_count;
-        summary.warn_count += repo_summary.warn_count;
-        summary.info_count += repo_summary.info_count;
-        summary.step_count += repo_summary.step_count;
-    }
-
-    summary
-}
-
-fn workspace_explain_repos(
-    report: &crate::workspace::WorkspaceDoctorReport,
-) -> Vec<WorkspaceRepoExplainReport> {
-    report
-        .repos
-        .iter()
-        .map(|repo| WorkspaceRepoExplainReport {
-            name: repo.name.clone(),
-            path: repo.path.clone(),
-            contract_path: repo.contract_path.clone(),
-            required: repo.required,
-            ok: repo.ok,
-            summary: explain_summary_from_findings(&repo.findings),
-            steps: explain_steps(&repo.findings),
-        })
-        .collect()
-}
-
 fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSummary {
     let mut summary = WorkspaceListSummary {
         repo_count: repos.len(),
@@ -11474,75 +11436,6 @@ fn render_explain_section(
     stdout
 }
 
-fn render_explain_steps_text(findings: &[Finding], contract_path: &Path) -> String {
-    let mut stdout = String::from("\n\n");
-    stdout.push_str(&paint_section_title("Plan"));
-    let groups = group_doctor_findings(findings.iter());
-    if groups.is_empty() {
-        if plain_mode() {
-            stdout.push_str("\n* none");
-        } else {
-            stdout.push_str(&format!("\n{} none", paint("✦", "1;38;2;255;214;79")));
-        }
-        return stdout;
-    }
-
-    for (index, group) in groups.iter().enumerate() {
-        let finding_count = group.findings.len();
-        let per_finding_next = explain_group_uses_per_finding_nexts(group);
-        let render_items = explain_group_renders_items(group);
-        if index > 0 {
-            stdout.push_str("\n\n");
-        } else {
-            stdout.push('\n');
-        }
-        stdout.push_str(&format!(
-            " {}. {} {}",
-            index + 1,
-            render_finding_summary(group.severity, &explain_group_title(group)),
-            paint_group_meta(&format!("({finding_count})"))
-        ));
-        if !concise_mode() {
-            append_wrapped_labeled_text(
-                &mut stdout,
-                "Why:",
-                &explain_group_why(group),
-                "  ",
-                84,
-                false,
-                |_| explain_why_key(),
-                |value| render_backticked_text(value, Some(contract_path)),
-            );
-        }
-        if render_items {
-            for finding in &group.findings {
-                append_wrapped_bullet_text(
-                    &mut stdout,
-                    summary_bullet(),
-                    &explain_group_item_text(group, finding),
-                    "  ",
-                    84,
-                    |value| render_backticked_text(value, Some(contract_path)),
-                );
-                if per_finding_next {
-                    append_explain_next_text(&mut stdout, &finding.next, "    ", 84, contract_path);
-                }
-            }
-        }
-        if !per_finding_next {
-            append_explain_next_text(
-                &mut stdout,
-                &explain_group_next(group),
-                "  ",
-                84,
-                contract_path,
-            );
-        }
-    }
-
-    stdout
-}
-
 fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) -> String {
     let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Overview"));
@@ -11587,110 +11480,6 @@ fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) ->
         )
     ));
     stdout
-}
-
-fn explain_action_count(findings: &[Finding]) -> usize {
-    group_doctor_findings(findings.iter()).len()
-}
-
-fn explain_group_uses_per_finding_nexts(group: &DoctorFindingGroup<'_>) -> bool {
-    matches!(group.kind, DoctorFindingGroupKind::ToolingVersion)
-        && group
-            .findings
-            .iter()
-            .map(|finding| compact_backticked_paths(&finding.next))
-            .collect::<BTreeSet<_>>()
-            .len()
-            > 1
-}
-
-fn explain_group_renders_items(group: &DoctorFindingGroup<'_>) -> bool {
-    !(matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) && group.findings.len() == 1)
-}
-
-fn explain_group_title(group: &DoctorFindingGroup<'_>) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
-            group.findings[0].summary.clone()
-        }
-        _ => doctor_finding_group_title(&group.kind, &group.findings),
-    }
-}
-
-fn explain_group_why(group: &DoctorFindingGroup<'_>) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
-            group.findings[0].why.clone()
-        }
-        _ => doctor_finding_group_why(&group.kind, &group.findings),
-    }
-}
-
-fn explain_group_next(group: &DoctorFindingGroup<'_>) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::SharedAction(_) if group.findings.len() == 1 => {
-            compact_backticked_paths(&group.findings[0].next)
-        }
-        _ => doctor_finding_group_next(&group.kind, &group.findings, None),
-    }
-}
-
-fn explain_group_item_text(group: &DoctorFindingGroup<'_>, finding: &Finding) -> String {
-    match group.kind {
-        DoctorFindingGroupKind::AdapterBootstrap => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::ToolingVersion => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::ContractDrift => {
-            doctor_finding_group_item_text(&group.kind, finding, false)
-        }
-        DoctorFindingGroupKind::PolicySurface
-        | DoctorFindingGroupKind::ServiceHealth
-        | DoctorFindingGroupKind::CheckFailure
-        | DoctorFindingGroupKind::EnvironmentValue
-        | DoctorFindingGroupKind::ExecutionBackend
-        | DoctorFindingGroupKind::SharedAction(_) => finding.summary.clone(),
-    }
-}
-
-fn explain_summary(report: &DoctorReport) -> ExplainSummary {
-    explain_summary_from_findings(&report.findings)
-}
-
-fn explain_summary_from_findings(findings: &[Finding]) -> ExplainSummary {
-    let mut summary = ExplainSummary {
-        step_count: findings.len(),
-        ..ExplainSummary::default()
-    };
-
-    for finding in findings {
-        match finding.severity {
-            FindingSeverity::Error => summary.error_count += 1,
-            FindingSeverity::Warn => summary.warn_count += 1,
-            FindingSeverity::Info => summary.info_count += 1,
-        }
-    }
-
-    summary
-}
-
-fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
-    findings
-        .iter()
-        .enumerate()
-        .map(|(index, finding)| ExplainStep {
-            order: index + 1,
-            code: finding.code(),
-            severity: finding.severity,
-            summary: finding.summary.clone(),
-            why: finding.why.clone(),
-            next: finding.next.clone(),
-            provenance: finding.provenance(),
-            provenance_key: finding.provenance_key(),
-        })
-        .collect()
 }
 
 fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
