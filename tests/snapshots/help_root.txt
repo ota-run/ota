@@ -18,6 +18,7 @@ Commands:
   diff         Compare two Ota contracts semantically
   env          Inspect resolved environment requirements from an Ota contract
   check        Run configured checks from an Ota contract
+  receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
   agents       Generate or sync AGENTS.md from an Ota contract
   clean        Clean persistent execution state for a repo

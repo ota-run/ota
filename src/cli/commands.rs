@@ -2863,23 +2863,31 @@ pub fn doctor(
             }
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: Vec::new(),
-                    error: Some(error.to_string()),
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
         },
         debug,
@@ -3450,23 +3458,31 @@ pub fn check(
             }
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: Vec::new(),
-                    error: Some(error.to_string()),
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
         },
         debug,
@@ -3525,23 +3541,31 @@ pub fn receipt(
             }
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: Vec::new(),
-                    error: Some(error.to_string()),
-                })),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
             },
         },
         debug,

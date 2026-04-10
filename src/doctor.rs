@@ -2668,7 +2668,8 @@ fn shell_single_quote(command: &str) -> String {
 mod tests {
     use std::env;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
 
     use crate::parser::parse_contract_str;
     use crate::test_support::ENV_MUTEX;
@@ -2682,6 +2683,16 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    fn synthetic_contract_path() -> &'static Path {
+        static PATH: OnceLock<PathBuf> = OnceLock::new();
+        PATH.get_or_init(|| {
+            let dir = std::env::temp_dir().join("ota-unit-test-contract");
+            fs::create_dir_all(&dir).unwrap();
+            dir.join("ota.yaml")
+        })
+        .as_path()
+    }
 
     fn write_fake_command(bin_dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = if cfg!(windows) {
@@ -2705,7 +2716,7 @@ mod tests {
     #[test]
     fn prioritizes_blocking_env_errors_before_warnings() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2724,7 +2735,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         assert!(!report.ok);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
@@ -2738,7 +2749,7 @@ tasks:
     #[test]
     fn warns_when_ephemeral_lifecycle_is_only_advisory() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2753,7 +2764,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
@@ -2789,7 +2800,7 @@ tasks:
         );
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2812,7 +2823,7 @@ tasks:
 
         let report = diagnose_preconditions_with_mode(
             &contract,
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             DoctorMode::Container,
         );
 
@@ -2891,7 +2902,7 @@ runtimes:
     #[test]
     fn warns_when_container_ephemeral_only_applies_to_run() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2909,7 +2920,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         let warning = report
             .findings
             .iter()
@@ -2927,7 +2938,7 @@ tasks:
         }
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2944,7 +2955,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         match original_path {
             Some(path) => unsafe {
@@ -2973,7 +2984,7 @@ tasks:
         }
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -2991,7 +3002,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         match original_path {
             Some(path) => unsafe {
@@ -3020,7 +3031,7 @@ tasks:
         }
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3038,7 +3049,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         match original_path {
             Some(path) => unsafe {
@@ -3067,7 +3078,7 @@ tasks:
         }
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3085,7 +3096,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         match original_path {
             Some(path) => unsafe {
@@ -3152,7 +3163,7 @@ tasks:
     #[test]
     fn reports_unsupported_remote_backend_provider() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3170,7 +3181,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         assert!(!report.ok);
         assert_eq!(
@@ -3182,7 +3193,7 @@ tasks:
     #[test]
     fn accepts_declared_backend_provider_remote_backend() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3205,7 +3216,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         assert!(report.ok);
         assert!(report.findings.iter().all(|finding| {
@@ -3218,7 +3229,7 @@ tasks:
     #[test]
     fn warns_for_suspicious_ssh_remote_target_shape() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3236,7 +3247,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(
             report
                 .findings
@@ -3248,7 +3259,7 @@ tasks:
     #[test]
     fn warns_for_suspicious_tsh_remote_target_shape() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3266,7 +3277,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(
             report
                 .findings
@@ -3278,7 +3289,7 @@ tasks:
     #[test]
     fn warns_for_suspicious_kubectl_remote_target_shape() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3296,7 +3307,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(
             report
                 .findings
@@ -3308,7 +3319,7 @@ tasks:
     #[test]
     fn reports_allowed_env_value_mismatches() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3327,7 +3338,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
     }
@@ -3335,7 +3346,7 @@ tasks:
     #[test]
     fn precondition_mode_skips_health_checks() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3352,7 +3363,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_preconditions(&contract, Path::new("ota.yaml"));
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert!(report.findings.is_empty());
     }
@@ -3360,7 +3371,7 @@ tasks:
     #[test]
     fn checks_only_mode_skips_env_runtime_and_tool_diagnosis() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3384,7 +3395,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_checks_only(&contract, Path::new("ota.yaml"));
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Check failed: health-check");
@@ -3417,7 +3428,7 @@ tasks:
         }
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3433,7 +3444,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
 
         match original_path {
             Some(path) => unsafe {
@@ -3456,7 +3467,7 @@ tasks:
     #[test]
     fn reports_required_service_healthcheck_failures_as_errors() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3473,7 +3484,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
@@ -3486,7 +3497,7 @@ tasks:
     #[test]
     fn reports_optional_service_healthcheck_failures_as_warnings() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3502,7 +3513,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
@@ -3515,7 +3526,7 @@ tasks:
     #[test]
     fn warns_when_required_service_has_no_healthcheck() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3531,7 +3542,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
@@ -3544,7 +3555,7 @@ tasks:
     #[test]
     fn reports_missing_tasks_as_not_ready() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3553,7 +3564,7 @@ project:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
@@ -3563,7 +3574,7 @@ project:
     #[test]
     fn warns_missing_tasks_for_sdk_type() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3573,7 +3584,7 @@ project:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
@@ -3583,7 +3594,7 @@ project:
     #[test]
     fn warns_missing_tasks_for_library_type_case_insensitive() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3593,7 +3604,7 @@ project:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
@@ -3603,7 +3614,7 @@ project:
     #[test]
     fn checks_only_scope_does_not_require_tasks() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3617,7 +3628,7 @@ checks:
         )
         .unwrap();
 
-        let report = diagnose_checks_only(&contract, Path::new("ota.yaml"));
+        let report = diagnose_checks_only(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert!(report.findings.is_empty());
     }
@@ -3625,7 +3636,7 @@ checks:
     #[test]
     fn reports_timed_out_service_healthchecks() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3642,7 +3653,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
@@ -3655,7 +3666,7 @@ tasks:
     #[test]
     fn sorts_errors_before_warnings_before_info() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3679,7 +3690,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 3);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
@@ -3741,7 +3752,7 @@ unexpected: true
         .unwrap();
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
         )
         .unwrap();
@@ -3794,7 +3805,7 @@ policies:
         .unwrap();
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
         )
         .unwrap();
@@ -3837,7 +3848,7 @@ policies:
         .unwrap();
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
         )
         .unwrap();
@@ -3880,7 +3891,7 @@ policies:
         .unwrap();
 
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
         )
         .unwrap();
@@ -3899,7 +3910,7 @@ policies:
     #[test]
     fn reports_timed_out_checks() {
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            synthetic_contract_path(),
             r#"
 version: 1
 project:
@@ -3917,7 +3928,7 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_contract(&contract, Path::new("ota.yaml"));
+        let report = diagnose_contract(&contract, synthetic_contract_path());
         assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);

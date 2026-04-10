@@ -11530,6 +11530,18 @@ tasks:
             vec!["errors", "ok", "path"],
             "up failure keys"
         );
+
+        let receipt = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(receipt.exit_code, 1);
+        assert!(
+            receipt.stderr.is_none(),
+            "receipt failure JSON should stay on stdout"
+        );
+        assert_eq!(
+            json_top_level_keys_named("receipt", &receipt),
+            vec!["errors", "ok", "path"],
+            "receipt failure keys"
+        );
     }
 
     #[test]
