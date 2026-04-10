@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+## 1.3.1
+
+- refreshed the premium doctor plain-text snapshot so the advisory ephemeral-lifecycle warning stays stable in the release gate.
+
 ## 1.3.0
 
 - fixed `ota init --json --dry-run` so the machine-readable preview now matches the reviewed starter contract, including derived starter defaults such as a safe minimal `agent` block when ota can infer one.
