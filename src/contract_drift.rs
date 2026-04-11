@@ -22,6 +22,8 @@
 
 use std::path::Path;
 
+use serde_yaml::{Mapping, Value as YamlValue};
+
 use crate::detector::{Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
@@ -31,6 +33,10 @@ const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
 const DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE: &str = "repo_signals";
 const DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE_KEY: &str = "repo_signals";
+pub(crate) const DETECT_OWNER_KIND_DETECTED: &str = "detected";
+pub(crate) const DETECT_OWNER_KIND_MANUAL: &str = "manual";
+pub(crate) const DETECT_OWNER_KIND_MERGED: &str = "merged";
+pub(crate) const DETECT_OWNER_KIND_POLICY: &str = "policy";
 
 pub(crate) fn append_contract_drift_findings(
     contract: &Contract,
@@ -45,7 +51,10 @@ pub(crate) fn append_contract_drift_findings(
     for change in
         collect_detect_changes(contract, &detect_report.contract, &detect_report.inferences)
             .into_iter()
-            .filter(|change| change.status == "update")
+            .filter(|change| {
+                change.status == "update"
+                    && change.owner_kind.as_deref() == Some(DETECT_OWNER_KIND_MERGED)
+            })
     {
         let existing = change.existing.unwrap_or_default();
         findings.push(Finding {
@@ -66,10 +75,7 @@ pub(crate) fn append_contract_drift_findings(
         });
     }
 
-    for removal in collect_detect_removals(contract, &detect_report.contract) {
-        if removal.field.starts_with("tasks.") {
-            continue;
-        }
+    for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
         findings.push(Finding {
             severity: FindingSeverity::Warn,
             summary: format!("Contract drift: `{}` is no longer detected", removal.field),
@@ -120,18 +126,75 @@ fn detect_change_provenance_key() -> String {
     String::from(DETECT_COMPARISON_REPO_SIGNALS_PROVENANCE_KEY)
 }
 
+fn detect_existing_field_owner_kind(contract: &Contract, field: &str) -> &'static str {
+    match detect_field_owner_kind_metadata(contract, field).as_deref() {
+        Some(DETECT_OWNER_KIND_MERGED) => DETECT_OWNER_KIND_MERGED,
+        Some(DETECT_OWNER_KIND_POLICY) => DETECT_OWNER_KIND_POLICY,
+        Some(DETECT_OWNER_KIND_MANUAL) => DETECT_OWNER_KIND_MANUAL,
+        _ => DETECT_OWNER_KIND_MANUAL,
+    }
+}
+
+pub(crate) fn detect_change_owner_kind(
+    existing: &Contract,
+    field: &str,
+    has_existing: bool,
+) -> String {
+    if has_existing {
+        detect_existing_field_owner_kind(existing, field).to_string()
+    } else {
+        String::from(DETECT_OWNER_KIND_DETECTED)
+    }
+}
+
+fn detect_field_owner_kind_metadata(contract: &Contract, field: &str) -> Option<String> {
+    let ota = contract.metadata.get("ota")?.as_mapping()?;
+    let detect = mapping_child(ota, "detect")?;
+    let field_ownership = mapping_child(detect, "field_ownership")?;
+    mapping_string(field_ownership, field).map(ToString::to_string)
+}
+
+fn mapping_child<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a Mapping> {
+    mapping
+        .get(&YamlValue::String(key.to_string()))
+        .and_then(YamlValue::as_mapping)
+}
+
+fn mapping_string<'a>(mapping: &'a Mapping, key: &str) -> Option<&'a str> {
+    mapping
+        .get(&YamlValue::String(key.to_string()))
+        .and_then(YamlValue::as_str)
+}
+
 fn push_detect_removal(
     removals: &mut Vec<DetectComparisonRemoval>,
+    existing_contract: &Contract,
     field: String,
     existing: String,
 ) {
     removals.push(DetectComparisonRemoval {
+        owner_kind: Some(detect_existing_field_owner_kind(existing_contract, &field).to_string()),
         field,
         existing,
         ownership: Some(String::from(DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP)),
         provenance: Some(detect_change_provenance()),
         provenance_key: Some(detect_change_provenance_key()),
     });
+}
+
+pub(crate) fn collect_detect_drift_removals(
+    existing: &Contract,
+    detected: &crate::detector::DetectContract,
+) -> Vec<DetectComparisonRemoval> {
+    collect_detect_removals(existing, detected)
+        .into_iter()
+        .filter(|removal| {
+            removal
+                .owner_kind
+                .as_deref()
+                .is_some_and(|owner_kind| owner_kind == DETECT_OWNER_KIND_MERGED)
+        })
+        .collect()
 }
 
 pub(crate) fn collect_detect_changes(
@@ -148,6 +211,7 @@ pub(crate) fn collect_detect_changes(
     if let Some(project) = detected.project.as_ref() {
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             "project.name",
             Some(existing.project.name.as_str()),
@@ -158,6 +222,7 @@ pub(crate) fn collect_detect_changes(
     for (name, value) in &detected.runtimes {
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("runtimes.{name}"),
             existing
@@ -171,6 +236,7 @@ pub(crate) fn collect_detect_changes(
     for (name, value) in &detected.tools {
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("tools.{name}"),
             existing
@@ -184,6 +250,7 @@ pub(crate) fn collect_detect_changes(
     for (name, service) in &detected.services {
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("services.{name}.provider"),
             existing
@@ -194,6 +261,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("services.{name}.start"),
             existing
@@ -204,6 +272,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("services.{name}.stop"),
             existing
@@ -214,6 +283,7 @@ pub(crate) fn collect_detect_changes(
         );
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("services.{name}.healthcheck"),
             existing
@@ -235,6 +305,7 @@ pub(crate) fn collect_detect_changes(
                 });
         push_detect_change(
             &mut changes,
+            existing,
             &inference_index,
             &format!("tasks.{name}.run"),
             existing_value,
@@ -244,6 +315,7 @@ pub(crate) fn collect_detect_changes(
             let existing_safe = existing.tasks.get(name).map(|task| task.safe_for_agent);
             push_detect_change(
                 &mut changes,
+                existing,
                 &inference_index,
                 &format!("tasks.{name}.safe_for_agent"),
                 existing_safe.map(|value| if value { "true" } else { "false" }),
@@ -264,6 +336,7 @@ pub(crate) fn collect_detect_removals(
     if detected.project.is_none() {
         push_detect_removal(
             &mut removals,
+            existing,
             String::from("project.name"),
             existing.project.name.clone(),
         );
@@ -273,6 +346,7 @@ pub(crate) fn collect_detect_removals(
         if !detected.runtimes.contains_key(name) {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("runtimes.{name}"),
                 requirement.version().to_string(),
             );
@@ -283,6 +357,7 @@ pub(crate) fn collect_detect_removals(
         if !detected.tools.contains_key(name) {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("tools.{name}"),
                 requirement.version().to_string(),
             );
@@ -298,6 +373,7 @@ pub(crate) fn collect_detect_removals(
         {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("services.{name}.provider"),
                 service.provider.as_deref().unwrap_or_default().to_string(),
             );
@@ -309,6 +385,7 @@ pub(crate) fn collect_detect_removals(
         {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("services.{name}.start"),
                 service.start.as_deref().unwrap_or_default().to_string(),
             );
@@ -320,6 +397,7 @@ pub(crate) fn collect_detect_removals(
         {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("services.{name}.stop"),
                 service.stop.as_deref().unwrap_or_default().to_string(),
             );
@@ -331,6 +409,7 @@ pub(crate) fn collect_detect_removals(
         {
             push_detect_removal(
                 &mut removals,
+                existing,
                 format!("services.{name}.healthcheck"),
                 service
                     .healthcheck
@@ -341,11 +420,36 @@ pub(crate) fn collect_detect_removals(
         }
     }
 
+    for (name, task) in &existing.tasks {
+        let detected_task = detected.tasks.get(name);
+        if let Some(existing_run) = match task.default_execution_kind() {
+            Some("run") => task.default_execution_body(),
+            _ => None,
+        } && detected_task.is_none()
+        {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("tasks.{name}.run"),
+                existing_run.to_string(),
+            );
+        }
+        if task.safe_for_agent && !detected_task.is_some_and(|task| task.safe_for_agent) {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("tasks.{name}.safe_for_agent"),
+                String::from("true"),
+            );
+        }
+    }
+
     removals
 }
 
 fn push_detect_change(
     changes: &mut Vec<DetectComparisonChange>,
+    existing_contract: &Contract,
     inference_index: &std::collections::BTreeMap<&str, &Inference>,
     field: &str,
     existing: Option<&str>,
@@ -362,6 +466,7 @@ fn push_detect_change(
             status: "add",
             existing: None,
             detected: detected.to_string(),
+            owner_kind: Some(detect_change_owner_kind(existing_contract, field, false)),
             ownership: Some(detect_change_ownership(None)),
             provenance: Some(detect_change_provenance()),
             provenance_key: Some(detect_change_provenance_key()),
@@ -373,6 +478,7 @@ fn push_detect_change(
             status: "update",
             existing: Some(existing.to_string()),
             detected: detected.to_string(),
+            owner_kind: Some(detect_change_owner_kind(existing_contract, field, true)),
             ownership: Some(detect_change_ownership(Some(existing))),
             provenance: Some(detect_change_provenance()),
             provenance_key: Some(detect_change_provenance_key()),
@@ -392,7 +498,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn collect_detect_removals_does_not_remove_task_fields_on_detector_silence() {
+    fn collect_detect_removals_keeps_manual_task_fields_visible_for_rewrite_only() {
         let existing = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -418,7 +524,16 @@ tasks:
         };
 
         let removals = collect_detect_removals(&existing, &detected);
-        assert!(removals.is_empty());
+        assert_eq!(removals.len(), 3);
+        assert_eq!(removals[0].field, "tasks.ci.run");
+        assert_eq!(removals[0].owner_kind.as_deref(), Some("manual"));
+        assert_eq!(removals[1].field, "tasks.setup.run");
+        assert_eq!(removals[1].owner_kind.as_deref(), Some("manual"));
+        assert_eq!(removals[2].field, "tasks.setup.safe_for_agent");
+        assert_eq!(removals[2].owner_kind.as_deref(), Some("manual"));
+
+        let drift = collect_detect_drift_removals(&existing, &detected);
+        assert!(drift.is_empty());
     }
 
     #[test]
@@ -459,7 +574,50 @@ services:
         let removals = collect_detect_removals(&existing, &detected);
         assert_eq!(removals.len(), 1);
         assert_eq!(removals[0].field, "services.postgres.provider");
+        assert_eq!(removals[0].owner_kind.as_deref(), Some("manual"));
         assert_eq!(removals[0].ownership.as_deref(), Some("repo_contract"));
         assert_eq!(removals[0].provenance.as_deref(), Some("repo_signals"));
+    }
+
+    #[test]
+    fn collect_detect_drift_removals_only_keeps_ota_managed_fields() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  cargo: "1.78"
+tasks:
+  setup:
+    run: cargo fetch
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        tools.cargo: merged
+        tasks.setup.run: merged
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            ..DetectContract::default()
+        };
+
+        let removals = collect_detect_removals(&existing, &detected);
+        assert_eq!(removals.len(), 2);
+        assert_eq!(removals[0].owner_kind.as_deref(), Some("merged"));
+        assert_eq!(removals[1].owner_kind.as_deref(), Some("merged"));
+
+        let drift = collect_detect_drift_removals(&existing, &detected);
+        assert_eq!(drift.len(), 2);
+        assert_eq!(drift[0].field, "tools.cargo");
+        assert_eq!(drift[1].field, "tasks.setup.run");
     }
 }

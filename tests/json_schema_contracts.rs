@@ -113,11 +113,13 @@ fn detect_schema_includes_comparison_preview() {
 
     assert!(success.get("comparison").is_some());
     assert!(comparison.get("removals").is_some());
+    assert!(change.get("owner_kind").is_some());
     assert!(change.get("ownership").is_some());
     assert!(change.get("provenance").is_some());
     assert!(change.get("provenance_key").is_some());
     assert!(change.get("source").is_some());
     assert!(change.get("confidence").is_some());
+    assert!(removal.get("owner_kind").is_some());
     assert!(removal.get("ownership").is_some());
     assert!(removal.get("provenance").is_some());
     assert!(removal.get("provenance_key").is_some());

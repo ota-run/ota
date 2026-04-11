@@ -55,7 +55,18 @@ Current shipped detect comparison output also carries stable ownership/provenanc
 existing-contract review, and add/update entries include direct detector source and confidence so
 automation does not need to reconstruct that evidence from separate arrays. On that detect
 comparison surface, `provenance` remains the shipped stable label `repo_signals`, with
-`provenance_key` available alongside it for the same machine-oriented classification.
+`provenance_key` available alongside it for the same machine-oriented classification. Detect
+comparison entries also expose `owner_kind`:
+
+- `detected` for add candidates that are not yet in the contract
+- `manual` for existing fields that are hand-authored or explicitly pinned
+- `merged` for fields that ota previously wrote and recorded under
+  `metadata.ota.detect.field_ownership`
+- `policy` reserved for future machine-owned policy-backed contract surfaces
+- `metadata.ota.detect` is ota-reserved and must remain a mapping when detect ownership tracking is in use
+
+Normal drift surfaces only treat `merged` fields as detector-owned drift. Rewrite preview remains
+broader: it can still show `manual` removals because a full replacement would drop them.
 
 The intended provenance categories are:
 

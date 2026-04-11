@@ -102,6 +102,7 @@ struct PolicyFindingContext<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DriftFindingContext<'a> {
+    owner_kind: &'a str,
     ownership: &'a str,
     provenance: &'a str,
     provenance_key: &'a str,
@@ -781,8 +782,9 @@ impl Finding {
     fn drift_context(&self) -> Option<DriftFindingContext<'_>> {
         if self.summary.starts_with("Contract drift:") {
             Some(DriftFindingContext {
+                owner_kind: "merged",
                 ownership: "repo_contract",
-                provenance: "repo signals were compared against the declared contract with `ota detect`",
+                provenance: "repo signals were compared against ota-managed contract fields with `ota detect`",
                 provenance_key: "repo_signals",
             })
         } else {
@@ -818,7 +820,7 @@ impl Serialize for Finding {
         let drift = self.drift_context();
         let mut state = serializer.serialize_struct(
             "Finding",
-            8 + policy.map(|_| 6).unwrap_or_default() + drift.map(|_| 3).unwrap_or_default(),
+            8 + policy.map(|_| 6).unwrap_or_default() + drift.map(|_| 4).unwrap_or_default(),
         )?;
 
         state.serialize_field("code", self.code())?;
@@ -840,6 +842,7 @@ impl Serialize for Finding {
         }
 
         if let Some(drift) = drift {
+            state.serialize_field("owner_kind", drift.owner_kind)?;
             state.serialize_field("ownership", drift.ownership)?;
             state.serialize_field("provenance", drift.provenance)?;
             state.serialize_field("provenance_key", drift.provenance_key)?;
