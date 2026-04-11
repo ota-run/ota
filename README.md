@@ -172,6 +172,13 @@ ota detect --rewrite --dry-run .
 
 ### Policy boundary review
 
+Use the conservative policy scaffold first when a team needs a starter org policy pack:
+
+```bash
+ota policy init --dry-run
+ota policy init
+```
+
 Use policy review when the contract and approved policy need to be reconciled:
 
 ```bash

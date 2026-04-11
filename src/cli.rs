@@ -40,7 +40,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -409,6 +409,17 @@ enum Commands {
 
 #[derive(Debug, Clone, Subcommand)]
 enum PolicyCommands {
+    /// Create a starter org policy pack.
+    Init {
+        /// Preview the starter policy pack without writing it.
+        #[arg(long, action = ArgAction::SetTrue)]
+        dry_run: bool,
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Path to a repo root, policy directory, or explicit .ota/org-policy.yaml target path.
+        path: Option<PathBuf>,
+    },
     /// Review the policy-vs-contract boundary and approved sources.
     Review {
         /// Print machine-readable JSON output.
@@ -1174,6 +1185,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Detect { json: true, .. }
             | Commands::Policy { json: true, .. }
             | Commands::Policy {
+                command: Some(PolicyCommands::Init { json: true, .. }),
+                ..
+            }
+            | Commands::Policy {
                 command: Some(PolicyCommands::Review { json: true, .. }),
                 ..
             }
@@ -1360,6 +1375,26 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Policy {
+            command:
+                Some(PolicyCommands::Init {
+                    dry_run,
+                    json,
+                    path: init_path,
+                }),
+            ..
+        } => {
+            if file.is_some() {
+                CommandOutput::failure_with_code(
+                    String::from(
+                        "`--file` is only supported for commands that read an existing contract",
+                    ),
+                    2,
+                )
+            } else {
+                commands::policy_init(init_path.as_deref(), dry_run, format_from_json(json), debug)
+            }
+        }
         Commands::Policy {
             json,
             command: None,
@@ -1948,6 +1983,10 @@ fn command_requests_json(command: &Commands) -> bool {
             ..
         } => *json,
         Commands::Policy {
+            command: Some(PolicyCommands::Init { json, .. }),
+            ..
+        } => *json,
+        Commands::Policy {
             command: Some(PolicyCommands::Review { json, .. }),
             ..
         } => *json,
@@ -1994,6 +2033,10 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
         Commands::Policy { command: None, .. } => "ota policy",
+        Commands::Policy {
+            command: Some(PolicyCommands::Init { .. }),
+            ..
+        } => "ota policy init",
         Commands::Policy {
             command: Some(PolicyCommands::Review { .. }),
             ..
@@ -7370,6 +7413,30 @@ policies:
     }
 
     #[test]
+    fn policy_init_parses_init_subcommand() {
+        let cli = Cli::parse_from(["ota", "policy", "init", "--dry-run", "--json", "."]);
+        let command = cli.command;
+
+        match &command {
+            Commands::Policy {
+                json: false,
+                command:
+                    Some(PolicyCommands::Init {
+                        dry_run: true,
+                        json: true,
+                        path: Some(path),
+                    }),
+                path: None,
+            } => {
+                assert_eq!(path.as_path(), Path::new("."));
+            }
+            other => panic!("unexpected command parsed: {other:?}"),
+        }
+
+        assert_eq!(super::command_where_label(&command), "ota policy init");
+    }
+
+    #[test]
     fn policy_review_parses_review_subcommand() {
         let cli = Cli::parse_from(["ota", "policy", "review", "--json", "./ota.yaml"]);
         let command = cli.command;
@@ -9208,6 +9275,137 @@ project:
                 "ota detect --merge {}",
                 compact_path(fixture.dir.path(), ".")
             )
+        );
+    }
+
+    #[test]
+    fn policy_init_dry_run_previews_minimal_policy_pack() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("POLICY INIT PREVIEW"));
+        assert!(stdout.contains("Mode: dry-run (no write)"));
+        assert!(stdout.contains("Policy pack:"));
+        assert!(stdout.contains("policies: {}"));
+        assert!(!fixture.path().join(".ota").join("org-policy.yaml").exists());
+    }
+
+    #[test]
+    fn policy_init_writes_minimal_policy_pack() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with(["ota", "policy", "init", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let policy_path = fixture.path().join(".ota").join("org-policy.yaml");
+        assert!(stdout.contains("POLICY INIT"));
+        assert!(stdout.contains("wrote"));
+        assert!(policy_path.is_file());
+        assert_eq!(fs::read_to_string(policy_path).unwrap(), "policies: {}\n");
+    }
+
+    #[test]
+    fn policy_init_json_reports_policy_mode() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["mode"], "policy");
+        assert_eq!(json["config"]["policies"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn policy_init_rejects_non_canonical_policy_file_target() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            fixture.path().join("custom.yaml").to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("is not a canonical policy target"));
+        assert!(stderr.contains("`.ota/org-policy.yaml`"));
+    }
+
+    #[test]
+    fn policy_init_refuses_to_overwrite_existing_policy_pack() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            "policies: {}\n",
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "policy", "init", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("refusing to overwrite the existing policy pack"));
+        assert!(stderr.contains("Next:\n  ▸ review the existing policy pack"));
+    }
+
+    #[test]
+    fn policy_init_json_refuses_to_overwrite_existing_policy_pack_with_next() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            "policies: {}\n",
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["written"], false);
+        assert_eq!(
+            json["error"],
+            format!(
+                "`{}` already exists; refusing to overwrite the existing policy pack",
+                compact_path(
+                    &fixture.path().join(".ota").join("org-policy.yaml"),
+                    "org-policy.yaml"
+                )
+            )
+        );
+        assert!(!json["error"].as_str().unwrap_or_default().contains("Next:"));
+        assert_eq!(
+            json["next"],
+            format!("ota policy {}", compact_path(fixture.path(), "."))
         );
     }
 

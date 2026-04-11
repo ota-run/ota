@@ -87,6 +87,7 @@ ota currently ships these commands:
 - `ota clean`
 - `ota extensions`
 - `ota policy`
+- `ota policy init`
 - `ota policy review`
 - `ota uninstall`
 - `ota self-update` / `ota upgrade`
@@ -927,6 +928,46 @@ JSON output:
 - failure responses include `error`
 
 Use this when you need to confirm which org policy ota actually applied before a run or diagnosis.
+
+## `ota policy init`
+
+Create a conservative starter org policy pack.
+
+```bash
+ota policy init [PATH]
+ota policy init --dry-run [PATH]
+ota policy init --json [PATH]
+ota policy init --dry-run --json [PATH]
+```
+
+Current behavior:
+
+- writes by default
+- refuses to overwrite an existing policy pack
+- defaults to `.ota/org-policy.yaml` under the current directory when no path is given
+- accepts a repo root, a `.ota/` directory, or an explicit `.ota/org-policy.yaml` target path
+- writes the minimal valid starter today: `policies: {}`
+- stays conservative and does not infer org rules or add provisioning approvals
+
+Text output:
+
+- write header: `POLICY INIT <path>`
+- preview header: `POLICY INIT PREVIEW <path>`
+- preview shows the starter policy pack YAML without writing it
+- write output confirms the written path and points back to `ota policy`
+- overwrite refusal stays explicit and non-mutating
+
+JSON output:
+
+- `ok`
+- `path`
+- `written`
+- `mode` (`policy`)
+- `config`
+- failure responses include `error`
+- overwrite refusals may include `next`
+
+Use this when a team needs a valid `.ota/org-policy.yaml` scaffold without guessing policy intent or hand-authoring the starter shape.
 
 ## `ota policy review`
 

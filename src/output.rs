@@ -711,6 +711,26 @@ pub struct InitFailure<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PolicyInitSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub mode: &'a str,
+    pub config: JsonValue,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PolicyInitFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub written: bool,
+    pub mode: &'a str,
+    pub error: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct AgentsSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
