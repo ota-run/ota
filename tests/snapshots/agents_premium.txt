@@ -7,8 +7,8 @@ Managed block:
 Ota-generated content
 
 Next:
-▸  run `ota agents --write` to write `./AGENTS.md`
-▸  run `ota doctor` to verify repo readiness and task safety from the same contract
+  ▸ run `ota agents --write` to write `./AGENTS.md`
+  ▸ run `ota doctor` to verify repo readiness and task safety from the same contract
 
 <!--
                 █████
