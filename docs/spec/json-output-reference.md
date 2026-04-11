@@ -21,6 +21,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/check.json](json-schemas/check.json)
 - [json-schemas/receipt.json](json-schemas/receipt.json)
 - [json-schemas/init.json](json-schemas/init.json)
+- [json-schemas/policy-init.json](json-schemas/policy-init.json)
 - [json-schemas/up.json](json-schemas/up.json)
 - [json-schemas/detect.json](json-schemas/detect.json)
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
@@ -48,6 +49,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
+- use `ota policy init --json` when you want the starter org policy pack preview or write result
 - use `ota policy review --json` when you need policy-authority review over a repo contract
 - use `ota workspace explain --json` when you want an ordered workspace remediation plan
 - use `ota workspace tasks --json` when you want workspace inventory and task availability
@@ -482,6 +484,47 @@ The optional `policy` payload mirrors the loaded policy pack when ota can read i
 need the authoritative boundary can inspect `policy_source` and `policy_path` first, then read the
 findings and grouped actions to decide whether the repo contract or the org policy pack should be
 updated.
+
+## `ota policy init --json`
+
+`ota policy init --json` is the conservative starter-policy surface. It either previews or writes a
+minimal valid `.ota/org-policy.yaml` without guessing org rules, provisioning approvals, or policy
+intent.
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/.ota/org-policy.yaml",
+  "written": false,
+  "mode": "policy",
+  "config": {
+    "policies": {}
+  }
+}
+```
+
+Current JSON fields:
+
+- `ok`
+- `path`
+- `written`
+- `mode` (`policy`)
+- `config`
+- failure responses include `error`
+- overwrite refusals may include `next`
+
+Failure example:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/.ota/org-policy.yaml",
+  "written": false,
+  "mode": "policy",
+  "error": "`./.ota/org-policy.yaml` already exists; refusing to overwrite the existing policy pack",
+  "next": "ota policy /abs/path/to/repo"
+}
+```
 
 `ota workspace doctor --json` may include the same `execution` object on each repo item when the
 underlying repo contract declares execution metadata, including env provenance for inherited

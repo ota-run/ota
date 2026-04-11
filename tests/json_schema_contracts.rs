@@ -103,6 +103,19 @@ fn policy_review_schema_includes_summary_and_policy_fields() {
 }
 
 #[test]
+fn policy_init_schema_includes_minimal_policy_pack_shape() {
+    let schema = load_schema("docs/spec/json-schemas/policy-init.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let config = &success["config"]["properties"];
+    let failure = &schema["oneOf"][1]["properties"];
+
+    assert_eq!(success["mode"]["const"], serde_json::json!("policy"));
+    assert!(config.get("policies").is_some());
+    assert_eq!(failure["mode"]["const"], serde_json::json!("policy"));
+    assert!(failure.get("next").is_some());
+}
+
+#[test]
 fn detect_schema_includes_comparison_preview() {
     let schema = load_schema("docs/spec/json-schemas/detect.json");
     let success = &schema["oneOf"][0]["properties"];

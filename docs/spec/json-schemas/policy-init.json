@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/policy-init.json",
+  "title": "ota policy init --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "mode", "config"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "written": { "type": "boolean" },
+        "mode": { "const": "policy" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policies"],
+          "properties": {
+            "policies": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "written", "mode", "error"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "written": { "const": false },
+        "mode": { "const": "policy" },
+        "error": { "type": "string" },
+        "next": { "type": "string" }
+      }
+    }
+  ]
+}

@@ -126,10 +126,14 @@ policies:
 
 For a team that wants a quick rollout, the practical path is:
 
-1. add `.ota/org-policy.yaml` at the org root or any ancestor of the governed repos
-2. start with a small set of required sections and files
-3. run `ota doctor` in one repo and compare the output before and after
-4. expand policy only after the first rules are easy to understand
+1. preview a starter pack with `ota policy init --dry-run`
+2. write `.ota/org-policy.yaml` with `ota policy init`
+3. start with a small set of required sections and files
+4. run `ota doctor` in one repo and compare the output before and after
+5. expand policy only after the first rules are easy to understand
+
+`ota policy init` is deliberately conservative: it writes the minimal valid starter
+`policies: {}` and does not guess provisioning approvals or org intent.
 
 Example policy pack:
 

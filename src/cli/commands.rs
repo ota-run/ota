@@ -59,16 +59,17 @@ use crate::output::{
     EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt,
     ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
     ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
-    MemberServicesSuccess, OutputFormat, PolicyReviewSuccess, PolicyReviewSummary, ReceiptSuccess,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
+    PolicyReviewSummary, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -117,6 +118,8 @@ use self::workspace_output::{
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
+const DEFAULT_POLICY_DIR: &str = ".ota";
+const DEFAULT_POLICY_FILE: &str = "org-policy.yaml";
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
@@ -1984,6 +1987,245 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) ->
         update::self_update(version, channel),
         debug,
         vec![String::from("DEBUG command=self-update")],
+    )
+}
+
+fn policy_init_target_error(path: &Path) -> String {
+    format!(
+        "`{}` is not a canonical policy target; pass a repo root, a `.ota` directory, or an explicit `.ota/org-policy.yaml` path",
+        compact_path(path, ".")
+    )
+}
+
+fn resolve_policy_init_path(path: Option<&Path>) -> Result<PathBuf, String> {
+    let base = path.unwrap_or_else(|| Path::new("."));
+    let is_explicit_policy_file = base
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_FILE))
+        || base
+            .extension()
+            .is_some_and(|ext| ext == "yaml" || ext == "yml")
+        || base.is_file();
+
+    if is_explicit_policy_file {
+        let parent = base.parent().unwrap_or_else(|| Path::new("."));
+        if parent
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_DIR))
+            && base
+                .file_name()
+                .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_FILE))
+        {
+            return Ok(base.to_path_buf());
+        }
+        return Err(policy_init_target_error(base));
+    }
+
+    if base.is_dir() {
+        if base
+            .file_name()
+            .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_DIR))
+        {
+            return Ok(base.join(DEFAULT_POLICY_FILE));
+        }
+        return Ok(base.join(DEFAULT_POLICY_DIR).join(DEFAULT_POLICY_FILE));
+    }
+
+    if base
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_DIR))
+    {
+        return Ok(base.join(DEFAULT_POLICY_FILE));
+    }
+
+    if base.exists() {
+        return Err(policy_init_target_error(base));
+    }
+
+    Ok(base.join(DEFAULT_POLICY_DIR).join(DEFAULT_POLICY_FILE))
+}
+
+fn policy_init_review_command(target_path: &Path) -> String {
+    let repo_root = target_path
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("."));
+    command_for_repo("ota policy", repo_root)
+}
+
+pub fn policy_init(
+    path: Option<&Path>,
+    dry_run: bool,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let target_path = match resolve_policy_init_path(path) {
+        Ok(target_path) => target_path,
+        Err(error) => {
+            let path_display = path
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| String::from("."));
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure_with_code(error, 2),
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&PolicyInitFailure {
+                            ok: false,
+                            path: &path_display,
+                            written: false,
+                            mode: "policy",
+                            error: &error,
+                            next: None,
+                        }),
+                        stderr: None,
+                        exit_code: 2,
+                    },
+                },
+                debug,
+                vec![
+                    String::from("DEBUG command=policy.init"),
+                    format!("DEBUG invalid_target={path_display}"),
+                ],
+            );
+        }
+    };
+    let path_display = target_path.display().to_string();
+    let compact_path_display = compact_path(&target_path, DEFAULT_POLICY_FILE);
+    let debug_lines = vec![
+        String::from("DEBUG command=policy.init"),
+        format!("DEBUG policy_path={path_display}"),
+        format!("DEBUG dry_run={dry_run}"),
+    ];
+    let policy_json = json!({ "policies": {} });
+    let yaml = String::from("policies: {}\n");
+
+    if target_path.exists() {
+        let review_command = policy_init_review_command(&target_path);
+        let error_reason = format!(
+            "`{}` already exists; refusing to overwrite the existing policy pack",
+            compact_path_display
+        );
+        let error_text = format!(
+            "{}{}",
+            error_reason,
+            format_next_timeline(&[
+                String::from("review the existing policy pack"),
+                format!("run `{review_command}` to inspect the active policy pack"),
+            ])
+        );
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error_text),
+                OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    mode: "policy",
+                    error: &error_reason,
+                    next: Some(&review_command),
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
+    if dry_run {
+        let write_command = match path {
+            Some(path) => format!("ota policy init {}", compact_path(path, ".")),
+            None => String::from("ota policy init"),
+        };
+        let stdout = format!(
+            "{}\n\n{}\n\n{}:\n{}\n{}",
+            format_command_header("POLICY INIT PREVIEW", &compact_path_display),
+            format_mode_line("dry-run (no write)"),
+            paint_section_title("Policy pack"),
+            stylize_yaml_preview(yaml.trim_end()),
+            format_next_timeline(&[
+                String::from("review the starter policy pack"),
+                format!("run `{}` to write it", paint_code(&write_command)),
+            ])
+        );
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::success(stdout),
+                OutputFormat::Json => CommandOutput::success(to_json(&PolicyInitSuccess {
+                    ok: true,
+                    path: &path_display,
+                    written: false,
+                    mode: "policy",
+                    config: policy_json.clone(),
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
+    if let Some(parent) = target_path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        let error = format!(
+            "failed to create `{}`: {error}",
+            compact_path(parent, DEFAULT_POLICY_DIR)
+        );
+        return finalize_debug(
+            match format {
+                OutputFormat::Text => CommandOutput::failure(error.clone()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    mode: "policy",
+                    error: &error,
+                    next: None,
+                })),
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
+    finalize_debug(
+        match fs::write(&target_path, &yaml) {
+            Ok(()) => match format {
+                OutputFormat::Text => {
+                    let review_command = paint_code(&policy_init_review_command(&target_path));
+                    CommandOutput::success(format!(
+                        "{}\n\n{}\n{}",
+                        format_command_header("POLICY INIT", &compact_path_display),
+                        format_result_line(&format!("wrote {}", paint_code(&compact_path_display))),
+                        format_next_timeline(&[
+                            String::from("review the starter policy pack"),
+                            format!("run `{review_command}` to inspect the active policy pack"),
+                        ])
+                    ))
+                }
+                OutputFormat::Json => CommandOutput::success(to_json(&PolicyInitSuccess {
+                    ok: true,
+                    path: &path_display,
+                    written: true,
+                    mode: "policy",
+                    config: policy_json,
+                })),
+            },
+            Err(error) => {
+                let error = format!("failed to write `{}`: {error}", compact_path_display);
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        mode: "policy",
+                        error: &error,
+                        next: None,
+                    })),
+                }
+            }
+        },
+        debug,
+        debug_lines,
     )
 }
 
