@@ -278,11 +278,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
             } else {
                 out.push_str(&format!("\n{}", error_next_key("Next:")));
                 for step in next_steps {
-                    out.push_str(&format!(
-                        "\n{}  {}",
-                        next_bullet(),
-                        stylize_inline_text(&step)
-                    ));
+                    out.push_str(&format_next_timeline_step(&stylize_inline_text(&step)));
                 }
             }
         }
@@ -494,21 +490,18 @@ fn render_missing_contract_guidance(
     match context {
         MissingContractContext::Repo => {
             out.push_str(&format!("\n\n{}", error_next_key("Next:")));
-            out.push_str(&format!(
-                "\n{}  run {} to create a starter contract",
-                next_bullet(),
+            out.push_str(&format_next_timeline_step(&format!(
+                "run {} to create a starter contract",
                 paint_code("`ota init`")
-            ));
-            out.push_str(&format!(
-                "\n{}  or run {} to preview inferred fields",
-                next_bullet(),
+            )));
+            out.push_str(&format_next_timeline_step(&format!(
+                "or run {} to preview inferred fields",
                 paint_code("`ota detect --dry-run`")
-            ));
-            out.push_str(&format!(
-                "\n{}  or run {} to write a detected contract",
-                next_bullet(),
+            )));
+            out.push_str(&format_next_timeline_step(&format!(
+                "or run {} to write a detected contract",
                 paint_code("`ota detect --write`")
-            ));
+            )));
         }
         MissingContractContext::Workspace => {
             out.push_str(&format!(
@@ -3900,7 +3893,7 @@ pub fn init(
         let highlighted_doctor = paint_code("ota doctor");
         let highlighted_detect_merge = paint_code("ota detect --merge");
         let error = format!(
-            "`{}` already exists; use `{highlighted_detect_merge}` to update the existing contract{}",
+            "`{}` already exists; refusing to overwrite the existing contract{}",
             highlighted_path,
             format_next_timeline(&[
                 format!(
@@ -4035,10 +4028,12 @@ pub fn agents(
             paint_code(&compact_output_display)
         ));
         stdout.push_str(&format!(
-            "\n\n{}\n{}  run {} to verify repo readiness and task safety from the same contract",
+            "\n\n{}{}",
             error_next_key("Next:"),
-            next_bullet(),
-            paint_code(&doctor_command)
+            format_next_timeline_step(&format!(
+                "run {} to verify repo readiness and task safety from the same contract",
+                paint_code(&doctor_command)
+            ))
         ));
         stdout
     };
@@ -4167,13 +4162,17 @@ pub fn agents(
                     paint_code("Ota-generated content")
                 ));
                 stdout.push_str(&format!(
-                    "\n\n{}\n{}  run {} to write {}\n{}  run {} to verify repo readiness and task safety from the same contract",
+                    "\n\n{}{}{}",
                     error_next_key("Next:"),
-                    next_bullet(),
-                    paint_code(&write_command),
-                    paint_code(&format!("`{compact_output_display}`")),
-                    next_bullet(),
-                    paint_code(&doctor_command)
+                    format_next_timeline_step(&format!(
+                        "run {} to write {}",
+                        paint_code(&write_command),
+                        paint_code(&format!("`{compact_output_display}`"))
+                    )),
+                    format_next_timeline_step(&format!(
+                        "run {} to verify repo readiness and task safety from the same contract",
+                        paint_code(&doctor_command)
+                    ))
                 ));
                 stdout.push('\n');
                 stdout.push('\n');
@@ -8333,7 +8332,7 @@ fn append_detect_preview_next(
     if needs_attention {
         stdout.push_str(&format!("\n\n{}", error_next_key("Next:")));
         for step in next_steps {
-            stdout.push_str(&format!("\n{}  {}", next_bullet(), step));
+            stdout.push_str(&format_next_timeline_step(step));
         }
     } else {
         stdout.push_str(&format_next_timeline(next_steps));
@@ -18275,6 +18274,12 @@ fn next_bullet() -> String {
     paint("▸", "38;2;0;255;255")
 }
 
+const NEXT_TIMELINE_INDENT: &str = "  ";
+
+fn format_next_timeline_step(item: &str) -> String {
+    format!("\n{NEXT_TIMELINE_INDENT}{} {item}", next_bullet())
+}
+
 fn paint_section_title(value: &str) -> String {
     paint(value, "1;38;2;94;168;214")
 }
@@ -18375,7 +18380,7 @@ fn format_next_timeline(items: &[String]) -> String {
 
     let mut output = format!("\n\n{}", paint_next_header());
     for item in items {
-        output.push_str(&format!("\n{}  {item}", next_bullet()));
+        output.push_str(&format_next_timeline_step(item));
     }
     output
 }
@@ -18387,7 +18392,7 @@ fn format_error_next_timeline(items: &[String]) -> String {
 
     let mut output = format!("\n\n{}", error_next_key("Next:"));
     for item in items {
-        output.push_str(&format!("\n{}  {item}", next_bullet()));
+        output.push_str(&format_next_timeline_step(item));
     }
     output
 }
