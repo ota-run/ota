@@ -2019,7 +2019,7 @@ fn policy_init_template(preset: Option<&str>) -> PolicyInitTemplate {
                     "adapter_bootstrap": {}
                 }
             }),
-            yaml: "policies:\n  provisioning: {}\n  adapter_bootstrap: {}\n\n# Replace the empty maps above with explicit approved sources, for example:\n# provisioning:\n#   node:\n#     source: brew\n#     approved_versions:\n#       - \"22\"\n# adapter_bootstrap:\n#   brew:\n#     source: brew-bootstrap\n#     approved_versions:\n#       - \"4.4\"\n",
+            yaml: "policies:\n  provisioning: {}\n  adapter_bootstrap: {}\n\n# Replace the empty maps above with explicit approved sources, for example:\n# provisioning:\n#   node:\n#     source: brew\n#     approved_versions:\n#       - \"22\"\n#   java:\n#     source: apt\n#     package: openjdk-22-jdk\n#     approved_versions:\n#       - \"22\"\n# adapter_bootstrap:\n#   brew:\n#     source: brew-bootstrap\n#     approved_versions:\n#       - \"4.4\"\n",
         },
         Some("agent") => PolicyInitTemplate {
             config: json!({

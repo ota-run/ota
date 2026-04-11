@@ -34,6 +34,7 @@
 - made bare `ota policy init --dry-run` more discoverable by listing the preset preview commands alongside the default minimal policy-pack preview, while keeping preset-specific dry runs faithful to the exact file they would write.
 - added semver-aware policy-backed provisioning approval so `approved_versions` can authorize major shorthand and semver ranges, while doctor JSON and policy-aware receipt text now surface `requested_version`, `normalized_requirement`, `policy_match`, and `resolved_version` without inventing concrete install versions from range-only policy.
 - added policy-backed provisioning `package` mappings so org policy can pin backend install identifiers (required for `apt`, `dnf`, `pacman`, `winget`, `choco`, and `scoop`) while keeping contract keys stable, and surfaced that mapping in provisioning JSON and previews.
+- fixed the `ota policy init --preset provisioning` example to avoid duplicate YAML keys and show a valid OS package mapping.
 
 ## 1.4.0
 

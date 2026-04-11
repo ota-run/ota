@@ -3886,6 +3886,59 @@ policies:
     }
 
     #[test]
+    fn reports_policy_provisioning_missing_package_mapping() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java: "22"
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  provisioning:
+    java:
+      source: apt
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Policy provisioning needs explicit package identifiers"
+            })
+            .expect("missing package warning should be present");
+        assert_eq!(finding.severity, FindingSeverity::Warn);
+        assert!(finding.why.contains("requires an explicit `package`"));
+    }
+
+    #[test]
     fn reports_missing_policy_required_sections() {
         let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = TempDir::new().unwrap();
