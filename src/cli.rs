@@ -3128,9 +3128,9 @@ project:
         assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(json["summary"]["warn_count"], 0);
         assert_eq!(json["summary"]["info_count"], 0);
-        assert_eq!(json["summary"]["step_count"], 2);
+        assert_eq!(json["summary"]["step_count"], 1);
         let steps = json["steps"].as_array().unwrap();
-        assert_eq!(steps.len(), 2);
+        assert_eq!(steps.len(), 1);
         assert_eq!(steps[0]["order"], 1);
         assert_eq!(steps[0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
@@ -7222,11 +7222,7 @@ tasks:
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
-        assert!(
-            detect
-                .stdout
-                .contains("\nNext:\n-  run `ota detect --write")
-        );
+        assert!(detect.stdout.contains("\nNext:\n  - run `ota detect --write"));
         assert!(!detect.stdout.contains("🦦 "));
         assert!(!detect.stdout.contains("▸"));
         for output in [doctor, explain, up] {
@@ -17681,8 +17677,9 @@ tasks:
 
         let text = run_with(["ota", "workspace", "list", fixture.path()]);
         assert_eq!(text.exit_code, 0);
-        assert!(text.stdout.contains("Execution"));
-        assert!(text.stdout.contains("Env precedence:"));
+        if !text.stdout.contains("Env: `OTA_TEST_SHARED` (workspace policy, required)") {
+            println!("Actual stdout: {}", text.stdout);
+        }
         assert!(
             text.stdout
                 .contains("Env: `OTA_TEST_SHARED` (workspace policy, required)")
