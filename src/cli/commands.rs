@@ -1976,7 +1976,7 @@ pub fn run_command(
 }
 
 fn run_command_streaming_enabled(force_stream: bool) -> bool {
-    force_stream || io::stdout().is_terminal() || io::stderr().is_terminal()
+    force_stream || (!plain_mode() && (io::stdout().is_terminal() || io::stderr().is_terminal()))
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
