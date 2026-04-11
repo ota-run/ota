@@ -2,6 +2,7 @@ policies:
   provisioning:
     java:
       source: dnf
+      package: java
       source_config:
         baseurl: https://mirror.local/fedora/40/x86_64
         repo_id: internal-fedora
@@ -9,6 +10,7 @@ policies:
         - "21"
     curl:
       source: apt
+      package: curl
       source_config:
         sources_list:
           - deb http://mirror.local/debian bookworm main
@@ -16,6 +18,7 @@ policies:
         - "8.7.1"
     git:
       source: apt
+      package: git
       source_config:
         sources_list:
           - deb http://mirror.local/debian bookworm main

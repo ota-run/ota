@@ -24,6 +24,11 @@
 
 # Changelog
 
+## 1.4.2
+
+- fixed `ota diff` to exit `0` when comparison succeeds, even when differences exist, matching the command reference semantics.
+- aligned policy-backed provisioning fixtures with explicit package identifiers for OS package managers so release-gate coverage matches the shipped policy rules.
+
 ## 1.4.1
 
 - added first-class detect ownership tracking with `owner_kind` on existing-contract comparison JSON, persisted ota-managed field ownership under `metadata.ota.detect.field_ownership`, and tightened drift so normal detect/doctor warnings only treat ota-managed fields as detector-owned while rewrite preview still shows full replacement impact.

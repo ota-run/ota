@@ -12892,6 +12892,7 @@ policies:
   provisioning:
     curl:
       source: apt
+      package: curl
       approved_versions:
         - "8.13.0"
 "#,
@@ -12916,7 +12917,7 @@ policies:
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Container apt cannot install pinned package version: curl"));
         assert!(text.contains(
-            "Why: the Linux/container target requests `curl 8.13.0`, but the configured apt sources do not provide that version"
+            "Why: the Linux/container target requests `curl 8.13.0`; policy approves it using rule `8.13.0`, but the configured apt sources do not provide that version"
         ));
         assert!(text.contains("\n  » Image: `premium/test:latest`"));
         assert!(!text.contains("configured apt sources do\n  not provide"));
@@ -13011,6 +13012,7 @@ policies:
   provisioning:
     jq:
       source: dnf
+      package: jq
       approved_versions:
         - "1.7.1"
 "#,
@@ -13067,6 +13069,7 @@ policies:
   provisioning:
     jq:
       source: pacman
+      package: jq
       approved_versions:
         - "1.7.1"
 "#,
@@ -13123,6 +13126,7 @@ policies:
   provisioning:
     Microsoft.VisualStudioCode:
       source: winget
+      package: Microsoft.VisualStudioCode
       approved_versions:
         - "1.88.0"
 "#,
@@ -13181,6 +13185,7 @@ policies:
   provisioning:
     git:
       source: choco
+      package: git
       approved_versions:
         - "2.47.0"
 "#,
@@ -13237,6 +13242,7 @@ policies:
   provisioning:
     neovim:
       source: scoop
+      package: neovim
       approved_versions:
         - "0.10.1"
 "#,
@@ -13517,6 +13523,7 @@ policies:
   provisioning:
     yq:
       source: apt
+      package: yq
       approved_versions:
         - "4.52.5"
 "#,
@@ -14205,6 +14212,7 @@ policies:
   provisioning:
     curl:
       source: apt
+      package: curl
       approved_versions:
         - "8.13.0"
 "#,
