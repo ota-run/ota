@@ -9176,11 +9176,12 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("use `ota detect --merge` to update the existing contract"));
+        assert!(stderr.contains("refusing to overwrite the existing contract"));
         assert!(
             stderr.contains("review the existing contract with `ota validate` or `ota doctor`")
         );
         assert!(stderr.contains("update the existing contract with `ota detect --merge"));
+        assert!(stderr.contains("Next:\n  ▸ review the existing contract"));
     }
 
     #[test]
@@ -11625,7 +11626,7 @@ project:
         assert!(stderr.contains("ota detect --merge --dry-run"));
         assert!(!stderr.contains("| Next: |"));
         assert!(
-            !stderr.contains("\n▸  review detected changes with `ota detect --merge --dry-run")
+            !stderr.contains("\n   ▸ review detected changes with `ota detect --merge --dry-run")
         );
     }
 
