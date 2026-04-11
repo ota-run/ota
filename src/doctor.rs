@@ -1632,9 +1632,7 @@ fn diagnose_org_policy(
                 } else {
                     sources.push(format!(
                         "{name} via {} ({}{}; source_config: {source_config})",
-                        rule.source,
-                        package_hint,
-                        versions
+                        rule.source, package_hint, versions
                     ));
                 }
             }

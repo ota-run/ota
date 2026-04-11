@@ -217,7 +217,11 @@ impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.install_name(), action_effective_version(action))
+                format!(
+                    "{}@{}",
+                    action.install_name(),
+                    action_effective_version(action)
+                )
             }
         }
     }
@@ -574,8 +578,12 @@ impl ScoopProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-        format!("{}@{}", action.install_name(), action_effective_version(action))
-    }
+                format!(
+                    "{}@{}",
+                    action.install_name(),
+                    action_effective_version(action)
+                )
+            }
         }
     }
 
@@ -673,7 +681,11 @@ impl BrewProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.install_name(), action_effective_version(action))
+                format!(
+                    "{}@{}",
+                    action.install_name(),
+                    action_effective_version(action)
+                )
             }
         }
     }
@@ -822,7 +834,11 @@ impl AptProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}={}", action.install_name(), action_effective_version(action))
+                format!(
+                    "{}={}",
+                    action.install_name(),
+                    action_effective_version(action)
+                )
             }
         }
     }
@@ -969,7 +985,11 @@ impl DnfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}-{}", action.install_name(), action_effective_version(action))
+                format!(
+                    "{}-{}",
+                    action.install_name(),
+                    action_effective_version(action)
+                )
             }
         }
     }
