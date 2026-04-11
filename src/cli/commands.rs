@@ -5491,6 +5491,7 @@ pub fn workspace_init(
                     "written": false,
                     "mode": "scaffold",
                     "config": draft.contract,
+                    "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                     "included": draft.included,
                     "missing_contract": draft.missing_contract,
                 }))),
@@ -5598,6 +5599,7 @@ pub fn workspace_init(
                         "written": true,
                         "mode": "scaffold",
                         "config": draft.contract,
+                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
                     }))),
@@ -5658,6 +5660,7 @@ pub fn workspace_init(
                         "written": false,
                         "mode": "scaffold",
                         "config": draft.contract,
+                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
                         "comparison": comparison,
@@ -5727,6 +5730,7 @@ pub fn workspace_init(
                             "written": false,
                             "mode": "scaffold",
                             "config": draft.contract,
+                            "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                             "included": draft.included,
                             "missing_contract": draft.missing_contract,
                             "comparison": comparison,
@@ -5763,6 +5767,7 @@ pub fn workspace_init(
                         "written": true,
                         "mode": "scaffold",
                         "config": draft.contract,
+                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
                         "comparison": comparison,
@@ -6003,6 +6008,7 @@ pub fn workspace_init(
                         "written": true,
                         "mode": "scaffold",
                         "config": draft.contract,
+                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
                     }))),
@@ -6056,6 +6062,7 @@ pub fn workspace_init(
                     "written": false,
                     "mode": "scaffold",
                     "config": draft.contract,
+                    "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
                     "included": draft.included,
                     "missing_contract": draft.missing_contract,
                 }))),
@@ -9998,8 +10005,10 @@ fn detect_json_config_value<T: Serialize>(value: &T) -> JsonValue {
 
 const CONTRACT_PROVENANCE_REPO_SIGNALS_KEY: &str = "repo_signals";
 const CONTRACT_PROVENANCE_TEMPLATE_DERIVED_KEY: &str = "template_derived";
+const CONTRACT_PROVENANCE_WORKSPACE_SCAFFOLD_KEY: &str = "workspace_scaffold";
 const CONTRACT_PROVENANCE_DETECTOR_INFERRED: &str = "detector-inferred";
 const CONTRACT_PROVENANCE_TEMPLATE_DERIVED: &str = "template-derived";
+const CONTRACT_PROVENANCE_WORKSPACE_DERIVED: &str = "workspace-derived";
 
 fn init_contract_provenance(
     contract: &DetectContract,
@@ -10220,6 +10229,64 @@ fn template_field_provenance(field: impl Into<String>, source: &str) -> Contract
         source: Some(String::from(source)),
         confidence: None,
     }
+}
+
+fn workspace_field_provenance(field: impl Into<String>, source: &str) -> ContractFieldProvenance {
+    ContractFieldProvenance {
+        field: field.into(),
+        provenance: String::from(CONTRACT_PROVENANCE_WORKSPACE_DERIVED),
+        provenance_key: String::from(CONTRACT_PROVENANCE_WORKSPACE_SCAFFOLD_KEY),
+        source: Some(String::from(source)),
+        confidence: None,
+    }
+}
+
+fn workspace_init_contract_provenance(
+    contract: &WorkspaceInitContract,
+    workspace_root: &Path,
+) -> Vec<ContractFieldProvenance> {
+    let mut provenance = vec![template_field_provenance(
+        "version",
+        "ota.workspace.init#starter_version",
+    )];
+
+    let root_name = workspace_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty());
+    if let Some(root_name) = root_name {
+        if contract.workspace.name == root_name {
+            provenance.push(workspace_field_provenance(
+                "workspace.name",
+                "workspace-root-directory",
+            ));
+        } else {
+            provenance.push(template_field_provenance(
+                "workspace.name",
+                "ota.workspace.init#workspace_name",
+            ));
+        }
+    } else {
+        provenance.push(template_field_provenance(
+            "workspace.name",
+            "ota.workspace.init#workspace_name",
+        ));
+    }
+
+    for (name, repo) in &contract.repos {
+        let repo_contract_source = format!("{}/{DEFAULT_CONTRACT_FILE}", repo.path);
+        provenance.push(workspace_field_provenance(
+            format!("repos.{name}.path"),
+            &repo_contract_source,
+        ));
+        provenance.push(template_field_provenance(
+            format!("repos.{name}.required"),
+            "ota.workspace.init#repo_required_default",
+        ));
+    }
+
+    provenance.sort_by(|left, right| left.field.cmp(&right.field));
+    provenance
 }
 
 fn set_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {

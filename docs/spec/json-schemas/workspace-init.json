@@ -12,6 +12,7 @@
         "written",
         "mode",
         "config",
+        "provenance",
         "included",
         "missing_contract"
       ],
@@ -48,6 +49,10 @@
               }
             }
           }
+        },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/contractFieldProvenance" }
         },
         "included": {
           "type": "array",

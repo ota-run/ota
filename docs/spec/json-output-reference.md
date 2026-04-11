@@ -680,6 +680,26 @@ Success:
       }
     }
   },
+  "provenance": [
+    {
+      "field": "workspace.name",
+      "provenance": "workspace-derived",
+      "provenance_key": "workspace_scaffold",
+      "source": "workspace-root-directory"
+    },
+    {
+      "field": "repos.web.path",
+      "provenance": "workspace-derived",
+      "provenance_key": "workspace_scaffold",
+      "source": "apps/web/ota.yaml"
+    },
+    {
+      "field": "repos.web.required",
+      "provenance": "template-derived",
+      "provenance_key": "template_derived",
+      "source": "ota.workspace.init#repo_required_default"
+    }
+  ],
   "included": [
     {
       "name": "web",
@@ -714,6 +734,12 @@ Failure:
 Failure shape can also include:
 
 - `next`: optional safe follow-up command when overwrite is refused
+
+`provenance` is the per-field source map for the generated workspace scaffold:
+
+- `workspace-derived` entries use `provenance_key: "workspace_scaffold"` for fields taken from workspace root naming or discovered repo contracts
+- `template-derived` entries cover scaffold defaults such as `version` and the default `required: true` repo policy
+- `source` tells you whether a field came from the workspace root directory, a discovered repo contract path, or an explicit workspace scaffold default
 
 ## `ota workspace doctor --json`
 

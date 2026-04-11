@@ -74,12 +74,20 @@ broader: it can still show `manual` removals because a full replacement would dr
 - `template-derived` fields identify starter-only defaults such as version pinning, task notes,
   and generated `agent` guidance
 
+`ota workspace init --json` and `ota workspace detect --json` now expose the same style of
+per-field `provenance` array for the generated workspace scaffold:
+
+- `workspace-derived` fields point back to the workspace root or discovered repo contract paths
+- `template-derived` fields identify scaffold defaults such as starter versioning and the default
+  `required: true` repo entries
+
 The intended provenance categories are:
 
 - repo-declared
 - policy-derived
 - template-derived
 - detector-inferred
+- workspace-derived
 - user-mutated
 
 Policy-backed provisioning should use the same provenance idea once source-selection lands:
