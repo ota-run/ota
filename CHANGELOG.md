@@ -24,6 +24,10 @@
 
 # Changelog
 
+## 1.4.3
+
+- fixed the policy-backed provisioning docs and backend formatting after the release-gate CI cleanup, including the package-rule heading and related provisioning output formatting.
+
 ## 1.4.2
 
 - fixed `ota diff` to exit `0` when comparison succeeds, even when differences exist, matching the command reference semantics.
