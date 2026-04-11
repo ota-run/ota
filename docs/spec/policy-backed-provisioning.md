@@ -169,7 +169,7 @@ The current shipped behavior is:
 Some provisioning adapters need an explicit install identifier that differs from the contract
 name. Policy-backed provisioning handles this through an optional `package` field on each rule.
 
-### Rule
+### Package rule
 
 - `package` may override the install identifier while keeping the contract key stable
 - `package` is required for OS package managers (`apt`, `dnf`, `pacman`, `winget`, `choco`, `scoop`)

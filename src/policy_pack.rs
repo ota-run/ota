@@ -713,7 +713,10 @@ struct ExplicitSemverSelector {
 }
 
 fn provisioning_source_requires_package(source: &str) -> bool {
-    matches!(source, "apt" | "dnf" | "pacman" | "winget" | "choco" | "scoop")
+    matches!(
+        source,
+        "apt" | "dnf" | "pacman" | "winget" | "choco" | "scoop"
+    )
 }
 
 fn evaluate_provisioning_version_match(
