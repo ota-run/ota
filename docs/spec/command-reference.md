@@ -935,6 +935,9 @@ Create a conservative starter org policy pack.
 
 ```bash
 ota policy init [PATH]
+ota policy init --preset required-sections [PATH]
+ota policy init --preset provisioning [PATH]
+ota policy init --preset agent [PATH]
 ota policy init --dry-run [PATH]
 ota policy init --json [PATH]
 ota policy init --dry-run --json [PATH]
@@ -946,13 +949,18 @@ Current behavior:
 - refuses to overwrite an existing policy pack
 - defaults to `.ota/org-policy.yaml` under the current directory when no path is given
 - accepts a repo root, a `.ota/` directory, or an explicit `.ota/org-policy.yaml` target path
+- supports explicit starter presets: `required-sections`, `provisioning`, and `agent`
 - writes the minimal valid starter today: `policies: {}`
-- stays conservative and does not infer org rules or add provisioning approvals
+- stays conservative and does not infer org rules or add provisioning approvals automatically
+- `required-sections` starts with a small required-section policy (`runtimes` and `tasks`)
+- `provisioning` scaffolds empty `provisioning` and `adapter_bootstrap` maps plus inline example guidance
+- `agent` starts with agent-safety and `AGENTS.md` export requirements enabled
 
 Text output:
 
 - write header: `POLICY INIT <path>`
 - preview header: `POLICY INIT PREVIEW <path>`
+- `Preset:` is shown when a preset is selected
 - preview shows the starter policy pack YAML without writing it
 - write output confirms the written path and points back to `ota policy`
 - overwrite refusal stays explicit and non-mutating
@@ -963,6 +971,7 @@ JSON output:
 - `path`
 - `written`
 - `mode` (`policy`)
+- optional `preset`
 - `config`
 - failure responses include `error`
 - overwrite refusals may include `next`

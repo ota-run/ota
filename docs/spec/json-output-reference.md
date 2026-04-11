@@ -497,8 +497,17 @@ intent.
   "path": "/abs/path/to/.ota/org-policy.yaml",
   "written": false,
   "mode": "policy",
+  "preset": "agent",
   "config": {
-    "policies": {}
+    "policies": {
+      "agent": {
+        "require_safe_tasks": true,
+        "require_writable_paths": true
+      },
+      "exports": {
+        "require_agents_md": true
+      }
+    }
   }
 }
 ```
@@ -509,6 +518,7 @@ Current JSON fields:
 - `path`
 - `written`
 - `mode` (`policy`)
+- optional `preset` (`required-sections`, `provisioning`, or `agent`)
 - `config`
 - failure responses include `error`
 - overwrite refusals may include `next`

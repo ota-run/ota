@@ -135,6 +135,13 @@ For a team that wants a quick rollout, the practical path is:
 `ota policy init` is deliberately conservative: it writes the minimal valid starter
 `policies: {}` and does not guess provisioning approvals or org intent.
 
+When the policy owner wants a stronger starting point, `ota policy init` also supports explicit
+presets:
+
+- `--preset required-sections` to start with `runtimes` and `tasks`
+- `--preset provisioning` to scaffold empty provisioning and adapter-bootstrap maps with inline examples
+- `--preset agent` to require safe tasks, writable-path intent, and `AGENTS.md`
+
 Example policy pack:
 
 ```yaml

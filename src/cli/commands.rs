@@ -1997,6 +1997,101 @@ fn policy_init_target_error(path: &Path) -> String {
     )
 }
 
+struct PolicyInitTemplate {
+    config: JsonValue,
+    yaml: &'static str,
+}
+
+fn policy_init_template(preset: Option<&str>) -> PolicyInitTemplate {
+    match preset {
+        Some("required-sections") => PolicyInitTemplate {
+            config: json!({
+                "policies": {
+                    "required_sections": ["runtimes", "tasks"]
+                }
+            }),
+            yaml: "policies:\n  required_sections:\n    - runtimes\n    - tasks\n",
+        },
+        Some("provisioning") => PolicyInitTemplate {
+            config: json!({
+                "policies": {
+                    "provisioning": {},
+                    "adapter_bootstrap": {}
+                }
+            }),
+            yaml: "policies:\n  provisioning: {}\n  adapter_bootstrap: {}\n\n# Replace the empty maps above with explicit approved sources, for example:\n# provisioning:\n#   node:\n#     source: brew\n#     approved_versions:\n#       - \"22\"\n# adapter_bootstrap:\n#   brew:\n#     source: brew-bootstrap\n#     approved_versions:\n#       - \"4.4\"\n",
+        },
+        Some("agent") => PolicyInitTemplate {
+            config: json!({
+                "policies": {
+                    "agent": {
+                        "require_safe_tasks": true,
+                        "require_writable_paths": true
+                    },
+                    "exports": {
+                        "require_agents_md": true
+                    }
+                }
+            }),
+            yaml: "policies:\n  agent:\n    require_safe_tasks: true\n    require_writable_paths: true\n  exports:\n    require_agents_md: true\n",
+        },
+        _ => PolicyInitTemplate {
+            config: json!({ "policies": {} }),
+            yaml: "policies: {}\n",
+        },
+    }
+}
+
+fn policy_init_command(path: Option<&Path>, preset: Option<&str>) -> String {
+    let mut command = String::from("ota policy init");
+    if let Some(preset) = preset {
+        command.push_str(" --preset ");
+        command.push_str(preset);
+    }
+    if let Some(path) = path {
+        command.push(' ');
+        command.push_str(&compact_path(path, "."));
+    }
+    command
+}
+
+fn policy_init_preview_command(path: Option<&Path>, preset: Option<&str>) -> String {
+    let mut command = String::from("ota policy init");
+    if let Some(preset) = preset {
+        command.push_str(" --preset ");
+        command.push_str(preset);
+    }
+    command.push_str(" --dry-run");
+    if let Some(path) = path {
+        command.push(' ');
+        command.push_str(&compact_path(path, "."));
+    }
+    command
+}
+
+fn policy_init_preset_line(preset: Option<&str>) -> String {
+    preset
+        .map(|preset| format!("\n{} {}", paint_key("Preset:"), paint_code(preset)))
+        .unwrap_or_default()
+}
+
+fn policy_init_available_presets_section(path: Option<&Path>, preset: Option<&str>) -> String {
+    if preset.is_some() {
+        return String::new();
+    }
+
+    let items = [
+        policy_init_preview_command(path, Some("required-sections")),
+        policy_init_preview_command(path, Some("provisioning")),
+        policy_init_preview_command(path, Some("agent")),
+    ];
+    let mut output = format!("\n\n{}:", paint_section_title("Available presets"));
+    for item in items {
+        output.push_str(&format_next_timeline_step(&paint_code(&item)));
+    }
+    output
+}
+
 fn resolve_policy_init_path(path: Option<&Path>) -> Result<PathBuf, String> {
     let base = path.unwrap_or_else(|| Path::new("."));
     let is_explicit_policy_file = base
@@ -2055,6 +2150,7 @@ fn policy_init_review_command(target_path: &Path) -> String {
 
 pub fn policy_init(
     path: Option<&Path>,
+    preset: Option<&str>,
     dry_run: bool,
     format: OutputFormat,
     debug: bool,
@@ -2074,6 +2170,7 @@ pub fn policy_init(
                             path: &path_display,
                             written: false,
                             mode: "policy",
+                            preset,
                             error: &error,
                             next: None,
                         }),
@@ -2094,10 +2191,11 @@ pub fn policy_init(
     let debug_lines = vec![
         String::from("DEBUG command=policy.init"),
         format!("DEBUG policy_path={path_display}"),
+        format!("DEBUG preset={}", preset.unwrap_or("none")),
         format!("DEBUG dry_run={dry_run}"),
     ];
-    let policy_json = json!({ "policies": {} });
-    let yaml = String::from("policies: {}\n");
+    let template = policy_init_template(preset);
+    let yaml = String::from(template.yaml);
 
     if target_path.exists() {
         let review_command = policy_init_review_command(&target_path);
@@ -2121,6 +2219,7 @@ pub fn policy_init(
                     path: &path_display,
                     written: false,
                     mode: "policy",
+                    preset,
                     error: &error_reason,
                     next: Some(&review_command),
                 })),
@@ -2131,16 +2230,15 @@ pub fn policy_init(
     }
 
     if dry_run {
-        let write_command = match path {
-            Some(path) => format!("ota policy init {}", compact_path(path, ".")),
-            None => String::from("ota policy init"),
-        };
+        let write_command = policy_init_command(path, preset);
         let stdout = format!(
-            "{}\n\n{}\n\n{}:\n{}\n{}",
+            "{}\n\n{}{}\n\n{}:\n{}{}{}",
             format_command_header("POLICY INIT PREVIEW", &compact_path_display),
             format_mode_line("dry-run (no write)"),
+            policy_init_preset_line(preset),
             paint_section_title("Policy pack"),
             stylize_yaml_preview(yaml.trim_end()),
+            policy_init_available_presets_section(path, preset),
             format_next_timeline(&[
                 String::from("review the starter policy pack"),
                 format!("run `{}` to write it", paint_code(&write_command)),
@@ -2154,7 +2252,8 @@ pub fn policy_init(
                     path: &path_display,
                     written: false,
                     mode: "policy",
-                    config: policy_json.clone(),
+                    preset,
+                    config: template.config.clone(),
                 })),
             },
             debug,
@@ -2177,6 +2276,7 @@ pub fn policy_init(
                     path: &path_display,
                     written: false,
                     mode: "policy",
+                    preset,
                     error: &error,
                     next: None,
                 })),
@@ -2191,22 +2291,31 @@ pub fn policy_init(
             Ok(()) => match format {
                 OutputFormat::Text => {
                     let review_command = paint_code(&policy_init_review_command(&target_path));
-                    CommandOutput::success(format!(
-                        "{}\n\n{}\n{}",
+                    let mut stdout = format!(
+                        "{}\n\n{}",
                         format_command_header("POLICY INIT", &compact_path_display),
                         format_result_line(&format!("wrote {}", paint_code(&compact_path_display))),
-                        format_next_timeline(&[
-                            String::from("review the starter policy pack"),
-                            format!("run `{review_command}` to inspect the active policy pack"),
-                        ])
-                    ))
+                    );
+                    if let Some(preset_line) = preset {
+                        stdout.push_str(&format!(
+                            "\n{} {}",
+                            paint_key("Preset:"),
+                            paint_code(preset_line)
+                        ));
+                    }
+                    stdout.push_str(&format_next_timeline(&[
+                        String::from("review the starter policy pack"),
+                        format!("run `{review_command}` to inspect the active policy pack"),
+                    ]));
+                    CommandOutput::success(stdout)
                 }
                 OutputFormat::Json => CommandOutput::success(to_json(&PolicyInitSuccess {
                     ok: true,
                     path: &path_display,
                     written: true,
                     mode: "policy",
-                    config: policy_json,
+                    preset,
+                    config: template.config,
                 })),
             },
             Err(error) => {
@@ -2218,6 +2327,7 @@ pub fn policy_init(
                         path: &path_display,
                         written: false,
                         mode: "policy",
+                        preset,
                         error: &error,
                         next: None,
                     })),
@@ -2548,7 +2658,6 @@ fn render_policy_review_text(
     }
 
     let summary = policy_review_summary(report);
-    stdout.push('\n');
     stdout.push_str(&render_policy_review_overview_text(&summary));
 
     if report.findings.is_empty() {
@@ -2615,7 +2724,7 @@ fn render_policy_review_text(
 }
 
 fn render_policy_review_overview_text(summary: &PolicyReviewSummary) -> String {
-    let mut stdout = String::from("\n\n");
+    let mut stdout = String::from("\n");
     stdout.push_str(&paint_section_title("Overview"));
     stdout.push_str(&format!(
         "\n{}",
@@ -13830,6 +13939,8 @@ mod tests {
         assert!(text.contains("POLICY REVIEW ./ota.yaml"));
         assert!(text.contains("Policy source: repo policy"));
         assert!(text.contains("Policy path: ./.ota/org-policy.yaml"));
+        assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n\nOverview"));
+        assert!(!text.contains("Policy path: ./.ota/org-policy.yaml\n\n\nOverview"));
         assert!(text.contains("Repo does not satisfy org policy pack"));
         assert!(text.contains("AGENTS.md"));
     }

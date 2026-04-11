@@ -411,6 +411,9 @@ enum Commands {
 enum PolicyCommands {
     /// Create a starter org policy pack.
     Init {
+        /// Apply a conservative starter preset.
+        #[arg(long, value_enum)]
+        preset: Option<PolicyInitPreset>,
         /// Preview the starter policy pack without writing it.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
@@ -428,6 +431,24 @@ enum PolicyCommands {
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PolicyInitPreset {
+    #[value(name = "required-sections")]
+    RequiredSections,
+    Provisioning,
+    Agent,
+}
+
+impl PolicyInitPreset {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::RequiredSections => "required-sections",
+            Self::Provisioning => "provisioning",
+            Self::Agent => "agent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -1378,6 +1399,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Policy {
             command:
                 Some(PolicyCommands::Init {
+                    preset,
                     dry_run,
                     json,
                     path: init_path,
@@ -1392,7 +1414,13 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     2,
                 )
             } else {
-                commands::policy_init(init_path.as_deref(), dry_run, format_from_json(json), debug)
+                commands::policy_init(
+                    init_path.as_deref(),
+                    preset.as_ref().map(|preset| preset.as_str()),
+                    dry_run,
+                    format_from_json(json),
+                    debug,
+                )
             }
         }
         Commands::Policy {
@@ -2084,8 +2112,8 @@ mod tests {
     use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
 
     use super::{
-        Cli, Commands, PolicyCommands, append_try_footer, collapse_blank_lines, commands,
-        maybe_append_update_notice, run_with,
+        Cli, Commands, PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines,
+        commands, maybe_append_update_notice, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -7414,7 +7442,16 @@ policies:
 
     #[test]
     fn policy_init_parses_init_subcommand() {
-        let cli = Cli::parse_from(["ota", "policy", "init", "--dry-run", "--json", "."]);
+        let cli = Cli::parse_from([
+            "ota",
+            "policy",
+            "init",
+            "--preset",
+            "required-sections",
+            "--dry-run",
+            "--json",
+            ".",
+        ]);
         let command = cli.command;
 
         match &command {
@@ -7422,6 +7459,7 @@ policies:
                 json: false,
                 command:
                     Some(PolicyCommands::Init {
+                        preset: Some(PolicyInitPreset::RequiredSections),
                         dry_run: true,
                         json: true,
                         path: Some(path),
@@ -9296,7 +9334,72 @@ project:
         assert!(stdout.contains("Mode: dry-run (no write)"));
         assert!(stdout.contains("Policy pack:"));
         assert!(stdout.contains("policies: {}"));
+        assert!(stdout.contains("Available presets:"));
+        let required_sections_preview = format!(
+            "ota policy init --preset required-sections --dry-run {}",
+            compact_path(fixture.path(), ".")
+        );
+        let provisioning_preview = format!(
+            "ota policy init --preset provisioning --dry-run {}",
+            compact_path(fixture.path(), ".")
+        );
+        let agent_preview = format!(
+            "ota policy init --preset agent --dry-run {}",
+            compact_path(fixture.path(), ".")
+        );
+        assert!(stdout.contains(&required_sections_preview));
+        assert!(stdout.contains(&provisioning_preview));
+        assert!(stdout.contains(&agent_preview));
+        assert!(stdout.contains("policies: {}\n\nAvailable presets:"));
+        assert!(stdout.contains(&format!("{agent_preview}\n\nNext:")));
+        assert!(!stdout.contains(&format!("{agent_preview}\n\n\nNext:")));
         assert!(!fixture.path().join(".ota").join("org-policy.yaml").exists());
+    }
+
+    #[test]
+    fn policy_init_required_sections_preset_preview_is_informative() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--preset",
+            "required-sections",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Preset: required-sections"));
+        assert!(stdout.contains("required_sections:"));
+        assert!(stdout.contains("- runtimes"));
+        assert!(stdout.contains("- tasks"));
+        assert!(!stdout.contains("Available presets:"));
+        assert!(stdout.contains("ota policy init --preset required-sections"));
+    }
+
+    #[test]
+    fn policy_init_provisioning_preset_preview_includes_example_guidance() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--preset",
+            "provisioning",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Preset: provisioning"));
+        assert!(stdout.contains("provisioning: {}"));
+        assert!(stdout.contains("adapter_bootstrap: {}"));
+        assert!(stdout.contains("Replace the empty maps above with explicit approved sources"));
     }
 
     #[test]
@@ -9312,6 +9415,29 @@ project:
         assert!(stdout.contains("wrote"));
         assert!(policy_path.is_file());
         assert_eq!(fs::read_to_string(policy_path).unwrap(), "policies: {}\n");
+    }
+
+    #[test]
+    fn policy_init_agent_preset_writes_policy_rules() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--preset",
+            "agent",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let policy_path = fixture.path().join(".ota").join("org-policy.yaml");
+        let written = fs::read_to_string(policy_path).unwrap();
+        assert!(stdout.contains("Preset: agent"));
+        assert!(written.contains("require_safe_tasks: true"));
+        assert!(written.contains("require_writable_paths: true"));
+        assert!(written.contains("require_agents_md: true"));
     }
 
     #[test]
@@ -9333,6 +9459,34 @@ project:
         assert_eq!(json["written"], false);
         assert_eq!(json["mode"], "policy");
         assert_eq!(json["config"]["policies"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn policy_init_json_reports_selected_preset() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "policy",
+            "init",
+            "--preset",
+            "agent",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["preset"], "agent");
+        assert_eq!(
+            json["config"]["policies"]["agent"]["require_safe_tasks"],
+            true
+        );
+        assert_eq!(
+            json["config"]["policies"]["exports"]["require_agents_md"],
+            true
+        );
     }
 
     #[test]

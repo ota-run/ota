@@ -110,8 +110,16 @@ fn policy_init_schema_includes_minimal_policy_pack_shape() {
     let failure = &schema["oneOf"][1]["properties"];
 
     assert_eq!(success["mode"]["const"], serde_json::json!("policy"));
+    assert_eq!(
+        success["preset"]["enum"],
+        serde_json::json!(["required-sections", "provisioning", "agent"])
+    );
     assert!(config.get("policies").is_some());
     assert_eq!(failure["mode"]["const"], serde_json::json!("policy"));
+    assert_eq!(
+        failure["preset"]["enum"],
+        serde_json::json!(["required-sections", "provisioning", "agent"])
+    );
     assert!(failure.get("next").is_some());
 }
 

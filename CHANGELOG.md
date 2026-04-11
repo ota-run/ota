@@ -30,7 +30,8 @@
 - fixed detect write-mode JSON so successful `--write`, `--merge`, and `--rewrite` responses now return the exact written contract, including persisted ownership metadata, and detect merge now fails clearly when `metadata.ota.detect` cannot be recorded because an existing metadata path is not mapping-shaped.
 - extended `ota init --json` with per-field starter provenance so machine consumers can distinguish detector-inferred contract fields from template-derived starter defaults, including `source` and `confidence` on detector-backed entries.
 - extended `ota workspace init --json` and `ota workspace detect --json` with per-field scaffold provenance so machine consumers can distinguish workspace-derived repo entries, preserved workspace-declared merge fields, and template-derived workspace defaults.
-- added `ota policy init` with `--dry-run` and `--json` so teams can scaffold a conservative minimal `.ota/org-policy.yaml` starter without overwriting an existing policy pack or guessing org rules.
+- added `ota policy init` with `--dry-run`, `--json`, and explicit starter presets (`required-sections`, `provisioning`, and `agent`) so teams can scaffold a conservative minimal `.ota/org-policy.yaml` starter or choose a stronger reviewed starting point without overwriting an existing policy pack.
+- made bare `ota policy init --dry-run` more discoverable by listing the preset preview commands alongside the default minimal policy-pack preview, while keeping preset-specific dry runs faithful to the exact file they would write.
 
 ## 1.4.0
 
