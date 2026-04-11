@@ -12,6 +12,9 @@
         "path": { "type": "string" },
         "written": { "type": "boolean" },
         "mode": { "const": "policy" },
+        "preset": {
+          "enum": ["required-sections", "provisioning", "agent"]
+        },
         "config": {
           "type": "object",
           "additionalProperties": false,
@@ -34,6 +37,9 @@
         "path": { "type": "string" },
         "written": { "const": false },
         "mode": { "const": "policy" },
+        "preset": {
+          "enum": ["required-sections", "provisioning", "agent"]
+        },
         "error": { "type": "string" },
         "next": { "type": "string" }
       }

@@ -716,6 +716,8 @@ pub struct PolicyInitSuccess<'a> {
     pub path: &'a str,
     pub written: bool,
     pub mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<&'a str>,
     pub config: JsonValue,
 }
 
@@ -725,6 +727,8 @@ pub struct PolicyInitFailure<'a> {
     pub path: &'a str,
     pub written: bool,
     pub mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preset: Option<&'a str>,
     pub error: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,

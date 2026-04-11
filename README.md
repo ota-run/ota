@@ -177,6 +177,9 @@ Use the conservative policy scaffold first when a team needs a starter org polic
 ```bash
 ota policy init --dry-run
 ota policy init
+ota policy init --preset required-sections --dry-run
+ota policy init --preset provisioning --dry-run
+ota policy init --preset agent --dry-run
 ```
 
 Use policy review when the contract and approved policy need to be reconciled:
