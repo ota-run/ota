@@ -823,6 +823,7 @@ where
         original_plain_mode: std::env::var_os("OTA_PLAIN_MODE"),
         original_json_mode: std::env::var_os("OTA_JSON_MODE"),
     };
+    commands::set_plain_mode(true);
     commands::take_failure_locus();
 
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
@@ -5930,6 +5931,7 @@ tasks:
 
     #[test]
     fn run_failure_try_footer_stays_tight_before_run_summary() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -7222,7 +7224,11 @@ tasks:
 
         assert_eq!(detect.exit_code, 0);
         assert!(detect.stdout.contains("DETECT PREVIEW "));
-        assert!(detect.stdout.contains("\nNext:\n  - run `ota detect --write"));
+        assert!(
+            detect
+                .stdout
+                .contains("\nNext:\n  - run `ota detect --write")
+        );
         assert!(!detect.stdout.contains("🦦 "));
         assert!(!detect.stdout.contains("▸"));
         for output in [doctor, explain, up] {
@@ -13920,6 +13926,7 @@ tasks:
 
     #[test]
     fn run_failure_text_snapshot_is_stable() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -17677,13 +17684,11 @@ tasks:
 
         let text = run_with(["ota", "workspace", "list", fixture.path()]);
         assert_eq!(text.exit_code, 0);
-        if !text.stdout.contains("Env: `OTA_TEST_SHARED` (workspace policy, required)") {
-            println!("Actual stdout: {}", text.stdout);
+        let stdout = strip_ansi(&text.stdout);
+        if !stdout.contains("Env: `OTA_TEST_SHARED` (workspace policy, required)") {
+            println!("Actual stdout (stripped): {}", stdout);
         }
-        assert!(
-            text.stdout
-                .contains("Env: `OTA_TEST_SHARED` (workspace policy, required)")
-        );
+        assert!(stdout.contains("Env: `OTA_TEST_SHARED` (workspace policy, required)"));
 
         let json = run_with(["ota", "workspace", "list", "--json", fixture.path()]);
         assert_eq!(json.exit_code, 0);
