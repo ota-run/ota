@@ -306,6 +306,7 @@ Root monorepo summary output can also include grouped member results:
         "name": "java",
         "requested_version": "22",
         "normalized_requirement": ">=22.0.0 <23.0.0",
+        "package": "openjdk-22-jdk",
         "source": "org-mirror",
         "approved_version": "22",
         "policy_match": "22",
@@ -330,6 +331,7 @@ Root monorepo summary output can also include grouped member results:
         "name": "java",
         "requested_version": "22",
         "normalized_requirement": ">=22.0.0 <23.0.0",
+        "package": "openjdk-22-jdk",
         "source": "org-mirror",
         "approved_version": "22",
         "policy_match": "22"
@@ -390,12 +392,13 @@ plan, so an installer backend can consume the request without re-deriving policy
 the diagnostic payload.
 
 Provisioning plan entries and request actions may also include additive semver-audit fields:
-`normalized_requirement`, `resolved_version`, and `policy_match`. `normalized_requirement`
+`normalized_requirement`, `resolved_version`, `policy_match`, and `package`. `normalized_requirement`
 captures the semver intent ota matched against policy, `policy_match` records the exact approved
 policy entry that authorized the request, and `resolved_version` appears only when policy provided
-an explicit concrete version for deterministic installation. Range-only policy approval does not
-invent a concrete install version, and when `resolved_version` is absent ota continues to pass the
-original `requested_version` to the backend.
+an explicit concrete version for deterministic installation. `package` is the backend install
+identifier when policy specifies one (for example `openjdk-22-jdk` for apt). Range-only policy
+approval does not invent a concrete install version, and when `resolved_version` is absent ota
+continues to pass the original `requested_version` to the backend.
 
 `ota doctor --json` and `ota workspace doctor --json` may also include a top-level
 `finding_groups` array when the output contains repeated-action groups. Each entry includes a

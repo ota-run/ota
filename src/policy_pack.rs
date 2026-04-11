@@ -111,6 +111,8 @@ pub struct PolicyProvisioningRule {
     #[serde(default)]
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
     pub approved_versions: Vec<String>,
     #[serde(default)]
     pub platforms: BTreeMap<String, PolicyPlatformProvisioningRule>,
@@ -122,6 +124,8 @@ pub struct PolicyPlatformProvisioningRule {
     pub source: String,
     #[serde(default)]
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
+    #[serde(default)]
+    pub package: Option<String>,
     #[serde(default)]
     pub approved_versions: Vec<String>,
 }
@@ -210,6 +214,8 @@ pub struct ProvisioningDecision {
     pub normalized_requirement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
     pub source: String,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
@@ -235,6 +241,8 @@ pub struct ProvisioningAction {
     pub normalized_requirement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
     pub source: String,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
@@ -256,6 +264,8 @@ pub struct ProvisioningPlanEntry {
     pub normalized_requirement: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
     pub source: Option<String>,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
@@ -272,6 +282,10 @@ pub struct ProvisioningPlan {
 }
 
 impl ProvisioningDecision {
+    pub fn install_name(&self) -> &str {
+        self.package.as_deref().unwrap_or(self.name.as_str())
+    }
+
     pub fn install_version(&self) -> &str {
         self.resolved_version
             .as_deref()
@@ -280,6 +294,19 @@ impl ProvisioningDecision {
 }
 
 impl ProvisioningAction {
+    pub fn install_name(&self) -> &str {
+        self.package.as_deref().unwrap_or(self.name.as_str())
+    }
+
+    pub fn display_name(&self) -> String {
+        match self.package.as_deref() {
+            Some(package) if package != self.name => {
+                format!("{} (package: {package})", self.name)
+            }
+            _ => self.name.clone(),
+        }
+    }
+
     pub fn install_version(&self) -> &str {
         self.resolved_version
             .as_deref()
@@ -367,6 +394,14 @@ impl OrgPolicyPack {
             ));
         }
 
+        if provisioning_source_requires_package(rule.source()) && rule.package().is_none() {
+            return Err(format!(
+                "policy-backed provisioning source `{}` for {} `{name}` requires an explicit `package` identifier",
+                rule.source(),
+                kind.as_str()
+            ));
+        }
+
         let version_match = evaluate_provisioning_version_match(
             kind,
             name,
@@ -380,6 +415,7 @@ impl OrgPolicyPack {
             requested_version: requested_version.to_string(),
             normalized_requirement: version_match.normalized_requirement,
             resolved_version: version_match.resolved_version,
+            package: rule.package().map(str::to_string),
             source: rule.source().to_string(),
             source_config: rule.source_config().cloned(),
             approved_version: version_match.approved_version,
@@ -457,6 +493,7 @@ impl OrgPolicyPack {
                     .unwrap_or_else(|| String::from("latest")),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: entry.source.unwrap_or_default(),
                 source_config: None,
                 approved_version: entry.approved_version,
@@ -519,6 +556,7 @@ impl OrgPolicyPack {
                     requested_version: entry.requested_version.clone(),
                     normalized_requirement: entry.normalized_requirement.clone(),
                     resolved_version: entry.resolved_version.clone(),
+                    package: entry.package.clone(),
                     source: source.clone(),
                     source_config: entry.source_config.clone(),
                     approved_version: entry.approved_version.clone(),
@@ -550,6 +588,7 @@ impl OrgPolicyPack {
                 requested_version: action.requested_version,
                 normalized_requirement: action.normalized_requirement,
                 resolved_version: action.resolved_version,
+                package: action.package,
                 source: action.source,
                 source_config: action.source_config,
                 approved_version: action.approved_version,
@@ -604,6 +643,7 @@ impl OrgPolicyPack {
                 requested_version: requested_version.to_string(),
                 normalized_requirement: decision.normalized_requirement.clone(),
                 resolved_version: decision.resolved_version.clone(),
+                package: decision.package.clone(),
                 source: Some(decision.source),
                 source_config: decision.source_config.clone(),
                 approved_version: decision.approved_version,
@@ -616,6 +656,7 @@ impl OrgPolicyPack {
                 requested_version: requested_version.to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: None,
                 source_config: None,
                 approved_version: None,
@@ -630,6 +671,7 @@ impl OrgPolicyPack {
                 requested_version: requested_version.to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: None,
                 source_config: None,
                 approved_version: None,
@@ -668,6 +710,10 @@ struct ExplicitSemverSelector {
     normalized_requirement: String,
     req: VersionReq,
     sample: Version,
+}
+
+fn provisioning_source_requires_package(source: &str) -> bool {
+    matches!(source, "apt" | "dnf" | "pacman" | "winget" | "choco" | "scoop")
 }
 
 fn evaluate_provisioning_version_match(
@@ -1065,17 +1111,26 @@ impl SourceRule for PolicyPlatformProvisioningRule {
 
 trait ProvisioningSourceRule: SourceRule {
     fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>>;
+    fn package(&self) -> Option<&str>;
 }
 
 impl ProvisioningSourceRule for PolicyProvisioningRule {
     fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>> {
         self.source_config.as_ref()
     }
+
+    fn package(&self) -> Option<&str> {
+        self.package.as_deref()
+    }
 }
 
 impl ProvisioningSourceRule for PolicyPlatformProvisioningRule {
     fn source_config(&self) -> Option<&BTreeMap<String, serde_yaml::Value>> {
         self.source_config.as_ref()
+    }
+
+    fn package(&self) -> Option<&str> {
+        self.package.as_deref()
     }
 }
 
@@ -1852,6 +1907,50 @@ policies:
         assert_eq!(decision.resolved_version.as_deref(), None);
         assert_eq!(decision.approved_version.as_deref(), Some("22"));
         assert_eq!(decision.policy_match.as_deref(), Some("22"));
+    }
+
+    #[test]
+    fn provisioning_requires_package_for_os_package_sources() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: apt
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let error = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "java", "22")
+            .unwrap_err();
+
+        assert!(error.contains("requires an explicit `package`"));
+    }
+
+    #[test]
+    fn records_package_for_provisioning_rules() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: apt
+      package: openjdk-22-jdk
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "java", "22")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.package.as_deref(), Some("openjdk-22-jdk"));
     }
 
     #[test]

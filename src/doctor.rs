@@ -130,7 +130,7 @@ fn provisioning_action_audit_summary(action: &ProvisioningAction) -> String {
     format!(
         "{} {} {} via {}{}",
         action.target_kind,
-        action.name,
+        action.display_name(),
         action.version_display(),
         action.source,
         action.policy_display_suffix()
@@ -1582,6 +1582,34 @@ fn diagnose_org_policy(
         let provisioning_request =
             policy_pack.provisioning_backend_request_for_os(policy_os, contract);
 
+        let missing_packages: Vec<String> = provisioning_plan
+            .blocked
+            .iter()
+            .filter_map(|entry| {
+                entry.blocked_reason.as_ref().and_then(|reason| {
+                    if reason.contains("requires an explicit `package`") {
+                        Some(reason.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if !missing_packages.is_empty() {
+            findings.push(Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Policy provisioning needs explicit package identifiers"),
+                why: format!(
+                    "policy-backed provisioning cannot proceed for {}",
+                    missing_packages.join("; ")
+                ),
+                next: String::from(
+                    "add `package` to the matching `policies.provisioning.<name>` rule or platform override, then rerun `ota doctor`",
+                ),
+            });
+        }
+
         if !policy_pack.policies.provisioning.is_empty() {
             let mut sources = Vec::new();
             for (name, rule) in &policy_pack.policies.provisioning {
@@ -1591,12 +1619,22 @@ fn diagnose_org_policy(
                     format!("versions {}", rule.approved_versions.join(", "))
                 };
                 let source_config = format_source_config_summary(rule.source_config.as_ref());
+                let package_hint = rule
+                    .package
+                    .as_deref()
+                    .map(|package| format!("package: {package}; "))
+                    .unwrap_or_default();
                 if source_config.is_empty() {
-                    sources.push(format!("{name} via {} ({versions})", rule.source));
+                    sources.push(format!(
+                        "{name} via {} ({}{})",
+                        rule.source, package_hint, versions
+                    ));
                 } else {
                     sources.push(format!(
-                        "{name} via {} ({versions}; source_config: {source_config})",
-                        rule.source
+                        "{name} via {} ({}{}; source_config: {source_config})",
+                        rule.source,
+                        package_hint,
+                        versions
                     ));
                 }
             }

@@ -14560,6 +14560,7 @@ tasks:
                             requested_version: String::from("21"),
                             normalized_requirement: None,
                             resolved_version: None,
+                            package: None,
                             source: String::from("sdkman"),
                             source_config: None,
                             approved_version: Some(String::from("21")),
@@ -14572,6 +14573,7 @@ tasks:
                             requested_version: String::from("22"),
                             normalized_requirement: None,
                             resolved_version: None,
+                            package: None,
                             source: String::from("brew"),
                             source_config: None,
                             approved_version: Some(String::from("22")),
@@ -15608,6 +15610,7 @@ policies:
                             requested_version: String::from("1.0"),
                             normalized_requirement: None,
                             resolved_version: None,
+                            package: None,
                             source: String::from("sdkman-bootstrap"),
                             source_config: None,
                             approved_version: None,
@@ -15686,6 +15689,7 @@ policies:
                         requested_version: String::from("4.4"),
                         normalized_requirement: None,
                         resolved_version: None,
+                        package: None,
                         source: String::from("brew-bootstrap"),
                         source_config: None,
                         approved_version: None,
@@ -15698,6 +15702,7 @@ policies:
                         requested_version: String::from("1.0"),
                         normalized_requirement: None,
                         resolved_version: None,
+                        package: None,
                         source: String::from("sdkman-bootstrap"),
                         source_config: None,
                         approved_version: None,
@@ -15798,6 +15803,7 @@ policies:
                 requested_version: String::from("21"),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: String::from("sdkman"),
                 source_config: None,
                 approved_version: Some(String::from("21")),
@@ -15833,6 +15839,7 @@ policies:
                 requested_version: String::from("4.4"),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: String::from("brew-bootstrap"),
                 source_config: None,
                 approved_version: None,
@@ -19647,7 +19654,7 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
 fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningAction) -> String {
     format!(
         "provision `{}` `{}` via `{}`{}",
-        action.name,
+        action.display_name(),
         action.version_display(),
         action.source,
         action.policy_display_suffix()
@@ -19655,7 +19662,10 @@ fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningA
 }
 
 fn render_up_preview_skip_action(action: &crate::policy_pack::ProvisioningAction) -> String {
-    format!("skip `{}`; already satisfies the contract", action.name)
+    format!(
+        "skip `{}`; already satisfies the contract",
+        action.display_name()
+    )
 }
 
 fn append_up_preview_service_actions(contract: &Contract, actions: &mut Vec<String>) {

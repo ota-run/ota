@@ -119,6 +119,7 @@ policies:
             - "22"
         linux:
           source: apt
+          package: nodejs
           source_config:
             sources_list:
               - deb http://mirror.local/debian bookworm main
@@ -126,6 +127,7 @@ policies:
             - "22"
         windows:
           source: choco
+          package: nodejs
           source_config:
             feed: internal-choco
           approved_versions:
@@ -161,6 +163,35 @@ The current shipped behavior is:
   explicit exact candidate like `22.11.0`
 - if policy approval succeeds but no deterministic concrete version exists, ota blocks
   provisioning instead of guessing
+
+## Package Mapping Discipline
+
+Some provisioning adapters need an explicit install identifier that differs from the contract
+name. Policy-backed provisioning handles this through an optional `package` field on each rule.
+
+### Rule
+
+- `package` may override the install identifier while keeping the contract key stable
+- `package` is required for OS package managers (`apt`, `dnf`, `pacman`, `winget`, `choco`, `scoop`)
+- `package` is optional for runtime managers (`brew`, `mise`, `asdf`, `sdkman`, `uv`)
+
+Example:
+
+```yaml
+policies:
+  provisioning:
+    java:
+      source: apt
+      package: openjdk-22-jdk
+      approved_versions:
+        - "22"
+```
+
+In that case:
+
+- the contract still declares `runtimes.java`
+- policy selects `apt` as the backend
+- `openjdk-22-jdk` is the install identifier passed to `apt`
 
 ### What ota should not do
 
@@ -373,6 +404,7 @@ policies:
     tools:
       node:
         source: choco
+        package: nodejs
         source_config:
           feed: internal-choco
         approved_versions:

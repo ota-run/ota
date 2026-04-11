@@ -217,7 +217,7 @@ impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action_effective_version(action))
+                format!("{}@{}", action.install_name(), action_effective_version(action))
             }
         }
     }
@@ -273,7 +273,9 @@ impl MiseProvisioningBackend {
 impl AsdfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.install_name().to_string()
+            }
         }
     }
 
@@ -330,8 +332,9 @@ impl AsdfProvisioningBackend {
 impl SdkmanProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime => action.name.clone(),
-            ProvisioningTargetKind::Tool => action.name.clone(),
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.install_name().to_string()
+            }
         }
     }
 
@@ -430,7 +433,9 @@ impl UvProvisioningBackend {
 impl WingetProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.install_name().to_string()
+            }
         }
     }
 
@@ -499,7 +504,9 @@ impl WingetProvisioningBackend {
 impl ChocoProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.install_name().to_string()
+            }
         }
     }
 
@@ -567,8 +574,8 @@ impl ScoopProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action_effective_version(action))
-            }
+        format!("{}@{}", action.install_name(), action_effective_version(action))
+    }
         }
     }
 
@@ -611,8 +618,8 @@ impl ScoopProvisioningBackend {
             .as_ref()
             .and_then(|config| config.get("bucket_name"))
             .and_then(|value| value.as_str())
-            .map(|bucket_name| format!("{bucket_name}/{}", action.name))
-            .unwrap_or_else(|| action.name.clone())
+            .map(|bucket_name| format!("{bucket_name}/{}", action.install_name()))
+            .unwrap_or_else(|| action.install_name().to_string())
     }
 
     fn probe_command(action: &ProvisioningAction) -> (String, Vec<String>, String) {
@@ -666,7 +673,7 @@ impl BrewProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action_effective_version(action))
+                format!("{}@{}", action.install_name(), action_effective_version(action))
             }
         }
     }
@@ -759,7 +766,9 @@ impl BrewProvisioningBackend {
 impl PacmanProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
-            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => action.name.clone(),
+            ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
+                action.install_name().to_string()
+            }
         }
     }
 
@@ -813,7 +822,7 @@ impl AptProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}={}", action.name, action_effective_version(action))
+                format!("{}={}", action.install_name(), action_effective_version(action))
             }
         }
     }
@@ -960,7 +969,7 @@ impl DnfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}-{}", action.name, action_effective_version(action))
+                format!("{}-{}", action.install_name(), action_effective_version(action))
             }
         }
     }
@@ -3652,6 +3661,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -3696,6 +3706,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -3768,6 +3779,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "asdf".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -3813,6 +3825,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "sdkman".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -3852,6 +3865,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "sdkman".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -3895,6 +3909,7 @@ mod tests {
                 requested_version: "3.12".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "uv".to_string(),
                 source_config: None,
                 approved_version: Some("3.12".to_string()),
@@ -3940,6 +3955,7 @@ mod tests {
                 requested_version: "3.9".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "winget".to_string(),
                 source_config: None,
                 approved_version: Some("3.9".to_string()),
@@ -3987,6 +4003,7 @@ mod tests {
                 requested_version: "3.9".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "winget".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     String::from("source_name"),
@@ -4035,6 +4052,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "choco".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
@@ -4080,6 +4098,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "choco".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     "feed".to_string(),
@@ -4130,6 +4149,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "scoop".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
@@ -4174,6 +4194,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "scoop".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
@@ -4226,6 +4247,7 @@ mod tests {
                 requested_version: "1.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "choco-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("2.0.0".to_string()),
@@ -4264,6 +4286,7 @@ mod tests {
                 requested_version: "1.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "scoop-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("2.0.0".to_string()),
@@ -4302,6 +4325,7 @@ mod tests {
                 requested_version: "1.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "winget-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("1.8.0".to_string()),
@@ -4345,6 +4369,7 @@ mod tests {
                 requested_version: "8.7.1".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "apt".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     String::from("sources_list"),
@@ -4396,6 +4421,7 @@ mod tests {
                 requested_version: "1.7".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "brew".to_string(),
                 source_config: None,
                 approved_version: Some("1.7".to_string()),
@@ -4440,6 +4466,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "brew".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
@@ -4496,6 +4523,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "pacman".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
@@ -4541,6 +4569,7 @@ mod tests {
                 requested_version: "1.7".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "apt".to_string(),
                 source_config: None,
                 approved_version: Some("1.7".to_string()),
@@ -4592,6 +4621,7 @@ mod tests {
                 requested_version: "8.13.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "apt".to_string(),
                 source_config: None,
                 approved_version: Some("8.13.0".to_string()),
@@ -4659,6 +4689,7 @@ mod tests {
                 requested_version: "22".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
@@ -4725,6 +4756,7 @@ mod tests {
             requested_version: "1.7.1".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "apt".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
@@ -4789,6 +4821,7 @@ mod tests {
             requested_version: "22".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "brew".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
@@ -4853,6 +4886,7 @@ mod tests {
             requested_version: "1.7.1".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "dnf".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
@@ -4917,6 +4951,7 @@ mod tests {
             requested_version: "1.7.1".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "pacman".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
@@ -4981,6 +5016,7 @@ mod tests {
             requested_version: "1.88.0".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "winget".to_string(),
             source_config: None,
             approved_version: Some("1.88.0".to_string()),
@@ -5042,6 +5078,7 @@ mod tests {
             requested_version: "2.47.0".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "choco".to_string(),
             source_config: None,
             approved_version: Some("2.47.0".to_string()),
@@ -5103,6 +5140,7 @@ mod tests {
             requested_version: "0.10.1".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "scoop".to_string(),
             source_config: None,
             approved_version: Some("0.10.1".to_string()),
@@ -5164,6 +5202,7 @@ mod tests {
             requested_version: "22".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "mise".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
@@ -5225,6 +5264,7 @@ mod tests {
             requested_version: "22".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "asdf".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
@@ -5286,6 +5326,7 @@ mod tests {
             requested_version: "21".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "sdkman".to_string(),
             source_config: None,
             approved_version: Some("21".to_string()),
@@ -5347,6 +5388,7 @@ mod tests {
             requested_version: "3.12".to_string(),
             normalized_requirement: None,
             resolved_version: None,
+            package: None,
             source: "uv".to_string(),
             source_config: None,
             approved_version: Some("3.12".to_string()),
@@ -5403,6 +5445,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "dnf".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
@@ -5448,6 +5491,7 @@ mod tests {
                 requested_version: "2.46.0".to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
+                package: None,
                 source: "dnf".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
