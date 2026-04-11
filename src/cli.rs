@@ -9084,6 +9084,42 @@ agent:
     }
 
     #[test]
+    fn init_json_write_marks_directory_fallback_project_as_template_derived() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "service/Makefile",
+            r#"build:
+	@printf "build\n"
+"#,
+        );
+
+        let repo_path = format!("{}/service", fixture.path());
+        let output = run_with(["ota", "init", "--json", repo_path.as_str()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "detected");
+        assert_eq!(json["config"]["project"]["name"], "service");
+
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let project_name = provenance
+            .iter()
+            .find(|entry| entry["field"] == "project.name")
+            .expect("project.name provenance");
+        assert_eq!(project_name["provenance"], "template-derived");
+        assert_eq!(project_name["provenance_key"], "template_derived");
+        assert_eq!(project_name["source"], "ota.init#directory_name");
+        assert!(project_name.get("confidence").is_none() || project_name["confidence"].is_null());
+
+        let task_run = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.build.run")
+            .expect("tasks.build.run provenance");
+        assert_eq!(task_run["provenance"], "detector-inferred");
+        assert_eq!(task_run["provenance_key"], "repo_signals");
+    }
+
+    #[test]
     fn init_json_dry_run_omits_agent_when_safe_writable_paths_cannot_be_inferred() {
         let fixture = ContractFixture::new_dir();
         fixture.write(

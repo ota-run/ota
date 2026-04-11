@@ -6,7 +6,7 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "written", "mode", "config", "inferred"],
+      "required": ["ok", "path", "written", "mode", "config", "inferred", "provenance"],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },

@@ -7932,6 +7932,14 @@ fn render_init(
     let compact_path_display = compact_contract_path(contract_path);
     let compact_root_display = compact_repo_path(&report.root);
     let bootstrap_contract = bootstrap_init_contract(&report);
+    let preview_detected_contract = if mode == "detected" {
+        report.contract.clone()
+    } else {
+        DetectContract {
+            version: 1,
+            ..DetectContract::default()
+        }
+    };
     let review_yaml = serde_yaml::to_string(&bootstrap_contract)
         .expect("serializing init contract should not fail");
 
@@ -7971,17 +7979,29 @@ fn render_init(
     }
 
     if write {
-        let mut write_contract = if mode == "detected" {
+        let selected_detected_contract = if mode == "detected" {
             if bootstrap {
-                bootstrap_contract
+                report.contract.clone()
             } else {
                 report.contract_with_min_confidence(Confidence::Medium)
             }
         } else {
+            DetectContract {
+                version: 1,
+                ..DetectContract::default()
+            }
+        };
+        let mut write_contract = if mode == "detected" {
+            selected_detected_contract.clone()
+        } else {
             bootstrap_contract
         };
         apply_starter_contract_defaults(&mut write_contract, &report.root);
-        let provenance = init_contract_provenance(&write_contract, &report.inferences);
+        let provenance = init_contract_provenance(
+            &write_contract,
+            &selected_detected_contract,
+            &report.inferences,
+        );
         let write_yaml = serde_yaml::to_string(&write_contract)
             .expect("serializing init write contract should not fail");
 
@@ -8169,7 +8189,11 @@ fn render_init(
             mode,
             config: &bootstrap_contract,
             inferred: &report.inferences,
-            provenance: init_contract_provenance(&bootstrap_contract, &report.inferences),
+            provenance: init_contract_provenance(
+                &bootstrap_contract,
+                &preview_detected_contract,
+                &report.inferences,
+            ),
         })),
     }
 }
@@ -9979,12 +10003,16 @@ const CONTRACT_PROVENANCE_TEMPLATE_DERIVED: &str = "template-derived";
 
 fn init_contract_provenance(
     contract: &DetectContract,
+    selected_detected_contract: &DetectContract,
     inferences: &[Inference],
 ) -> Vec<ContractFieldProvenance> {
     let inference_map = inferences
         .iter()
         .map(|inference| (inference.field.as_str(), inference))
         .collect::<BTreeMap<_, _>>();
+    let detected_fields = detect_field_paths(selected_detected_contract)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let mut provenance = Vec::new();
 
     provenance.push(template_field_provenance(
@@ -9996,6 +10024,7 @@ fn init_contract_provenance(
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
+            &detected_fields,
             "project.name",
             "ota.init#directory_name",
         );
@@ -10005,6 +10034,7 @@ fn init_contract_provenance(
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
+            &detected_fields,
             format!("runtimes.{name}"),
             "ota.init#starter_contract",
         );
@@ -10013,6 +10043,7 @@ fn init_contract_provenance(
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
+            &detected_fields,
             format!("tools.{name}"),
             "ota.init#starter_contract",
         );
@@ -10022,6 +10053,7 @@ fn init_contract_provenance(
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
+                &detected_fields,
                 format!("services.{name}.provider"),
                 "ota.init#starter_contract",
             );
@@ -10030,6 +10062,7 @@ fn init_contract_provenance(
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
+                &detected_fields,
                 format!("services.{name}.start"),
                 "ota.init#starter_contract",
             );
@@ -10038,6 +10071,7 @@ fn init_contract_provenance(
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
+                &detected_fields,
                 format!("services.{name}.stop"),
                 "ota.init#starter_contract",
             );
@@ -10046,6 +10080,7 @@ fn init_contract_provenance(
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
+                &detected_fields,
                 format!("services.{name}.healthcheck"),
                 "ota.init#starter_contract",
             );
@@ -10055,6 +10090,7 @@ fn init_contract_provenance(
         push_init_field_provenance(
             &mut provenance,
             &inference_map,
+            &detected_fields,
             format!("tasks.{name}.run"),
             "ota.init#starter_contract",
         );
@@ -10068,6 +10104,7 @@ fn init_contract_provenance(
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
+                &detected_fields,
                 format!("tasks.{name}.safe_for_agent"),
                 "ota.init#task_safe_for_agent",
             );
@@ -10148,11 +10185,14 @@ fn init_contract_provenance(
 fn push_init_field_provenance(
     entries: &mut Vec<ContractFieldProvenance>,
     inferences: &BTreeMap<&str, &Inference>,
+    detected_fields: &BTreeSet<String>,
     field: impl Into<String>,
     template_source: &str,
 ) {
     let field = field.into();
-    if let Some(inference) = inferences.get(field.as_str()) {
+    if detected_fields.contains(&field)
+        && let Some(inference) = inferences.get(field.as_str())
+    {
         entries.push(inferred_field_provenance(&field, inference));
     } else {
         entries.push(template_field_provenance(field, template_source));
