@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added first-class detect ownership tracking with `owner_kind` on existing-contract comparison JSON, persisted ota-managed field ownership under `metadata.ota.detect.field_ownership`, and tightened drift so normal detect/doctor warnings only treat ota-managed fields as detector-owned while rewrite preview still shows full replacement impact.
+- fixed detect write-mode JSON so successful `--write`, `--merge`, and `--rewrite` responses now return the exact written contract, including persisted ownership metadata, and detect merge now fails clearly when `metadata.ota.detect` cannot be recorded because an existing metadata path is not mapping-shaped.
+
 ## 1.4.0
 
 - hardened premium text wrapping so `Why:` lines, detail lines, and detect drift bullets stop inserting premature newlines and now rely on real terminal width instead of stale formatter caps.

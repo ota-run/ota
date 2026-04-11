@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
 use crate::detector::{Confidence, DetectContract, Inference};
@@ -732,7 +733,7 @@ pub struct DetectSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub written: bool,
-    pub config: &'a DetectContract,
+    pub config: JsonValue,
     pub inferred: &'a [Inference],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comparison: Option<&'a DetectComparison>,
@@ -767,6 +768,8 @@ pub struct DetectComparisonChange {
     pub existing: Option<String>,
     pub detected: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ownership: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
@@ -782,6 +785,8 @@ pub struct DetectComparisonChange {
 pub struct DetectComparisonRemoval {
     pub field: String,
     pub existing: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ownership: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

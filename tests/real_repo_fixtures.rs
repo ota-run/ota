@@ -2098,7 +2098,7 @@ services:
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json["ok"], false);
     assert!(json.get("path").is_some());
-    assert_eq!(json["findings"].as_array().unwrap().len(), 3);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
     assert_eq!(json["findings"][0]["code"], "OTA_SERVICE_CHECK_FAILED");
     assert_eq!(json["findings"][0]["category"], "service");
     assert_eq!(json["findings"][0]["owner"], "service");
@@ -2187,7 +2187,7 @@ tasks:
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 0);
 }
 
 #[cfg(unix)]
@@ -2220,7 +2220,7 @@ tasks:
 
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(json["ok"], false);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
     assert_eq!(json["findings"][0]["severity"], "error");
     assert_eq!(
         json["findings"][0]["summary"],
@@ -2383,7 +2383,7 @@ services:
     let json = stdout_json(&output);
 
     assert_eq!(json["ok"], true);
-    assert_eq!(json["findings"].as_array().unwrap().len(), 2);
+    assert_eq!(json["findings"].as_array().unwrap().len(), 1);
     assert_eq!(json["findings"][0]["severity"], "warn");
     assert_eq!(
         json["findings"][0]["summary"],

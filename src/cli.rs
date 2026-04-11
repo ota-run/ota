@@ -3126,7 +3126,7 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 0);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["step_count"], 2);
         let steps = json["steps"].as_array().unwrap();
@@ -3879,9 +3879,9 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["summary"]["error_count"], 1);
-        assert_eq!(json["summary"]["warn_count"], 1);
+        assert_eq!(json["summary"]["warn_count"], 0);
         assert_eq!(json["summary"]["info_count"], 0);
-        assert_eq!(json["findings"].as_array().unwrap().len(), 1);
+        assert_eq!(json["findings"].as_array().unwrap().len(), 0);
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["ok"], false);
@@ -6746,6 +6746,11 @@ project:
 tasks:
   ci:
     run: cargo test
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        project.name: merged
 "#,
         )
         .expect("write ota.yaml");
@@ -6775,6 +6780,7 @@ version = "0.1.0"
                         .as_str()
                         .unwrap_or_default()
                         .starts_with("Contract drift:")
+                        && finding["owner_kind"] == "merged"
                         && finding["ownership"] == "repo_contract"
                         && finding["provenance_key"] == "repo_signals"
                         && finding["provenance"]
@@ -6783,6 +6789,148 @@ version = "0.1.0"
                             .contains("ota detect")
                 }),
             "expected at least one contract-drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_manual_detected_update_for_contract_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+tasks:
+  ci:
+    run: cargo test
+"#,
+        )
+        .expect("write ota.yaml");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[package]
+name = "detected"
+version = "0.1.0"
+"#,
+        )
+        .expect("write Cargo.toml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    !finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("Contract drift:")
+                }),
+            "manual detected updates should not produce drift warnings"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_manual_detector_silence_for_contract_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+services:
+  postgres:
+    provider: docker-compose
+tasks:
+  ci:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{
+  "name": "existing"
+}"#,
+        )
+        .expect("write package.json");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    !finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("Contract drift:")
+                }),
+            "manual contract fields should not produce drift warnings on detector silence"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_ota_managed_detector_silence_for_contract_drift() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: existing
+services:
+  postgres:
+    provider: docker-compose
+tasks:
+  ci:
+    run: printf ready
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        services.postgres.provider: merged
+"#,
+        )
+        .expect("write ota.yaml");
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{
+  "name": "existing"
+}"#,
+        )
+        .expect("write package.json");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .starts_with("Contract drift: `services.postgres.provider`")
+                        && finding["owner_kind"] == "merged"
+                }),
+            "ota-managed fields should still produce drift warnings"
         );
     }
 
@@ -6849,13 +6997,13 @@ tasks:
             "expected the real runtime mismatch finding"
         );
         assert!(
-            findings.iter().any(|finding| {
-                finding["summary"]
+            findings.iter().all(|finding| {
+                !finding["summary"]
                     .as_str()
                     .unwrap_or_default()
                     .starts_with("Contract drift: `runtimes.java`")
             }),
-            "expected the runtime drift warning"
+            "manual runtime declarations should not produce drift warnings"
         );
     }
 
@@ -6920,12 +7068,12 @@ tasks:
             "expected the docker version mismatch to be present"
         );
         assert!(
-            stdout.contains("Review contract drift (2)"),
-            "expected the grouped contract drift warning"
+            !stdout.contains("Review contract drift"),
+            "manual tool declarations should not produce grouped drift warnings"
         );
         assert!(
-            stdout.contains("tools.docker"),
-            "expected the docker drift detail to be present"
+            !stdout.contains("tools.docker"),
+            "manual tool drift detail should not be present"
         );
     }
 
@@ -7401,7 +7549,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["summary"]["error_count"], 0);
-        assert_eq!(json["summary"]["warn_count"], 2);
+        assert_eq!(json["summary"]["warn_count"], 1);
         assert_eq!(json["summary"]["info_count"], 0);
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
         assert_eq!(
@@ -10461,6 +10609,7 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["comparison"]["existing_contract"], true);
         assert_eq!(json["comparison"]["changes"][0]["field"], "project.name");
+        assert_eq!(json["comparison"]["changes"][0]["owner_kind"], "manual");
         assert_eq!(
             json["comparison"]["changes"][0]["ownership"],
             "repo_contract"
@@ -10489,6 +10638,11 @@ project:
   name: existing
 tools:
   cargo: "1.78"
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        tools.cargo: merged
 tasks:
   build:
     run: cargo build
@@ -10517,6 +10671,7 @@ tasks:
         assert_eq!(json["comparison"]["existing_contract"], true);
         assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 1);
         assert_eq!(json["comparison"]["removals"][0]["field"], "tools.cargo");
+        assert_eq!(json["comparison"]["removals"][0]["owner_kind"], "merged");
         assert_eq!(
             json["comparison"]["removals"][0]["ownership"],
             "repo_contract"
@@ -10553,6 +10708,7 @@ project:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("project.name: would update `existing` -> `ota-web`"));
+        assert!(stdout.contains("Owner: manual"));
         assert!(stdout.contains("Source: package.json#name [high]"));
     }
 
@@ -10565,6 +10721,11 @@ project:
   name: existing
 tools:
   cargo: "1.78"
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        tools.cargo: merged
 tasks:
   build:
     run: cargo build
@@ -10592,6 +10753,41 @@ tasks:
             .expect("drift section");
         let contract = stdout.find("Contract:").expect("contract section");
         assert!(drift < contract);
+    }
+
+    #[test]
+    fn detect_rewrite_json_reports_manual_replacement_impact() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tools:
+  cargo: "1.78"
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0"
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--json",
+            "--rewrite",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["comparison"]["removals"].as_array().unwrap().len(), 1);
+        assert_eq!(json["comparison"]["removals"][0]["field"], "tools.cargo");
+        assert_eq!(json["comparison"]["removals"][0]["owner_kind"], "manual");
     }
 
     #[test]
@@ -10721,6 +10917,9 @@ project:
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("field_ownership:"));
+        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("tasks.dev.run: merged"));
         assert!(written.contains("name: existing"));
         assert!(!written.contains("name: ota-web"));
     }
@@ -10734,6 +10933,11 @@ project:
   name: existing
 tools:
   cargo: "1.78"
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        tools.cargo: merged
 "#,
         );
         fixture.write(
@@ -10962,6 +11166,54 @@ tasks:
     }
 
     #[test]
+    fn detect_rewrite_json_reports_written_config_with_ownership_metadata() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+tasks:
+  setup:
+    run: echo existing
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "detect",
+            "--json",
+            "--rewrite",
+            "--yes",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], true);
+        assert_eq!(json["config"]["project"]["name"], "ota-web");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["project.name"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
+            "merged"
+        );
+    }
+
+    #[test]
     fn detect_rewrite_refuses_to_overwrite_protected_contract() {
         let fixture = ContractFixture::new(
             r#"
@@ -11034,6 +11286,39 @@ tasks:
     }
 
     #[test]
+    fn detect_merge_fails_when_metadata_ota_is_not_mapping() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+metadata:
+  ota: legacy
+"#,
+        );
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "existing",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains(
+            "cannot record detect ownership under `metadata.ota.detect.field_ownership` because `metadata.ota` is not a mapping"
+        ));
+        assert!(stderr.contains("repair the conflicting metadata path"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("ota: legacy"));
+        assert!(!written.contains("field_ownership:"));
+    }
+
+    #[test]
     fn detect_merge_json_reports_written_when_additions_are_applied() {
         let fixture = ContractFixture::new(
             r#"
@@ -11057,6 +11342,15 @@ project:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["written"], true);
         assert_eq!(json["comparison"]["existing_contract"], true);
+        assert_eq!(json["config"]["project"]["name"], "existing");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
+            "merged"
+        );
         assert!(
             json["comparison"]["changes"]
                 .as_array()
@@ -11138,7 +11432,43 @@ tasks:
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("field_ownership:"));
+        assert!(written.contains("project.name: merged"));
+        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("tasks.dev.run: merged"));
         assert!(!written.contains("node:"));
+    }
+
+    #[test]
+    fn detect_write_json_reports_written_config_with_ownership_metadata() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], true);
+        assert_eq!(json["config"]["project"]["name"], "ota-web");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["project.name"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
+            "merged"
+        );
     }
 
     #[test]
@@ -13002,7 +13332,7 @@ tasks:
         assert!(stdout.contains("rerun"));
         assert!(stdout.contains("ota doctor"));
         assert!(stdout.contains(&contract_path));
-        assert!(stdout.contains(&format!("ota detect --merge --dry-run {contract_path}")));
+        assert!(!stdout.contains("ota detect --merge --dry-run"));
     }
 
     #[test]

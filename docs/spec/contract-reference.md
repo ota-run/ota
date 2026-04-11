@@ -804,9 +804,26 @@ metadata:
   owner: ota
   author: ota Maintainers
   created_at: 2026-03-23
+  ota:
+    detect:
+      field_ownership:
+        project.name: merged
+        tools.pnpm: merged
+        tools.curl: manual
 ```
 
 This is an open map for extra repo-specific values.
+
+`ota detect --write`, `ota detect --merge`, and `ota detect --rewrite` record ota-managed detect
+fields under `metadata.ota.detect.field_ownership` using `merged`.
+
+The `metadata.ota.detect` subtree is ota-reserved and must remain mapping-shaped. If `metadata.ota`
+or `metadata.ota.detect` is repurposed as a scalar or list, detect merge cannot persist ownership
+metadata and will fail until that path is repaired.
+
+You can also pin curated fields explicitly with `manual` there when detector silence should not be
+treated as contract drift. When a field has no detect ownership entry, ota treats the existing
+contract value as `manual` by default.
 
 ## Full example
 

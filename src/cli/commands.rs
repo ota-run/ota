@@ -39,9 +39,10 @@ use time::macros::format_description;
 
 use super::{AnnotationFormat, AnnotationMode};
 use crate::contract_drift::{
-    append_contract_drift_findings, collect_detect_changes, collect_detect_removals,
+    DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
+    collect_detect_drift_removals, collect_detect_removals,
 };
-use crate::detector::{Confidence, DetectReport, Inference, detect_repo};
+use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
     diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
@@ -4925,7 +4926,15 @@ pub fn detect(
                         )),
                     };
                 }
-                let comparison = compare_detected_contract(&contract_path, &report);
+                let comparison = compare_detected_contract(
+                    &contract_path,
+                    &report,
+                    if rewrite {
+                        DetectRemovalScope::RewriteImpact
+                    } else {
+                        DetectRemovalScope::Drift
+                    },
+                );
                 let selected_fields = apply.iter().cloned().collect::<BTreeSet<_>>();
                 let comparison =
                     selected_detect_comparison(comparison.as_ref(), &report, &selected_fields);
@@ -4978,7 +4987,7 @@ pub fn detect(
                         ok: true,
                         path: &path_display,
                         written: false,
-                        config: &report.contract,
+                        config: detect_json_config_value(&report.contract),
                         inferred: &report.inferences,
                         comparison: comparison.as_ref(),
                     })),
@@ -7269,7 +7278,22 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     }
 
     let candidate = report.high_confidence_contract();
-    let yaml = serde_yaml::to_string(&candidate)
+    let mut document = serde_yaml::to_value(&candidate)
+        .expect("serializing detected write candidate should not fail");
+    if let Err(error) = record_detect_owned_fields(&mut document, detect_field_paths(&candidate)) {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+    let config = detect_json_config_value(&document);
+    let yaml = serde_yaml::to_string(&document)
         .expect("serializing detected write candidate should not fail");
 
     match parse_contract_str(&contract_path, &yaml)
@@ -7330,7 +7354,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 ok: true,
                 path: &path_display,
                 written: true,
-                config: &candidate,
+                config,
                 inferred: &report.inferences,
                 comparison: None,
             })),
@@ -7412,12 +7436,8 @@ fn write_detected_merge(
         }
     };
 
-    let comparison = DetectComparison {
-        existing_contract: true,
-        changes: collect_detect_changes(&existing_contract, &report.contract, &report.inferences),
-        removals: collect_detect_removals(&existing_contract, &report.contract),
-        error: None,
-    };
+    let comparison =
+        build_detect_comparison(&existing_contract, &report, DetectRemovalScope::Drift);
 
     let apply_all = apply_all || apply.iter().any(|field| field == ".");
     let selected_fields = apply
@@ -7504,7 +7524,7 @@ fn write_detected_merge(
                 ok: true,
                 path: &path_display,
                 written: false,
-                config: &report.contract,
+                config: detect_json_config_value(&report.contract),
                 inferred: &report.inferences,
                 comparison: Some(&comparison),
             })),
@@ -7564,11 +7584,34 @@ fn write_detected_merge(
     let mut applied = Vec::new();
     for change in selected_changes {
         if apply_detect_change(&mut document, change) {
+            if let Err(error) =
+                record_detect_owned_fields(&mut document, vec![change.field.clone()])
+            {
+                let error = format!(
+                    "{}{}",
+                    error,
+                    format_next_timeline(&[format!(
+                        "repair the conflicting metadata path and rerun `ota detect --merge {}`",
+                        compact_repo_path(&report.root)
+                    )]),
+                );
+                return match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                        ok: false,
+                        path: &path_display,
+                        written: false,
+                        error: &error,
+                        next: None,
+                    })),
+                };
+            }
             applied.push(DetectComparisonChange {
                 field: change.field.clone(),
                 status: change.status,
                 existing: change.existing.clone(),
                 detected: change.detected.clone(),
+                owner_kind: change.owner_kind.clone(),
                 ownership: change.ownership.clone(),
                 provenance: change.provenance.clone(),
                 provenance_key: change.provenance_key.clone(),
@@ -7578,6 +7621,7 @@ fn write_detected_merge(
         }
     }
 
+    let config = detect_json_config_value(&document);
     let yaml = match serde_yaml::to_string(&document) {
         Ok(yaml) => yaml,
         Err(error) => {
@@ -7634,7 +7678,8 @@ fn write_detected_merge(
     match fs::write(&contract_path, yaml) {
         Ok(()) => match format {
             OutputFormat::Text => {
-                let post_write_comparison = compare_detected_contract(&contract_path, &report);
+                let post_write_comparison =
+                    compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
                 let mut stdout = format_command_header("MERGED", &compact_path_display);
                 let applied_title = if selected_fields.is_empty() {
                     "Applied high-confidence additions"
@@ -7650,12 +7695,13 @@ fn write_detected_merge(
                 CommandOutput::success(stdout)
             }
             OutputFormat::Json => {
-                let post_write_comparison = compare_detected_contract(&contract_path, &report);
+                let post_write_comparison =
+                    compare_detected_contract(&contract_path, &report, DetectRemovalScope::Drift);
                 CommandOutput::success(to_json(&DetectSuccess {
                     ok: true,
                     path: &path_display,
                     written: true,
-                    config: &report.contract,
+                    config,
                     inferred: &report.inferences,
                     comparison: post_write_comparison.as_ref(),
                 }))
@@ -7697,9 +7743,44 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
             };
         }
     };
-    let comparison = compare_detected_contract(&contract_path, &report);
+    let comparison =
+        compare_detected_contract(&contract_path, &report, DetectRemovalScope::RewriteImpact);
 
-    let yaml = match serde_yaml::to_string(&report.contract) {
+    let mut document = match serde_yaml::to_value(&report.contract) {
+        Ok(document) => document,
+        Err(error) => {
+            let error = format!(
+                "failed to serialize rewritten contract `{}`: {}",
+                compact_path_display, error
+            );
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                    ok: false,
+                    path: &path_display,
+                    written: false,
+                    error: &error,
+                    next: None,
+                })),
+            };
+        }
+    };
+    if let Err(error) =
+        record_detect_owned_fields(&mut document, detect_field_paths(&report.contract))
+    {
+        return match format {
+            OutputFormat::Text => CommandOutput::failure(error),
+            OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
+                ok: false,
+                path: &path_display,
+                written: false,
+                error: &error,
+                next: None,
+            })),
+        };
+    }
+    let config = detect_json_config_value(&document);
+    let yaml = match serde_yaml::to_string(&document) {
         Ok(yaml) => yaml,
         Err(error) => {
             let error = format!(
@@ -7795,7 +7876,7 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
                 ok: true,
                 path: &path_display,
                 written: true,
-                config: &report.contract,
+                config,
                 inferred: &report.inferences,
                 comparison: comparison.as_ref(),
             })),
@@ -8093,18 +8174,14 @@ fn render_init(
 fn compare_detected_contract(
     contract_path: &Path,
     report: &DetectReport,
+    removal_scope: DetectRemovalScope,
 ) -> Option<DetectComparison> {
     if !contract_path.exists() {
         return None;
     }
 
     match load_contract(contract_path) {
-        Ok(existing) => Some(DetectComparison {
-            existing_contract: true,
-            changes: collect_detect_changes(&existing, &report.contract, &report.inferences),
-            removals: collect_detect_removals(&existing, &report.contract),
-            error: None,
-        }),
+        Ok(existing) => Some(build_detect_comparison(&existing, report, removal_scope)),
         Err(error) => Some(DetectComparison {
             existing_contract: true,
             changes: Vec::new(),
@@ -8123,6 +8200,30 @@ enum DetectComparisonMode {
     RewritePreview,
     MergeResult,
     RewriteResult,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DetectRemovalScope {
+    Drift,
+    RewriteImpact,
+}
+
+fn build_detect_comparison(
+    existing: &Contract,
+    report: &DetectReport,
+    removal_scope: DetectRemovalScope,
+) -> DetectComparison {
+    DetectComparison {
+        existing_contract: true,
+        changes: collect_detect_changes(existing, &report.contract, &report.inferences),
+        removals: match removal_scope {
+            DetectRemovalScope::Drift => collect_detect_drift_removals(existing, &report.contract),
+            DetectRemovalScope::RewriteImpact => {
+                collect_detect_removals(existing, &report.contract)
+            }
+        },
+        error: None,
+    }
 }
 
 fn detect_preview_mode(merge: bool, rewrite: bool) -> DetectComparisonMode {
@@ -8249,6 +8350,9 @@ fn render_detect_comparison_section(
                 )),
                 _ => {}
             }
+            if let Some(detail) = render_detect_comparison_owner_detail(change) {
+                stdout.push_str(&format!("\n    {detail}"));
+            }
             if let Some(detail) = render_detect_comparison_source_detail(change) {
                 stdout.push_str(&format!("\n    {detail}"));
             }
@@ -8262,6 +8366,11 @@ fn render_detect_comparison_section(
         ));
         render_detect_removals_section(stdout, &comparison.removals, mode);
     }
+}
+
+fn render_detect_comparison_owner_detail(change: &DetectComparisonChange) -> Option<String> {
+    let owner_kind = change.owner_kind.as_deref()?;
+    Some(format!("{} {}", paint_key("Owner:"), owner_kind))
 }
 
 fn render_detect_comparison_source_detail(change: &DetectComparisonChange) -> Option<String> {
@@ -8663,48 +8772,92 @@ fn render_detect_named_drift_concise_group(
     }
 }
 
-fn render_detect_command_removal(command: &str) -> String {
+fn detect_removal_owner_tag(owner_kind: Option<&str>) -> String {
+    owner_kind
+        .map(|owner_kind| paint_group_meta(&format!("({owner_kind})")))
+        .unwrap_or_default()
+}
+
+fn render_detect_command_removal(removal: &DetectRemovalDisplayEntry) -> String {
     let bullet = summary_bullet();
     let action = paint_muted_action("remove command");
+    let owner_tag = detect_removal_owner_tag(removal.owner_kind.as_deref());
     let wrapped = wrap_display_tokens_for_terminal(
-        command,
+        &removal.value,
         72,
-        2 + visible_display_width(&bullet) + 1 + visible_display_width(&action) + 1,
+        2 + visible_display_width(&bullet)
+            + 1
+            + visible_display_width(&action)
+            + usize::from(!owner_tag.is_empty()) * (1 + visible_display_width(&owner_tag))
+            + 1,
     );
     if wrapped.len() == 1 {
         return format!(
-            "\n  {} {} {}",
+            "\n  {} {}{} {}",
             bullet,
             action,
+            if owner_tag.is_empty() {
+                String::new()
+            } else {
+                format!(" {owner_tag}")
+            },
             paint_backticked_code(&wrapped[0])
         );
     }
 
-    let mut out = format!("\n  {} {}", bullet, action);
+    let mut out = format!(
+        "\n  {} {}{}",
+        bullet,
+        action,
+        if owner_tag.is_empty() {
+            String::new()
+        } else {
+            format!(" {owner_tag}")
+        }
+    );
     for line in wrapped {
         out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
     }
     out
 }
 
-fn render_detect_field_removal(action: &str, value: &str) -> String {
+fn render_detect_field_removal(action: &str, removal: &DetectRemovalDisplayEntry) -> String {
     let bullet = summary_bullet();
     let action_label = paint_muted_action(action);
+    let owner_tag = detect_removal_owner_tag(removal.owner_kind.as_deref());
     let wrapped = wrap_display_tokens_for_terminal(
-        value,
+        &removal.value,
         72,
-        2 + visible_display_width(&bullet) + 1 + visible_display_width(&action_label) + 1,
+        2 + visible_display_width(&bullet)
+            + 1
+            + visible_display_width(&action_label)
+            + usize::from(!owner_tag.is_empty()) * (1 + visible_display_width(&owner_tag))
+            + 1,
     );
     if wrapped.len() <= 1 {
         return format!(
-            "\n  {} {} {}",
+            "\n  {} {}{} {}",
             bullet,
             action_label,
-            paint_backticked_code(value)
+            if owner_tag.is_empty() {
+                String::new()
+            } else {
+                format!(" {owner_tag}")
+            },
+            paint_backticked_code(&removal.value)
         );
     }
 
-    let mut out = format!("\n  {} {}", bullet, action_label);
+    let mut out = format!(
+        "\n  {} {}{}",
+        bullet,
+        action_label,
+        if owner_tag.is_empty() {
+            String::new()
+        } else {
+            format!(" {owner_tag}")
+        }
+    );
     for line in wrapped {
         out.push_str(&format!("\n    {}", paint_backticked_code(&line)));
     }
@@ -8713,7 +8866,7 @@ fn render_detect_field_removal(action: &str, value: &str) -> String {
 
 fn detect_task_removal_entries(
     removal: &DetectComparisonRemoval,
-) -> Option<(String, DetectTaskDriftKind, Vec<String>)> {
+) -> Option<(String, DetectTaskDriftKind, Vec<DetectRemovalDisplayEntry>)> {
     let field = removal.field.strip_prefix("tasks.")?;
     let (task_name, property) = field.rsplit_once('.')?;
     let (kind, entries) = match property {
@@ -8724,7 +8877,10 @@ fn detect_task_removal_entries(
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(ToString::to_string)
+                .map(|line| DetectRemovalDisplayEntry {
+                    value: line.to_string(),
+                    owner_kind: removal.owner_kind.clone(),
+                })
                 .collect::<Vec<_>>(),
         ),
         "safe_for_agent" => (
@@ -8734,7 +8890,10 @@ fn detect_task_removal_entries(
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(|line| format!("{property}: {line}"))
+                .map(|line| DetectRemovalDisplayEntry {
+                    value: format!("{property}: {line}"),
+                    owner_kind: removal.owner_kind.clone(),
+                })
                 .collect::<Vec<_>>(),
         ),
         _ => (
@@ -8744,7 +8903,10 @@ fn detect_task_removal_entries(
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(|line| format!("{property}: {line}"))
+                .map(|line| DetectRemovalDisplayEntry {
+                    value: format!("{property}: {line}"),
+                    owner_kind: removal.owner_kind.clone(),
+                })
                 .collect::<Vec<_>>(),
         ),
     };
@@ -8758,12 +8920,12 @@ fn detect_task_removal_entries(
 
 fn detect_named_removal_entries(
     removal: &DetectComparisonRemoval,
-) -> (DetectNamedDriftKind, String, Vec<String>) {
+) -> (DetectNamedDriftKind, String, Vec<DetectRemovalDisplayEntry>) {
     if let Some(field) = removal.field.strip_prefix("runtimes.") {
         return (
             DetectNamedDriftKind::Runtime,
             field.to_string(),
-            removal_lines(&removal.existing),
+            removal_lines(&removal.existing, removal.owner_kind.clone()),
         );
     }
 
@@ -8771,7 +8933,7 @@ fn detect_named_removal_entries(
         return (
             DetectNamedDriftKind::Tool,
             field.to_string(),
-            removal_lines(&removal.existing),
+            removal_lines(&removal.existing, removal.owner_kind.clone()),
         );
     }
 
@@ -8786,7 +8948,10 @@ fn detect_named_removal_entries(
                 .lines()
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
-                .map(|line| format!("{property}: {line}"))
+                .map(|line| DetectRemovalDisplayEntry {
+                    value: format!("{property}: {line}"),
+                    owner_kind: removal.owner_kind.clone(),
+                })
                 .collect(),
         );
     }
@@ -8794,16 +8959,19 @@ fn detect_named_removal_entries(
     (
         DetectNamedDriftKind::Other,
         removal.field.clone(),
-        removal_lines(&removal.existing),
+        removal_lines(&removal.existing, removal.owner_kind.clone()),
     )
 }
 
-fn removal_lines(existing: &str) -> Vec<String> {
+fn removal_lines(existing: &str, owner_kind: Option<String>) -> Vec<DetectRemovalDisplayEntry> {
     existing
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(ToString::to_string)
+        .map(|line| DetectRemovalDisplayEntry {
+            value: line.to_string(),
+            owner_kind: owner_kind.clone(),
+        })
         .collect()
 }
 
@@ -8814,19 +8982,19 @@ fn detect_named_drift_count(entries: &[DetectNamedDriftSummary]) -> usize {
 fn detect_drift_why(mode: DetectComparisonMode, object: &str) -> String {
     match mode {
         DetectComparisonMode::Preview => format!(
-            "Current repo signals no longer support {object} in the existing contract. `ota detect --merge` will not remove them automatically; review rewrite if you want to drop stale entries."
+            "Current repo signals no longer support {object} in the existing contract. Only ota-merged fields are treated as drift here; `ota detect --merge` will not remove them automatically, and rewrite is the full replacement path."
         ),
         DetectComparisonMode::MergePreview => format!(
-            "Current repo signals no longer support {object}. `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
+            "Current repo signals no longer support {object}. Only ota-merged fields are listed here; `ota detect --merge` is additive-only and will not remove these stale entries from `ota.yaml`."
         ),
         DetectComparisonMode::MergeResult => format!(
-            "Current repo signals no longer support {object}. `ota detect --merge` left these stale entries unchanged because merge is additive-only."
+            "Current repo signals no longer support {object}. Only ota-merged fields are listed here; `ota detect --merge` left these stale entries unchanged because merge is additive-only."
         ),
         DetectComparisonMode::RewritePreview => format!(
-            "Running `ota detect --rewrite --yes` would remove {object} from `ota.yaml` because current repo signals no longer support them."
+            "Running `ota detect --rewrite --yes` would remove {object} from `ota.yaml`. `merged` means ota previously wrote the field; `manual` means the field is hand-authored or explicitly pinned."
         ),
         DetectComparisonMode::RewriteResult => format!(
-            "The rewritten contract should no longer contain {object}; if these entries still appear, review the repo signals and contract manually."
+            "The rewritten contract should no longer contain {object}. `manual` labels identify hand-authored fields that the full replacement dropped."
         ),
     }
 }
@@ -8911,9 +9079,9 @@ impl DetectNamedDriftKind {
 #[derive(Debug, Default)]
 struct DetectTaskDriftSummary {
     task_name: String,
-    command_removals: Vec<String>,
-    agent_safety_removals: Vec<String>,
-    other_removals: Vec<String>,
+    command_removals: Vec<DetectRemovalDisplayEntry>,
+    agent_safety_removals: Vec<DetectRemovalDisplayEntry>,
+    other_removals: Vec<DetectRemovalDisplayEntry>,
 }
 
 impl DetectTaskDriftSummary {
@@ -8924,7 +9092,7 @@ impl DetectTaskDriftSummary {
         }
     }
 
-    fn removals_for(&self, kind: DetectTaskDriftKind) -> &[String] {
+    fn removals_for(&self, kind: DetectTaskDriftKind) -> &[DetectRemovalDisplayEntry] {
         match kind {
             DetectTaskDriftKind::Command => &self.command_removals,
             DetectTaskDriftKind::AgentSafety => &self.agent_safety_removals,
@@ -8966,7 +9134,7 @@ impl DetectTaskDriftSummary {
 #[derive(Debug, Default)]
 struct DetectNamedDriftSummary {
     name: String,
-    removals: Vec<String>,
+    removals: Vec<DetectRemovalDisplayEntry>,
 }
 
 impl DetectNamedDriftSummary {
@@ -8976,6 +9144,12 @@ impl DetectNamedDriftSummary {
             ..Self::default()
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct DetectRemovalDisplayEntry {
+    value: String,
+    owner_kind: Option<String>,
 }
 
 fn detect_task_sort_key(task_name: &str) -> (usize, String) {
@@ -9708,6 +9882,91 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         ["tasks", _, "safe_for_agent"] => set_bool_field(root, &segments, &change.detected),
         _ => false,
     }
+}
+
+fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
+    let mut fields = Vec::new();
+    if contract.project.is_some() {
+        fields.push(String::from("project.name"));
+    }
+    for name in contract.runtimes.keys() {
+        fields.push(format!("runtimes.{name}"));
+    }
+    for name in contract.tools.keys() {
+        fields.push(format!("tools.{name}"));
+    }
+    for (name, service) in &contract.services {
+        if service.provider.is_some() {
+            fields.push(format!("services.{name}.provider"));
+        }
+        if service.start.is_some() {
+            fields.push(format!("services.{name}.start"));
+        }
+        if service.stop.is_some() {
+            fields.push(format!("services.{name}.stop"));
+        }
+        if service.healthcheck.is_some() {
+            fields.push(format!("services.{name}.healthcheck"));
+        }
+    }
+    for (name, task) in &contract.tasks {
+        fields.push(format!("tasks.{name}.run"));
+        if task.safe_for_agent {
+            fields.push(format!("tasks.{name}.safe_for_agent"));
+        }
+    }
+    fields
+}
+
+fn record_detect_owned_fields(document: &mut YamlValue, fields: Vec<String>) -> Result<(), String> {
+    if fields.is_empty() {
+        return Ok(());
+    }
+
+    let Some(root) = document.as_mapping_mut() else {
+        return Err(String::from(
+            "cannot record detect ownership because the contract document is not a mapping",
+        ));
+    };
+    let field_ownership =
+        ensure_mapping_path(root, &["metadata", "ota", "detect", "field_ownership"])?;
+
+    for field in fields {
+        field_ownership.insert(
+            YamlValue::String(field),
+            YamlValue::String(String::from(DETECT_OWNER_KIND_MERGED)),
+        );
+    }
+
+    Ok(())
+}
+
+fn ensure_mapping_path<'a>(
+    root: &'a mut Mapping,
+    segments: &[&str],
+) -> Result<&'a mut Mapping, String> {
+    let mut current = root;
+    let mut path_segments = Vec::with_capacity(segments.len());
+    for segment in segments {
+        path_segments.push(*segment);
+        let entry = current
+            .entry(YamlValue::String((*segment).to_string()))
+            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+        if !entry.is_mapping() {
+            return Err(format!(
+                "cannot record detect ownership under `metadata.ota.detect.field_ownership` because `{}` is not a mapping",
+                path_segments.join(".")
+            ));
+        }
+        current = entry
+            .as_mapping_mut()
+            .expect("mapping check above should guarantee mapping access");
+    }
+    Ok(current)
+}
+
+fn detect_json_config_value<T: Serialize>(value: &T) -> JsonValue {
+    serde_json::to_value(value).expect("serializing detect config should not fail")
 }
 
 fn set_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
@@ -12960,6 +13219,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.bump-version.run"),
                     existing: String::from("./scripts/bump-version.sh"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -12967,6 +13227,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.setup.run"),
                     existing: String::from("cargo fetch"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -12974,6 +13235,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -12983,6 +13245,7 @@ mod tests {
                     existing: String::from(
                         "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -12990,6 +13253,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -12999,6 +13263,7 @@ mod tests {
                     existing: String::from(
                         "ota doctor --json . | ota annotations --mode doctor --format \"${OTA_INPUT_RENDER_FORMAT}\" --input -",
                     ),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13006,6 +13271,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tools.node"),
                     existing: String::from("22"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13013,6 +13279,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("runtimes.java"),
                     existing: String::from("21"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13020,6 +13287,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("services.postgres.provider"),
                     existing: String::from("docker-compose"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13085,6 +13353,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.setup.run"),
                     existing: String::from("cargo fetch"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13092,6 +13361,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.build.safe_for_agent"),
                     existing: String::from("true"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13101,6 +13371,7 @@ mod tests {
                     existing: String::from(
                         "cargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1",
                     ),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13108,6 +13379,7 @@ mod tests {
                 DetectComparisonRemoval {
                     field: String::from("tasks.ci.safe_for_agent"),
                     existing: String::from("true"),
+                    owner_kind: None,
                     ownership: None,
                     provenance: None,
                     provenance_key: None,
@@ -13145,6 +13417,7 @@ mod tests {
             removals: vec![DetectComparisonRemoval {
                 field: String::from("tasks.setup.run"),
                 existing: String::from("cargo fetch"),
+                owner_kind: None,
                 ownership: None,
                 provenance: None,
                 provenance_key: None,
@@ -13163,7 +13436,7 @@ mod tests {
             "Why: Current repo signals no longer support the commands below in the existing contract."
         ));
         assert!(text.contains("ota detect --merge"));
-        assert!(text.contains("review rewrite"));
+        assert!(text.contains("rewrite is the full replacement path"));
         assert!(text.contains("no additive changes detected against the existing contract"));
         assert!(!text.contains("Applying detect merge would remove"));
     }

@@ -29,6 +29,7 @@
                   "status": { "enum": ["add", "update"] },
                   "existing": { "type": "string" },
                   "detected": { "type": "string" },
+                  "owner_kind": { "enum": ["detected", "manual", "merged", "policy"] },
                   "ownership": { "enum": ["repo_contract", "repo_signals"] },
                   "provenance": { "type": "string" },
                   "provenance_key": { "enum": ["repo_signals"] },
@@ -46,6 +47,7 @@
                 "properties": {
                   "field": { "type": "string" },
                   "existing": { "type": "string" },
+                  "owner_kind": { "enum": ["manual", "merged", "policy"] },
                   "ownership": { "enum": ["repo_contract"] },
                   "provenance": { "type": "string" },
                   "provenance_key": { "enum": ["repo_signals"] }

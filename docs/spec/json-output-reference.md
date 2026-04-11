@@ -414,10 +414,10 @@ invocation.
 
 When the repo signals no longer match the declared contract, `ota doctor --json` may include
 warning findings that describe the drift and point back to `ota detect --merge --dry-run` for the
-comparison preview. Drift findings also include optional `ownership` and `provenance` fields so
-CI and editors can classify the mismatch as a repo-contract issue and trace the source of the
-comparison.
-When that drift provenance is present, `provenance_key` is `repo_signals`.
+comparison preview. Drift findings also include optional `owner_kind`, `ownership`, and
+`provenance` fields so CI and editors can classify the mismatch as a repo-contract issue and
+trace the source of the comparison. When that drift provenance is present, `owner_kind` is
+currently `merged` and `provenance_key` is `repo_signals`.
 
 `ota doctor --json` may also include an `extensions` object when the contract declares top-level
 extension data. Each entry is a typed adapter descriptor with `kind`, `command`, and
@@ -1205,10 +1205,13 @@ success shape.
 
 - `written: true` when additive high-confidence fields were applied
 - `written: false` when there was nothing eligible to add
+- `config` is the detected candidate contract for preview-only results; when a detect write mode succeeds (`--write`, `--merge`, or `--rewrite` with `written: true`), `config` is the exact contract ota wrote to disk, including `metadata.ota.detect.field_ownership`
 - `comparison` describing detected adds and updates against the existing contract
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields
 - `comparison.removals[*].ownership` is `repo_contract` because those entries describe stale declared contract data
+- `comparison.changes[*].owner_kind` is `detected` for add candidates, `manual` for default hand-authored existing fields, and `merged` when ota previously wrote the field and recorded it under `metadata.ota.detect.field_ownership`
+- `comparison.removals[*].owner_kind` is `merged` on normal drift surfaces, while rewrite preview can also surface `manual` removals because a full replacement would drop those fields
 - `comparison.*.provenance` preserves the stable machine label `repo_signals`
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
 - `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
@@ -1230,6 +1233,7 @@ success shape.
         "status": "update",
         "existing": "existing",
         "detected": "ota-web",
+        "owner_kind": "manual",
         "ownership": "repo_contract",
         "provenance": "repo_signals",
         "provenance_key": "repo_signals",
@@ -1241,6 +1245,7 @@ success shape.
       {
         "field": "tools.cargo",
         "existing": "1.78",
+        "owner_kind": "merged",
         "ownership": "repo_contract",
         "provenance": "repo_signals",
         "provenance_key": "repo_signals"
