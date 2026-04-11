@@ -8,6 +8,7 @@ clap = { version = "4.5.39", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 serde_yaml = "0.9.34"
+semver = "1.0.27"
 thiserror = "2.0.12"
 toml = "1.1.2"
 time = { version = "0.3.44", features = ["formatting", "macros"] }

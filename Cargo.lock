@@ -270,6 +270,7 @@ name = "ota"
 version = "1.4.1"
 dependencies = [
  "clap",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

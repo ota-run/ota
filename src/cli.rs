@@ -3046,7 +3046,7 @@ tasks:
 
         let output = run_with(["ota", "diff", base.path(), target.path()]);
 
-        assert_ne!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0);
         assert!(output.stderr.is_none());
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DIFF"));
@@ -3089,7 +3089,7 @@ tasks:
 
         let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
 
-        assert_ne!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0);
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
@@ -7596,6 +7596,12 @@ policies:
                 .unwrap()
                 .contains("source_config: feed=internal-jdk")
         );
+        assert!(
+            provisioning_finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("runtime java 22 via org-mirror (policy: 22)")
+        );
         let finding = findings
             .iter()
             .find(|finding| finding["summary"] == "Adapter bootstrap sources are declared")
@@ -7617,10 +7623,100 @@ policies:
                 .contains("bootstrap missing adapter binaries")
         );
         assert_eq!(provisioning["allowed"][0]["name"], "java");
+        assert_eq!(provisioning["allowed"][0]["requested_version"], "22");
+        assert_eq!(
+            provisioning["allowed"][0]["normalized_requirement"],
+            ">=22.0.0 <23.0.0"
+        );
+        assert!(provisioning["allowed"][0]["resolved_version"].is_null());
+        assert_eq!(provisioning["allowed"][0]["policy_match"], "22");
         assert_eq!(provisioning["allowed"][1]["name"], "maven");
         assert_eq!(provisioning["actions"].as_array().unwrap().len(), 2);
         assert_eq!(provisioning["actions"][0]["kind"], "select_source");
         assert_eq!(provisioning["actions"][0]["target_kind"], "runtime");
+        assert_eq!(provisioning["actions"][0]["policy_match"], "22");
+        assert_eq!(
+            provisioning_request["actions"][0]["normalized_requirement"],
+            ">=22.0.0 <23.0.0"
+        );
+        assert_eq!(provisioning_request["actions"][0]["policy_match"], "22");
+        assert!(provisioning_request["actions"][0]["resolved_version"].is_null());
+    }
+
+    #[test]
+    fn doctor_json_surfaces_requested_resolved_and_policy_match_for_semver_policy() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: ">=18"
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22.11.0"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provisioning = json["provisioning"]
+            .as_object()
+            .expect("provisioning plan should be present");
+        assert_eq!(provisioning["allowed"].as_array().unwrap().len(), 1);
+        assert_eq!(provisioning["allowed"][0]["name"], "node");
+        assert_eq!(provisioning["allowed"][0]["requested_version"], ">=18");
+        assert_eq!(provisioning["allowed"][0]["normalized_requirement"], ">=18");
+        assert_eq!(provisioning["allowed"][0]["resolved_version"], "22.11.0");
+        assert_eq!(provisioning["allowed"][0]["policy_match"], "22.11.0");
+
+        let provisioning_request = json["provisioning_request"]
+            .as_object()
+            .expect("provisioning request should be present");
+        assert_eq!(provisioning_request["actions"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            provisioning_request["actions"][0]["requested_version"],
+            ">=18"
+        );
+        assert_eq!(
+            provisioning_request["actions"][0]["resolved_version"],
+            "22.11.0"
+        );
+        assert_eq!(
+            provisioning_request["actions"][0]["policy_match"],
+            "22.11.0"
+        );
+
+        let findings = json["findings"].as_array().unwrap();
+        let provisioning_finding = findings
+            .iter()
+            .find(|finding| finding["summary"] == "Policy-backed provisioning sources are declared")
+            .expect("provisioning finding should be present");
+        assert!(
+            provisioning_finding["why"]
+                .as_str()
+                .unwrap()
+                .contains("runtime node >=18 -> 22.11.0 via brew (policy: 22.11.0)")
+        );
     }
 
     #[test]

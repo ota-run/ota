@@ -24,7 +24,7 @@
 
 # Provisioning Sources
 
-Status: spec candidate.
+Status: shipped in part.
 
 This document explains how ota chooses approved sources for declared runtimes and tools.
 
@@ -135,6 +135,139 @@ policies:
 This lets ota keep one contract for the repo while still choosing the approved source that
 matches the OS it is running on.
 
+## Version Resolution Discipline
+
+Policy-backed provisioning must keep **approval** separate from **exact install selection**.
+
+That distinction matters because a semver range can authorize a family of versions without
+telling ota which exact version should be installed.
+
+### Rule
+
+- ranges can authorize
+- only explicit concrete versions can select
+
+### Shipped today
+
+The current shipped behavior is:
+
+- exact string matches still work as before
+- major or minor shorthand such as `24` or `3.9` is normalized for policy matching
+- policy `approved_versions` can authorize with semver ranges such as `^24` or `~3.9`
+- ota records the original `requested_version`, the semver `normalized_requirement`,
+  the matched `policy_match`, and `resolved_version` when an exact policy candidate won
+- when `resolved_version` is absent, ota keeps the original contract version as the backend input
+- true range requests such as `>=18` are provisionable only when policy supplies an
+  explicit exact candidate like `22.11.0`
+- if policy approval succeeds but no deterministic concrete version exists, ota blocks
+  provisioning instead of guessing
+
+### What ota should not do
+
+Ota should not invent an install version from a range-only policy.
+
+Example:
+
+```yaml
+runtimes:
+  node: ">=18"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "^22"
+```
+
+In that case:
+
+- policy approval can succeed because the policy allows the `22.x` line
+- exact install selection is still unknown
+- ota should not silently choose `22.99.99`, `latest 22`, or any other undeclared concrete version
+
+That would be a hidden policy decision rather than a declared one, and it would weaken
+determinism and trust.
+
+### Safe concrete selection
+
+Concrete selection is safe only when policy provides an explicit concrete candidate.
+
+Example:
+
+```yaml
+runtimes:
+  node: ">=18"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22.11.0"
+```
+
+Now ota can resolve concretely to `22.11.0` because the policy provided an exact installable
+candidate.
+
+### Semver-aware approval is still valuable
+
+Ota should still become semver-aware for policy approval and auditability even when exact
+selection is deferred.
+
+Example:
+
+```yaml
+runtimes:
+  node: "24"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "^24"
+```
+
+A naive exact-string comparison would reject that. Semver-aware approval should understand:
+
+- requested intent is the `24` line
+- policy allows the `24` line
+- policy approval therefore succeeds
+
+The audit surface should make that explicit, for example:
+
+- requested version: `24`
+- normalized requirement: `>=24.0.0 <25.0.0`
+- matched policy rule: `^24`
+- selected source: `brew`
+
+That improves policy matching and diagnostics without pretending ota already knows the exact
+install version.
+
+### Cross-backend selection stays deferred
+
+Ota should not force one global concrete-resolution rule across all shipped provisioning adapters
+until there is an explicit deterministic model.
+
+That matters because:
+
+- `brew`, `apt`, `sdkman`, `mise`, `asdf`, `winget`, `choco`, `scoop`, `dnf`, and `pacman` all
+  behave differently
+- some accept majors
+- some require exact versions
+- some map logical runtime names onto different package identifiers or formulas
+- some expose only the versions currently present in their repositories or feeds
+
+Until ota has a declared, reproducible selection model, the safer truth is:
+
+- this contract version is policy-approved
+- this is the policy rule that matched
+- no concrete install version is available yet for deterministic provisioning
+
+### Current implementation order
+
+1. semver-aware policy approval is shipped
+2. requested version, normalized requirement, matched policy rule, and resolved version are exposed in doctor JSON and policy-aware receipt text
+3. broader cross-backend concrete selection remains deferred until ota has a declared deterministic model
+
 ## Non-Goals
 
 - no hidden workstation management
@@ -151,7 +284,7 @@ matches the OS it is running on.
 - `checks` proves readiness before execution
 - `env` declares runtime environment requirements
 - `policies.env` supplies approved env values today
-- this future policy layer would supply approved source selection for provisioning
+- `policies.provisioning` supplies approved source selection for provisioning
 
 ## Proposed Policy Shape
 

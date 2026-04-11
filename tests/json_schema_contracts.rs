@@ -49,19 +49,31 @@ fn tasks_schema_includes_agent_and_variant_fields() {
 #[test]
 fn doctor_schema_includes_agent_summary() {
     let schema = load_schema("docs/spec/json-schemas/doctor.json");
+    let shared = load_schema("docs/spec/json-schemas/shared.json");
     let properties = &schema["properties"];
     let member_properties = &properties["members"]["items"]["properties"];
     let execution_properties = &properties["execution"]["properties"];
     let execution_env_properties = &execution_properties["env"]["items"]["properties"];
+    let provisioning_action = &shared["$defs"]["provisioningAction"]["properties"];
+    let provisioning_entry = &shared["$defs"]["provisioningPlanEntry"]["properties"];
 
     assert!(properties.get("agent").is_some());
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
     assert!(properties.get("mode").is_some());
+    assert!(properties.get("provisioning").is_some());
+    assert!(properties.get("provisioning_request").is_some());
+    assert!(properties.get("adapter_bootstrap").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
     assert!(execution_properties.get("env").is_some());
     assert!(execution_env_properties.get("policy").is_some());
+    assert!(provisioning_action.get("normalized_requirement").is_some());
+    assert!(provisioning_action.get("resolved_version").is_some());
+    assert!(provisioning_action.get("policy_match").is_some());
+    assert!(provisioning_entry.get("normalized_requirement").is_some());
+    assert!(provisioning_entry.get("resolved_version").is_some());
+    assert!(provisioning_entry.get("policy_match").is_some());
     assert!(properties["summary"]["properties"].get("verdict").is_some());
     assert!(
         properties["summary"]["properties"]
@@ -267,6 +279,8 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     assert!(repo.get("required").is_some());
     assert!(repo.get("findings").is_some());
     assert!(repo.get("agent_verdict").is_some());
+    assert!(repo.get("provisioning").is_some());
+    assert!(repo.get("adapter_bootstrap").is_some());
     assert!(execution.get("env").is_some());
     assert!(execution_env.get("policy").is_some());
     assert!(execution_env.get("source").is_some());

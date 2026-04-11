@@ -116,6 +116,105 @@
         "source": { "type": "string" },
         "confidence": { "enum": ["low", "medium", "high"] }
       }
+    },
+    "provisioningPlanEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "requested_version"],
+      "properties": {
+        "kind": { "enum": ["runtime", "tool"] },
+        "name": { "type": "string" },
+        "requested_version": { "type": "string" },
+        "normalized_requirement": { "type": "string" },
+        "resolved_version": { "type": "string" },
+        "source": { "type": "string" },
+        "source_config": { "type": "object" },
+        "approved_version": { "type": "string" },
+        "policy_match": { "type": "string" },
+        "blocked_reason": { "type": "string" }
+      }
+    },
+    "provisioningAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target_kind", "name", "requested_version", "source"],
+      "properties": {
+        "kind": { "enum": ["select_source", "install", "verify"] },
+        "target_kind": { "enum": ["runtime", "tool"] },
+        "name": { "type": "string" },
+        "requested_version": { "type": "string" },
+        "normalized_requirement": { "type": "string" },
+        "resolved_version": { "type": "string" },
+        "source": { "type": "string" },
+        "source_config": { "type": "object" },
+        "approved_version": { "type": "string" },
+        "policy_match": { "type": "string" }
+      }
+    },
+    "provisioningPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "blocked", "actions"],
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provisioningPlanEntry" }
+        },
+        "blocked": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provisioningPlanEntry" }
+        },
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provisioningAction" }
+        }
+      }
+    },
+    "provisioningBackendRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions"],
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/provisioningAction" }
+        }
+      }
+    },
+    "adapterBootstrapPlanEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "source": { "type": "string" },
+        "approved_version": { "type": "string" },
+        "blocked_reason": { "type": "string" }
+      }
+    },
+    "adapterBootstrapPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "blocked"],
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/adapterBootstrapPlanEntry" }
+        },
+        "blocked": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/adapterBootstrapPlanEntry" }
+        }
+      }
+    },
+    "adapterBootstrapDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan", "request"],
+      "properties": {
+        "plan": { "$ref": "#/$defs/adapterBootstrapPlan" },
+        "request": { "$ref": "#/$defs/provisioningBackendRequest" }
+      }
     }
   }
 }

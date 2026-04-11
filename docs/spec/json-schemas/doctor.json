@@ -115,6 +115,13 @@
         }
       }
     },
+    "provisioning": { "$ref": "./shared.json#/$defs/provisioningPlan" },
+    "provisioning_request": {
+      "$ref": "./shared.json#/$defs/provisioningBackendRequest"
+    },
+    "adapter_bootstrap": {
+      "$ref": "./shared.json#/$defs/adapterBootstrapDiagnostics"
+    },
     "extensions": {
       "type": "object",
       "additionalProperties": {
