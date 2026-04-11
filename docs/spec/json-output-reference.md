@@ -963,6 +963,21 @@ counts from checks-only output.
       "source": "package.json#name",
       "confidence": "high"
     }
+  ],
+  "provenance": [
+    {
+      "field": "project.name",
+      "provenance": "detector-inferred",
+      "provenance_key": "repo_signals",
+      "source": "package.json#name",
+      "confidence": "high"
+    },
+    {
+      "field": "agent.bootstrap.ota.sh",
+      "provenance": "template-derived",
+      "provenance_key": "template_derived",
+      "source": "ota.init#starter_agent_bootstrap"
+    }
   ]
 }
 ```
@@ -973,6 +988,13 @@ present and point at the matching `ota run <task>` command.
 In dry-run preview mode, `config` matches the starter contract ota would review or write,
 including derived starter defaults such as a minimal `agent` block when ota can infer one
 safely.
+
+`provenance` is the per-field source map for the starter contract:
+
+- detector-backed fields use `provenance: "detector-inferred"` and `provenance_key: "repo_signals"`
+- starter-only defaults use `provenance: "template-derived"` and `provenance_key: "template_derived"`
+- detector-backed entries also copy `source` and `confidence` from the matching `inferred[*]`
+- template-derived entries use an `ota.init#...` source label so automation can distinguish starter defaults from repo evidence
 
 Failure example:
 

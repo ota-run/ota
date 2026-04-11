@@ -52,23 +52,23 @@ use crate::doctor::{
 use crate::execution::selected_container_engine;
 use crate::execution::{execution_target, format_backend, format_lifecycle};
 use crate::output::{
-    AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput, DetectComparison,
-    DetectComparisonChange, DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange,
-    DiffFailure, DiffSuccess, DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker,
-    DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus,
-    EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt, ExecutionReceiptEnvSource,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitSuccess, MemberServicesSuccess, OutputFormat,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptSuccess, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan,
-    UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
+    ContractFieldProvenance, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
+    DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
+    DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict,
+    EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt,
+    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
+    MemberServicesSuccess, OutputFormat, PolicyReviewSuccess, PolicyReviewSummary, ReceiptSuccess,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
+    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -7981,6 +7981,7 @@ fn render_init(
             bootstrap_contract
         };
         apply_starter_contract_defaults(&mut write_contract, &report.root);
+        let provenance = init_contract_provenance(&write_contract, &report.inferences);
         let write_yaml = serde_yaml::to_string(&write_contract)
             .expect("serializing init write contract should not fail");
 
@@ -8122,6 +8123,7 @@ fn render_init(
                     mode,
                     config: &write_contract,
                     inferred: &report.inferences,
+                    provenance,
                 })),
             },
             Err(error) => {
@@ -8167,6 +8169,7 @@ fn render_init(
             mode,
             config: &bootstrap_contract,
             inferred: &report.inferences,
+            provenance: init_contract_provenance(&bootstrap_contract, &report.inferences),
         })),
     }
 }
@@ -9967,6 +9970,216 @@ fn ensure_mapping_path<'a>(
 
 fn detect_json_config_value<T: Serialize>(value: &T) -> JsonValue {
     serde_json::to_value(value).expect("serializing detect config should not fail")
+}
+
+const CONTRACT_PROVENANCE_REPO_SIGNALS_KEY: &str = "repo_signals";
+const CONTRACT_PROVENANCE_TEMPLATE_DERIVED_KEY: &str = "template_derived";
+const CONTRACT_PROVENANCE_DETECTOR_INFERRED: &str = "detector-inferred";
+const CONTRACT_PROVENANCE_TEMPLATE_DERIVED: &str = "template-derived";
+
+fn init_contract_provenance(
+    contract: &DetectContract,
+    inferences: &[Inference],
+) -> Vec<ContractFieldProvenance> {
+    let inference_map = inferences
+        .iter()
+        .map(|inference| (inference.field.as_str(), inference))
+        .collect::<BTreeMap<_, _>>();
+    let mut provenance = Vec::new();
+
+    provenance.push(template_field_provenance(
+        "version",
+        "ota.init#starter_version",
+    ));
+
+    if contract.project.is_some() {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            "project.name",
+            "ota.init#directory_name",
+        );
+    }
+
+    for name in contract.runtimes.keys() {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            format!("runtimes.{name}"),
+            "ota.init#starter_contract",
+        );
+    }
+    for name in contract.tools.keys() {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            format!("tools.{name}"),
+            "ota.init#starter_contract",
+        );
+    }
+    for (name, service) in &contract.services {
+        if service.provider.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                format!("services.{name}.provider"),
+                "ota.init#starter_contract",
+            );
+        }
+        if service.start.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                format!("services.{name}.start"),
+                "ota.init#starter_contract",
+            );
+        }
+        if service.stop.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                format!("services.{name}.stop"),
+                "ota.init#starter_contract",
+            );
+        }
+        if service.healthcheck.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                format!("services.{name}.healthcheck"),
+                "ota.init#starter_contract",
+            );
+        }
+    }
+    for (name, task) in &contract.tasks {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            format!("tasks.{name}.run"),
+            "ota.init#starter_contract",
+        );
+        if task.notes.is_some() {
+            provenance.push(template_field_provenance(
+                format!("tasks.{name}.notes"),
+                "ota.init#task_notes",
+            ));
+        }
+        if task.safe_for_agent {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                format!("tasks.{name}.safe_for_agent"),
+                "ota.init#task_safe_for_agent",
+            );
+        }
+    }
+
+    if let Some(agent) = &contract.agent {
+        if agent.entrypoint.is_some() {
+            provenance.push(template_field_provenance(
+                "agent.entrypoint",
+                "ota.init#starter_agent",
+            ));
+        }
+        if agent.default_task.is_some() {
+            provenance.push(template_field_provenance(
+                "agent.default_task",
+                "ota.init#starter_agent",
+            ));
+        }
+        if !agent.safe_tasks.is_empty() {
+            provenance.push(template_field_provenance(
+                "agent.safe_tasks",
+                "ota.init#starter_agent",
+            ));
+        }
+        if !agent.verify_after_changes.is_empty() {
+            provenance.push(template_field_provenance(
+                "agent.verify_after_changes",
+                "ota.init#starter_agent",
+            ));
+        }
+        if !agent.writable_paths.is_empty() {
+            provenance.push(template_field_provenance(
+                "agent.writable_paths",
+                "ota.init#starter_agent",
+            ));
+        }
+        if !agent.protected_paths.is_empty() {
+            provenance.push(template_field_provenance(
+                "agent.protected_paths",
+                "ota.init#starter_agent",
+            ));
+        }
+        if let Some(bootstrap) = &agent.bootstrap
+            && let Some(ota) = &bootstrap.ota
+        {
+            if ota.note.is_some() {
+                provenance.push(template_field_provenance(
+                    "agent.bootstrap.ota.note",
+                    "ota.init#starter_agent_bootstrap",
+                ));
+            }
+            if ota.sh.is_some() {
+                provenance.push(template_field_provenance(
+                    "agent.bootstrap.ota.sh",
+                    "ota.init#starter_agent_bootstrap",
+                ));
+            }
+            if ota.powershell.is_some() {
+                provenance.push(template_field_provenance(
+                    "agent.bootstrap.ota.powershell",
+                    "ota.init#starter_agent_bootstrap",
+                ));
+            }
+        }
+        if agent.notes.is_some() {
+            provenance.push(template_field_provenance(
+                "agent.notes",
+                "ota.init#starter_agent_notes",
+            ));
+        }
+    }
+
+    provenance.sort_by(|left, right| left.field.cmp(&right.field));
+    provenance
+}
+
+fn push_init_field_provenance(
+    entries: &mut Vec<ContractFieldProvenance>,
+    inferences: &BTreeMap<&str, &Inference>,
+    field: impl Into<String>,
+    template_source: &str,
+) {
+    let field = field.into();
+    if let Some(inference) = inferences.get(field.as_str()) {
+        entries.push(inferred_field_provenance(&field, inference));
+    } else {
+        entries.push(template_field_provenance(field, template_source));
+    }
+}
+
+fn inferred_field_provenance(
+    field: impl Into<String>,
+    inference: &Inference,
+) -> ContractFieldProvenance {
+    ContractFieldProvenance {
+        field: field.into(),
+        provenance: String::from(CONTRACT_PROVENANCE_DETECTOR_INFERRED),
+        provenance_key: String::from(CONTRACT_PROVENANCE_REPO_SIGNALS_KEY),
+        source: Some(inference.source.clone()),
+        confidence: Some(inference.confidence),
+    }
+}
+
+fn template_field_provenance(field: impl Into<String>, source: &str) -> ContractFieldProvenance {
+    ContractFieldProvenance {
+        field: field.into(),
+        provenance: String::from(CONTRACT_PROVENANCE_TEMPLATE_DERIVED),
+        provenance_key: String::from(CONTRACT_PROVENANCE_TEMPLATE_DERIVED_KEY),
+        source: Some(String::from(source)),
+        confidence: None,
+    }
 }
 
 fn set_string_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
