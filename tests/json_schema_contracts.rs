@@ -215,10 +215,14 @@ fn shared_finding_schema_includes_optional_policy_context() {
 fn init_schema_includes_optional_next_on_failures() {
     let schema = load_schema("docs/spec/json-schemas/init.json");
     let shared = load_schema("docs/spec/json-schemas/shared.json");
+    let success_required = schema["oneOf"][0]["required"]
+        .as_array()
+        .expect("required array");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
     let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
+    assert!(success_required.iter().any(|entry| entry == "provenance"));
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("provenance").is_some());
