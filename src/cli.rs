@@ -14205,6 +14205,7 @@ tasks:
                 "mode",
                 "ok",
                 "path",
+                "provenance",
                 "written",
             ],
         );
@@ -14306,6 +14307,65 @@ tasks:
             compact_path(fixture.path(), ".")
         )));
         assert!(fixture.path().join("ota.workspace.yaml").exists());
+    }
+
+    #[test]
+    fn workspace_detect_json_preview_reports_scaffold_provenance() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--json",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provenance = json["provenance"].as_array().expect("provenance array");
+
+        let workspace_name = provenance
+            .iter()
+            .find(|entry| entry["field"] == "workspace.name")
+            .expect("workspace.name provenance");
+        assert_eq!(workspace_name["provenance"], "workspace-derived");
+        assert_eq!(workspace_name["provenance_key"], "workspace_scaffold");
+        assert_eq!(workspace_name["source"], "workspace-root-directory");
+
+        let repo_path = provenance
+            .iter()
+            .find(|entry| entry["field"] == "repos.web.path")
+            .expect("repos.web.path provenance");
+        assert_eq!(repo_path["provenance"], "workspace-derived");
+        assert_eq!(repo_path["provenance_key"], "workspace_scaffold");
+        assert_eq!(repo_path["source"], "apps/web/ota.yaml");
+
+        let repo_required = provenance
+            .iter()
+            .find(|entry| entry["field"] == "repos.web.required")
+            .expect("repos.web.required provenance");
+        assert_eq!(repo_required["provenance"], "template-derived");
+        assert_eq!(repo_required["provenance_key"], "template_derived");
+        assert_eq!(
+            repo_required["source"],
+            "ota.workspace.init#repo_required_default"
+        );
     }
 
     #[test]

@@ -256,18 +256,30 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
 #[test]
 fn workspace_init_schema_exists_and_covers_scaffold_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-init.json");
+    let shared = load_schema("docs/spec/json-schemas/shared.json");
+    let success_required = schema["oneOf"][0]["required"]
+        .as_array()
+        .expect("required array");
     let success = &schema["oneOf"][0]["properties"];
     let config = &success["config"]["properties"];
     let repo_summary = &schema["$defs"]["repoSummary"]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
+    let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
+    assert!(success_required.iter().any(|entry| entry == "provenance"));
     assert!(success.get("mode").is_some());
     assert!(success.get("config").is_some());
+    assert!(success.get("provenance").is_some());
     assert!(success.get("included").is_some());
     assert!(success.get("missing_contract").is_some());
     assert!(success.get("comparison").is_some());
     assert!(config.get("workspace").is_some());
     assert!(config.get("repos").is_some());
+    assert!(provenance.get("field").is_some());
+    assert!(provenance.get("provenance").is_some());
+    assert!(provenance.get("provenance_key").is_some());
+    assert!(provenance.get("source").is_some());
+    assert!(provenance.get("confidence").is_some());
     assert!(repo_summary.get("name").is_some());
     assert!(repo_summary.get("path").is_some());
     assert!(failure.get("next").is_some());

@@ -97,8 +97,12 @@
       "required": ["field", "provenance", "provenance_key"],
       "properties": {
         "field": { "type": "string" },
-        "provenance": { "enum": ["detector-inferred", "template-derived"] },
-        "provenance_key": { "enum": ["repo_signals", "template_derived"] },
+        "provenance": {
+          "enum": ["detector-inferred", "template-derived", "workspace-derived"]
+        },
+        "provenance_key": {
+          "enum": ["repo_signals", "template_derived", "workspace_scaffold"]
+        },
         "source": { "type": "string" },
         "confidence": { "enum": ["low", "medium", "high"] }
       }
