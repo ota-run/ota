@@ -255,6 +255,9 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Archive the receipt JSON to `.ota/receipts`.
+        #[arg(long, action = ArgAction::SetTrue)]
+        archive: bool,
         /// Capture the receipt in a specific execution context.
         #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
         mode: DoctorModeArg,
@@ -775,6 +778,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Archive the receipt JSON to `.ota/receipts`.
+        #[arg(long, action = ArgAction::SetTrue)]
+        archive: bool,
         /// Maximum number of independent repos to inspect at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -1321,6 +1327,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Receipt {
             json,
+            archive,
             mode,
             member,
             path,
@@ -1330,6 +1337,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             mode.into(),
             format_from_json(json),
+            archive,
             debug,
         ),
         Commands::Diff { json, base, target } => commands::diff(
@@ -1739,11 +1747,17 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
-            WorkspaceCommands::Receipt { json, jobs, path } => commands::workspace_receipt(
+            WorkspaceCommands::Receipt {
+                json,
+                archive,
+                jobs,
+                path,
+            } => commands::workspace_receipt(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
                 format_from_json(json),
+                archive,
                 debug,
             ),
             WorkspaceCommands::Run {
@@ -4143,6 +4157,28 @@ tasks:
         assert!(stdout.contains("Steps:"));
         assert!(stdout.contains("1. READY  readiness"));
         assert!(stdout.contains("Summary"));
+    }
+
+    #[test]
+    fn receipt_json_archives_receipt_when_requested() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let archive_path = json["archive_path"].as_str().unwrap();
+        assert!(archive_path.contains(".ota/receipts/"));
+        assert!(Path::new(archive_path).is_file());
     }
 
     #[test]

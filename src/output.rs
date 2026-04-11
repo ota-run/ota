@@ -639,6 +639,8 @@ pub struct WorkspaceReceiptSuccess<'a> {
     pub mode: &'a str,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<&'a str>,
     pub repos: &'a [WorkspaceRepoStatusReport],
 }
 
@@ -649,6 +651,8 @@ pub struct ReceiptSuccess<'a> {
     pub mode: &'a str,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<&'a str>,
     pub findings: &'a [Finding],
 }
 

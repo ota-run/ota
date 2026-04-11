@@ -3842,6 +3842,7 @@ pub fn receipt(
     member: Option<&str>,
     mode: DoctorMode,
     format: OutputFormat,
+    archive: bool,
     debug: bool,
 ) -> CommandOutput {
     let resolved_path = match resolve_contract_path(path, file_override) {
@@ -3875,12 +3876,42 @@ pub fn receipt(
                 );
                 let receipt =
                     repo_readiness_receipt(&target.contract_path, &target.contract, mode, &report);
+                let archive_path = if archive {
+                    let root = contract_working_dir(&target.contract_path);
+                    let archive_path = match next_receipt_archive_path(&root, "repo-receipt") {
+                        Ok(path) => path,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                    let archive_path_display = archive_path.display().to_string();
+                    let payload = ReceiptSuccess {
+                        ok: receipt.ok,
+                        path: &path_display,
+                        mode: "receipt",
+                        summary: receipt.summary,
+                        receipt: receipt.clone(),
+                        archive_path: Some(archive_path_display.as_str()),
+                        findings: &report.findings,
+                    };
+                    if let Err(error) = write_receipt_archive(&archive_path, &payload) {
+                        return CommandOutput::failure(error);
+                    }
+                    if let Err(error) =
+                        prune_receipt_archives(&root, "repo-receipt", RECEIPT_ARCHIVE_LIMIT)
+                    {
+                        return CommandOutput::failure(error);
+                    }
+                    Some(archive_path)
+                } else {
+                    None
+                };
+
                 render_repo_receipt(
                     &text_path_display,
                     &path_display,
                     &RepoReceiptReport {
                         receipt,
                         findings: report.findings,
+                        archive_path,
                     },
                     format,
                 )
@@ -7436,6 +7467,7 @@ pub fn workspace_receipt(
     file_override: Option<&Path>,
     jobs: usize,
     format: OutputFormat,
+    archive: bool,
     debug: bool,
 ) -> CommandOutput {
     if jobs == 0 {
@@ -7469,7 +7501,43 @@ pub fn workspace_receipt(
 
     finalize_debug(
         match load_and_run_workspace_receipt(&resolved_path, jobs) {
-            Ok(report) => render_workspace_receipt(&compact_path_display, &report, format),
+            Ok(mut report) => {
+                let archive_path = if archive {
+                    let root = resolved_path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."));
+                    let archive_path = match next_receipt_archive_path(root, "workspace-receipt") {
+                        Ok(path) => path,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                    let archive_path_display = archive_path.display().to_string();
+                    let payload = WorkspaceReceiptSuccess {
+                        ok: report.receipt.ok,
+                        path: &path_display,
+                        mode: "receipt",
+                        summary: report.receipt.summary,
+                        receipt: report.receipt.clone(),
+                        archive_path: Some(archive_path_display.as_str()),
+                        repos: &report.repos,
+                    };
+                    if let Err(error) = write_receipt_archive(&archive_path, &payload) {
+                        return CommandOutput::failure(error);
+                    }
+                    if let Err(error) = prune_receipt_archives(
+                        root,
+                        "workspace-receipt",
+                        RECEIPT_ARCHIVE_LIMIT,
+                    ) {
+                        return CommandOutput::failure(error);
+                    }
+                    Some(archive_path)
+                } else {
+                    None
+                };
+
+                report.archive_path = archive_path;
+                render_workspace_receipt(&compact_path_display, &report, format)
+            }
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => CommandOutput::failure(errors.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -8273,6 +8341,68 @@ fn create_timestamped_backup(path: &Path) -> Result<PathBuf, String> {
         )
     })?;
     Ok(backup_path)
+}
+
+const RECEIPT_ARCHIVE_LIMIT: usize = 50;
+
+fn receipt_archive_dir(root: &Path) -> PathBuf {
+    root.join(".ota").join("receipts")
+}
+
+fn next_receipt_archive_path(root: &Path, prefix: &str) -> Result<PathBuf, String> {
+    let archive_dir = receipt_archive_dir(root);
+    fs::create_dir_all(&archive_dir).map_err(|error| {
+        format!(
+            "failed to create receipt archive directory `{}`: {error}",
+            compact_path(&archive_dir, ".")
+        )
+    })?;
+    let stamp = OffsetDateTime::now_utc()
+        .format(&format_description!(
+            "[year][month][day]-[hour][minute][second]-[subsecond digits:3]Z"
+        ))
+        .map_err(|error| format!("failed to format receipt archive timestamp: {error}"))?;
+    Ok(archive_dir.join(format!("{prefix}-{stamp}.json")))
+}
+
+fn write_receipt_archive(path: &Path, payload: &impl Serialize) -> Result<(), String> {
+    let content = serde_json::to_string_pretty(payload)
+        .map_err(|error| format!("failed to serialize receipt archive: {error}"))?;
+    fs::write(path, content).map_err(|error| {
+        format!(
+            "failed to write receipt archive `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })
+}
+
+fn prune_receipt_archives(root: &Path, prefix: &str, keep: usize) -> Result<(), String> {
+    let archive_dir = receipt_archive_dir(root);
+    let mut entries = fs::read_dir(&archive_dir)
+        .map_err(|error| format!("failed to read receipt archive directory: {error}"))?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path();
+            if file_name.starts_with(prefix) && file_name.ends_with(".json") {
+                Some((file_name, path))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if entries.len() <= keep {
+        return Ok(());
+    }
+
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let excess = entries.len().saturating_sub(keep);
+    for (_, path) in entries.into_iter().take(excess) {
+        let _ = fs::remove_file(path);
+    }
+
+    Ok(())
 }
 
 fn render_init(
@@ -19019,11 +19149,13 @@ struct WorkspaceStatusReport {
 struct RepoReceiptReport {
     receipt: ExecutionReceipt,
     findings: Vec<Finding>,
+    archive_path: Option<PathBuf>,
 }
 
 struct WorkspaceReceiptReport {
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoStatusReport>,
+    archive_path: Option<PathBuf>,
 }
 
 struct WorkspaceRunReport {
@@ -19206,6 +19338,13 @@ fn render_repo_receipt(
                 format_command_header("RECEIPT", text_path),
                 render_execution_receipt_text(&report.receipt)
             );
+            if let Some(archive_path) = report.archive_path.as_ref() {
+                stdout.push_str(&summary_detail_line(
+                    "Archive:",
+                    &compact_path(archive_path, "."),
+                ));
+                stdout.push('\n');
+            }
             stdout.push('\n');
 
             CommandOutput {
@@ -19215,14 +19354,20 @@ fn render_repo_receipt(
             }
         }
         OutputFormat::Json => CommandOutput {
-            stdout: to_json(&ReceiptSuccess {
-                ok: report.receipt.ok,
-                path: json_path,
-                mode: "receipt",
-                summary: report.receipt.summary,
-                receipt: report.receipt.clone(),
-                findings: &report.findings,
-            }),
+            stdout: {
+                let archive_path =
+                    report.archive_path.as_ref().map(|path| path.display().to_string());
+                let payload = ReceiptSuccess {
+                    ok: report.receipt.ok,
+                    path: json_path,
+                    mode: "receipt",
+                    summary: report.receipt.summary,
+                    receipt: report.receipt.clone(),
+                    archive_path: archive_path.as_deref(),
+                    findings: &report.findings,
+                };
+                to_json(&payload)
+            },
             stderr: None,
             exit_code: if report.receipt.ok { 0 } else { 1 },
         },
@@ -20778,6 +20923,7 @@ fn load_and_run_workspace_receipt(
     Ok(WorkspaceReceiptReport {
         receipt,
         repos: report.repos,
+        archive_path: None,
     })
 }
 

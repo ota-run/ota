@@ -714,6 +714,13 @@ pub(crate) fn render_workspace_receipt(
                 format_command_header("WORKSPACE RECEIPT", path),
                 render_execution_receipt_text(&report.receipt)
             );
+            if let Some(archive_path) = report.archive_path.as_ref() {
+                stdout.push_str(&summary_detail_line(
+                    "Archive:",
+                    &compact_path(archive_path, "."),
+                ));
+                stdout.push('\n');
+            }
 
             stdout.push('\n');
 
@@ -724,14 +731,20 @@ pub(crate) fn render_workspace_receipt(
             }
         }
         OutputFormat::Json => CommandOutput {
-            stdout: to_json(&WorkspaceReceiptSuccess {
-                ok: report.receipt.ok,
-                path,
-                mode: "receipt",
-                summary: report.receipt.summary,
-                receipt: report.receipt.clone(),
-                repos: &report.repos,
-            }),
+            stdout: {
+                let archive_path =
+                    report.archive_path.as_ref().map(|path| path.display().to_string());
+                let payload = WorkspaceReceiptSuccess {
+                    ok: report.receipt.ok,
+                    path,
+                    mode: "receipt",
+                    summary: report.receipt.summary,
+                    receipt: report.receipt.clone(),
+                    archive_path: archive_path.as_deref(),
+                    repos: &report.repos,
+                };
+                to_json(&payload)
+            },
             stderr: None,
             exit_code: if report.receipt.ok { 0 } else { 1 },
         },
