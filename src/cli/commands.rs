@@ -1232,7 +1232,7 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                         CommandOutput {
                             stdout,
                             stderr: None,
-                            exit_code: if changes.is_empty() { 0 } else { 1 },
+                            exit_code: 0,
                         }
                     }
                     OutputFormat::Json => CommandOutput {
@@ -1244,7 +1244,7 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                             changes: &changes,
                         }),
                         stderr: None,
-                        exit_code: if changes.is_empty() { 0 } else { 1 },
+                        exit_code: 0,
                     },
                 }
             }

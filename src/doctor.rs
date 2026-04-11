@@ -2927,6 +2927,7 @@ policies:
             - "8.13.0"
         linux:
           source: apt
+          package: curl
           approved_versions:
             - "8.13.0"
 "#,

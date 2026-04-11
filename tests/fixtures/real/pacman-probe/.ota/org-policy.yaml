@@ -25,9 +25,11 @@ policies:
   provisioning:
     node:
       source: pacman
+      package: nodejs
       approved_versions:
         - "22"
     git:
       source: pacman
+      package: git
       approved_versions:
         - "2.46.0"
