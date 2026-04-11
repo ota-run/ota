@@ -280,6 +280,24 @@ fn workspace_init_schema_exists_and_covers_scaffold_fields() {
     assert!(provenance.get("provenance_key").is_some());
     assert!(provenance.get("source").is_some());
     assert!(provenance.get("confidence").is_some());
+    let provenance_enum =
+        shared["$defs"]["contractFieldProvenance"]["properties"]["provenance"]["enum"]
+            .as_array()
+            .expect("provenance enum");
+    let provenance_key_enum =
+        shared["$defs"]["contractFieldProvenance"]["properties"]["provenance_key"]["enum"]
+            .as_array()
+            .expect("provenance key enum");
+    assert!(
+        provenance_enum
+            .iter()
+            .any(|entry| entry == "workspace-declared")
+    );
+    assert!(
+        provenance_key_enum
+            .iter()
+            .any(|entry| entry == "workspace_contract")
+    );
     assert!(repo_summary.get("name").is_some());
     assert!(repo_summary.get("path").is_some());
     assert!(failure.get("next").is_some());

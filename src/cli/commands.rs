@@ -92,9 +92,10 @@ use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
-    DEFAULT_WORKSPACE_FILE, WorkspaceExecutionSummary, WorkspaceRepoRef, WorkspaceValidationErrors,
-    diagnose_workspace_contract_with_jobs, diagnose_workspace_repo, load_workspace_contract,
-    ordered_workspace_repo_refs, parse_workspace_contract_str, validate_workspace_contract,
+    DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
+    WorkspaceValidationErrors, diagnose_workspace_contract_with_jobs, diagnose_workspace_repo,
+    load_workspace_contract, ordered_workspace_repo_refs, parse_workspace_contract_str,
+    validate_workspace_contract,
 };
 
 mod explain_output;
@@ -5299,6 +5300,12 @@ struct WorkspaceRepoRewriteResult {
     skipped: Vec<(WorkspaceInitRepoSummary, String)>,
 }
 
+struct WorkspaceInitMergeState {
+    yaml: String,
+    contract: WorkspaceContract,
+    comparison: WorkspaceInitComparison,
+}
+
 pub enum WorkspaceScaffoldSurface {
     Init,
     Detect,
@@ -5606,8 +5613,8 @@ pub fn workspace_init(
                 }
             }
             Ok(draft) if merge && !write => {
-                let comparison = match compare_workspace_init_merge(&workspace_path, &draft) {
-                    Ok(comparison) => comparison,
+                let merge_state = match build_workspace_init_merge_state(&workspace_path, &draft) {
+                    Ok(state) => state,
                     Err(error) => {
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error),
@@ -5623,15 +5630,6 @@ pub fn workspace_init(
                 };
                 match format {
                     OutputFormat::Text => {
-                        let yaml = match serde_yaml::to_string(&draft.contract) {
-                            Ok(yaml) => yaml,
-                            Err(error) => {
-                                return CommandOutput::failure(format!(
-                                    "failed to serialize workspace contract for `{}`: {error}",
-                                    compact_path_display
-                                ));
-                            }
-                        };
                         let mut stdout = format_command_header(
                             &format!("WORKSPACE {command_label} MERGE PREVIEW"),
                             &compact_root_display,
@@ -5641,11 +5639,11 @@ pub fn workspace_init(
                             "run `{command_name} --merge {compact_root_display}` to apply additive repo entries",
                         )]));
                         stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
-                        stdout.push_str(&stylize_yaml_preview(yaml.trim_end()));
+                        stdout.push_str(&stylize_yaml_preview(merge_state.yaml.trim_end()));
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Additive merge preview",
-                            &comparison.additions,
+                            &merge_state.comparison.additions,
                         );
                         render_workspace_init_discovery_sections(
                             &mut stdout,
@@ -5659,11 +5657,11 @@ pub fn workspace_init(
                         "path": path_display,
                         "written": false,
                         "mode": "scaffold",
-                        "config": draft.contract,
-                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
+                        "config": merge_state.contract,
+                        "provenance": workspace_merge_contract_provenance(&merge_state.contract, &merge_state.comparison.additions),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
-                        "comparison": comparison,
+                        "comparison": merge_state.comparison,
                     }))),
                 }
             }
@@ -5689,8 +5687,8 @@ pub fn workspace_init(
                     }
                 }
 
-                let comparison = match apply_workspace_init_merge(&workspace_path, &draft) {
-                    Ok(result) => result,
+                let merge_state = match apply_workspace_init_merge(&workspace_path, &draft) {
+                    Ok(state) => state,
                     Err(error) => {
                         return match format {
                             OutputFormat::Text => CommandOutput::failure(error),
@@ -5705,7 +5703,7 @@ pub fn workspace_init(
                     }
                 };
 
-                if comparison.additions.is_empty() {
+                if merge_state.comparison.additions.is_empty() {
                     return match format {
                         OutputFormat::Text => {
                             let mut stdout = format_command_header(
@@ -5715,7 +5713,7 @@ pub fn workspace_init(
                             render_workspace_init_merge_section(
                                 &mut stdout,
                                 "Additive merge preview",
-                                &comparison.additions,
+                                &merge_state.comparison.additions,
                             );
                             render_workspace_auto_provision_sections(
                                 &mut stdout,
@@ -5729,11 +5727,11 @@ pub fn workspace_init(
                             "path": path_display,
                             "written": false,
                             "mode": "scaffold",
-                            "config": draft.contract,
-                            "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
+                            "config": merge_state.contract,
+                            "provenance": workspace_merge_contract_provenance(&merge_state.contract, &merge_state.comparison.additions),
                             "included": draft.included,
                             "missing_contract": draft.missing_contract,
-                            "comparison": comparison,
+                            "comparison": merge_state.comparison,
                         }))),
                     };
                 }
@@ -5747,7 +5745,7 @@ pub fn workspace_init(
                         render_workspace_init_merge_section(
                             &mut stdout,
                             "Applied additions",
-                            &comparison.additions,
+                            &merge_state.comparison.additions,
                         );
                         render_workspace_auto_provision_sections(
                             &mut stdout,
@@ -5766,11 +5764,11 @@ pub fn workspace_init(
                         "path": path_display,
                         "written": true,
                         "mode": "scaffold",
-                        "config": draft.contract,
-                        "provenance": workspace_init_contract_provenance(&draft.contract, &workspace_root),
+                        "config": merge_state.contract,
+                        "provenance": workspace_merge_contract_provenance(&merge_state.contract, &merge_state.comparison.additions),
                         "included": draft.included,
                         "missing_contract": draft.missing_contract,
-                        "comparison": comparison,
+                        "comparison": merge_state.comparison,
                     }))),
                 }
             }
@@ -10006,9 +10004,11 @@ fn detect_json_config_value<T: Serialize>(value: &T) -> JsonValue {
 const CONTRACT_PROVENANCE_REPO_SIGNALS_KEY: &str = "repo_signals";
 const CONTRACT_PROVENANCE_TEMPLATE_DERIVED_KEY: &str = "template_derived";
 const CONTRACT_PROVENANCE_WORKSPACE_SCAFFOLD_KEY: &str = "workspace_scaffold";
+const CONTRACT_PROVENANCE_WORKSPACE_CONTRACT_KEY: &str = "workspace_contract";
 const CONTRACT_PROVENANCE_DETECTOR_INFERRED: &str = "detector-inferred";
 const CONTRACT_PROVENANCE_TEMPLATE_DERIVED: &str = "template-derived";
 const CONTRACT_PROVENANCE_WORKSPACE_DERIVED: &str = "workspace-derived";
+const CONTRACT_PROVENANCE_WORKSPACE_DECLARED: &str = "workspace-declared";
 
 fn init_contract_provenance(
     contract: &DetectContract,
@@ -10241,6 +10241,19 @@ fn workspace_field_provenance(field: impl Into<String>, source: &str) -> Contrac
     }
 }
 
+fn workspace_declared_field_provenance(
+    field: impl Into<String>,
+    source: &str,
+) -> ContractFieldProvenance {
+    ContractFieldProvenance {
+        field: field.into(),
+        provenance: String::from(CONTRACT_PROVENANCE_WORKSPACE_DECLARED),
+        provenance_key: String::from(CONTRACT_PROVENANCE_WORKSPACE_CONTRACT_KEY),
+        source: Some(String::from(source)),
+        confidence: None,
+    }
+}
+
 fn workspace_init_contract_provenance(
     contract: &WorkspaceInitContract,
     workspace_root: &Path,
@@ -10273,15 +10286,113 @@ fn workspace_init_contract_provenance(
         ));
     }
 
-    for (name, repo) in &contract.repos {
-        let repo_contract_source = format!("{}/{DEFAULT_CONTRACT_FILE}", repo.path);
+    for (name, _repo) in &contract.repos {
         provenance.push(workspace_field_provenance(
             format!("repos.{name}.path"),
-            &repo_contract_source,
+            "workspace-discovery",
         ));
         provenance.push(template_field_provenance(
             format!("repos.{name}.required"),
             "ota.workspace.init#repo_required_default",
+        ));
+    }
+
+    provenance.sort_by(|left, right| left.field.cmp(&right.field));
+    provenance
+}
+
+fn workspace_merge_contract_provenance(
+    contract: &WorkspaceContract,
+    additions: &[WorkspaceInitRepoSummary],
+) -> Vec<ContractFieldProvenance> {
+    let addition_names: BTreeSet<&str> = additions.iter().map(|repo| repo.name.as_str()).collect();
+    let mut provenance = vec![workspace_declared_field_provenance(
+        "version",
+        "existing-workspace-contract",
+    )];
+
+    provenance.push(workspace_declared_field_provenance(
+        "workspace.name",
+        "existing-workspace-contract",
+    ));
+    if contract.workspace.description.is_some() {
+        provenance.push(workspace_declared_field_provenance(
+            "workspace.description",
+            "existing-workspace-contract",
+        ));
+    }
+    if contract.workspace.git_base.is_some() {
+        provenance.push(workspace_declared_field_provenance(
+            "workspace.git_base",
+            "existing-workspace-contract",
+        ));
+    }
+    if contract.workspace.policy.is_some() {
+        provenance.push(workspace_declared_field_provenance(
+            "workspace.policy",
+            "existing-workspace-contract",
+        ));
+    }
+
+    for (name, repo) in &contract.repos {
+        if addition_names.contains(name.as_str()) {
+            provenance.push(workspace_field_provenance(
+                format!("repos.{name}.path"),
+                "workspace-discovery",
+            ));
+            provenance.push(template_field_provenance(
+                format!("repos.{name}.required"),
+                "ota.workspace.init#repo_required_default",
+            ));
+            continue;
+        }
+
+        provenance.push(workspace_declared_field_provenance(
+            format!("repos.{name}.path"),
+            "existing-workspace-contract",
+        ));
+        provenance.push(workspace_declared_field_provenance(
+            format!("repos.{name}.required"),
+            "existing-workspace-contract",
+        ));
+        if repo.contract.is_some() {
+            provenance.push(workspace_declared_field_provenance(
+                format!("repos.{name}.contract"),
+                "existing-workspace-contract",
+            ));
+        }
+        if !repo.depends_on.is_empty() {
+            provenance.push(workspace_declared_field_provenance(
+                format!("repos.{name}.depends_on"),
+                "existing-workspace-contract",
+            ));
+        }
+        if let Some(source) = &repo.source {
+            if source.git.is_some() {
+                provenance.push(workspace_declared_field_provenance(
+                    format!("repos.{name}.source.git"),
+                    "existing-workspace-contract",
+                ));
+            }
+            if source.repo.is_some() {
+                provenance.push(workspace_declared_field_provenance(
+                    format!("repos.{name}.source.repo"),
+                    "existing-workspace-contract",
+                ));
+            }
+            if source.git_ref.is_some() {
+                provenance.push(workspace_declared_field_provenance(
+                    format!("repos.{name}.source.ref"),
+                    "existing-workspace-contract",
+                ));
+            }
+        }
+    }
+
+    for name in contract.policies.keys() {
+        provenance.push(workspace_declared_field_provenance(
+            format!("policies.{name}"),
+            "existing-workspace-contract",
         ));
     }
 
@@ -15692,17 +15803,17 @@ fn render_workspace_init_merge_section(
     }
 }
 
-fn compare_workspace_init_merge(
+fn build_workspace_init_merge_state(
     workspace_path: &Path,
     draft: &WorkspaceInitDraft,
-) -> Result<WorkspaceInitComparison, String> {
+) -> Result<WorkspaceInitMergeState, String> {
     let contents = fs::read_to_string(workspace_path).map_err(|error| {
         format!(
             "failed to read `{}`: {error}",
             compact_workspace_path(workspace_path)
         )
     })?;
-    let document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
+    let mut document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
         format!(
             "failed to parse existing workspace contract `{}` for merge: {error}",
             compact_workspace_path(workspace_path)
@@ -15726,29 +15837,6 @@ fn compare_workspace_init_merge(
         }
     }
 
-    Ok(WorkspaceInitComparison {
-        existing_contract: true,
-        additions,
-    })
-}
-
-fn apply_workspace_init_merge(
-    workspace_path: &Path,
-    draft: &WorkspaceInitDraft,
-) -> Result<WorkspaceInitComparison, String> {
-    let contents = fs::read_to_string(workspace_path).map_err(|error| {
-        format!(
-            "failed to read `{}`: {error}",
-            compact_workspace_path(workspace_path)
-        )
-    })?;
-    let mut document: YamlValue = serde_yaml::from_str(&contents).map_err(|error| {
-        format!(
-            "failed to parse existing workspace contract `{}` for merge: {error}",
-            compact_workspace_path(workspace_path)
-        )
-    })?;
-
     let root = document.as_mapping_mut().ok_or_else(|| {
         format!(
             "existing workspace contract `{}` must be a mapping for merge",
@@ -15769,12 +15857,8 @@ fn apply_workspace_init_merge(
             )
         })?;
 
-    let mut additions = Vec::new();
-    for repo in &draft.included {
+    for repo in &additions {
         let repo_key = YamlValue::String(repo.name.clone());
-        if repos.contains_key(&repo_key) {
-            continue;
-        }
         let spec =
             draft.contract.repos.get(&repo.name).ok_or_else(|| {
                 format!("internal merge error: missing repo spec `{}`", repo.name)
@@ -15789,7 +15873,6 @@ fn apply_workspace_init_merge(
             YamlValue::Bool(spec.required),
         );
         repos.insert(repo_key, YamlValue::Mapping(spec_map));
-        additions.push(repo.clone());
     }
 
     let yaml = serde_yaml::to_string(&document).map_err(|error| {
@@ -15801,17 +15884,30 @@ fn apply_workspace_init_merge(
     let contract =
         parse_workspace_contract_str(workspace_path, &yaml).map_err(|error| error.to_string())?;
     validate_workspace_contract(workspace_path, &contract).map_err(|error| error.to_string())?;
-    fs::write(workspace_path, yaml).map_err(|error| {
-        format!(
-            "failed to write `{}`: {error}",
-            compact_workspace_path(workspace_path)
-        )
-    })?;
-
-    Ok(WorkspaceInitComparison {
-        existing_contract: true,
-        additions,
+    Ok(WorkspaceInitMergeState {
+        yaml,
+        contract,
+        comparison: WorkspaceInitComparison {
+            existing_contract: true,
+            additions,
+        },
     })
+}
+
+fn apply_workspace_init_merge(
+    workspace_path: &Path,
+    draft: &WorkspaceInitDraft,
+) -> Result<WorkspaceInitMergeState, String> {
+    let state = build_workspace_init_merge_state(workspace_path, draft)?;
+    if !state.comparison.additions.is_empty() {
+        fs::write(workspace_path, &state.yaml).map_err(|error| {
+            format!(
+                "failed to write `{}`: {error}",
+                compact_workspace_path(workspace_path)
+            )
+        })?;
+    }
+    Ok(state)
 }
 
 fn resolve_workspace_init_target(path: Option<&Path>) -> Result<(PathBuf, PathBuf), String> {

@@ -98,10 +98,20 @@
       "properties": {
         "field": { "type": "string" },
         "provenance": {
-          "enum": ["detector-inferred", "template-derived", "workspace-derived"]
+          "enum": [
+            "detector-inferred",
+            "template-derived",
+            "workspace-derived",
+            "workspace-declared"
+          ]
         },
         "provenance_key": {
-          "enum": ["repo_signals", "template_derived", "workspace_scaffold"]
+          "enum": [
+            "repo_signals",
+            "template_derived",
+            "workspace_scaffold",
+            "workspace_contract"
+          ]
         },
         "source": { "type": "string" },
         "confidence": { "enum": ["low", "medium", "high"] }

@@ -77,7 +77,8 @@ broader: it can still show `manual` removals because a full replacement would dr
 `ota workspace init --json` and `ota workspace detect --json` now expose the same style of
 per-field `provenance` array for the generated workspace scaffold:
 
-- `workspace-derived` fields point back to the workspace root or discovered repo contract paths
+- `workspace-derived` fields point back to the workspace root or workspace discovery
+- `workspace-declared` fields mark values preserved from an existing `ota.workspace.yaml`
 - `template-derived` fields identify scaffold defaults such as starter versioning and the default
   `required: true` repo entries
 
@@ -88,6 +89,7 @@ The intended provenance categories are:
 - template-derived
 - detector-inferred
 - workspace-derived
+- workspace-declared
 - user-mutated
 
 Policy-backed provisioning should use the same provenance idea once source-selection lands:
