@@ -45,6 +45,7 @@ Choose a flow:
   review a starter contract    ota init --dry-run
   prepare the repo             ota up
   inspect env requirements     ota env
+  scaffold org policy          ota policy init --dry-run
   review policy boundary       ota policy review
   generate agent guidance      ota agents
   list runnable tasks          ota tasks --use

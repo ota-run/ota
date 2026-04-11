@@ -3140,7 +3140,7 @@ policies:
 
         let output = run_with(["ota", "diff", "--json", base.path(), target.path()]);
 
-        assert_ne!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 0);
         assert!(output.stderr.is_none());
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();

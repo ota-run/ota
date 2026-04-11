@@ -2107,10 +2107,12 @@ policies:
       platforms:
         linux:
           source: apt
+          package: nodejs
           approved_versions:
             - "22"
         windows:
           source: choco
+          package: nodejs
           approved_versions:
             - "22"
 "#,
@@ -2145,6 +2147,7 @@ policies:
       source: choco
       source_config:
         feed: internal-choco
+      package: nodejs
       approved_versions:
         - "22"
 "#,
