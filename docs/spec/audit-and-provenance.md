@@ -68,6 +68,12 @@ comparison entries also expose `owner_kind`:
 Normal drift surfaces only treat `merged` fields as detector-owned drift. Rewrite preview remains
 broader: it can still show `manual` removals because a full replacement would drop them.
 
+`ota init --json` now exposes a per-field `provenance` array for the starter contract itself:
+
+- `detector-inferred` fields point back to repo evidence with `source` and `confidence`
+- `template-derived` fields identify starter-only defaults such as version pinning, task notes,
+  and generated `agent` guidance
+
 The intended provenance categories are:
 
 - repo-declared

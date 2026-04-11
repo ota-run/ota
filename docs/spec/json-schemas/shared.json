@@ -90,6 +90,18 @@
         "source": { "type": "string" },
         "confidence": { "enum": ["low", "medium", "high"] }
       }
+    },
+    "contractFieldProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "provenance", "provenance_key"],
+      "properties": {
+        "field": { "type": "string" },
+        "provenance": { "enum": ["detector-inferred", "template-derived"] },
+        "provenance_key": { "enum": ["repo_signals", "template_derived"] },
+        "source": { "type": "string" },
+        "confidence": { "enum": ["low", "medium", "high"] }
+      }
     }
   }
 }

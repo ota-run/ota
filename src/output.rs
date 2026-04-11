@@ -696,6 +696,8 @@ pub struct InitSuccess<'a> {
     pub mode: &'a str,
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub provenance: Vec<ContractFieldProvenance>,
 }
 
 #[derive(Debug, Serialize)]
@@ -747,6 +749,17 @@ pub struct DetectFailure<'a> {
     pub error: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContractFieldProvenance {
+    pub field: String,
+    pub provenance: String,
+    pub provenance_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<Confidence>,
 }
 
 #[derive(Debug, Clone, Serialize)]

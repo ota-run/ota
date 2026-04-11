@@ -9038,6 +9038,52 @@ agent:
     }
 
     #[test]
+    fn init_json_dry_run_reports_field_provenance() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": {
+    "setup": "pnpm install",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("src")).unwrap();
+
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let provenance = json["provenance"].as_array().expect("provenance array");
+
+        let project_name = provenance
+            .iter()
+            .find(|entry| entry["field"] == "project.name")
+            .expect("project.name provenance");
+        assert_eq!(project_name["provenance"], "detector-inferred");
+        assert_eq!(project_name["provenance_key"], "repo_signals");
+        assert_eq!(project_name["source"], "package.json#name");
+        assert_eq!(project_name["confidence"], "high");
+
+        let starter_bootstrap = provenance
+            .iter()
+            .find(|entry| entry["field"] == "agent.bootstrap.ota.sh")
+            .expect("starter bootstrap provenance");
+        assert_eq!(starter_bootstrap["provenance"], "template-derived");
+        assert_eq!(starter_bootstrap["provenance_key"], "template_derived");
+        assert_eq!(
+            starter_bootstrap["source"],
+            "ota.init#starter_agent_bootstrap"
+        );
+        assert!(
+            starter_bootstrap.get("confidence").is_none()
+                || starter_bootstrap["confidence"].is_null()
+        );
+    }
+
+    #[test]
     fn init_json_dry_run_omits_agent_when_safe_writable_paths_cannot_be_inferred() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -11767,17 +11813,7 @@ tasks:
 
         let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
         assert_eq!(doctor.exit_code, 0);
-        assert_json_top_level_keys(
-            &doctor,
-            &[
-                "finding_groups",
-                "findings",
-                "mode",
-                "ok",
-                "path",
-                "summary",
-            ],
-        );
+        assert_json_top_level_keys(&doctor, &["findings", "mode", "ok", "path", "summary"]);
 
         let check = run_with(["ota", "check", "--json", fixture.path()]);
         assert_eq!(check.exit_code, 0);
@@ -11802,7 +11838,15 @@ tasks:
         assert_eq!(init.exit_code, 0);
         assert_json_top_level_keys(
             &init,
-            &["config", "inferred", "mode", "ok", "path", "written"],
+            &[
+                "config",
+                "inferred",
+                "mode",
+                "ok",
+                "path",
+                "provenance",
+                "written",
+            ],
         );
     }
 

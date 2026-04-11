@@ -16,6 +16,10 @@
         "inferred": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/inference" }
+        },
+        "provenance": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/contractFieldProvenance" }
         }
       }
     },
