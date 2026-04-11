@@ -84,6 +84,8 @@ exact install candidate, that `Policy:` section also shows the requested version
 the resolved install version, and the matched policy rule. On failure, the normal text output keeps `Why`
 and `Next` before the trailing summary block. The receipt keeps the structured
 summary data for JSON and optional receipt output.
+When `--archive` is set on receipt commands, ota persists the JSON receipt under
+`.ota/receipts` so CI or humans can audit the exact execution trail later.
 
 ## Behavior
 

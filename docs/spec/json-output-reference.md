@@ -1234,6 +1234,7 @@ load/validation failures still emit the shared `ValidateFailure` JSON shape on s
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "mode": "receipt",
+  "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260411-113015-042Z.json",
   "summary": {
     "error_count": 0,
     "warn_count": 0,
@@ -1269,6 +1270,7 @@ Current receipt JSON fields:
 - `ok`
 - `path`
 - `mode` (`receipt`)
+- `archive_path` (when `--archive` is set)
 - `summary`
 - `receipt`
 - `findings`
@@ -1278,6 +1280,8 @@ member contract path while the readiness findings reflect the merged member targ
 
 Use `ota receipt --json` when you need a deterministic repo-local artifact for the current
 readiness state without provisioning, starting services, or writing repo files.
+Add `--archive` to persist the JSON receipt in `.ota/receipts` for later audit; ota keeps
+the newest 50 archives.
 
 ## `ota detect --json`
 
@@ -1471,7 +1475,8 @@ local git drift together, includes per-repo `ready`, `readiness_status`, `drift_
 
 `ota workspace receipt --json` uses the same scan as `status`, but packages the result as a
 receipt artifact. It records the same readiness and drift detail, adds `"mode": "receipt"`, and
-keeps the receipt object available for CI or archive consumers.
+keeps the receipt object available for CI or archive consumers. When `--archive` is set,
+the output also includes `archive_path` pointing at the persisted receipt JSON.
 
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.

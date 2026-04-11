@@ -11,6 +11,7 @@
         "ok": { "const": true },
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
+        "archive_path": { "type": "string" },
         "summary": {
           "type": "object",
           "additionalProperties": false,

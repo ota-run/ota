@@ -776,6 +776,7 @@ Capture the current repo readiness scan as a read-only receipt artifact for CI o
 ota receipt [PATH]
 ota receipt --json [PATH]
 ota receipt --mode container [PATH]
+ota receipt --archive [PATH]
 ota receipt --member api [PATH]
 ```
 
@@ -789,6 +790,7 @@ Current behavior:
 - captures the current repo state as an execution receipt with one `readiness` step
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
+- `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 
 Text output:
 
@@ -800,6 +802,7 @@ JSON output:
 - `ok`
 - `path`
 - `mode: "receipt"`
+- `archive_path` (when `--archive` is set)
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`
 - `findings`
@@ -1804,6 +1807,7 @@ Capture the current workspace scan as a read-only receipt artifact for CI or arc
 ota workspace receipt [PATH]
 ota workspace receipt --json [PATH]
 ota workspace receipt --jobs 4 [PATH]
+ota workspace receipt --archive [PATH]
 ```
 
 Current behavior:
@@ -1815,6 +1819,7 @@ Current behavior:
 - can inspect independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - `--json` returns a workspace receipt roll-up with `mode: "receipt"`
+- `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically
 
 Text output:
@@ -1828,6 +1833,7 @@ JSON output:
 - `ok`
 - `path`
 - `mode: "receipt"`
+- `archive_path` (when `--archive` is set)
 - `summary` mirroring the receipt summary with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`
 - `repos`
