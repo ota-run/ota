@@ -74,6 +74,8 @@ pub struct ProvisioningFailureDiagnosis {
     pub target_kind: ProvisioningTargetKind,
     pub name: String,
     pub requested_version: String,
+    pub resolved_version: Option<String>,
+    pub policy_match: Option<String>,
     pub kind: ProvisioningFailureKind,
 }
 
@@ -116,6 +118,18 @@ pub trait ProvisioningBackend {
         target: &ProvisioningExecutionTarget,
         mode: ProvisioningOutputMode,
     ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError>;
+}
+
+fn action_effective_version(action: &ProvisioningAction) -> &str {
+    action.install_version()
+}
+
+fn action_version_matches_output(action: &ProvisioningAction, value: &str) -> bool {
+    text_output_contains_requested_version(value, &action.requested_version)
+        || action.resolved_version.as_ref().is_some_and(|version| {
+            version != &action.requested_version
+                && text_output_contains_requested_version(value, version)
+        })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -203,7 +217,7 @@ impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action.requested_version)
+                format!("{}@{}", action.name, action_effective_version(action))
             }
         }
     }
@@ -249,6 +263,8 @@ impl MiseProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -269,11 +285,11 @@ impl AsdfProvisioningBackend {
                 String::from("list"),
                 String::from("all"),
                 install_target.clone(),
-                action.requested_version.clone(),
+                action_effective_version(action).to_string(),
             ],
             format!(
                 "asdf list all {install_target} {}",
-                action.requested_version
+                action_effective_version(action)
             ),
         )
     }
@@ -304,6 +320,8 @@ impl AsdfProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -355,6 +373,8 @@ impl SdkmanProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -369,11 +389,11 @@ impl UvProvisioningBackend {
                 String::from("list"),
                 String::from("--managed-python"),
                 String::from("--all-versions"),
-                action.requested_version.clone(),
+                action_effective_version(action).to_string(),
             ],
             format!(
                 "uv python list --managed-python --all-versions {}",
-                action.requested_version
+                action_effective_version(action)
             ),
         )
     }
@@ -400,6 +420,8 @@ impl UvProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -467,6 +489,8 @@ impl WingetProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -532,6 +556,8 @@ impl ChocoProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -541,7 +567,7 @@ impl ScoopProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action.requested_version)
+                format!("{}@{}", action.name, action_effective_version(action))
             }
         }
     }
@@ -629,6 +655,8 @@ impl ScoopProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -638,7 +666,7 @@ impl BrewProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}@{}", action.name, action.requested_version)
+                format!("{}@{}", action.name, action_effective_version(action))
             }
         }
     }
@@ -721,6 +749,8 @@ impl BrewProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -768,6 +798,8 @@ impl PacmanProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -781,7 +813,7 @@ impl AptProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}={}", action.name, action.requested_version)
+                format!("{}={}", action.name, action_effective_version(action))
             }
         }
     }
@@ -917,6 +949,8 @@ impl AptProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
@@ -926,7 +960,7 @@ impl DnfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!("{}-{}", action.name, action.requested_version)
+                format!("{}-{}", action.name, action_effective_version(action))
             }
         }
     }
@@ -995,12 +1029,15 @@ impl DnfProvisioningBackend {
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         })
     }
 }
 
 pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) -> Option<String> {
+    let version = action_effective_version(action);
     let command = match action.source.as_str() {
         "mise" => format!(
             "mise install {}",
@@ -1009,26 +1046,26 @@ pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) ->
         "asdf" => format!(
             "asdf install {} {}",
             AsdfProvisioningBackend::install_target(action),
-            action.requested_version
+            version
         ),
         "sdkman" => format!(
             "sdk install {} {}",
             SdkmanProvisioningBackend::install_target(action),
-            action.requested_version
+            version
         ),
-        "uv" => format!("uv python install {}", action.requested_version),
+        "uv" => format!("uv python install {version}"),
         "winget" => {
             let install_target = WingetProvisioningBackend::install_target(action);
             let source_args = WingetProvisioningBackend::source_args(action);
             if source_args.is_empty() {
                 format!(
                     "winget install --id {install_target} --version {} --exact --accept-source-agreements --accept-package-agreements",
-                    action.requested_version
+                    version
                 )
             } else {
                 format!(
                     "winget install --id {install_target} --version {} --exact --accept-source-agreements --accept-package-agreements {}",
-                    action.requested_version,
+                    version,
                     source_args.join(" ")
                 )
             }
@@ -1039,12 +1076,12 @@ pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) ->
             if source_args.is_empty() {
                 format!(
                     "choco install {install_target} --version {} -y --no-progress",
-                    action.requested_version
+                    version
                 )
             } else {
                 format!(
                     "choco install {install_target} --version {} -y --no-progress {}",
-                    action.requested_version,
+                    version,
                     source_args.join(" ")
                 )
             }
@@ -1315,11 +1352,12 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let version = action_effective_version(action);
             let output = execute_provisioning_command(
                 target,
                 working_dir,
                 "asdf",
-                &["install", &install_target, &action.requested_version],
+                &["install", &install_target, version],
                 mode,
             )?;
 
@@ -1328,7 +1366,7 @@ impl ProvisioningBackend for AsdfProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("asdf install {install_target} {}", action.requested_version),
+                    command: format!("asdf install {install_target} {version}"),
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -1374,13 +1412,14 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let version = action_effective_version(action);
             let output = execute_provisioning_command(
                 target,
                 working_dir,
                 "bash",
                 &[
                     "-c",
-                    &Self::sdkman_command("install", &install_target, &action.requested_version),
+                    &Self::sdkman_command("install", &install_target, version),
                 ],
                 mode,
             )?;
@@ -1396,7 +1435,7 @@ impl ProvisioningBackend for SdkmanProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("sdk install {install_target} {}", action.requested_version),
+                    command: format!("sdk install {install_target} {version}"),
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -1441,11 +1480,12 @@ impl ProvisioningBackend for UvProvisioningBackend {
                 });
             }
 
+            let version = action_effective_version(action);
             let output = execute_provisioning_command(
                 target,
                 working_dir,
                 "uv",
-                &["python", "install", &action.requested_version],
+                &["python", "install", version],
                 mode,
             )?;
 
@@ -1454,7 +1494,7 @@ impl ProvisioningBackend for UvProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: format!("uv python install {}", action.requested_version),
+                    command: format!("uv python install {version}"),
                     exit_code: output.exit_code,
                     stdout,
                     stderr,
@@ -1493,13 +1533,14 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let version = action_effective_version(action);
             let source_args = Self::source_args(action);
             let mut args = vec![
                 "install".to_string(),
                 "--id".to_string(),
                 install_target.clone(),
                 "--version".to_string(),
-                action.requested_version.clone(),
+                version.to_string(),
                 "--exact".to_string(),
                 "--accept-source-agreements".to_string(),
                 "--accept-package-agreements".to_string(),
@@ -1515,15 +1556,12 @@ impl ProvisioningBackend for WingetProvisioningBackend {
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: if source_args.is_empty() {
-                        format!(
-                            "winget install --id {install_target} --version {}",
-                            action.requested_version
-                        )
+                        format!("winget install --id {install_target} --version {}", version)
                     } else {
                         let source_arg = source_args.join(" ");
                         format!(
                             "winget install --id {install_target} --version {} {source_arg}",
-                            action.requested_version
+                            version
                         )
                     },
                     exit_code: output.exit_code,
@@ -1564,12 +1602,13 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             }
 
             let install_target = Self::install_target(action);
+            let version = action_effective_version(action);
             let source_args = Self::source_args(action);
             let mut args = vec![
                 "install".to_string(),
                 install_target.clone(),
                 "--version".to_string(),
-                action.requested_version.clone(),
+                version.to_string(),
                 "-y".to_string(),
                 "--no-progress".to_string(),
             ];
@@ -1584,10 +1623,8 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: {
-                        let mut command = format!(
-                            "choco install {install_target} --version {}",
-                            action.requested_version
-                        );
+                        let mut command =
+                            format!("choco install {install_target} --version {}", version);
                         if let Some(feed) = action
                             .source_config
                             .as_ref()
@@ -2600,6 +2637,8 @@ fn generic_failure_diagnosis(action: &ProvisioningAction) -> ProvisioningFailure
         target_kind: action.target_kind,
         name: action.name.clone(),
         requested_version: action.requested_version.clone(),
+        resolved_version: action.resolved_version.clone(),
+        policy_match: action.policy_match.clone(),
         kind: ProvisioningFailureKind::BackendFailed,
     }
 }
@@ -2717,7 +2756,9 @@ pub fn probe_mise_installability_with_target(
         });
     }
 
-    if json_or_text_output_contains_requested_version(&output.stdout, &action.requested_version) {
+    if action_version_matches_output(action, &output.stdout)
+        || action_version_matches_output(action, &output.stderr)
+    {
         return Ok(());
     }
 
@@ -2731,6 +2772,8 @@ pub fn probe_mise_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -2770,7 +2813,9 @@ pub fn probe_asdf_installability_with_target(
         });
     }
 
-    if text_output_contains_requested_version(&output.stdout, &action.requested_version) {
+    if action_version_matches_output(action, &output.stdout)
+        || action_version_matches_output(action, &output.stderr)
+    {
         return Ok(());
     }
 
@@ -2784,6 +2829,8 @@ pub fn probe_asdf_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -2839,8 +2886,8 @@ pub fn probe_sdkman_installability_with_target(
         });
     }
 
-    if text_output_contains_requested_version(&output.stdout, &action.requested_version)
-        || text_output_contains_requested_version(&output.stderr, &action.requested_version)
+    if action_version_matches_output(action, &output.stdout)
+        || action_version_matches_output(action, &output.stderr)
     {
         return Ok(());
     }
@@ -2855,6 +2902,8 @@ pub fn probe_sdkman_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -2901,8 +2950,8 @@ pub fn probe_uv_installability_with_target(
         });
     }
 
-    if text_output_contains_requested_version(&output.stdout, &action.requested_version)
-        || text_output_contains_requested_version(&output.stderr, &action.requested_version)
+    if action_version_matches_output(action, &output.stdout)
+        || action_version_matches_output(action, &output.stderr)
     {
         return Ok(());
     }
@@ -2917,6 +2966,8 @@ pub fn probe_uv_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -2957,7 +3008,7 @@ pub fn probe_winget_installability_with_target(
     }
 
     let combined = format!("{}\n{}", output.stdout, output.stderr);
-    if combined.contains(&action.requested_version) {
+    if action_version_matches_output(action, &combined) {
         return Ok(());
     }
 
@@ -2971,6 +3022,8 @@ pub fn probe_winget_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -3025,7 +3078,7 @@ pub fn probe_choco_installability_with_target(
         };
         if name.eq_ignore_ascii_case(package_name.as_str()) {
             saw_package = true;
-            if version == action.requested_version {
+            if version == action_effective_version(action) {
                 return Ok(());
             }
         }
@@ -3046,6 +3099,8 @@ pub fn probe_choco_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind,
         },
     })
@@ -3095,7 +3150,10 @@ pub fn probe_scoop_installability_with_target(
         })
         .or_else(|| scoop_manifest_version_from_text(&output.stdout));
 
-    if manifest_version.as_deref() == Some(action.requested_version.as_str()) {
+    if manifest_version
+        .as_deref()
+        .is_some_and(|version| action_version_matches_output(action, version))
+    {
         return Ok(());
     }
 
@@ -3109,6 +3167,8 @@ pub fn probe_scoop_installability_with_target(
             target_kind: action.target_kind,
             name: action.name.clone(),
             requested_version: action.requested_version.clone(),
+            resolved_version: action.resolved_version.clone(),
+            policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
     })
@@ -3305,40 +3365,6 @@ fn text_output_contains_requested_version(value: &str, request: &str) -> bool {
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .any(|token| version_matches_request(token, request))
-}
-
-fn collect_json_string_values(value: &JsonValue, values: &mut Vec<String>) {
-    match value {
-        JsonValue::String(text) => values.push(text.clone()),
-        JsonValue::Array(items) => {
-            for item in items {
-                collect_json_string_values(item, values);
-            }
-        }
-        JsonValue::Object(object) => {
-            if let Some(version) = object.get("version").and_then(JsonValue::as_str) {
-                values.push(version.to_string());
-            }
-            for item in object.values() {
-                collect_json_string_values(item, values);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn json_or_text_output_contains_requested_version(value: &str, request: &str) -> bool {
-    if let Ok(json) = serde_json::from_str::<JsonValue>(value) {
-        let mut values = Vec::new();
-        collect_json_string_values(&json, &mut values);
-        if values
-            .iter()
-            .any(|candidate| version_matches_request(candidate, request))
-        {
-            return true;
-        }
-    }
-    text_output_contains_requested_version(value, request)
 }
 
 fn shell_command(command: &str, args: &[&str]) -> String {
@@ -3624,9 +3650,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3665,9 +3694,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3734,9 +3766,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "asdf".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3776,9 +3811,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "sdkman".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3812,9 +3850,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "java".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "sdkman".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3852,9 +3893,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "python".to_string(),
                 requested_version: "3.12".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "uv".to_string(),
                 source_config: None,
                 approved_version: Some("3.12".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3894,9 +3938,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "maven".to_string(),
                 requested_version: "3.9".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "winget".to_string(),
                 source_config: None,
                 approved_version: Some("3.9".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3938,12 +3985,15 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "maven".to_string(),
                 requested_version: "3.9".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "winget".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     String::from("source_name"),
                     Value::String("internal-winget".to_string()),
                 )])),
                 approved_version: Some("3.9".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -3983,9 +4033,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "choco".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4025,12 +4078,15 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "node".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "choco".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     "feed".to_string(),
                     serde_yaml::Value::String("internal-choco".to_string()),
                 )])),
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4072,9 +4128,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "scoop".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4113,6 +4172,8 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "scoop".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
@@ -4125,6 +4186,7 @@ mod tests {
                     ),
                 ])),
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4162,9 +4224,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "choco".to_string(),
                 requested_version: "1.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "choco-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("2.0.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4197,9 +4262,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "scoop".to_string(),
                 requested_version: "1.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "scoop-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("2.0.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4232,9 +4300,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "winget".to_string(),
                 requested_version: "1.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "winget-bootstrap".to_string(),
                 source_config: None,
                 approved_version: Some("1.8.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4272,6 +4343,8 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "curl".to_string(),
                 requested_version: "8.7.1".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "apt".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([(
                     String::from("sources_list"),
@@ -4280,6 +4353,7 @@ mod tests {
                     )]),
                 )])),
                 approved_version: Some("8.7.1".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4320,9 +4394,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "jq".to_string(),
                 requested_version: "1.7".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "brew".to_string(),
                 source_config: None,
                 approved_version: Some("1.7".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4361,6 +4438,8 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "brew".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
@@ -4373,6 +4452,7 @@ mod tests {
                     ),
                 ])),
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4414,9 +4494,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "pacman".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4456,9 +4539,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "jq".to_string(),
                 requested_version: "1.7".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "apt".to_string(),
                 source_config: None,
                 approved_version: Some("1.7".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4504,9 +4590,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "curl".to_string(),
                 requested_version: "8.13.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "apt".to_string(),
                 source_config: None,
                 approved_version: Some("8.13.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4568,9 +4657,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: "node".to_string(),
                 requested_version: "22".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "mise".to_string(),
                 source_config: None,
                 approved_version: Some("22".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -4631,9 +4723,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "jq".to_string(),
             requested_version: "1.7.1".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "apt".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4692,9 +4787,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Runtime,
             name: "node".to_string(),
             requested_version: "22".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "brew".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4753,9 +4851,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "jq".to_string(),
             requested_version: "1.7.1".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "dnf".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4814,9 +4915,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "jq".to_string(),
             requested_version: "1.7.1".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "pacman".to_string(),
             source_config: None,
             approved_version: Some("1.7.1".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4875,9 +4979,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "Microsoft.VisualStudioCode".to_string(),
             requested_version: "1.88.0".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "winget".to_string(),
             source_config: None,
             approved_version: Some("1.88.0".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4933,9 +5040,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "git".to_string(),
             requested_version: "2.47.0".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "choco".to_string(),
             source_config: None,
             approved_version: Some("2.47.0".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -4991,9 +5101,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Tool,
             name: "neovim".to_string(),
             requested_version: "0.10.1".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "scoop".to_string(),
             source_config: None,
             approved_version: Some("0.10.1".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -5049,9 +5162,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Runtime,
             name: "node".to_string(),
             requested_version: "22".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "mise".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -5107,9 +5223,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Runtime,
             name: "node".to_string(),
             requested_version: "22".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "asdf".to_string(),
             source_config: None,
             approved_version: Some("22".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -5165,9 +5284,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Runtime,
             name: "java".to_string(),
             requested_version: "21".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "sdkman".to_string(),
             source_config: None,
             approved_version: Some("21".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -5223,9 +5345,12 @@ mod tests {
             target_kind: ProvisioningTargetKind::Runtime,
             name: "python".to_string(),
             requested_version: "3.12".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
             source: "uv".to_string(),
             source_config: None,
             approved_version: Some("3.12".to_string()),
+            policy_match: None,
         };
 
         let result = probe_provisioning_installability_with_target(
@@ -5276,9 +5401,12 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "dnf".to_string(),
                 source_config: None,
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 
@@ -5318,6 +5446,8 @@ mod tests {
                 target_kind: ProvisioningTargetKind::Tool,
                 name: "git".to_string(),
                 requested_version: "2.46.0".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: "dnf".to_string(),
                 source_config: Some(std::collections::BTreeMap::from([
                     (
@@ -5330,6 +5460,7 @@ mod tests {
                     ),
                 ])),
                 approved_version: Some("2.46.0".to_string()),
+                policy_match: None,
             }],
         };
 

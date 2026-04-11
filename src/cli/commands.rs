@@ -14558,18 +14558,24 @@ tasks:
                             target_kind: ProvisioningTargetKind::Runtime,
                             name: String::from("java"),
                             requested_version: String::from("21"),
+                            normalized_requirement: None,
+                            resolved_version: None,
                             source: String::from("sdkman"),
                             source_config: None,
                             approved_version: Some(String::from("21")),
+                            policy_match: None,
                         },
                         ProvisioningAction {
                             kind: ProvisioningActionKind::SelectSource,
                             target_kind: ProvisioningTargetKind::Tool,
                             name: String::from("node"),
                             requested_version: String::from("22"),
+                            normalized_requirement: None,
+                            resolved_version: None,
                             source: String::from("brew"),
                             source_config: None,
                             approved_version: Some(String::from("22")),
+                            policy_match: None,
                         },
                     ],
                 },
@@ -15600,9 +15606,12 @@ policies:
                             target_kind: ProvisioningTargetKind::Tool,
                             name: String::from("sdkman"),
                             requested_version: String::from("1.0"),
+                            normalized_requirement: None,
+                            resolved_version: None,
                             source: String::from("sdkman-bootstrap"),
                             source_config: None,
                             approved_version: None,
+                            policy_match: None,
                         }],
                     },
                     DoctorMode::Container,
@@ -15675,18 +15684,24 @@ policies:
                         target_kind: ProvisioningTargetKind::Tool,
                         name: String::from("brew"),
                         requested_version: String::from("4.4"),
+                        normalized_requirement: None,
+                        resolved_version: None,
                         source: String::from("brew-bootstrap"),
                         source_config: None,
                         approved_version: None,
+                        policy_match: None,
                     },
                     ProvisioningAction {
                         kind: ProvisioningActionKind::SelectSource,
                         target_kind: ProvisioningTargetKind::Tool,
                         name: String::from("sdkman"),
                         requested_version: String::from("1.0"),
+                        normalized_requirement: None,
+                        resolved_version: None,
                         source: String::from("sdkman-bootstrap"),
                         source_config: None,
                         approved_version: None,
+                        policy_match: None,
                     },
                 ],
             },
@@ -15781,9 +15796,12 @@ policies:
                 target_kind: ProvisioningTargetKind::Runtime,
                 name: String::from("java"),
                 requested_version: String::from("21"),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: String::from("sdkman"),
                 source_config: None,
                 approved_version: Some(String::from("21")),
+                policy_match: None,
             }],
         };
 
@@ -15813,9 +15831,12 @@ policies:
                 target_kind: ProvisioningTargetKind::Tool,
                 name: String::from("brew"),
                 requested_version: String::from("4.4"),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: String::from("brew-bootstrap"),
                 source_config: None,
                 approved_version: None,
+                policy_match: None,
             }],
         };
 
@@ -17222,8 +17243,12 @@ fn execution_policy_lines(
         .into_iter()
         .map(|action| {
             let mut line = format!(
-                "{} {} {} via {}",
-                action.target_kind, action.name, action.requested_version, action.source
+                "{} {} {} via {}{}",
+                action.target_kind,
+                action.name,
+                action.version_display(),
+                action.source,
+                action.policy_display_suffix()
             );
             if let Some(source_config) = source_config_summary(action.source_config.as_ref()) {
                 line.push_str(&format!(" (source_config: {source_config})"));
@@ -19620,13 +19645,12 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
 }
 
 fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningAction) -> String {
-    let version = action
-        .approved_version
-        .as_deref()
-        .unwrap_or(action.requested_version.as_str());
     format!(
-        "provision `{}` `{}` via `{}`",
-        action.name, version, action.source
+        "provision `{}` `{}` via `{}`{}",
+        action.name,
+        action.version_display(),
+        action.source,
+        action.policy_display_suffix()
     )
 }
 

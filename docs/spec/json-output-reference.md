@@ -305,16 +305,20 @@ Root monorepo summary output can also include grouped member results:
         "kind": "runtime",
         "name": "java",
         "requested_version": "22",
+        "normalized_requirement": ">=22.0.0 <23.0.0",
         "source": "org-mirror",
         "approved_version": "22",
+        "policy_match": "22",
         "blocked_reason": null
       },
       {
         "kind": "tool",
         "name": "maven",
         "requested_version": "3.9",
+        "normalized_requirement": ">=3.9.0 <3.10.0",
         "source": "approved-manager",
         "approved_version": "3.9",
+        "policy_match": "3.9",
         "blocked_reason": null
       }
     ],
@@ -325,16 +329,20 @@ Root monorepo summary output can also include grouped member results:
         "target_kind": "runtime",
         "name": "java",
         "requested_version": "22",
+        "normalized_requirement": ">=22.0.0 <23.0.0",
         "source": "org-mirror",
-        "approved_version": "22"
+        "approved_version": "22",
+        "policy_match": "22"
       },
       {
         "kind": "select_source",
         "target_kind": "tool",
         "name": "maven",
         "requested_version": "3.9",
+        "normalized_requirement": ">=3.9.0 <3.10.0",
         "source": "approved-manager",
-        "approved_version": "3.9"
+        "approved_version": "3.9",
+        "policy_match": "3.9"
       }
     ]
   },
@@ -380,6 +388,14 @@ When that plan exists, `ota doctor --json` also includes a top-level `provisioni
 object. It is the backend intake form and carries only the selected `actions` from the read-only
 plan, so an installer backend can consume the request without re-deriving policy decisions from
 the diagnostic payload.
+
+Provisioning plan entries and request actions may also include additive semver-audit fields:
+`normalized_requirement`, `resolved_version`, and `policy_match`. `normalized_requirement`
+captures the semver intent ota matched against policy, `policy_match` records the exact approved
+policy entry that authorized the request, and `resolved_version` appears only when policy provided
+an explicit concrete version for deterministic installation. Range-only policy approval does not
+invent a concrete install version, and when `resolved_version` is absent ota continues to pass the
+original `requested_version` to the backend.
 
 `ota doctor --json` and `ota workspace doctor --json` may also include a top-level
 `finding_groups` array when the output contains repeated-action groups. Each entry includes a

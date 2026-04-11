@@ -32,6 +32,7 @@
 - extended `ota workspace init --json` and `ota workspace detect --json` with per-field scaffold provenance so machine consumers can distinguish workspace-derived repo entries, preserved workspace-declared merge fields, and template-derived workspace defaults.
 - added `ota policy init` with `--dry-run`, `--json`, and explicit starter presets (`required-sections`, `provisioning`, and `agent`) so teams can scaffold a conservative minimal `.ota/org-policy.yaml` starter or choose a stronger reviewed starting point without overwriting an existing policy pack.
 - made bare `ota policy init --dry-run` more discoverable by listing the preset preview commands alongside the default minimal policy-pack preview, while keeping preset-specific dry runs faithful to the exact file they would write.
+- added semver-aware policy-backed provisioning approval so `approved_versions` can authorize major shorthand and semver ranges, while doctor JSON and policy-aware receipt text now surface `requested_version`, `normalized_requirement`, `policy_match`, and `resolved_version` without inventing concrete install versions from range-only policy.
 
 ## 1.4.0
 

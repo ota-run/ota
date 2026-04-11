@@ -124,6 +124,20 @@
                 }
               }
             },
+            "provisioning": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["plan", "request"],
+              "properties": {
+                "plan": { "$ref": "./shared.json#/$defs/provisioningPlan" },
+                "request": {
+                  "$ref": "./shared.json#/$defs/provisioningBackendRequest"
+                }
+              }
+            },
+            "adapter_bootstrap": {
+              "$ref": "./shared.json#/$defs/adapterBootstrapDiagnostics"
+            },
             "findings": {
               "type": "array",
               "items": { "$ref": "./shared.json#/$defs/finding" }

@@ -27,6 +27,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use semver::{Comparator, Op, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 
 use crate::workspace::DEFAULT_WORKSPACE_FILE;
@@ -205,9 +206,15 @@ pub struct ProvisioningDecision {
     pub kind: ProvisioningTargetKind,
     pub name: String,
     pub requested_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_requirement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
     pub source: String,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_match: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -224,9 +231,15 @@ pub struct ProvisioningAction {
     pub target_kind: ProvisioningTargetKind,
     pub name: String,
     pub requested_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_requirement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
     pub source: String,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_match: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -239,9 +252,15 @@ pub struct ProvisioningPlanEntry {
     pub kind: ProvisioningTargetKind,
     pub name: String,
     pub requested_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_requirement: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
     pub source: Option<String>,
     pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     pub approved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_match: Option<String>,
     pub blocked_reason: Option<String>,
 }
 
@@ -250,6 +269,38 @@ pub struct ProvisioningPlan {
     pub allowed: Vec<ProvisioningPlanEntry>,
     pub blocked: Vec<ProvisioningPlanEntry>,
     pub actions: Vec<ProvisioningAction>,
+}
+
+impl ProvisioningDecision {
+    pub fn install_version(&self) -> &str {
+        self.resolved_version
+            .as_deref()
+            .unwrap_or(self.requested_version.as_str())
+    }
+}
+
+impl ProvisioningAction {
+    pub fn install_version(&self) -> &str {
+        self.resolved_version
+            .as_deref()
+            .unwrap_or(self.requested_version.as_str())
+    }
+
+    pub fn version_display(&self) -> String {
+        match self.resolved_version.as_deref() {
+            Some(resolved) if resolved != self.requested_version => {
+                format!("{} -> {resolved}", self.requested_version)
+            }
+            _ => self.requested_version.clone(),
+        }
+    }
+
+    pub fn policy_display_suffix(&self) -> String {
+        self.policy_match
+            .as_ref()
+            .map(|rule| format!(" (policy: {rule})"))
+            .unwrap_or_default()
+    }
 }
 
 impl OrgPolicyPack {
@@ -316,30 +367,23 @@ impl OrgPolicyPack {
             ));
         }
 
-        if !rule.approved_versions().is_empty()
-            && !rule
-                .approved_versions()
-                .iter()
-                .any(|version| version == requested_version)
-        {
-            return Err(format!(
-                "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
-                kind.as_str(),
-                rule.approved_versions().join(", ")
-            ));
-        }
+        let version_match = evaluate_provisioning_version_match(
+            kind,
+            name,
+            requested_version,
+            rule.approved_versions(),
+        )?;
 
         Ok(Some(ProvisioningDecision {
             kind,
             name: name.to_string(),
             requested_version: requested_version.to_string(),
+            normalized_requirement: version_match.normalized_requirement,
+            resolved_version: version_match.resolved_version,
             source: rule.source().to_string(),
             source_config: rule.source_config().cloned(),
-            approved_version: rule
-                .approved_versions()
-                .iter()
-                .find(|version| version.as_str() == requested_version)
-                .cloned(),
+            approved_version: version_match.approved_version,
+            policy_match: version_match.policy_match,
         }))
     }
 
@@ -411,9 +455,12 @@ impl OrgPolicyPack {
                     .approved_version
                     .clone()
                     .unwrap_or_else(|| String::from("latest")),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: entry.source.unwrap_or_default(),
                 source_config: None,
                 approved_version: entry.approved_version,
+                policy_match: None,
             })
             .collect();
 
@@ -470,9 +517,12 @@ impl OrgPolicyPack {
                     target_kind: entry.kind,
                     name: entry.name.clone(),
                     requested_version: entry.requested_version.clone(),
+                    normalized_requirement: entry.normalized_requirement.clone(),
+                    resolved_version: entry.resolved_version.clone(),
                     source: source.clone(),
                     source_config: entry.source_config.clone(),
                     approved_version: entry.approved_version.clone(),
+                    policy_match: entry.policy_match.clone(),
                 })
             })
             .collect();
@@ -498,9 +548,12 @@ impl OrgPolicyPack {
                 kind: action.target_kind,
                 name: action.name,
                 requested_version: action.requested_version,
+                normalized_requirement: action.normalized_requirement,
+                resolved_version: action.resolved_version,
                 source: action.source,
                 source_config: action.source_config,
                 approved_version: action.approved_version,
+                policy_match: action.policy_match,
             })
             .collect()
     }
@@ -549,18 +602,24 @@ impl OrgPolicyPack {
                 kind,
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
+                normalized_requirement: decision.normalized_requirement.clone(),
+                resolved_version: decision.resolved_version.clone(),
                 source: Some(decision.source),
                 source_config: decision.source_config.clone(),
                 approved_version: decision.approved_version,
+                policy_match: decision.policy_match,
                 blocked_reason: None,
             }),
             Ok(None) => plan.blocked.push(ProvisioningPlanEntry {
                 kind,
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: None,
                 source_config: None,
                 approved_version: None,
+                policy_match: None,
                 blocked_reason: Some(format!(
                     "no approved provisioning source declared for {kind} `{name}`"
                 )),
@@ -569,13 +628,335 @@ impl OrgPolicyPack {
                 kind,
                 name: name.to_string(),
                 requested_version: requested_version.to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
                 source: None,
                 source_config: None,
                 approved_version: None,
+                policy_match: None,
                 blocked_reason: Some(message),
             }),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProvisioningVersionMatch {
+    normalized_requirement: Option<String>,
+    resolved_version: Option<String>,
+    approved_version: Option<String>,
+    policy_match: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedProvisioningRequirement {
+    normalized_requirement: String,
+    req: VersionReq,
+    sample: Version,
+    installable_without_resolution: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedPolicyVersionRule {
+    req: VersionReq,
+    concrete_version: Option<Version>,
+    exact_literal: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExplicitSemverSelector {
+    normalized_requirement: String,
+    req: VersionReq,
+    sample: Version,
+}
+
+fn evaluate_provisioning_version_match(
+    kind: ProvisioningTargetKind,
+    name: &str,
+    requested_version: &str,
+    approved_versions: &[String],
+) -> Result<ProvisioningVersionMatch, String> {
+    let parsed_request = parse_requested_provisioning_requirement(requested_version);
+    let normalized_requirement = parsed_request
+        .as_ref()
+        .map(|parsed| parsed.normalized_requirement.clone());
+
+    if approved_versions.is_empty() {
+        if parsed_request
+            .as_ref()
+            .is_some_and(|parsed| !parsed.installable_without_resolution)
+        {
+            return Err(format!(
+                "{} `{name}` requirement `{requested_version}` does not have an exact approved version; deterministic installation requires an explicit concrete policy candidate",
+                kind.as_str()
+            ));
+        }
+
+        return Ok(ProvisioningVersionMatch {
+            normalized_requirement,
+            resolved_version: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+
+    if let Some(policy_match) = approved_versions
+        .iter()
+        .find(|approved| approved.as_str() == requested_version)
+        .cloned()
+    {
+        return Ok(ProvisioningVersionMatch {
+            normalized_requirement,
+            resolved_version: parse_concrete_semver_candidate(&policy_match)
+                .map(|version| version.to_string()),
+            approved_version: Some(policy_match.clone()),
+            policy_match: Some(policy_match),
+        });
+    }
+
+    let Some(parsed_request) = parsed_request else {
+        return Err(format!(
+            "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+            kind.as_str(),
+            approved_versions.join(", ")
+        ));
+    };
+
+    let mut matching_rules = Vec::new();
+    let mut exact_candidates = Vec::new();
+
+    for approved in approved_versions {
+        let Some(rule) = parse_policy_version_rule(approved) else {
+            continue;
+        };
+
+        let matches = if parsed_request.installable_without_resolution {
+            rule.req.matches(&parsed_request.sample)
+        } else {
+            requirements_intersect(&parsed_request.req, &rule.req)
+        };
+
+        if !matches {
+            continue;
+        }
+
+        matching_rules.push((approved.clone(), rule.exact_literal));
+        if let Some(version) = rule.concrete_version
+            && parsed_request.req.matches(&version)
+        {
+            exact_candidates.push((approved.clone(), version));
+        }
+    }
+
+    if parsed_request.installable_without_resolution {
+        if let Some((policy_match, version)) = exact_candidates
+            .into_iter()
+            .max_by(|(_, left), (_, right)| left.cmp(right))
+        {
+            return Ok(ProvisioningVersionMatch {
+                normalized_requirement: Some(parsed_request.normalized_requirement),
+                resolved_version: Some(version.to_string()),
+                approved_version: Some(policy_match.clone()),
+                policy_match: Some(policy_match),
+            });
+        }
+
+        if let Some((policy_match, exact_literal)) = matching_rules.into_iter().next() {
+            return Ok(ProvisioningVersionMatch {
+                normalized_requirement: Some(parsed_request.normalized_requirement),
+                resolved_version: None,
+                approved_version: exact_literal.then_some(policy_match.clone()),
+                policy_match: Some(policy_match),
+            });
+        }
+    } else {
+        if let Some((policy_match, version)) = exact_candidates
+            .into_iter()
+            .max_by(|(_, left), (_, right)| left.cmp(right))
+        {
+            return Ok(ProvisioningVersionMatch {
+                normalized_requirement: Some(parsed_request.normalized_requirement),
+                resolved_version: Some(version.to_string()),
+                approved_version: Some(policy_match.clone()),
+                policy_match: Some(policy_match),
+            });
+        }
+
+        if let Some((policy_match, _)) = matching_rules.into_iter().next() {
+            return Err(format!(
+                "{} `{name}` requirement `{requested_version}` is authorized by policy match `{policy_match}`, but no exact approved version is declared for deterministic installation",
+                kind.as_str()
+            ));
+        }
+    }
+
+    Err(format!(
+        "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+        kind.as_str(),
+        approved_versions.join(", ")
+    ))
+}
+
+fn parse_requested_provisioning_requirement(value: &str) -> Option<ParsedProvisioningRequirement> {
+    if let Some(selector) = parse_explicit_semver_selector(value) {
+        return Some(ParsedProvisioningRequirement {
+            normalized_requirement: selector.normalized_requirement,
+            req: selector.req,
+            sample: selector.sample,
+            installable_without_resolution: true,
+        });
+    }
+
+    let req = parse_semver_requirement(value)?;
+    let sample = minimum_matching_version(&req)?;
+    Some(ParsedProvisioningRequirement {
+        normalized_requirement: value.trim().to_string(),
+        req,
+        sample,
+        installable_without_resolution: false,
+    })
+}
+
+fn parse_policy_version_rule(value: &str) -> Option<ParsedPolicyVersionRule> {
+    if let Some(selector) = parse_explicit_semver_selector(value) {
+        return Some(ParsedPolicyVersionRule {
+            req: selector.req,
+            concrete_version: parse_concrete_semver_candidate(value),
+            exact_literal: true,
+        });
+    }
+
+    let req = parse_semver_requirement(value)?;
+    Some(ParsedPolicyVersionRule {
+        req,
+        concrete_version: None,
+        exact_literal: false,
+    })
+}
+
+fn parse_explicit_semver_selector(value: &str) -> Option<ExplicitSemverSelector> {
+    let parts = parse_numeric_semver_parts(value)?;
+    match parts.as_slice() {
+        [major] => {
+            let sample = Version::new(*major, 0, 0);
+            let normalized_requirement = format!(">={major}.0.0 <{}.0.0", major + 1);
+            let req = format!(">={major}.0.0, <{}.0.0", major + 1);
+            Some(ExplicitSemverSelector {
+                req: VersionReq::parse(&req).ok()?,
+                normalized_requirement,
+                sample,
+            })
+        }
+        [major, minor] => {
+            let sample = Version::new(*major, *minor, 0);
+            let normalized_requirement = format!(">={major}.{minor}.0 <{major}.{}.0", minor + 1);
+            let req = format!(">={major}.{minor}.0, <{major}.{}.0", minor + 1);
+            Some(ExplicitSemverSelector {
+                req: VersionReq::parse(&req).ok()?,
+                normalized_requirement,
+                sample,
+            })
+        }
+        [major, minor, patch] => {
+            let sample = Version::new(*major, *minor, *patch);
+            let normalized_requirement = format!("={major}.{minor}.{patch}");
+            Some(ExplicitSemverSelector {
+                req: VersionReq::parse(&normalized_requirement).ok()?,
+                normalized_requirement,
+                sample,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn parse_numeric_semver_parts(value: &str) -> Option<Vec<u64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || !trimmed.chars().all(|ch| ch.is_ascii_digit() || ch == '.') {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    for part in trimmed.split('.') {
+        if part.is_empty() {
+            return None;
+        }
+        parts.push(part.parse().ok()?);
+    }
+
+    (1..=3).contains(&parts.len()).then_some(parts)
+}
+
+fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
+    let trimmed = value.trim();
+    VersionReq::parse(trimmed).ok().or_else(|| {
+        let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(", ");
+        (normalized != trimmed)
+            .then(|| VersionReq::parse(&normalized).ok())
+            .flatten()
+    })
+}
+
+fn parse_concrete_semver_candidate(value: &str) -> Option<Version> {
+    let parts = parse_numeric_semver_parts(value)?;
+    match parts.as_slice() {
+        [major, minor, patch] => Some(Version::new(*major, *minor, *patch)),
+        _ => None,
+    }
+}
+
+fn requirements_intersect(left: &VersionReq, right: &VersionReq) -> bool {
+    let combined = VersionReq {
+        comparators: left
+            .comparators
+            .iter()
+            .cloned()
+            .chain(right.comparators.iter().cloned())
+            .collect(),
+    };
+
+    minimum_matching_version(&combined)
+        .map(|candidate| combined.matches(&candidate))
+        .unwrap_or(false)
+}
+
+fn minimum_matching_version(req: &VersionReq) -> Option<Version> {
+    let candidate = req
+        .comparators
+        .iter()
+        .filter_map(comparator_lower_bound)
+        .max()
+        .unwrap_or_else(|| Version::new(0, 0, 0));
+    req.matches(&candidate).then_some(candidate)
+}
+
+fn comparator_lower_bound(comparator: &Comparator) -> Option<Version> {
+    let base = Version::new(
+        comparator.major,
+        comparator.minor.unwrap_or(0),
+        comparator.patch.unwrap_or(0),
+    );
+
+    match comparator.op {
+        Op::Exact | Op::GreaterEq | Op::Tilde | Op::Caret | Op::Wildcard => Some(base),
+        Op::Greater => Some(increment_version(
+            &base,
+            comparator.minor.is_some(),
+            comparator.patch.is_some(),
+        )),
+        Op::Less | Op::LessEq => None,
+        _ => None,
+    }
+}
+
+fn increment_version(base: &Version, _has_minor: bool, has_patch: bool) -> Version {
+    let mut version = base.clone();
+    if has_patch {
+        version.patch += 1;
+    } else {
+        version.patch = 1;
+    }
+    version
 }
 
 fn validate_source_rules<T>(rules: &BTreeMap<String, T>, label: &str) -> Result<(), String>
@@ -1464,7 +1845,13 @@ policies:
             .unwrap();
 
         assert_eq!(decision.source, "org-mirror");
+        assert_eq!(
+            decision.normalized_requirement.as_deref(),
+            Some(">=22.0.0 <23.0.0")
+        );
+        assert_eq!(decision.resolved_version.as_deref(), None);
         assert_eq!(decision.approved_version.as_deref(), Some("22"));
+        assert_eq!(decision.policy_match.as_deref(), Some("22"));
     }
 
     #[test]
@@ -1487,7 +1874,125 @@ policies:
             .unwrap();
 
         assert_eq!(decision.source, "approved-manager");
+        assert_eq!(
+            decision.normalized_requirement.as_deref(),
+            Some(">=3.9.0 <3.10.0")
+        );
+        assert_eq!(decision.resolved_version.as_deref(), None);
         assert_eq!(decision.approved_version.as_deref(), Some("3.9"));
+        assert_eq!(decision.policy_match.as_deref(), Some("3.9"));
+    }
+
+    #[test]
+    fn matches_semver_policy_range_for_major_version_request() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "^24"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "node", "24")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "brew");
+        assert_eq!(
+            decision.normalized_requirement.as_deref(),
+            Some(">=24.0.0 <25.0.0")
+        );
+        assert_eq!(decision.resolved_version, None);
+        assert_eq!(decision.approved_version, None);
+        assert_eq!(decision.policy_match.as_deref(), Some("^24"));
+    }
+
+    #[test]
+    fn resolves_exact_policy_candidate_for_range_request() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22.11.0"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "node", ">=18")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(decision.source, "brew");
+        assert_eq!(decision.normalized_requirement.as_deref(), Some(">=18"));
+        assert_eq!(decision.resolved_version.as_deref(), Some("22.11.0"));
+        assert_eq!(decision.approved_version.as_deref(), Some("22.11.0"));
+        assert_eq!(decision.policy_match.as_deref(), Some("22.11.0"));
+    }
+
+    #[test]
+    fn rejects_range_only_policy_for_non_deterministic_range_request() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "^22"
+"#,
+        )
+        .unwrap();
+
+        let error = policy
+            .resolve_provisioning(ProvisioningTargetKind::Runtime, "node", ">=18")
+            .unwrap_err();
+
+        assert!(error.contains("authorized by policy match `^22`"));
+        assert!(error.contains("no exact approved version is declared"));
+    }
+
+    #[test]
+    fn provisioning_backend_request_carries_semver_audit_fields() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22.11.0"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: demo
+runtimes:
+  node: ">=18"
+"#,
+        )
+        .unwrap();
+
+        let request = policy.provisioning_backend_request_for_os("macos", &contract);
+
+        assert_eq!(request.actions.len(), 1);
+        let action = &request.actions[0];
+        assert_eq!(action.requested_version, ">=18");
+        assert_eq!(action.normalized_requirement.as_deref(), Some(">=18"));
+        assert_eq!(action.resolved_version.as_deref(), Some("22.11.0"));
+        assert_eq!(action.policy_match.as_deref(), Some("22.11.0"));
+        assert_eq!(action.install_version(), "22.11.0");
     }
 
     #[test]

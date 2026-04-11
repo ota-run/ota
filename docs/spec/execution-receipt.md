@@ -79,18 +79,11 @@ The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`
 `lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`, `ota run`,
 `ota up`, and workspace execution flows. Repo receipts now also include a `Policy:`
 section when policy-backed provisioning is present, listing the selected source and
-any backend-specific source config. On failure, the normal text output keeps `Why`
+any backend-specific source config. When semver-aware policy approval selects an
+exact install candidate, that `Policy:` section also shows the requested version,
+the resolved install version, and the matched policy rule. On failure, the normal text output keeps `Why`
 and `Next` before the trailing summary block. The receipt keeps the structured
 summary data for JSON and optional receipt output.
-
-Future policy-backed provisioning receipts should additionally be able to record:
-
-- the requested runtime or tool
-- the approved source that won
-- the version or distribution that was selected
-- whether the action was install, select, or verify-only
-- whether policy allowed mutation for that decision
-- backend-specific source config in structured and text output
 
 ## Behavior
 

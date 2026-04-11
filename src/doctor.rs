@@ -126,6 +126,34 @@ struct ContainerProbeContext {
     engine: String,
 }
 
+fn provisioning_action_audit_summary(action: &ProvisioningAction) -> String {
+    format!(
+        "{} {} {} via {}{}",
+        action.target_kind,
+        action.name,
+        action.version_display(),
+        action.source,
+        action.policy_display_suffix()
+    )
+}
+
+fn provisioning_diagnosis_requirement_summary(diagnosis: &ProvisioningFailureDiagnosis) -> String {
+    let request = format!("`{} {}`", diagnosis.name, diagnosis.requested_version);
+    match (
+        diagnosis.resolved_version.as_deref(),
+        diagnosis.policy_match.as_deref(),
+    ) {
+        (Some(resolved), Some(rule)) if resolved != diagnosis.requested_version => {
+            format!("{request}; policy resolves that to `{resolved}` using rule `{rule}`")
+        }
+        (Some(resolved), None) if resolved != diagnosis.requested_version => {
+            format!("{request}; ota resolves that to `{resolved}`")
+        }
+        (_, Some(rule)) => format!("{request}; policy approves it using rule `{rule}`"),
+        _ => request,
+    }
+}
+
 pub(crate) fn provisioning_installability_finding(
     diagnosis: &ProvisioningFailureDiagnosis,
     target: &ProvisioningExecutionTarget,
@@ -151,8 +179,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the Linux/container target requests `{} {}`, but the configured apt sources do not provide that version",
-                diagnosis.name, diagnosis.requested_version
+                "the Linux/container target requests {}, but the configured apt sources do not provide that version",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "update the selected container image{image_hint} or its apt sources, or relax the Linux/container version pin for `{}`, then rerun `{rerun_command}`",
@@ -189,8 +217,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the Linux/container target could not refresh apt indexes, so ota could not verify or install `{} {}`",
-                diagnosis.name, diagnosis.requested_version
+                "the Linux/container target could not refresh apt indexes, so ota could not verify or install {}",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "fix apt repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
@@ -207,9 +235,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the Linux/container target requests `{} {}`, but the configured `{backend}` provisioning path does not provide that version inside container image `{}`",
-                diagnosis.name,
-                diagnosis.requested_version,
+                "the Linux/container target requests {}, but the configured `{backend}` provisioning path does not provide that version inside container image `{}`",
+                provisioning_diagnosis_requirement_summary(diagnosis),
                 image.unwrap_or("unknown")
             ),
             next: format!(
@@ -248,8 +275,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the Linux/container target could not refresh the configured `{backend}` sources, so ota could not verify or install `{} {}`",
-                diagnosis.name, diagnosis.requested_version
+                "the Linux/container target could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "fix `{backend}` repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
@@ -262,9 +289,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the Linux/container target requests `{} {}`, but the configured `{backend}` provisioning path could not satisfy it inside container image `{}`",
-                diagnosis.name,
-                diagnosis.requested_version,
+                "the Linux/container target requests {}, but the configured `{backend}` provisioning path could not satisfy it inside container image `{}`",
+                provisioning_diagnosis_requirement_summary(diagnosis),
                 image.unwrap_or("unknown")
             ),
             next: format!(
@@ -283,8 +309,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the host target requests `{} {}`, but the configured `{backend}` provisioning path could not provide that version",
-                diagnosis.name, diagnosis.requested_version
+                "the host target requests {}, but the configured `{backend}` provisioning path could not provide that version",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "fix the host `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
@@ -321,8 +347,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the host target could not refresh the configured `{backend}` sources, so ota could not verify or install `{} {}`",
-                diagnosis.name, diagnosis.requested_version
+                "the host target could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "fix the host `{backend}` repository access, then rerun `{rerun_command}`"
@@ -335,8 +361,8 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
             why: format!(
-                "the host target requests `{} {}`, but the configured `{backend}` provisioning path could not satisfy it",
-                diagnosis.name, diagnosis.requested_version
+                "the host target requests {}, but the configured `{backend}` provisioning path could not satisfy it",
+                provisioning_diagnosis_requirement_summary(diagnosis)
             ),
             next: format!(
                 "fix the host `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
@@ -1578,12 +1604,7 @@ fn diagnose_org_policy(
             let matched_targets: Vec<String> = policy_pack
                 .selected_provisioning_actions_for_os(policy_os, contract)
                 .into_iter()
-                .map(|entry| {
-                    format!(
-                        "{} {} {} via {}",
-                        entry.target_kind, entry.name, entry.requested_version, entry.source
-                    )
-                })
+                .map(|entry| provisioning_action_audit_summary(&entry))
                 .collect();
 
             findings.push(Finding {
