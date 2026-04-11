@@ -14354,7 +14354,7 @@ tasks:
             .expect("repos.web.path provenance");
         assert_eq!(repo_path["provenance"], "workspace-derived");
         assert_eq!(repo_path["provenance_key"], "workspace_scaffold");
-        assert_eq!(repo_path["source"], "apps/web/ota.yaml");
+        assert_eq!(repo_path["source"], "workspace-discovery");
 
         let repo_required = provenance
             .iter()
@@ -14427,6 +14427,172 @@ repos:
 
         let workspace = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
         assert!(workspace.contains("services/api"));
+    }
+
+    #[test]
+    fn workspace_detect_merge_json_reports_the_actual_merged_contract_and_provenance() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        let api_dir = fixture.path().join("services").join("api");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::create_dir_all(&api_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            api_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  setup:
+    run: echo api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+  description: Existing workspace
+repos:
+  web:
+    path: apps/web
+    required: false
+policies:
+  org:
+    source: local
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--merge",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], false);
+        assert_eq!(
+            json["config"]["workspace"]["description"],
+            "Existing workspace"
+        );
+        assert_eq!(json["config"]["repos"]["web"]["required"], false);
+        assert_eq!(json["config"]["repos"]["api"]["path"], "services/api");
+        assert_eq!(json["config"]["repos"]["api"]["required"], true);
+        assert_eq!(json["config"]["policies"]["org"]["source"], "local");
+
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let workspace_description = provenance
+            .iter()
+            .find(|entry| entry["field"] == "workspace.description")
+            .expect("workspace.description provenance");
+        assert_eq!(workspace_description["provenance"], "workspace-declared");
+        assert_eq!(
+            workspace_description["provenance_key"],
+            "workspace_contract"
+        );
+        assert_eq!(
+            workspace_description["source"],
+            "existing-workspace-contract"
+        );
+
+        let web_required = provenance
+            .iter()
+            .find(|entry| entry["field"] == "repos.web.required")
+            .expect("repos.web.required provenance");
+        assert_eq!(web_required["provenance"], "workspace-declared");
+        assert_eq!(web_required["provenance_key"], "workspace_contract");
+
+        let api_path = provenance
+            .iter()
+            .find(|entry| entry["field"] == "repos.api.path")
+            .expect("repos.api.path provenance");
+        assert_eq!(api_path["provenance"], "workspace-derived");
+        assert_eq!(api_path["provenance_key"], "workspace_scaffold");
+        assert_eq!(api_path["source"], "workspace-discovery");
+    }
+
+    #[test]
+    fn workspace_detect_merge_json_no_change_keeps_existing_contract_truthful() {
+        let fixture = TempDir::new().unwrap();
+        let web_dir = fixture.path().join("apps").join("web");
+        fs::create_dir_all(&web_dir).unwrap();
+        fs::write(
+            web_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+  description: Existing workspace
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+        let before = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "detect",
+            "--merge",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], false);
+        assert_eq!(json["comparison"]["additions"], serde_json::json!([]));
+        assert_eq!(
+            json["config"]["workspace"]["description"],
+            "Existing workspace"
+        );
+        assert_eq!(json["config"]["repos"]["web"]["required"], false);
+
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let web_path = provenance
+            .iter()
+            .find(|entry| entry["field"] == "repos.web.path")
+            .expect("repos.web.path provenance");
+        assert_eq!(web_path["provenance"], "workspace-declared");
+        assert_eq!(web_path["provenance_key"], "workspace_contract");
+
+        let after = fs::read_to_string(fixture.path().join("ota.workspace.yaml")).unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]

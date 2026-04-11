@@ -33,7 +33,9 @@
               "required": ["name"],
               "properties": {
                 "name": { "type": "string" },
-                "description": { "type": "string" }
+                "description": { "type": "string" },
+                "git_base": { "type": "string" },
+                "policy": { "type": "string" }
               }
             },
             "repos": {
@@ -44,9 +46,27 @@
                 "required": ["path", "required"],
                 "properties": {
                   "path": { "type": "string" },
-                  "required": { "type": "boolean" }
+                  "contract": { "type": "string" },
+                  "required": { "type": "boolean" },
+                  "depends_on": {
+                    "type": "array",
+                    "items": { "type": "string" }
+                  },
+                  "source": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "git": { "type": "string" },
+                      "repo": { "type": "string" },
+                      "ref": { "type": "string" }
+                    }
+                  }
                 }
               }
+            },
+            "policies": {
+              "type": "object",
+              "additionalProperties": true
             }
           }
         },
