@@ -10,18 +10,9 @@ Plan
   » npm resolved `24.14.1`, requires `10`
     Next: install a compatible npm version that satisfies `10`, then rerun `ota doctor`
 
- 2. Review contract drift (2)
-  Why: repo signals no longer match the declared contract
-  » `runtimes.node` is no longer detected
-  » `tools.npm` is no longer detected
-  Next:
-    run `ota detect --merge --dry-run`
-    to review the comparison, then
-    `ota detect --merge`
-
 Overview
- »  Findings: 4
- »  Actions: 2
+ »  Findings: 2
+ »  Actions: 1
  »  Errors: 2
- »  Warnings: 2
+ »  Warnings: 0
  »  Info: 0
