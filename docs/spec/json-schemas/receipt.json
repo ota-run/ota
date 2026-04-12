@@ -103,6 +103,54 @@
     {
       "type": "object",
       "additionalProperties": false,
+      "required": ["ok", "path", "mode", "summary", "archives"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "mode": { "const": "history" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["archive_count"],
+          "properties": {
+            "archive_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "archives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["archive_path", "archived_at", "ok", "contract", "summary"],
+            "properties": {
+              "archive_path": { "type": "string" },
+              "archived_at": { "type": "string" },
+              "ok": { "type": "boolean" },
+              "contract": { "type": "string" },
+              "backend": { "type": "string" },
+              "lifecycle": { "type": "string" },
+              "summary": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["error_count", "warn_count", "info_count", "step_count"],
+                "properties": {
+                  "error_count": { "type": "integer", "minimum": 0 },
+                  "warn_count": { "type": "integer", "minimum": 0 },
+                  "info_count": { "type": "integer", "minimum": 0 },
+                  "step_count": { "type": "integer", "minimum": 0 },
+                  "repo_count": { "type": "integer", "minimum": 0 },
+                  "ready_count": { "type": "integer", "minimum": 0 },
+                  "not_ready_count": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["ok", "path"],
       "properties": {
         "ok": { "const": false },

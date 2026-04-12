@@ -166,7 +166,9 @@ fn receipt_schema_includes_receipt_and_findings() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
     let success = &schema["oneOf"][0]["properties"];
     let success_summary = &success["summary"]["properties"];
-    let failure = &schema["oneOf"][1]["properties"];
+    let history = &schema["oneOf"][1]["properties"];
+    let history_summary = &history["summary"]["properties"];
+    let failure = &schema["oneOf"][2]["properties"];
 
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
@@ -175,6 +177,8 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_summary.get("warn_count").is_some());
     assert!(success_summary.get("info_count").is_some());
     assert!(success_summary.get("step_count").is_some());
+    assert!(history.get("archives").is_some());
+    assert!(history_summary.get("archive_count").is_some());
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
 }

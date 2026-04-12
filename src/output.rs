@@ -657,6 +657,33 @@ pub struct ReceiptSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReceiptHistorySummary {
+    pub archive_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ReceiptHistoryEntry {
+    pub archive_path: String,
+    pub archived_at: String,
+    pub ok: bool,
+    pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    pub summary: ExecutionReceiptSummary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptHistorySuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: ReceiptHistorySummary,
+    pub archives: &'a [ReceiptHistoryEntry],
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoRunReport {
     pub name: String,
     pub path: String,

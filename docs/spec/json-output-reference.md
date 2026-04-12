@@ -1275,6 +1275,52 @@ Current receipt JSON fields:
 - `receipt`
 - `findings`
 
+## `ota receipt --json --history`
+
+`ota receipt --json --history` is the read-only archive index for repo receipts already written to
+`.ota/receipts`. It does not rerun diagnosis; it lists archived receipt files newest first.
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/repo",
+  "mode": "history",
+  "summary": {
+    "archive_count": 2
+  },
+  "archives": [
+    {
+      "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-091512-142Z.json",
+      "archived_at": "2026-04-12T09:15:12.142Z",
+      "ok": false,
+      "contract": "/abs/path/to/ota.yaml",
+      "backend": "native",
+      "summary": {
+        "error_count": 1,
+        "warn_count": 0,
+        "info_count": 0,
+        "step_count": 1
+      }
+    }
+  ]
+}
+```
+
+Current receipt history JSON fields:
+
+- `ok`
+- `path` (resolved repo boundary for the archive read)
+- `mode` (`history`)
+- `summary.archive_count`
+- `archives[]`
+- `archives[].archive_path`
+- `archives[].archived_at`
+- `archives[].ok`
+- `archives[].contract`
+- `archives[].backend` (when the archived receipt recorded one)
+- `archives[].lifecycle` (when the archived receipt recorded one)
+- `archives[].summary`
+
 When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
 member contract path while the readiness findings reflect the merged member target.
 

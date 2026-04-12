@@ -255,6 +255,13 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// List archived receipt artifacts from `.ota/receipts`.
+        #[arg(
+            long,
+            action = ArgAction::SetTrue,
+            conflicts_with_all = ["archive", "member", "mode"]
+        )]
+        history: bool,
         /// Archive the receipt JSON to `.ota/receipts`.
         #[arg(long, action = ArgAction::SetTrue)]
         archive: bool,
@@ -1327,6 +1334,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Receipt {
             json,
+            history,
             archive,
             mode,
             member,
@@ -1337,6 +1345,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             mode.into(),
             format_from_json(json),
+            history,
             archive,
             debug,
         ),
@@ -4179,6 +4188,67 @@ tasks:
         let archive_path = json["archive_path"].as_str().unwrap();
         assert!(archive_path.contains(".ota/receipts/"));
         assert!(Path::new(archive_path).is_file());
+    }
+
+    #[test]
+    fn receipt_history_text_reports_empty_archive_set() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("RECEIPT HISTORY"));
+        assert!(stdout.contains("Archives: 0"));
+        assert!(stdout.contains("no archived receipts"));
+    }
+
+    #[test]
+    fn receipt_history_json_lists_archived_receipts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let archive = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+        assert_eq!(archive.exit_code, 0);
+
+        let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "history");
+        assert_eq!(json["summary"]["archive_count"], 1);
+        assert_eq!(json["archives"][0]["ok"], true);
+        assert_eq!(
+            json["archives"][0]["contract"],
+            fixture.file_path().display().to_string()
+        );
+        assert!(
+            json["archives"][0]["archive_path"]
+                .as_str()
+                .unwrap()
+                .contains(".ota/receipts/")
+        );
+        assert!(
+            json["archives"][0]["archived_at"]
+                .as_str()
+                .unwrap()
+                .contains('T')
+        );
     }
 
     #[test]
@@ -9441,6 +9511,13 @@ project:
         let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["written"], false);
+        assert!(
+            !json["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains('\u{1b}')
+        );
+        assert!(!json["error"].as_str().unwrap_or_default().contains("Next:"));
         assert_eq!(
             json["next"],
             format!(

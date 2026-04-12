@@ -86,6 +86,8 @@ and `Next` before the trailing summary block. The receipt keeps the structured
 summary data for JSON and optional receipt output.
 When `--archive` is set on receipt commands, ota persists the JSON receipt under
 `.ota/receipts` so CI or humans can audit the exact execution trail later.
+`ota receipt --history` is the read-only archive index for those repo receipt files; it lists the
+existing archived receipts directly from `.ota/receipts` without rerunning diagnosis.
 
 ## Behavior
 
