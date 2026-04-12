@@ -44,6 +44,7 @@
 - clarified policy-backed provisioning text so execution summaries show mapped package aliases like `node (package: nodejs)` instead of only the contract key.
 - made native and container tool/runtime diagnosis probe-aware so `ota doctor` now distinguishes missing commands from failed or unparseable version probes, and surfaces the resolved executable path plus probe command in both text and JSON evidence.
 - added `Image:` to execution summaries and receipt JSON when container execution is selected, while keeping `Target:` reserved for real named targets such as persistent containers and remote backends.
+- made update-check failures honest but non-spammy across platforms by showing a lightweight failure notice only after successful commands and rate-limiting repeated failed checks locally, while keeping the existing newer-version notice unchanged.
 
 ## 1.4.3
 
