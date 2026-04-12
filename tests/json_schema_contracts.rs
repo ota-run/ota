@@ -179,6 +179,8 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_summary.get("step_count").is_some());
     assert!(history.get("archives").is_some());
     assert!(history_summary.get("archive_count").is_some());
+    assert!(history_summary.get("invalid_archive_count").is_some());
+    assert!(history.get("invalid_archives").is_some());
     assert!(failure.get("errors").is_some());
     assert!(failure.get("error").is_some());
 }

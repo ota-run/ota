@@ -1286,7 +1286,8 @@ Current receipt JSON fields:
   "path": "/abs/path/to/repo",
   "mode": "history",
   "summary": {
-    "archive_count": 2
+    "archive_count": 2,
+    "invalid_archive_count": 1
   },
   "archives": [
     {
@@ -1302,6 +1303,12 @@ Current receipt JSON fields:
         "step_count": 1
       }
     }
+  ],
+  "invalid_archives": [
+    {
+      "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-090000-000Z.json",
+      "error": "failed to parse receipt archive `./.ota/receipts/repo-receipt-20260412-090000-000Z.json`: EOF while parsing a value at line 1 column 10"
+    }
   ]
 }
 ```
@@ -1312,6 +1319,7 @@ Current receipt history JSON fields:
 - `path` (resolved repo boundary for the archive read)
 - `mode` (`history`)
 - `summary.archive_count`
+- `summary.invalid_archive_count`
 - `archives[]`
 - `archives[].archive_path`
 - `archives[].archived_at`
@@ -1320,6 +1328,9 @@ Current receipt history JSON fields:
 - `archives[].backend` (when the archived receipt recorded one)
 - `archives[].lifecycle` (when the archived receipt recorded one)
 - `archives[].summary`
+- `invalid_archives[]` when malformed archive files were skipped
+- `invalid_archives[].archive_path`
+- `invalid_archives[].error`
 
 When `--member <name>` is set against a monorepo root, `receipt.contract` points at the selected
 member contract path while the readiness findings reflect the merged member target.

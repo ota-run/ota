@@ -794,13 +794,13 @@ Current behavior:
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
-- `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit directory paths are treated as the repo boundary for that read path
+- `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
 
 Text output:
 
 - header: `RECEIPT <path>`
 - prints the receipt steps, summary, env sources, policy lines, and blocked items when present
-- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts
+- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts; malformed archived files are skipped and surfaced under `Skipped Archives`
 
 JSON output:
 
@@ -811,7 +811,7 @@ JSON output:
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`
 - `findings`
-- `--history` switches `mode` to `history` and returns `summary.archive_count` plus an `archives` array with `archive_path`, `archived_at`, `ok`, `contract`, optional backend/lifecycle, and summary counts for each archived receipt
+- `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
 
 Current non-goals:
 
