@@ -15538,6 +15538,53 @@ tasks:
     }
 
     #[test]
+    fn execution_policy_lines_show_package_aliases_when_policy_maps_packages() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  node: "22"
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    node:
+      source: apt
+      package: nodejs
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let lines = super::execution_policy_lines(&contract, &contract_path, Backend::Native);
+
+        assert_eq!(lines.len(), 1);
+        assert!(
+            lines[0].contains("tool node (package: nodejs) 22 via apt"),
+            "expected package alias in execution policy line, got: {}",
+            lines[0]
+        );
+    }
+
+    #[test]
     fn doctor_json_exports_group_summaries() {
         let findings = [
             Finding {
@@ -18246,7 +18293,7 @@ fn execution_policy_lines(
             let mut line = format!(
                 "{} {} {} via {}{}",
                 action.target_kind,
-                action.name,
+                action.display_name(),
                 action.version_display(),
                 action.source,
                 action.policy_display_suffix()
