@@ -34,6 +34,7 @@
 
 ## Unreleased
 
+- added `ota receipt --baseline <latest|FILE>` as the first receipt compare surface, classifying findings as introduced, resolved, or unchanged against an archived or explicit repo receipt JSON baseline without mutating repo state.
 - added `ota receipt --history` as a read-only repo archive index over `.ota/receipts`, with stable text and JSON output for archived receipt inspection without rerunning diagnosis, skipped malformed archive reporting, and explicit repo-directory or `ota.yaml` path semantics.
 - fixed `ota init --json --dry-run` overwrite failures so machine-readable `error` strings stay plain and `next` remains a separate JSON field with no embedded ANSI styling or `Next:` block.
 - documented the official `ota-run/action@v1` GitHub Actions workflow, linked it from the command and hosted-validation references, and corrected GitHub-hosted install snippets to add the ota install directory to `GITHUB_PATH` for direct CLI steps.

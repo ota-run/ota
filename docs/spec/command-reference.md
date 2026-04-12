@@ -779,6 +779,8 @@ ota receipt [PATH]
 ota receipt --json [PATH]
 ota receipt --mode container [PATH]
 ota receipt --archive [PATH]
+ota receipt --baseline latest [PATH]
+ota receipt --baseline ./baseline-receipt.json [PATH]
 ota receipt --history [PATH]
 ota receipt --member api [PATH]
 ```
@@ -795,12 +797,16 @@ Current behavior:
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
+- `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
+- compare mode is read-only and does not archive or mutate repo state; it exits `0` when the comparison itself succeeds, even if the current or baseline receipt is not ready
 
 Text output:
 
 - header: `RECEIPT <path>`
 - prints the receipt steps, summary, env sources, policy lines, and blocked items when present
 - `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts; malformed archived files are skipped and surfaced under `Skipped Archives`
+- `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 
 JSON output:
 
@@ -812,6 +818,7 @@ JSON output:
 - `receipt`
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
+- `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`
 
 Current non-goals:
 
@@ -819,6 +826,7 @@ Current non-goals:
 - replacing `ota doctor` as the full readiness explanation surface
 - separate receipt storage outside the explicit `.ota/receipts` archive directory
 - monorepo multi-member roll-up beyond the selected resolved contract target
+- baseline gating semantics such as “fail on new blockers” in the first compare slice
 
 ## `ota up`
 

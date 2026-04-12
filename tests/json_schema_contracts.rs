@@ -166,9 +166,11 @@ fn receipt_schema_includes_receipt_and_findings() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
     let success = &schema["oneOf"][0]["properties"];
     let success_summary = &success["summary"]["properties"];
-    let history = &schema["oneOf"][1]["properties"];
+    let diff = &schema["oneOf"][1]["properties"];
+    let diff_summary = &diff["summary"]["properties"];
+    let history = &schema["oneOf"][2]["properties"];
     let history_summary = &history["summary"]["properties"];
-    let failure = &schema["oneOf"][2]["properties"];
+    let failure = &schema["oneOf"][3]["properties"];
 
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
@@ -177,6 +179,16 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_summary.get("warn_count").is_some());
     assert!(success_summary.get("info_count").is_some());
     assert!(success_summary.get("step_count").is_some());
+    assert!(diff.get("baseline").is_some());
+    assert!(diff.get("current").is_some());
+    assert!(diff.get("introduced").is_some());
+    assert!(diff.get("resolved").is_some());
+    assert!(diff.get("unchanged").is_some());
+    assert!(diff_summary.get("baseline_ok").is_some());
+    assert!(diff_summary.get("current_ok").is_some());
+    assert!(diff_summary.get("introduced").is_some());
+    assert!(diff_summary.get("resolved").is_some());
+    assert!(diff_summary.get("unchanged").is_some());
     assert!(history.get("archives").is_some());
     assert!(history_summary.get("archive_count").is_some());
     assert!(history_summary.get("invalid_archive_count").is_some());

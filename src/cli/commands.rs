@@ -26,7 +26,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -60,17 +60,18 @@ use crate::output::{
     ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
     ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
     MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
-    PolicyReviewSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptSuccess, ServiceSummary, ServicesFailure,
+    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan,
+    UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -3843,6 +3844,7 @@ pub fn receipt(
     member: Option<&str>,
     mode: DoctorMode,
     format: OutputFormat,
+    baseline: Option<&str>,
     history: bool,
     archive: bool,
     debug: bool,
@@ -3940,6 +3942,18 @@ pub fn receipt(
                 );
                 let receipt =
                     repo_readiness_receipt(&target.contract_path, &target.contract, mode, &report);
+                if let Some(baseline) = baseline {
+                    return render_repo_receipt_diff(
+                        &text_path_display,
+                        &path_display,
+                        &target.contract_path,
+                        &receipt,
+                        &report.findings,
+                        baseline,
+                        format,
+                    );
+                }
+
                 let archive_path = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     let archive_path = match next_receipt_archive_path(&root, "repo-receipt") {
@@ -8545,10 +8559,58 @@ fn format_receipt_archive_timestamp(stamp: &str) -> String {
     )
 }
 
-fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, String> {
+fn repo_receipt_archive_timestamp(path: &Path) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?;
+    let stamp = file_name
+        .strip_prefix("repo-receipt-")?
+        .strip_suffix(".json")?;
+    Some(format_receipt_archive_timestamp(stamp))
+}
+
+fn read_repo_receipt_archive_record(path: &Path) -> Result<RepoReceiptArchiveRecord, String> {
+    let payload = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read receipt archive `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    let payload: ArchivedRepoReceiptEnvelope = serde_json::from_str(&payload).map_err(|error| {
+        format!(
+            "failed to parse receipt archive `{}`: {error}",
+            compact_path(path, ".")
+        )
+    })?;
+    if let Some(mode) = payload.mode.as_deref()
+        && mode != "receipt"
+    {
+        return Err(format!(
+            "receipt archive `{}` is not an `ota receipt` artifact",
+            compact_path(path, ".")
+        ));
+    }
+    if payload.receipt.scope != "repo" {
+        return Err(format!(
+            "receipt archive `{}` is not a repo receipt",
+            compact_path(path, ".")
+        ));
+    }
+    if payload.receipt.contract.trim().is_empty() {
+        return Err(format!(
+            "receipt archive `{}` is missing `receipt.contract`",
+            compact_path(path, ".")
+        ));
+    }
+    Ok(RepoReceiptArchiveRecord {
+        archive_path: path.to_path_buf(),
+        archived_at: repo_receipt_archive_timestamp(path),
+        payload,
+    })
+}
+
+fn scan_repo_receipt_archives(root: &Path) -> Result<RepoReceiptArchiveScan, String> {
     let archive_dir = receipt_archive_dir(root);
     if !archive_dir.is_dir() {
-        return Ok(RepoReceiptHistoryReport {
+        return Ok(RepoReceiptArchiveScan {
             archives: Vec::new(),
             invalid_archives: Vec::new(),
         });
@@ -8576,53 +8638,496 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
     let mut archives = Vec::new();
     let mut invalid_archives = Vec::new();
 
-    for (file_name, path) in entries {
-        let archive_path = path.display().to_string();
-        let payload = match fs::read_to_string(&path) {
-            Ok(payload) => payload,
-            Err(error) => {
-                invalid_archives.push(ReceiptHistoryInvalidArchive {
-                    archive_path,
-                    error: format!(
-                        "failed to read receipt archive `{}`: {error}",
-                        compact_path(&path, ".")
-                    ),
-                });
-                continue;
-            }
-        };
-        let archived: ArchivedRepoReceiptEnvelope = match serde_json::from_str(&payload) {
-            Ok(archived) => archived,
-            Err(error) => {
-                invalid_archives.push(ReceiptHistoryInvalidArchive {
-                    archive_path,
-                    error: format!(
-                        "failed to parse receipt archive `{}`: {error}",
-                        compact_path(&path, ".")
-                    ),
-                });
-                continue;
-            }
-        };
-        let stamp = file_name
-            .strip_prefix("repo-receipt-")
-            .and_then(|value| value.strip_suffix(".json"))
-            .unwrap_or(file_name.as_str());
-        archives.push(ReceiptHistoryEntry {
-            archive_path,
-            archived_at: format_receipt_archive_timestamp(stamp),
-            ok: archived.ok,
-            contract: archived.receipt.contract,
-            backend: archived.receipt.backend,
-            lifecycle: archived.receipt.lifecycle,
-            summary: archived.summary.into(),
-        });
+    for (_, path) in entries {
+        match read_repo_receipt_archive_record(&path) {
+            Ok(record) => archives.push(record),
+            Err(error) => invalid_archives.push(ReceiptHistoryInvalidArchive {
+                archive_path: path.display().to_string(),
+                error,
+            }),
+        }
     }
 
-    Ok(RepoReceiptHistoryReport {
+    Ok(RepoReceiptArchiveScan {
         archives,
         invalid_archives,
     })
+}
+
+fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, String> {
+    let scan = scan_repo_receipt_archives(root)?;
+    Ok(RepoReceiptHistoryReport {
+        archives: scan
+            .archives
+            .into_iter()
+            .map(|archive| ReceiptHistoryEntry {
+                archive_path: archive.archive_path.display().to_string(),
+                archived_at: archive
+                    .archived_at
+                    .unwrap_or_else(|| String::from("unknown")),
+                ok: archive.payload.ok,
+                contract: archive.payload.receipt.contract,
+                backend: archive.payload.receipt.backend,
+                lifecycle: archive.payload.receipt.lifecycle,
+                summary: archive.payload.summary.into(),
+            })
+            .collect(),
+        invalid_archives: scan.invalid_archives,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ReceiptFindingKey {
+    severity: FindingSeverity,
+    code: String,
+    summary: String,
+    why: String,
+}
+
+fn receipt_finding_key(finding: &Finding) -> ReceiptFindingKey {
+    ReceiptFindingKey {
+        severity: finding.severity,
+        code: finding.code().to_string(),
+        summary: finding.summary.clone(),
+        why: finding.why.clone(),
+    }
+}
+
+fn receipt_diff_counts(findings: &[Finding]) -> ReceiptDiffCounts {
+    ReceiptDiffCounts {
+        count: findings.len(),
+        error_count: findings
+            .iter()
+            .filter(|finding| finding.severity == FindingSeverity::Error)
+            .count(),
+        warn_count: findings
+            .iter()
+            .filter(|finding| finding.severity == FindingSeverity::Warn)
+            .count(),
+        info_count: findings
+            .iter()
+            .filter(|finding| finding.severity == FindingSeverity::Info)
+            .count(),
+    }
+}
+
+fn repo_receipt_contract_identity(root: &Path, contract: &Path) -> String {
+    let relative = contract.strip_prefix(root).unwrap_or(contract);
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(value) => parts.push(value.to_string_lossy().into_owned()),
+            Component::ParentDir => parts.push(String::from("..")),
+            Component::RootDir => parts.push(String::from("/")),
+            Component::Prefix(value) => {
+                parts.push(value.as_os_str().to_string_lossy().into_owned());
+            }
+        }
+    }
+    if parts.is_empty() {
+        String::from(DEFAULT_CONTRACT_FILE)
+    } else if parts.first().map(String::as_str) == Some("/") {
+        format!(
+            "/{}",
+            parts.into_iter().skip(1).collect::<Vec<_>>().join("/")
+        )
+    } else {
+        parts.join("/")
+    }
+}
+
+fn repo_root_from_archive_path(path: &Path) -> Option<&Path> {
+    let receipts_dir = path.parent()?;
+    if receipts_dir.file_name().and_then(|value| value.to_str()) != Some("receipts") {
+        return None;
+    }
+    let ota_dir = receipts_dir.parent()?;
+    if ota_dir.file_name().and_then(|value| value.to_str()) != Some(".ota") {
+        return None;
+    }
+    ota_dir.parent()
+}
+
+fn repo_receipt_contract_identity_from_archive_record(
+    record: &RepoReceiptArchiveRecord,
+) -> Option<String> {
+    let contract = Path::new(record.payload.receipt.contract.as_str());
+    record
+        .payload
+        .archive_path
+        .as_deref()
+        .and_then(|archive_path| repo_root_from_archive_path(Path::new(archive_path)))
+        .and_then(|root| contract.strip_prefix(root).ok())
+        .or_else(|| {
+            repo_root_from_archive_path(&record.archive_path)
+                .and_then(|root| contract.strip_prefix(root).ok())
+        })
+        .map(|relative| repo_receipt_contract_identity(Path::new(""), relative))
+}
+
+fn load_latest_repo_receipt_baseline(
+    root: &Path,
+    contract_path: &Path,
+) -> Result<RepoReceiptArchiveRecord, String> {
+    let scan = scan_repo_receipt_archives(root)?;
+    let current_identity = repo_receipt_contract_identity(root, contract_path);
+    scan.archives
+        .into_iter()
+        .find(|archive| {
+            repo_receipt_contract_identity_from_archive_record(archive).as_deref()
+                == Some(current_identity.as_str())
+        })
+        .ok_or_else(|| {
+            format!(
+                "no archived repo receipt found for contract `{}` under `{}`",
+                compact_contract_path(contract_path),
+                compact_path(&receipt_archive_dir(root), ".")
+            )
+        })
+}
+
+fn load_explicit_repo_receipt_baseline(path: &Path) -> Result<RepoReceiptArchiveRecord, String> {
+    if !path.is_file() {
+        return Err(format!(
+            "receipt baseline path does not point to a file: `{}`",
+            path.display()
+        ));
+    }
+    read_repo_receipt_archive_record(path)
+}
+
+fn load_repo_receipt_baseline(
+    root: &Path,
+    contract_path: &Path,
+    baseline: &str,
+) -> Result<(String, RepoReceiptArchiveRecord), String> {
+    if baseline == "latest" {
+        return load_latest_repo_receipt_baseline(root, contract_path)
+            .map(|record| (String::from("latest"), record));
+    }
+
+    load_explicit_repo_receipt_baseline(Path::new(baseline))
+        .map(|record| (String::from("file"), record))
+}
+
+fn build_repo_receipt_diff_report(
+    baseline_source: String,
+    baseline_record: RepoReceiptArchiveRecord,
+    current_receipt: &ExecutionReceipt,
+    current_findings: &[Finding],
+) -> RepoReceiptDiffReport {
+    let mut baseline_remaining = BTreeMap::new();
+    for finding in &baseline_record.payload.findings {
+        *baseline_remaining
+            .entry(receipt_finding_key(finding))
+            .or_insert(0usize) += 1;
+    }
+
+    let mut introduced = Vec::new();
+    let mut unchanged = Vec::new();
+    for finding in current_findings {
+        let key = receipt_finding_key(finding);
+        if let Some(remaining) = baseline_remaining.get_mut(&key)
+            && *remaining > 0
+        {
+            *remaining -= 1;
+            unchanged.push(finding.clone());
+        } else {
+            introduced.push(finding.clone());
+        }
+    }
+
+    let mut current_remaining = BTreeMap::new();
+    for finding in current_findings {
+        *current_remaining
+            .entry(receipt_finding_key(finding))
+            .or_insert(0usize) += 1;
+    }
+
+    let mut resolved = Vec::new();
+    for finding in &baseline_record.payload.findings {
+        let key = receipt_finding_key(finding);
+        if let Some(remaining) = current_remaining.get_mut(&key)
+            && *remaining > 0
+        {
+            *remaining -= 1;
+        } else {
+            resolved.push(finding.clone());
+        }
+    }
+
+    let baseline = ReceiptDiffBaseline {
+        source: baseline_source,
+        archive_path: Some(baseline_record.archive_path.display().to_string()),
+        archived_at: baseline_record.archived_at,
+        ok: baseline_record.payload.ok,
+        contract: baseline_record.payload.receipt.contract,
+        backend: baseline_record.payload.receipt.backend,
+        lifecycle: baseline_record.payload.receipt.lifecycle,
+        summary: baseline_record.payload.summary.into(),
+    };
+    let current = ReceiptDiffSide {
+        ok: current_receipt.ok,
+        contract: current_receipt.contract.clone(),
+        backend: current_receipt.backend.clone(),
+        lifecycle: current_receipt.lifecycle.clone(),
+        summary: current_receipt.summary,
+    };
+    let summary = ReceiptDiffSummary {
+        baseline_ok: baseline.ok,
+        current_ok: current.ok,
+        introduced: receipt_diff_counts(&introduced),
+        resolved: receipt_diff_counts(&resolved),
+        unchanged: receipt_diff_counts(&unchanged),
+    };
+
+    RepoReceiptDiffReport {
+        baseline,
+        current,
+        summary,
+        introduced,
+        resolved,
+        unchanged,
+    }
+}
+
+fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
+    format!(
+        "{} (errors={}, warnings={}, info={})",
+        counts.count, counts.error_count, counts.warn_count, counts.info_count
+    )
+}
+
+fn append_receipt_diff_side_section(
+    stdout: &mut String,
+    title: &str,
+    contract: &str,
+    backend: Option<&str>,
+    lifecycle: Option<&str>,
+    summary: &ExecutionReceiptSummary,
+) {
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Contract:"),
+        compact_path(Path::new(contract), ".")
+    ));
+    if let Some(backend) = backend {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Backend:"),
+            backend
+        ));
+    }
+    if let Some(lifecycle) = lifecycle {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Lifecycle:"),
+            lifecycle
+        ));
+    }
+    stdout.push_str(&format!(
+        "\n {}  {} errors={}, warnings={}, info={}",
+        summary_bullet(),
+        paint_key("Summary:"),
+        summary.error_count,
+        summary.warn_count,
+        summary.info_count
+    ));
+}
+
+fn append_receipt_diff_grouped_section(
+    stdout: &mut String,
+    title: &str,
+    findings: &[Finding],
+    contract_path: &Path,
+) {
+    if findings.is_empty() {
+        return;
+    }
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    for group in group_doctor_findings(findings.iter()) {
+        stdout.push_str(&render_grouped_doctor_findings(
+            &group,
+            Some(contract_path),
+            None,
+        ));
+    }
+}
+
+fn append_receipt_diff_resolved_section(stdout: &mut String, title: &str, findings: &[Finding]) {
+    if findings.is_empty() {
+        return;
+    }
+    stdout.push_str(&format!("\n\n{}:", paint_section_title(title)));
+    for finding in findings {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            list_bullet(),
+            render_severity(finding.severity),
+            render_finding_summary(finding.severity, &finding.summary)
+        ));
+    }
+}
+
+fn render_repo_receipt_diff(
+    text_path: &str,
+    json_path: &str,
+    contract_path: &Path,
+    current_receipt: &ExecutionReceipt,
+    current_findings: &[Finding],
+    baseline: &str,
+    format: OutputFormat,
+) -> CommandOutput {
+    let root = contract_working_dir(contract_path);
+    let (baseline_source, baseline_record) =
+        match load_repo_receipt_baseline(root, contract_path, baseline) {
+            Ok(result) => result,
+            Err(error) => {
+                return match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => CommandOutput {
+                        stdout: to_json(&ValidateFailure {
+                            summary: None,
+                            ok: false,
+                            path: json_path,
+                            errors: vec![error],
+                            error: None,
+                        }),
+                        stderr: None,
+                        exit_code: 1,
+                    },
+                };
+            }
+        };
+    let report = build_repo_receipt_diff_report(
+        baseline_source,
+        baseline_record,
+        current_receipt,
+        current_findings,
+    );
+
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header("RECEIPT DIFF", text_path);
+            stdout.push_str("\n\n");
+            stdout.push_str(&paint_section_title("Overview"));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Current:"),
+                render_readiness_status(report.current.ok)
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Baseline:"),
+                render_readiness_status(report.baseline.ok)
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Source:"),
+                report.baseline.source
+            ));
+            if let Some(archived_at) = report.baseline.archived_at.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Archived:"),
+                    archived_at
+                ));
+            }
+            if let Some(archive_path) = report.baseline.archive_path.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Archive:"),
+                    compact_path(Path::new(archive_path), ".")
+                ));
+            }
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Introduced:"),
+                render_receipt_diff_counts(&report.summary.introduced)
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Resolved:"),
+                render_receipt_diff_counts(&report.summary.resolved)
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Unchanged:"),
+                render_receipt_diff_counts(&report.summary.unchanged)
+            ));
+
+            append_receipt_diff_side_section(
+                &mut stdout,
+                "Baseline",
+                &report.baseline.contract,
+                report.baseline.backend.as_deref(),
+                report.baseline.lifecycle.as_deref(),
+                &report.baseline.summary,
+            );
+            append_receipt_diff_side_section(
+                &mut stdout,
+                "Current",
+                &report.current.contract,
+                report.current.backend.as_deref(),
+                report.current.lifecycle.as_deref(),
+                &report.current.summary,
+            );
+            append_receipt_diff_grouped_section(
+                &mut stdout,
+                "Introduced Findings",
+                &report.introduced,
+                contract_path,
+            );
+            append_receipt_diff_resolved_section(
+                &mut stdout,
+                "Resolved Findings",
+                &report.resolved,
+            );
+            if report.introduced.is_empty() && report.resolved.is_empty() {
+                append_receipt_diff_grouped_section(
+                    &mut stdout,
+                    "Unchanged Findings",
+                    &report.unchanged,
+                    contract_path,
+                );
+            }
+            stdout.push('\n');
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: 0,
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&ReceiptDiffSuccess {
+                ok: current_receipt.ok,
+                path: json_path,
+                mode: "diff",
+                baseline: report.baseline,
+                current: report.current,
+                summary: report.summary,
+                introduced: report.introduced,
+                resolved: report.resolved,
+                unchanged: report.unchanged,
+            }),
+            stderr: None,
+            exit_code: 0,
+        },
+    }
 }
 
 fn render_init(
@@ -19473,6 +19978,15 @@ struct RepoReceiptHistoryReport {
     invalid_archives: Vec<ReceiptHistoryInvalidArchive>,
 }
 
+struct RepoReceiptDiffReport {
+    baseline: ReceiptDiffBaseline,
+    current: ReceiptDiffSide,
+    summary: ReceiptDiffSummary,
+    introduced: Vec<Finding>,
+    resolved: Vec<Finding>,
+    unchanged: Vec<Finding>,
+}
+
 struct WorkspaceReceiptReport {
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoStatusReport>,
@@ -19532,6 +20046,8 @@ impl From<ArchivedReceiptSummaryData> for ExecutionReceiptSummary {
 #[derive(Debug, Deserialize, Default)]
 struct ArchivedRepoReceiptData {
     #[serde(default)]
+    scope: String,
+    #[serde(default)]
     contract: String,
     #[serde(default)]
     backend: Option<String>,
@@ -19543,8 +20059,27 @@ struct ArchivedRepoReceiptData {
 struct ArchivedRepoReceiptEnvelope {
     ok: bool,
     #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    archive_path: Option<String>,
+    #[serde(default)]
     summary: ArchivedReceiptSummaryData,
     receipt: ArchivedRepoReceiptData,
+    #[serde(default)]
+    findings: Vec<Finding>,
+}
+
+#[derive(Debug)]
+struct RepoReceiptArchiveRecord {
+    archive_path: PathBuf,
+    archived_at: Option<String>,
+    payload: ArchivedRepoReceiptEnvelope,
+}
+
+#[derive(Debug)]
+struct RepoReceiptArchiveScan {
+    archives: Vec<RepoReceiptArchiveRecord>,
+    invalid_archives: Vec<ReceiptHistoryInvalidArchive>,
 }
 
 fn execution_receipt_summary(

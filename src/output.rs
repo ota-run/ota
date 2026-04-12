@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 
@@ -163,7 +163,7 @@ pub struct ExplainSummary {
     pub step_count: usize,
 }
 
-#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ExecutionReceiptSummary {
     pub error_count: usize,
     pub warn_count: usize,
@@ -177,7 +177,7 @@ pub struct ExecutionReceiptSummary {
     pub not_ready_count: Option<usize>,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptStep {
     pub order: usize,
     pub label: String,
@@ -188,14 +188,14 @@ pub struct ExecutionReceiptStep {
     pub exit_code: Option<i32>,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptEnvSource {
     pub name: String,
     pub value: String,
     pub source: String,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceipt {
     pub ok: bool,
     pub path: String,
@@ -690,6 +690,63 @@ pub struct ReceiptHistorySuccess<'a> {
     pub archives: &'a [ReceiptHistoryEntry],
     #[serde(skip_serializing_if = "slice_is_empty")]
     pub invalid_archives: &'a [ReceiptHistoryInvalidArchive],
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffCounts {
+    pub count: usize,
+    pub error_count: usize,
+    pub warn_count: usize,
+    pub info_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffSummary {
+    pub baseline_ok: bool,
+    pub current_ok: bool,
+    pub introduced: ReceiptDiffCounts,
+    pub resolved: ReceiptDiffCounts,
+    pub unchanged: ReceiptDiffCounts,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffSide {
+    pub ok: bool,
+    pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    pub summary: ExecutionReceiptSummary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffBaseline {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<String>,
+    pub ok: bool,
+    pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    pub summary: ExecutionReceiptSummary,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptDiffSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub baseline: ReceiptDiffBaseline,
+    pub current: ReceiptDiffSide,
+    pub summary: ReceiptDiffSummary,
+    pub introduced: Vec<Finding>,
+    pub resolved: Vec<Finding>,
+    pub unchanged: Vec<Finding>,
 }
 
 #[derive(Debug, Serialize)]

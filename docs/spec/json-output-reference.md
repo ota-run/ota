@@ -1275,6 +1275,115 @@ Current receipt JSON fields:
 - `receipt`
 - `findings`
 
+`ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
+receipt success shape with `ok: false`.
+
+## `ota receipt --json --baseline`
+
+`ota receipt --json --baseline` compares the current repo receipt against either:
+
+- `latest`: the newest valid archived repo receipt for the same contract under `.ota/receipts`
+- an explicit repo receipt JSON file path
+
+The compare path is read-only. It does not rerun the baseline receipt, does not archive the
+current receipt automatically, and exits `0` when comparison succeeds even if the current receipt
+or baseline receipt is not ready.
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "diff",
+  "baseline": {
+    "source": "latest",
+    "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
+    "archived_at": "2026-04-12T10:10:10.123Z",
+    "ok": false,
+    "contract": "/abs/path/to/ota.yaml",
+    "backend": "native",
+    "summary": {
+      "error_count": 2,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "current": {
+    "ok": false,
+    "contract": "/abs/path/to/ota.yaml",
+    "backend": "native",
+    "summary": {
+      "error_count": 2,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "summary": {
+    "baseline_ok": false,
+    "current_ok": false,
+    "introduced": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "resolved": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "unchanged": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    }
+  },
+  "introduced": [
+    {
+      "summary": "Missing environment variable: OTA_BASELINE_REQUIRED"
+    }
+  ],
+  "resolved": [
+    {
+      "summary": "Missing tool: old-tool"
+    }
+  ],
+  "unchanged": [
+    {
+      "summary": "No tasks defined in contract"
+    }
+  ]
+}
+```
+
+Current receipt diff JSON fields:
+
+- `ok` (current receipt readiness, not diff success/failure)
+- `path`
+- `mode` (`diff`)
+- `baseline.source` (`latest` or `file`)
+- `baseline.archive_path`
+- `baseline.archived_at` (when the baseline file name encodes an archived timestamp)
+- `baseline.ok`
+- `baseline.contract`
+- `baseline.backend` / `baseline.lifecycle` when recorded
+- `baseline.summary`
+- `current.ok`
+- `current.contract`
+- `current.backend` / `current.lifecycle` when recorded
+- `current.summary`
+- `summary.baseline_ok`
+- `summary.current_ok`
+- `summary.introduced`
+- `summary.resolved`
+- `summary.unchanged`
+- `introduced[]`
+- `resolved[]`
+- `unchanged[]`
+
 ## `ota receipt --json --history`
 
 `ota receipt --json --history` is the read-only archive index for repo receipts already written to

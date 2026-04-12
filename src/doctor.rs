@@ -30,8 +30,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
 use serde::ser::{SerializeStruct, Serializer};
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::execution::{container_engine_candidates, selected_container_engine};
@@ -49,7 +49,7 @@ use crate::schema::{
     ServiceSpec,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FindingSeverity {
     Error,
@@ -57,7 +57,7 @@ pub enum FindingSeverity {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Finding {
     pub severity: FindingSeverity,
     pub summary: String,

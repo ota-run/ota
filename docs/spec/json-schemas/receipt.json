@@ -8,7 +8,7 @@
       "additionalProperties": false,
       "required": ["ok", "path", "mode", "summary", "receipt", "findings"],
       "properties": {
-        "ok": { "const": true },
+        "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
         "archive_path": { "type": "string" },
@@ -95,6 +95,133 @@
           }
         },
         "findings": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "baseline",
+        "current",
+        "summary",
+        "introduced",
+        "resolved",
+        "unchanged"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "mode": { "const": "diff" },
+        "baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "ok", "contract", "summary"],
+          "properties": {
+            "source": { "enum": ["latest", "file"] },
+            "archive_path": { "type": "string" },
+            "archived_at": { "type": "string" },
+            "ok": { "type": "boolean" },
+            "contract": { "type": "string" },
+            "backend": { "type": "string" },
+            "lifecycle": { "type": "string" },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["error_count", "warn_count", "info_count", "step_count"],
+              "properties": {
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 },
+                "step_count": { "type": "integer", "minimum": 0 },
+                "repo_count": { "type": "integer", "minimum": 0 },
+                "ready_count": { "type": "integer", "minimum": 0 },
+                "not_ready_count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "current": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "contract", "summary"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "contract": { "type": "string" },
+            "backend": { "type": "string" },
+            "lifecycle": { "type": "string" },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["error_count", "warn_count", "info_count", "step_count"],
+              "properties": {
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 },
+                "step_count": { "type": "integer", "minimum": 0 },
+                "repo_count": { "type": "integer", "minimum": 0 },
+                "ready_count": { "type": "integer", "minimum": 0 },
+                "not_ready_count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["baseline_ok", "current_ok", "introduced", "resolved", "unchanged"],
+          "properties": {
+            "baseline_ok": { "type": "boolean" },
+            "current_ok": { "type": "boolean" },
+            "introduced": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["count", "error_count", "warn_count", "info_count"],
+              "properties": {
+                "count": { "type": "integer", "minimum": 0 },
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "resolved": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["count", "error_count", "warn_count", "info_count"],
+              "properties": {
+                "count": { "type": "integer", "minimum": 0 },
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "unchanged": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["count", "error_count", "warn_count", "info_count"],
+              "properties": {
+                "count": { "type": "integer", "minimum": 0 },
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "introduced": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        },
+        "resolved": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        },
+        "unchanged": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
         }
