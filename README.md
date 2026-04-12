@@ -445,6 +445,11 @@ In CI, the runner still owns the job. ota owns the repo contract and can provisi
 services such as Postgres through `ota up`, so the workflow stays thin and the service intent lives
 with the repo instead of being duplicated in pipeline YAML.
 
+If the runner is GitHub Actions and you want the official wrapper for step summaries, annotations,
+pull-request comments, and receipt artifacts, use
+[ota-run/action](https://github.com/ota-run/action) and see
+[docs/spec/github-action-workflow.md](docs/spec/github-action-workflow.md).
+
 That is different from host provisioning. ota can provision declared services and run tasks in a
 container or remote backend, but it does not replace the OS package manager, language installer,
 or workstation bootstrap process.
@@ -562,6 +567,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 
 ### Start here
 - [Command reference](docs/spec/command-reference.md)
+- [GitHub Action workflow](docs/spec/github-action-workflow.md)
 - [Contract reference](docs/spec/contract-reference.md)
 - [Workspace reference](docs/spec/workspace-reference.md)
 - [Shell semantics](docs/spec/shell-semantics.md)
