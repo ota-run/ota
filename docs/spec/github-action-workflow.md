@@ -41,6 +41,10 @@ The GitHub Action keeps the boundary thin and honest:
 
 It is not a second diagnosis engine.
 
+The action repo lives at [github.com/ota-run/action](https://github.com/ota-run/action). This
+page mirrors the shipped action contract so users do not need to leave the ota docs to find the
+supported inputs, outputs, and default behavior.
+
 ## Use when
 
 Use `ota-run/action@v1` when:
@@ -114,6 +118,40 @@ The action supports:
 
 The action currently supports Linux, macOS, and Windows GitHub Actions runners.
 
+## Inputs
+
+- `command` supports `receipt` or `doctor`; default: `receipt`
+- `path` passes the repo or contract target to ota; default: `.`
+- `working-directory` controls where ota is invoked; default: `.`
+- `execution-mode` selects `native` or `container`; default: `native`
+- `member` passes an optional monorepo member target
+- `archive` adds `--archive` when `command=receipt`; default: `true`
+- `annotate` emits GitHub annotations from ota findings; default: `true`
+- `max-annotations` caps emitted annotations; default: `20`
+- `comment-pr` creates or updates the sticky pull-request comment; default: `false`
+- `comment-pr-only` limits comment behavior to pull-request events; default: `true`
+- `artifact-name` sets the uploaded artifact name; default: `ota-report`
+- `artifact-retention-days` sets optional artifact retention in days
+- `fail-on-error` fails the action when ota reports a blocked outcome; default: `true`
+- `install` controls installation behavior with `auto`, `always`, or `never`; default: `auto`
+- `ota-version` pins installer-driven ota installation to a specific release such as `v1.4.3`
+- `ota-bin` overrides the ota binary name or path after resolution; default: `ota`
+- `output-path` chooses where the captured ota JSON payload is written; default:
+  `.ota-action-output.json`
+- `github-token` supplies the token used for sticky pull-request comment updates
+
+## Outputs
+
+- `ok` reports whether ota returned an ok result
+- `status` exposes the derived action status: `ready`, `risky`, or `blocked`
+- `output-path` returns the written path to the captured ota JSON output
+- `archive-path` returns the archived receipt path when `receipt --archive` produced one
+- `artifact-name` returns the uploaded artifact name
+- `error-count` returns the error count from the ota summary
+- `warn-count` returns the warning count from the ota summary
+- `info-count` returns the info count from the ota summary
+- `primary-summary` returns the primary blocker or top finding summary
+
 ## Job boundaries
 
 When the action installs ota, it adds the install directory to `PATH` for later steps in the same
@@ -153,3 +191,10 @@ The clean GitHub Actions shape is:
 
 That keeps pull-request feedback compact while preserving a clear execution boundary for setup,
 task runs, and release steps.
+
+## Repo and examples
+
+- use [github.com/ota-run/action](https://github.com/ota-run/action) for source, release tags,
+  and copyable workflow examples
+- keep this page as the canonical product reference for when to use the action and what its
+  contract surface is
