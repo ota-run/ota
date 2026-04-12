@@ -43,6 +43,7 @@ const ANSI_BRIGHT_GREEN: &str = "\x1b[92m";
 const ANSI_GOLD_ACCENT: &str = "\x1b[1;38;2;214;161;95m";
 const ANSI_BOLD_WHITE: &str = "\x1b[1;37m";
 const ANSI_FG_RESET: &str = "\x1b[39m";
+const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateTrack {
@@ -75,6 +76,30 @@ fn latest_release_url() -> String {
 fn release_list_url() -> String {
     env::var("OTA_UPDATE_CHECK_URL_LATEST")
         .unwrap_or_else(|_| DEFAULT_RELEASES_LIST_URL.to_string())
+}
+
+fn ota_cache_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        env::var_os("LOCALAPPDATA")
+            .or_else(|| env::var_os("APPDATA"))
+            .map(PathBuf::from)
+            .unwrap_or_else(env::temp_dir)
+            .join("ota")
+    }
+
+    #[cfg(not(windows))]
+    {
+        env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+            .unwrap_or_else(env::temp_dir)
+            .join("ota")
+    }
+}
+
+fn update_check_failure_state_path() -> PathBuf {
+    ota_cache_dir().join("update-check-failure-notice-at.txt")
 }
 
 fn installer_url() -> String {
@@ -132,6 +157,79 @@ fn render_up_to_date_output(version: &str) -> String {
         up_to_date = up_to_date,
         version = version
     )
+}
+
+fn render_update_available_notice(latest: &str) -> String {
+    format!(
+        "A newer `{ota}ota{reset}` release is available: {version}v{latest}{reset}\nRun `{command}ota self-update{reset}` or `{command}ota upgrade{reset}` to update.",
+        ota = ANSI_GOLD_ACCENT,
+        version = ANSI_BRIGHT_GREEN,
+        command = ANSI_GOLD_ACCENT,
+        reset = ANSI_FG_RESET
+    )
+}
+
+fn render_update_check_failed_notice() -> String {
+    format!(
+        "Could not check for a newer `{ota}ota{reset}` release right now.\nRun `{command}ota self-update{reset}` or `{command}ota upgrade{reset}` later to check again.",
+        ota = ANSI_GOLD_ACCENT,
+        command = ANSI_GOLD_ACCENT,
+        reset = ANSI_FG_RESET
+    )
+}
+
+fn current_unix_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn last_update_check_failure_notice_at(state_path: &Path) -> Option<u64> {
+    fs::read_to_string(state_path).ok()?.trim().parse().ok()
+}
+
+fn clear_update_check_failure_notice(state_path: &Path) {
+    let _ = fs::remove_file(state_path);
+}
+
+fn maybe_emit_failed_update_check_notice(now_secs: u64, state_path: &Path) -> Option<String> {
+    if let Some(last_notice) = last_update_check_failure_notice_at(state_path)
+        && now_secs.saturating_sub(last_notice) < UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS
+    {
+        return None;
+    }
+
+    if let Some(parent) = state_path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return None;
+    }
+
+    if fs::write(state_path, now_secs.to_string()).is_err() {
+        return None;
+    }
+
+    Some(render_update_check_failed_notice())
+}
+
+fn maybe_update_notice_with_state(
+    current_version: &str,
+    latest_result: Result<String, ()>,
+    now_secs: u64,
+    state_path: &Path,
+) -> Option<String> {
+    match latest_result {
+        Ok(latest) => {
+            clear_update_check_failure_notice(state_path);
+            let current = normalize_version(current_version);
+            if latest == current {
+                return None;
+            }
+            Some(render_update_available_notice(&latest))
+        }
+        Err(()) => maybe_emit_failed_update_check_notice(now_secs, state_path),
+    }
 }
 
 fn temp_script_path() -> PathBuf {
@@ -393,19 +491,13 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
 }
 
 pub fn maybe_update_notice(current_version: &str) -> Option<String> {
-    let latest = fetch_release_tag(UpdateTrack::Stable)?;
-    let current = normalize_version(current_version);
-    if latest == current {
-        return None;
-    }
-
-    Some(format!(
-        "A newer `{ota}ota{reset}` release is available: {version}v{latest}{reset}\nRun `{command}ota self-update{reset}` or `{command}ota upgrade{reset}` to update.",
-        ota = ANSI_GOLD_ACCENT,
-        version = ANSI_BRIGHT_GREEN,
-        command = ANSI_GOLD_ACCENT,
-        reset = ANSI_FG_RESET
-    ))
+    let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
+    maybe_update_notice_with_state(
+        current_version,
+        latest_result,
+        current_unix_timestamp_secs(),
+        &update_check_failure_state_path(),
+    )
 }
 
 fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
@@ -513,10 +605,12 @@ mod tests {
 
     #[cfg(unix)]
     use crate::test_support::ENV_MUTEX;
+    use tempfile::tempdir;
 
     use super::UpdateTrack;
     use super::fetch_release_tag;
     use super::maybe_update_notice;
+    use super::maybe_update_notice_with_state;
     use super::normalize_version;
     use super::render_up_to_date_output;
     use super::self_update as update_self_update;
@@ -569,11 +663,46 @@ mod tests {
 
         handle.join().unwrap();
 
+        assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
+    }
+
+    #[test]
+    fn rate_limits_failed_update_check_notice() {
+        let temp = tempdir().unwrap();
+        let state_path = temp.path().join("update-check-failure-notice-at.txt");
+
+        let first = maybe_update_notice_with_state("v1.0.0", Err(()), 100, &state_path);
+        let second = maybe_update_notice_with_state("v1.0.0", Err(()), 101, &state_path);
+        let after_cooldown = maybe_update_notice_with_state(
+            "v1.0.0",
+            Err(()),
+            100 + super::UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS + 1,
+            &state_path,
+        );
+
+        assert_eq!(first, Some(super::render_update_check_failed_notice()));
+        assert_eq!(second, None);
         assert_eq!(
-            notice,
-            Some(String::from(
-                "A newer `\u{1b}[1;38;2;214;161;95mota\u{1b}[39m` release is available: \u{1b}[92mv9.9.9\u{1b}[39m\nRun `\u{1b}[1;38;2;214;161;95mota self-update\u{1b}[39m` or `\u{1b}[1;38;2;214;161;95mota upgrade\u{1b}[39m` to update."
-            ))
+            after_cooldown,
+            Some(super::render_update_check_failed_notice())
+        );
+    }
+
+    #[test]
+    fn successful_update_check_clears_failed_notice_cooldown() {
+        let temp = tempdir().unwrap();
+        let state_path = temp.path().join("update-check-failure-notice-at.txt");
+
+        let failed = maybe_update_notice_with_state("v1.0.0", Err(()), 100, &state_path);
+        let successful =
+            maybe_update_notice_with_state("v1.0.0", Ok(String::from("1.0.0")), 101, &state_path);
+        let failed_again = maybe_update_notice_with_state("v1.0.0", Err(()), 102, &state_path);
+
+        assert_eq!(failed, Some(super::render_update_check_failed_notice()));
+        assert_eq!(successful, None);
+        assert_eq!(
+            failed_again,
+            Some(super::render_update_check_failed_notice())
         );
     }
 
