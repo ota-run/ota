@@ -24,15 +24,11 @@
 
 # Changelog
 
-## 1.4.5
-
-- added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
-
 ## 1.4.4
 
 - added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
 
-## Unreleased
+## 1.4.6
 
 - added `ota receipt --baseline <latest|FILE>` as the first receipt compare surface, classifying findings as introduced, resolved, or unchanged against an archived or explicit repo receipt JSON baseline without mutating repo state.
 - added `ota receipt --history` as a read-only repo archive index over `.ota/receipts`, with stable text and JSON output for archived receipt inspection without rerunning diagnosis, skipped malformed archive reporting, and explicit repo-directory or `ota.yaml` path semantics.
@@ -41,6 +37,8 @@
 - expanded the GitHub Action reference to document the full shipped input and output contract, plus the canonical `ota-run/action` repo link for examples and releases.
 - added a provider-neutral CI workflow reference that explains the canonical `validate` + `doctor` + plain annotations + archived receipt split for non-GitHub runners such as GitLab CI, Jenkins, and CircleCI.
 - fixed execution-summary status rendering so `NOT READY` post-execution failures render as `failed`, kept only pre-execution blockers as `blocked`, lowered the summary status labels, and pinned the internal GitHub readiness workflow to ota `1.4.4`.
+
+## Unreleased
 
 ## 1.4.3
 
