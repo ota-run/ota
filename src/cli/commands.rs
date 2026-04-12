@@ -50,7 +50,7 @@ use crate::doctor::{
     diagnose_services_only, provisioning_installability_finding,
 };
 use crate::execution::selected_container_engine;
-use crate::execution::{execution_target, format_backend, format_lifecycle};
+use crate::execution::{execution_image, execution_target, format_backend, format_lifecycle};
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
     ContractFieldProvenance, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
@@ -16675,6 +16675,7 @@ tasks:
             workspace: None,
             backend: Some(String::from("native")),
             lifecycle: None,
+            image: None,
             target: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -16711,6 +16712,7 @@ tasks:
             workspace: None,
             backend: Some(String::from("native")),
             lifecycle: None,
+            image: None,
             target: None,
             acquired: Vec::new(),
             env: BTreeMap::new(),
@@ -16747,6 +16749,45 @@ tasks:
         assert!(rendered.contains("Why: task failed | Why: missing tool"));
         assert!(rendered.contains("\nNext: install the missing tool and rerun"));
         assert!(!rendered.contains("\n\nNext: install the missing tool and rerun"));
+    }
+
+    #[test]
+    fn execution_summary_renders_container_image_without_ephemeral_target() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            workspace: None,
+            backend: Some(String::from("container")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("ghcr.io/ota/dev:latest")),
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "post-setup diagnosis",
+                "READY",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("post-setup diagnosis"),
+            "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Mode:       container"));
+        assert!(rendered.contains("Image:      ghcr.io/ota/dev:latest"));
+        assert!(!rendered.contains("Target:"));
     }
 
     #[test]
@@ -18575,6 +18616,7 @@ fn run_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let image = execution_image(contract, backend);
     let target = target.or_else(|| execution_target(contract, contract_path, backend, lifecycle));
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
     let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
@@ -18607,6 +18649,7 @@ fn run_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        image,
         target,
         acquired: Vec::new(),
         env: env_details
@@ -19197,6 +19240,9 @@ fn render_execution_receipt_summary_block(
         lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
     lines.push(summary_detail_line("Mode:", &mode));
+    if let Some(image) = receipt.image.as_deref() {
+        lines.push(summary_detail_line("Image:", image));
+    }
     if let Some(target) = receipt.target.as_deref() {
         lines.push(summary_detail_line("Target:", target));
     }
@@ -20608,6 +20654,7 @@ fn repo_execution_receipt(
     next: Option<String>,
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
+    let image = execution_image(contract, backend);
     let target = execution_target(contract, path, backend, lifecycle);
     let task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
@@ -20633,6 +20680,7 @@ fn repo_execution_receipt(
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        image,
         target,
         acquired: Vec::new(),
         env: env_details
@@ -20902,6 +20950,7 @@ fn workspace_up_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        image: None,
         target: None,
         acquired: Vec::new(),
         env: env_sources
@@ -20964,6 +21013,7 @@ fn workspace_status_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        image: None,
         target: None,
         acquired: Vec::new(),
         env: BTreeMap::new(),
@@ -21029,6 +21079,7 @@ fn workspace_run_receipt(
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
+        image: None,
         target: None,
         acquired: Vec::new(),
         env: env_sources

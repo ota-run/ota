@@ -1275,6 +1275,13 @@ Current receipt JSON fields:
 - `receipt`
 - `findings`
 
+The nested `receipt` object can also include:
+
+- `backend`
+- `lifecycle`
+- `image` when container execution is selected
+- `target` when a stable named execution target exists, such as a persistent container or remote target
+
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.
 
