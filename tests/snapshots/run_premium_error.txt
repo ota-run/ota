@@ -12,4 +12,5 @@ Path:       <TMP>
 Contract:   <TMP>/ota.yaml
 Mode:       native
 Task:       install-from-source
+Status:     failed
 Note:       running on the host environment

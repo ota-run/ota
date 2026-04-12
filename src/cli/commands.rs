@@ -7503,9 +7503,7 @@ pub fn workspace_receipt(
         match load_and_run_workspace_receipt(&resolved_path, jobs) {
             Ok(mut report) => {
                 let archive_path = if archive {
-                    let root = resolved_path
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."));
+                    let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
                     let archive_path = match next_receipt_archive_path(root, "workspace-receipt") {
                         Ok(path) => path,
                         Err(error) => return CommandOutput::failure(error),
@@ -7523,11 +7521,9 @@ pub fn workspace_receipt(
                     if let Err(error) = write_receipt_archive(&archive_path, &payload) {
                         return CommandOutput::failure(error);
                     }
-                    if let Err(error) = prune_receipt_archives(
-                        root,
-                        "workspace-receipt",
-                        RECEIPT_ARCHIVE_LIMIT,
-                    ) {
+                    if let Err(error) =
+                        prune_receipt_archives(root, "workspace-receipt", RECEIPT_ARCHIVE_LIMIT)
+                    {
                         return CommandOutput::failure(error);
                     }
                     Some(archive_path)
@@ -13830,13 +13826,16 @@ mod tests {
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_up_preview, compact_contract_file_path_relative_to, compact_path_relative_to,
         compact_policy_path_relative_to_contract, doctor_mode_execution_overrides, execute_repo_up,
-        render_detect_comparison_section, render_execution_receipt_summary_block,
-        render_execution_receipt_text, render_report_section, render_up_result,
-        render_up_section_from_parts, run_execution_receipt, strip_ansi_codes,
-        stylize_text_failure, up_doctor_mode, workspace_refresh_command,
+        execution_receipt_step, render_detect_comparison_section,
+        render_execution_receipt_summary_block, render_execution_receipt_text,
+        render_report_section, render_up_result, render_up_section_from_parts,
+        run_execution_receipt, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
+        workspace_refresh_command,
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
-    use crate::output::{DetectComparison, DetectComparisonRemoval};
+    use crate::output::{
+        DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptSummary,
+    };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
@@ -15572,9 +15571,82 @@ tasks:
         let rendered = strip_ansi_codes(&stylize_text_failure("ota run", &message));
 
         assert!(rendered.contains("RUN SUMMARY"));
+        assert!(rendered.contains("Status:     failed"));
         assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
         assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦  RUN SUMMARY\n\nScope:"));
+    }
+
+    #[test]
+    fn execution_summary_marks_precondition_not_ready_as_blocked() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            workspace: None,
+            backend: Some(String::from("native")),
+            lifecycle: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "preconditions",
+                "NOT READY",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            None,
+            "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Status:     blocked"));
+    }
+
+    #[test]
+    fn execution_summary_marks_service_not_ready_as_failed() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            workspace: None,
+            backend: Some(String::from("native")),
+            lifecycle: None,
+            target: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "services",
+                "NOT READY",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            None,
+            "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Status:     failed"));
     }
 
     #[test]
@@ -18040,6 +18112,11 @@ fn render_execution_receipt_summary_block(
         lines.push(summary_detail_line("Target:", target));
     }
     lines.push(summary_detail_line("Task:", task));
+    let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
+    lines.push(summary_detail_line(
+        "Status:",
+        &render_execution_summary_status_value(&status),
+    ));
     lines.push(summary_detail_line("Note:", &note));
     lines.join("\n")
 }
@@ -18053,6 +18130,17 @@ fn render_execution_receipt_status(status: &str) -> String {
         "READY" => paint("READY", "1;38;2;0;255;120"),
         "NOT READY" | "BLOCKED" | "WARN" => paint(status.trim(), "1;38;2;255;235;59"),
         value if value.contains("FAILED") => render_failed_status_label(value),
+        other => paint(other, "1;37"),
+    }
+}
+
+fn render_execution_summary_status_value(status: &str) -> String {
+    match status.trim() {
+        "success" => paint("success", "1;38;2;0;255;120"),
+        "blocked" => paint("blocked", "1;38;2;255;235;59"),
+        "skipped" => paint("skipped", "1;38;2;180;180;180"),
+        "preview" => paint("preview", "1;38;2;0;255;255"),
+        "failed" => paint("failed", "1;31"),
         other => paint(other, "1;37"),
     }
 }
@@ -19223,6 +19311,70 @@ fn execution_receipt_step(
     }
 }
 
+fn execution_summary_status_for_step(step: &ExecutionReceiptStep) -> &'static str {
+    match step.status.trim() {
+        "READY" => "success",
+        "PREVIEW" => "preview",
+        "SKIPPED" | "NOT ACQUIRED" => "skipped",
+        "NOT READY" => match step.label.trim() {
+            "preconditions" | "provisioning" | "validation" | "dependencies" => "blocked",
+            _ => "failed",
+        },
+        "BLOCKED" | "WARN" | "MISSING" | "MISSING CONTRACT" | "UNRESOLVED" | "INVALID CONTRACT" => {
+            "blocked"
+        }
+        value if value.contains("FAILED") => "failed",
+        _ => "failed",
+    }
+}
+
+fn aggregate_execution_summary_status(
+    ok: bool,
+    steps: &[ExecutionReceiptStep],
+    blocked: &[String],
+) -> String {
+    if steps.is_empty() {
+        return if ok {
+            String::from("success")
+        } else if !blocked.is_empty() {
+            String::from("blocked")
+        } else {
+            String::from("failed")
+        };
+    }
+
+    let mapped_statuses: Vec<&'static str> = steps
+        .iter()
+        .map(execution_summary_status_for_step)
+        .collect();
+
+    if mapped_statuses.iter().all(|status| *status == "preview") {
+        return String::from("preview");
+    }
+
+    if mapped_statuses.iter().all(|status| *status == "skipped") {
+        return String::from("skipped");
+    }
+
+    if ok {
+        return String::from("success");
+    }
+
+    if mapped_statuses.iter().any(|status| *status == "failed") {
+        return String::from("failed");
+    }
+
+    if !blocked.is_empty() || mapped_statuses.iter().any(|status| *status == "blocked") {
+        return String::from("blocked");
+    }
+
+    if mapped_statuses.iter().any(|status| *status == "skipped") {
+        return String::from("skipped");
+    }
+
+    String::from("failed")
+}
+
 fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
     ExecutionOverrides {
         backend: Some(match mode {
@@ -19355,8 +19507,10 @@ fn render_repo_receipt(
         }
         OutputFormat::Json => CommandOutput {
             stdout: {
-                let archive_path =
-                    report.archive_path.as_ref().map(|path| path.display().to_string());
+                let archive_path = report
+                    .archive_path
+                    .as_ref()
+                    .map(|path| path.display().to_string());
                 let payload = ReceiptSuccess {
                     ok: report.receipt.ok,
                     path: json_path,

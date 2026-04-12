@@ -5017,6 +5017,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
         let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Status:     success"));
         assert!(stdout.contains("Note:       using a fresh container image for this run"));
         assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
@@ -5363,6 +5364,7 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
         let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Status:     success"));
         assert!(stdout.contains("Note:       using a fresh container image for this run"));
         assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
@@ -9794,6 +9796,7 @@ tasks:
         assert!(rendered.contains("SUMMARY"));
         assert!(rendered.contains("Mode:       native"));
         assert!(rendered.contains("Task:       setup"));
+        assert!(rendered.contains("Status:     success"));
         assert!(rendered.contains("Note:       running on the host environment"));
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
@@ -9859,6 +9862,7 @@ tasks:
         assert!(rendered.contains("SUMMARY"));
         assert!(rendered.contains("Mode:       container"));
         assert!(rendered.contains("Task:       setup"));
+        assert!(rendered.contains("Status:     success"));
         assert!(rendered.contains("Target:"));
         assert!(rendered.contains("ota-"));
         assert!(rendered.contains("Lifecycle:  persistent"));
@@ -10571,6 +10575,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: provisioning"));
+        assert!(stdout.contains("Status:     blocked"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -10658,6 +10663,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: services"));
+        assert!(stdout.contains("Status:     failed"));
         assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());

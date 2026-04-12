@@ -732,8 +732,10 @@ pub(crate) fn render_workspace_receipt(
         }
         OutputFormat::Json => CommandOutput {
             stdout: {
-                let archive_path =
-                    report.archive_path.as_ref().map(|path| path.display().to_string());
+                let archive_path = report
+                    .archive_path
+                    .as_ref()
+                    .map(|path| path.display().to_string());
                 let payload = WorkspaceReceiptSuccess {
                     ok: report.receipt.ok,
                     path,

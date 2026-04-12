@@ -16,4 +16,5 @@ Contract:   ./ota.yaml
 Lifecycle:  ephemeral
 Mode:       native
 Task:       post-setup diagnosis
+Status:     success
 Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory in native mode only
