@@ -519,10 +519,10 @@ Current behavior:
 - if every declared input has a default, you can omit all input flags
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
-- on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, target, and task
+- on failure, text output keeps `Why` and `Next` first, then appends a compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
 - on non-interactive text success, large task output is shown as a bounded excerpt before the compact `RUN SUMMARY`
 - on non-interactive text failure, task output is shown as a bounded excerpt with a `--stream` rerun hint before the compact `RUN SUMMARY`
-- on success, text output includes the compact `RUN SUMMARY` block with the selected mode, target, and task
+- on success, text output includes the compact `RUN SUMMARY` block with the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
 
 Example:
@@ -568,7 +568,7 @@ ota run version:bump --version major
 - applies configured environment values, approved policy env values, and task input env variables
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
-- execution receipts include backend, lifecycle, remote target when set, acquired paths, env sources, and step summary data; text receipts also print the winning env source for each resolved value
+- execution receipts include backend, lifecycle, container image when relevant, remote target when set, acquired paths, env sources, and step summary data; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

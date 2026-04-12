@@ -86,6 +86,23 @@ pub(crate) fn execution_target(
     }
 }
 
+pub(crate) fn execution_image(contract: &Contract, backend: Backend) -> Option<String> {
+    match backend {
+        Backend::Container => Some(
+            contract
+                .execution
+                .as_ref()?
+                .backends
+                .as_ref()?
+                .container
+                .as_ref()?
+                .image
+                .clone(),
+        ),
+        Backend::Native | Backend::Remote => None,
+    }
+}
+
 pub(crate) fn container_engine_candidates(contract: &Contract) -> Vec<String> {
     let engines = contract
         .execution

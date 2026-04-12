@@ -38,6 +38,7 @@ The receipt is meant to answer:
 - what scope ota used
 - what contract version or hash it acted on
 - what backend and lifecycle were chosen
+- what container image was selected when container execution applies
 - what was reused or acquired
 - what env or policy affected the decision
 - what policy-backed provisioning sources were selected
@@ -67,6 +68,7 @@ The receipt includes:
 - `workspace`
 - `backend`
 - `lifecycle`
+- `image`
 - `acquired`
 - `env`
 - `policy`
@@ -76,7 +78,7 @@ The receipt includes:
 - `next`
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
-`lifecycle`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`, `ota run`,
+`lifecycle`, `image`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`, `ota run`,
 `ota up`, and workspace execution flows. Repo receipts now also include a `Policy:`
 section when policy-backed provisioning is present, listing the selected source and
 any backend-specific source config. When semver-aware policy approval selects an

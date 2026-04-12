@@ -35,6 +35,7 @@
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "lifecycle": { "type": "string" },
+            "image": { "type": "string" },
             "target": { "type": "string" },
             "acquired": {
               "type": "array",

@@ -43,6 +43,7 @@
 - expanded diagnosis provenance so `ota doctor --json` findings and `ota explain` steps can trace repo-contract, org-policy, and repo-signal sources without inventing a parallel diagnosis schema.
 - clarified policy-backed provisioning text so execution summaries show mapped package aliases like `node (package: nodejs)` instead of only the contract key.
 - made native tool and runtime diagnosis probe-aware so `ota doctor` now distinguishes missing commands from failed or unparseable version probes, and surfaces the resolved executable path plus probe command in both text and JSON evidence.
+- added `Image:` to execution summaries and receipt JSON when container execution is selected, while keeping `Target:` reserved for real named targets such as persistent containers and remote backends.
 
 ## 1.4.3
 
