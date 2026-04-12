@@ -24,6 +24,10 @@
 
 # Changelog
 
+## 1.4.5
+
+- added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
+
 ## 1.4.4
 
 - added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
