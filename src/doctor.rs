@@ -108,6 +108,12 @@ struct DriftFindingContext<'a> {
     provenance_key: &'a str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FindingProvenanceContext<'a> {
+    provenance: &'a str,
+    provenance_key: &'a str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningDiagnostics {
     pub plan: ProvisioningPlan,
@@ -407,6 +413,15 @@ impl Finding {
                 install_scope: "repo_local",
                 mutation_allowed: false,
             }),
+            "Policy provisioning needs explicit package identifiers" => {
+                Some(PolicyFindingContext {
+                    outcome: "blocked_by_policy",
+                    reason: "missing_package_identifiers",
+                    source: "org",
+                    install_scope: "repo_local",
+                    mutation_allowed: false,
+                })
+            }
             "Invalid org policy pack" => Some(PolicyFindingContext {
                 outcome: "blocked_by_integrity_policy",
                 reason: "invalid_org_policy_pack",
@@ -483,6 +498,12 @@ impl Finding {
             }
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
+            "Policy-backed provisioning sources are declared" => {
+                "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+            }
+            "Policy provisioning needs explicit package identifiers" => {
+                "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+            }
             "Adapter bootstrap sources are declared" => {
                 "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
             }
@@ -523,7 +544,9 @@ impl Finding {
             | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "provisioning",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
-            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "policy",
+            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "policy",
             "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => "execution",
             "OTA_CONTRACT_DRIFT" => "contract",
             _ => "contract",
@@ -566,7 +589,9 @@ impl Finding {
             | "OTA_SERVICE_UNVERIFIABLE" => "service",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
-            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => "org_policy",
+            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "org_policy",
             _ => "repo_contract",
         }
     }
@@ -758,6 +783,13 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => (
+                "policy-backed provisioning is missing required package identifiers".to_string(),
+                "policy-backed provisioning rules declare required package identifiers for OS package managers".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => (
                 "the org policy pack declares approved adapter bootstrap sources".to_string(),
                 "the org policy pack has no adapter bootstrap sources declared".to_string(),
@@ -818,21 +850,87 @@ impl Finding {
         }
     }
 
-    pub(crate) fn provenance(&self) -> Option<String> {
+    fn provenance_context(&self) -> Option<FindingProvenanceContext<'_>> {
         if self.policy_context().is_some() {
-            return Some(String::from("org policy"));
+            return Some(FindingProvenanceContext {
+                provenance: "org policy",
+                provenance_key: "org_policy",
+            });
         }
 
-        self.drift_context()
+        if let Some(drift) = self.drift_context() {
+            return Some(FindingProvenanceContext {
+                provenance: drift.provenance,
+                provenance_key: drift.provenance_key,
+            });
+        }
+
+        let summary = self.summary.as_str();
+        if matches!(
+            summary,
+            "No `ota.yaml` found"
+                | "Could not inspect repo signals"
+                | "Detected Rust repo"
+                | "No repo signals detected"
+        ) || summary.starts_with("Detected Docker Compose services: ")
+            || summary.starts_with("Host tool available: ")
+            || summary.starts_with("Missing host tool: ")
+            || (summary.starts_with("Missing container execution backend CLI: ")
+                && self.why.contains("Docker Compose signals were detected"))
+        {
+            return Some(FindingProvenanceContext {
+                provenance: "repo signals",
+                provenance_key: "repo_signals",
+            });
+        }
+
+        match self.code() {
+            "OTA_TASKS_MISSING"
+            | "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
+            | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
+            | "OTA_BACKEND_CLI_MISSING"
+            | "OTA_CONTAINER_BACKEND_CLI_MISSING"
+            | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+            | "OTA_REMOTE_TARGET_SUSPICIOUS"
+            | "OTA_SERVICE_CHECK_FAILED"
+            | "OTA_SERVICE_CHECK_TIMED_OUT"
+            | "OTA_SERVICE_UNVERIFIABLE"
+            | "OTA_ENV_MISSING"
+            | "OTA_ENV_INVALID"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_MISSING"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_MISSING"
+            | "OTA_CHECK_FAILED"
+            | "OTA_CHECK_TIMED_OUT" => Some(FindingProvenanceContext {
+                provenance: "repo contract",
+                provenance_key: "repo_contract",
+            }),
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => Some(FindingProvenanceContext {
+                provenance: "org policy",
+                provenance_key: "org_policy",
+            }),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn provenance(&self) -> Option<String> {
+        self.provenance_context()
             .map(|context| context.provenance.to_string())
     }
 
     pub(crate) fn provenance_key(&self) -> Option<String> {
-        if self.policy_context().is_some() {
-            return Some(String::from("org_policy"));
-        }
-
-        self.drift_context()
+        self.provenance_context()
             .map(|context| context.provenance_key.to_string())
     }
 }
@@ -844,9 +942,12 @@ impl Serialize for Finding {
     {
         let policy = self.policy_context();
         let drift = self.drift_context();
+        let provenance = self.provenance_context();
         let mut state = serializer.serialize_struct(
             "Finding",
-            8 + policy.map(|_| 6).unwrap_or_default() + drift.map(|_| 4).unwrap_or_default(),
+            8 + policy.map(|_| 5).unwrap_or_default()
+                + drift.map(|_| 2).unwrap_or_default()
+                + provenance.map(|_| 2).unwrap_or_default(),
         )?;
 
         state.serialize_field("code", self.code())?;
@@ -864,14 +965,16 @@ impl Serialize for Finding {
             state.serialize_field("policy_source", policy.source)?;
             state.serialize_field("install_scope", policy.install_scope)?;
             state.serialize_field("mutation_allowed", &policy.mutation_allowed)?;
-            state.serialize_field("provenance_key", "org_policy")?;
         }
 
         if let Some(drift) = drift {
             state.serialize_field("owner_kind", drift.owner_kind)?;
             state.serialize_field("ownership", drift.ownership)?;
-            state.serialize_field("provenance", drift.provenance)?;
-            state.serialize_field("provenance_key", drift.provenance_key)?;
+        }
+
+        if let Some(provenance) = provenance {
+            state.serialize_field("provenance", provenance.provenance)?;
+            state.serialize_field("provenance_key", provenance.provenance_key)?;
         }
 
         state.end()

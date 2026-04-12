@@ -130,6 +130,10 @@ pub struct DoctorPrimaryBlocker {
     pub summary: String,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -276,6 +280,10 @@ pub struct WorkspacePrimaryBlocker {
     pub summary: String,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance_key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]

@@ -2137,6 +2137,7 @@ mod tests {
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
 
+    use crate::doctor::{Finding, FindingSeverity};
     use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
 
     use super::{
@@ -3234,6 +3235,8 @@ project:
         assert_eq!(steps[0]["order"], 1);
         assert_eq!(steps[0]["code"], "OTA_TASKS_MISSING");
         assert_eq!(steps[0]["summary"], "No tasks defined in contract");
+        assert_eq!(steps[0]["provenance"], "repo contract");
+        assert_eq!(steps[0]["provenance_key"], "repo_contract");
     }
 
     #[test]
@@ -3272,7 +3275,7 @@ policies:
 
         let text = run_with(["ota", "explain", fixture.path().to_str().unwrap()]);
         let stdout = strip_ansi(&text.stdout);
-        assert!(!stdout.contains("Provenance:"));
+        assert!(stdout.contains("Provenance: org policy"));
     }
 
     #[test]
@@ -8031,6 +8034,8 @@ tasks:
         assert_eq!(object.get("ok").unwrap(), &Value::Bool(false));
         assert!(object.get("findings").unwrap().is_array());
         assert_eq!(object.len(), 6);
+        assert_eq!(json["findings"][0]["provenance"], "repo contract");
+        assert_eq!(json["findings"][0]["provenance_key"], "repo_contract");
     }
 
     #[test]
@@ -8220,6 +8225,14 @@ policies:
             .iter()
             .find(|finding| finding["summary"] == "Policy-backed provisioning sources are declared")
             .expect("provisioning finding should be present");
+        assert_eq!(
+            provisioning_finding["code"],
+            "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+        );
+        assert_eq!(provisioning_finding["category"], "policy");
+        assert_eq!(provisioning_finding["owner"], "org_policy");
+        assert_eq!(provisioning_finding["provenance"], "org policy");
+        assert_eq!(provisioning_finding["provenance_key"], "org_policy");
         assert_eq!(provisioning_finding["severity"], "info");
         assert_eq!(
             provisioning_finding["policy_reason"],
@@ -8244,6 +8257,14 @@ policies:
             .iter()
             .find(|finding| finding["summary"] == "Adapter bootstrap sources are declared")
             .expect("adapter bootstrap finding should be present");
+        assert_eq!(
+            finding["code"],
+            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
+        );
+        assert_eq!(finding["category"], "policy");
+        assert_eq!(finding["owner"], "org_policy");
+        assert_eq!(finding["provenance"], "org policy");
+        assert_eq!(finding["provenance_key"], "org_policy");
         assert_eq!(finding["summary"], "Adapter bootstrap sources are declared");
         assert_eq!(finding["severity"], "info");
         assert_eq!(finding["policy_outcome"], "policy_surface_available");
@@ -10557,6 +10578,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("No tasks defined in contract"));
+        assert!(stdout.contains("Provenance: repo contract"));
     }
 
     #[test]
@@ -10605,6 +10627,10 @@ project:
         assert!(stdout.contains("Missing container execution backend CLI: docker, podman"));
         assert!(stdout.contains("ota detect --dry-run"));
         assert!(stdout.contains("ota init --bootstrap"));
+        assert!(
+            stdout.matches("Provenance: repo signals").count() >= 2,
+            "expected provenance on secondary contractless findings, not only the primary blocker"
+        );
 
         let json_output = run_with(["ota", "doctor", "--json", fixture.path().to_str().unwrap()]);
         let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
@@ -10613,6 +10639,31 @@ project:
             "No `ota.yaml` found"
         );
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "error");
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"] == "Detected Rust repo"
+                        && finding["provenance"] == "repo signals"
+                        && finding["provenance_key"] == "repo_signals"
+                }),
+            "expected repo-signal provenance on contractless findings"
+        );
+    }
+
+    #[test]
+    fn doctor_without_contract_marks_no_signals_finding_with_repo_signal_provenance() {
+        let finding = Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("No repo signals detected"),
+            why: String::from("`./repo` did not expose obvious repo markers yet"),
+            next: String::from("run `ota init --bootstrap` or `ota detect --dry-run`"),
+        };
+
+        assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
+        assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
     }
 
     #[test]

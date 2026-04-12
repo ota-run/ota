@@ -108,6 +108,18 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
                 |value| render_backticked_text(value, Some(contract_path)),
             );
         }
+        if let Some(provenance) = explain_group_provenance(group) {
+            append_wrapped_labeled_text(
+                &mut stdout,
+                "Provenance:",
+                &provenance,
+                "  ",
+                84,
+                false,
+                paint_key,
+                |value| render_backticked_text(value, Some(contract_path)),
+            );
+        }
         if render_items {
             for finding in &group.findings {
                 append_wrapped_bullet_text(
@@ -118,6 +130,18 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
                     84,
                     |value| render_backticked_text(value, Some(contract_path)),
                 );
+                if let Some(provenance) = finding.provenance() {
+                    append_wrapped_labeled_text(
+                        &mut stdout,
+                        "Provenance:",
+                        &provenance,
+                        "    ",
+                        84,
+                        false,
+                        paint_key,
+                        |value| render_backticked_text(value, Some(contract_path)),
+                    );
+                }
                 if per_finding_next {
                     append_explain_next_text(&mut stdout, &finding.next, "    ", 84, contract_path);
                 }
@@ -135,6 +159,25 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
     }
 
     stdout
+}
+
+fn explain_group_provenance(group: &DoctorFindingGroup<'_>) -> Option<String> {
+    if explain_group_renders_items(group) {
+        return None;
+    }
+
+    let mut entries = group.findings.iter().map(|finding| {
+        finding
+            .provenance()
+            .zip(finding.provenance_key())
+            .map(|(provenance, key)| (provenance, key))
+    });
+    let first = entries.next().flatten()?;
+    if entries.all(|entry| entry == Some((first.0.clone(), first.1.clone()))) {
+        Some(first.0)
+    } else {
+        None
+    }
 }
 
 pub(super) fn explain_action_count(findings: &[Finding]) -> usize {

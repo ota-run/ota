@@ -399,14 +399,14 @@ Text output:
 - `Plan` section with ordered remediation steps
 - stable finding code for each step
 - `Why` and `Next` lines for each step
-- provenance lines when the finding carries policy or drift provenance
+- `Provenance` lines when ota can trace the diagnosis source for that step
 - `Overview` counts at the end
 
 JSON output:
 
 - success: `ok`, `path`, `summary`, `steps`
 - each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
-- steps may also include `provenance`
+- steps may also include `provenance` and `provenance_key`
 - failure: `ok`, `path`, and `error`
 
 ## `ota annotations`
@@ -627,6 +627,7 @@ Text output:
 - status line: `READY` or `NOT READY`
 - `Execution` includes a `Mode:` line in text output so the selected diagnosis context is explicit
 - summary includes repo verdict and agent verdict before per-finding details
+- grouped finding sections include `Provenance:` when the grouped findings share one diagnosis source
 - with `--concise`, findings keep severity + summary + `Next`, while `Why` detail is omitted
 
 JSON output:
@@ -635,6 +636,7 @@ JSON output:
 - `path`
 - `agent` when the contract declares agent guidance
 - `findings`
+- findings may also include `provenance` / `provenance_key` when ota can trace the diagnosis back to the repo contract, org policy, or repo signals
 - monorepo root summaries include grouped per-member results in `members`
 - repeated `--member` values return grouped per-member results in `members`
 

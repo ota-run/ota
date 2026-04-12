@@ -91,6 +91,7 @@ pub(crate) fn render_workspace_doctor_text(
             ),
             &primary_blocker.why,
             &primary_blocker.next,
+            primary_blocker.provenance.clone(),
             None,
             None,
         ));
@@ -395,6 +396,7 @@ pub(crate) fn render_workspace_check_text(
             ),
             &primary_blocker.why,
             &primary_blocker.next,
+            primary_blocker.provenance.clone(),
             None,
             None,
         ));
