@@ -149,6 +149,7 @@ Required evidence fields:
 Rules:
 
 - fields may be empty when the data is unavailable
+- runtime and tool probe findings should populate `command` and `path` with the exact version probe ota ran and the resolved executable it used
 - the object itself must still be present on every finding
 - evidence must support the code and category, not replace them
 
