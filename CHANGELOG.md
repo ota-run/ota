@@ -40,6 +40,8 @@
 
 ## Unreleased
 
+- expanded diagnosis provenance so `ota doctor --json` findings and `ota explain` steps can trace repo-contract, org-policy, and repo-signal sources without inventing a parallel diagnosis schema.
+
 ## 1.4.3
 
 - fixed the policy-backed provisioning docs and backend formatting after the release-gate CI cleanup, including the package-rule heading and related provisioning output formatting.

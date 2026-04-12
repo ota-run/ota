@@ -12,6 +12,7 @@
           "enum": [
             "contract",
             "execution",
+            "provisioning",
             "policy",
             "service",
             "environment",
@@ -23,6 +24,7 @@
           "enum": [
             "repo_contract",
             "host",
+            "container_target",
             "service",
             "workspace_acquisition",
             "org_policy",
@@ -61,13 +63,15 @@
         "provenance_key": {
           "enum": [
             "org_policy",
-            "repo_signals"
+            "repo_signals",
+            "repo_contract"
           ]
         },
         "policy_outcome": {
           "enum": [
             "satisfied",
             "installable",
+            "policy_surface_available",
             "blocked_by_policy",
             "blocked_by_source_unavailable",
             "blocked_by_integrity_policy",

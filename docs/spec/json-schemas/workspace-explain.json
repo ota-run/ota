@@ -68,7 +68,7 @@
           "next": { "type": "string" },
           "provenance": { "type": "string" },
           "provenance_key": {
-            "enum": ["org_policy", "repo_signals"]
+            "enum": ["org_policy", "repo_signals", "repo_contract"]
           }
         }
       }

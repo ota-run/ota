@@ -12300,6 +12300,8 @@ fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBl
         summary: finding.summary.clone(),
         why: finding.why.clone(),
         next: finding.next.clone(),
+        provenance: finding.provenance(),
+        provenance_key: finding.provenance_key(),
     })
 }
 
@@ -12324,6 +12326,8 @@ fn workspace_primary_blocker(
                 summary: finding.summary.clone(),
                 why: finding.why.clone(),
                 next: finding.next.clone(),
+                provenance: finding.provenance(),
+                provenance_key: finding.provenance_key(),
             };
             if finding.severity == FindingSeverity::Error {
                 return Some(blocker);
@@ -12660,6 +12664,7 @@ fn render_report_section(
             &primary_blocker.summary,
             &primary_blocker.why,
             &primary_blocker.next,
+            primary_blocker.provenance.clone(),
             doctor_mode,
             contract_path,
         ));
@@ -12718,13 +12723,22 @@ fn render_report_section(
                 .as_ref()
                 .map(|value| format!("\n{}", value))
                 .unwrap_or_default();
+            let provenance_line = finding.provenance().map(|value| {
+                format!(
+                    "\n{} {}",
+                    finding_detail_key(finding.severity, "Provenance:"),
+                    value
+                )
+            });
+            let provenance_block = provenance_line.as_deref().unwrap_or("");
             if concise_mode() {
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
-                    "{}  {}{}",
+                    "{}  {}{}{}",
                     render_severity(finding.severity),
                     render_finding_summary(finding.severity, &finding.summary),
                     source_block,
+                    provenance_block,
                 ));
                 if let Some(image) = container_image.as_deref() {
                     append_container_image_detail(&mut stdout, image, "", finding.severity);
@@ -12742,10 +12756,11 @@ fn render_report_section(
             } else {
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
-                    "{}  {}{}",
+                    "{}  {}{}{}",
                     render_severity(finding.severity),
                     render_finding_summary(finding.severity, &finding.summary),
                     source_block,
+                    provenance_block,
                 ));
                 append_wrapped_labeled_text(
                     &mut stdout,
@@ -12832,6 +12847,7 @@ fn render_primary_finding_text_with_next_rewriter(
     summary: &str,
     why: &str,
     next: &str,
+    provenance: Option<String>,
     doctor_mode: Option<DoctorMode>,
     contract_path: Option<&Path>,
     rewrite_next: fn(&str, Option<DoctorMode>) -> String,
@@ -12871,6 +12887,18 @@ fn render_primary_finding_text_with_next_rewriter(
             |value| render_backticked_text(value, contract_path),
         );
     }
+    if let Some(provenance) = provenance.as_deref() {
+        append_wrapped_labeled_text(
+            &mut stdout,
+            "Provenance:",
+            provenance,
+            "",
+            DOCTOR_DETAIL_WRAP_WIDTH,
+            false,
+            paint_key,
+            |value| render_backticked_text(value, contract_path),
+        );
+    }
     if let Some(image) = container_image.as_deref() {
         append_container_image_detail(&mut stdout, image, "", severity);
     }
@@ -12892,6 +12920,7 @@ fn render_primary_finding_text(
     summary: &str,
     why: &str,
     next: &str,
+    provenance: Option<String>,
     doctor_mode: Option<DoctorMode>,
     contract_path: Option<&Path>,
 ) -> String {
@@ -12900,6 +12929,7 @@ fn render_primary_finding_text(
         summary,
         why,
         next,
+        provenance,
         doctor_mode,
         contract_path,
         rewrite_doctor_mode_command,
@@ -13003,6 +13033,7 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
+        "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => String::from("policy-surface"),
         "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
         "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
@@ -13057,6 +13088,7 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
+        "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => String::from("policy-surface"),
         "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
         "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
@@ -13106,6 +13138,7 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
         "OTA_CONTRACT_DRIFT" => DoctorFindingGroupKind::ContractDrift,
         "OTA_POLICY_PACK_VIOLATION"
         | "OTA_POLICY_PACK_INVALID"
+        | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
         | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => DoctorFindingGroupKind::PolicySurface,
         "OTA_SERVICE_CHECK_FAILED" | "OTA_SERVICE_CHECK_TIMED_OUT" | "OTA_SERVICE_UNVERIFIABLE" => {
@@ -13141,6 +13174,21 @@ fn doctor_group_slug(value: &str) -> String {
         slug.pop();
     }
     slug
+}
+
+fn doctor_group_provenance(group: &DoctorFindingGroup<'_>) -> Option<String> {
+    let mut entries = group.findings.iter().map(|finding| {
+        finding
+            .provenance()
+            .zip(finding.provenance_key())
+            .map(|(provenance, key)| (provenance, key))
+    });
+    let first = entries.next().flatten()?;
+    if entries.all(|entry| entry == Some((first.0.clone(), first.1.clone()))) {
+        Some(first.0)
+    } else {
+        None
+    }
 }
 
 fn render_grouped_doctor_findings(
@@ -13190,6 +13238,13 @@ fn render_grouped_doctor_findings(
             "\n{} {}",
             finding_detail_key(group.severity, "Source:"),
             source
+        ));
+    }
+    if let Some(provenance) = doctor_group_provenance(group) {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            finding_detail_key(group.severity, "Provenance:"),
+            provenance
         ));
     }
     append_wrapped_labeled_text(
@@ -15636,6 +15691,8 @@ tasks:
                 next: String::from(
                     "install a compatible java version that satisfies `21`, then rerun `ota doctor`",
                 ),
+                provenance: None,
+                provenance_key: None,
             }),
         };
 
@@ -15903,6 +15960,8 @@ tasks:
                 next: String::from(
                     "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
                 ),
+                provenance: None,
+                provenance_key: None,
             }),
         };
 
@@ -15967,6 +16026,8 @@ tasks:
                     "failed to parse policy pack\n`./.ota/org-policy.yaml`: policies.provisioning.curl: missing field `source`",
                 ),
                 next: String::from("repair `./.ota/org-policy.yaml` and re-run `ota doctor`"),
+                provenance: None,
+                provenance_key: None,
             }),
         };
 
@@ -16062,6 +16123,8 @@ tasks:
                 next: String::from(
                     "update `execution.backends.container.image` (currently `jdxcode/mise:latest`) so `java` is available, then rerun `ota doctor --mode container`",
                 ),
+                provenance: None,
+                provenance_key: None,
             }),
         };
 
@@ -18509,6 +18572,7 @@ fn render_up_preview_text(
             &blocker.summary,
             &blocker.why,
             &blocker.next,
+            blocker.provenance(),
             doctor_mode_from_backend(Some(execution.backend.as_str())),
             None,
             rewrite_up_preview_next_command,

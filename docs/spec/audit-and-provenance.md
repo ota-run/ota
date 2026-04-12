@@ -48,7 +48,8 @@ Audit and provenance support:
 
 ## Provenance model
 
-The current shipped output already uses per-field provenance in detection and diagnosis.
+The current shipped output already uses per-field provenance in detection and additive provenance
+labels on diagnosis findings and explain steps.
 V5 extends that idea to org policy and template-derived behavior.
 
 Current shipped detect comparison output also carries stable ownership/provenance labels for
@@ -92,9 +93,9 @@ The intended provenance categories are:
 - workspace-declared
 - user-mutated
 
-Policy-backed provisioning should use the same provenance idea once source-selection lands:
-the repo declares what it needs, policy declares where it may come from, and the receipt records
-which approved source won.
+Policy-backed provisioning now uses the same provenance idea on diagnosis: the repo declares what
+it needs, policy declares where it may come from, doctor/explain report that provenance, and the
+receipt records which approved source won.
 
 ## Signed config direction
 

@@ -376,9 +376,9 @@ Finding objects always include stable identity fields:
 Finding objects may also include additive policy context keys when policy-aware diagnosis is surfaced:
 `policy_outcome`, `policy_reason`, `policy_source`, `install_scope`, and `mutation_allowed`.
 These keys are optional and backward-compatible.
-When a stable machine-oriented provenance label is available, finding objects may also include
-`provenance_key`, such as `org_policy` or `repo_signals`, while `provenance` remains the
-human-readable label.
+When ota can trace the diagnosis source, finding objects may also include `provenance` and
+`provenance_key`. Current shipped provenance keys include `repo_contract`, `org_policy`, and
+`repo_signals`.
 
 When the repo declares runtimes or tools and policy provides approved sources for them,
 `ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
@@ -624,8 +624,8 @@ Doctor JSON findings also include remote target-shape warnings when relevant, su
 
 ## `ota explain --json`
 
-Explain steps may also include `provenance` and `provenance_key` when the underlying finding
-carries policy or drift context.
+Explain steps may also include `provenance` and `provenance_key` when ota can trace the diagnosis
+source for the underlying finding.
 
 ```json
 {
@@ -654,8 +654,8 @@ carries policy or drift context.
 
 ## `ota workspace explain --json`
 
-Workspace explain steps may also include `provenance` and `provenance_key` when the underlying
-finding carries policy or drift context.
+Workspace explain steps may also include `provenance` and `provenance_key` when ota can trace the
+diagnosis source for the underlying finding.
 
 ```json
 {
