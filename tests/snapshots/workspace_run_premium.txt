@@ -17,4 +17,5 @@ Contract:   ./ota.workspace.yaml
 Workspace:  premium-workspace
 Mode:       native
 Task:       setup
+Status:     success
 Note:       running on the host environment

@@ -24,6 +24,12 @@
 
 # Changelog
 
+## Unreleased
+
+- documented the official `ota-run/action@v1` GitHub Actions workflow, linked it from the command and hosted-validation references, and corrected GitHub-hosted install snippets to add the ota install directory to `GITHUB_PATH` for direct CLI steps.
+- added a provider-neutral CI workflow reference that explains the canonical `validate` + `doctor` + plain annotations + archived receipt split for non-GitHub runners such as GitLab CI, Jenkins, and CircleCI.
+- fixed execution-summary status rendering so `NOT READY` post-execution failures render as `failed`, kept only pre-execution blockers as `blocked`, lowered the summary status labels, and pinned the internal GitHub readiness workflow to ota `1.4.3`.
+
 ## 1.4.3
 
 - fixed the policy-backed provisioning docs and backend formatting after the release-gate CI cleanup, including the package-rule heading and related provisioning output formatting.

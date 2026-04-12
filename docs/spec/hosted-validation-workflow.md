@@ -40,6 +40,19 @@ Hosted validation should:
 - emit stable JSON for automation
 - avoid hidden repo or workspace mutation
 
+## Official GitHub Actions wrapper
+
+If the CI runner is GitHub Actions, prefer `ota-run/action@v1` when you want a read-only
+readiness receipt, annotations, pull-request comments, and uploaded receipt artifacts without
+writing your own JSON adapter.
+
+The action is the GitHub-native wrapper around ota JSON. It does not replace direct `ota up`,
+`ota run`, or workspace execution steps.
+
+See [github-action-workflow.md](github-action-workflow.md) for the canonical action contract.
+For provider-neutral runners such as GitLab CI, Jenkins, or CircleCI, see
+[ci-pipeline-workflow.md](ci-pipeline-workflow.md).
+
 ## Recommended workflow
 
 Use the following commands as the canonical hosted-validation stack:
@@ -139,9 +152,11 @@ jobs:
           --health-retries=5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install ota
-        run: curl -fsSL https://dist.ota.run/install.sh | sh
+        run: |
+          curl -fsSL https://dist.ota.run/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Validate contract
         run: ota validate
       - name: Diagnose readiness
@@ -196,9 +211,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install ota
-        run: curl -fsSL https://dist.ota.run/install.sh | sh
+        run: |
+          curl -fsSL https://dist.ota.run/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Validate contract
         run: ota validate
       - name: Prepare repo
@@ -218,6 +235,41 @@ Example PR policy:
 - fail the job on any `severity: error`
 - post warnings as annotations
 - keep JSON artifacts for traceability
+
+## Example with the official GitHub Action
+
+Use this when the runner is GitHub Actions and you want step summaries, annotations, a sticky
+pull-request comment, and an archived receipt without writing adapter glue in the workflow.
+
+```yaml
+name: readiness
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - name: Publish ota readiness
+        uses: ota-run/action@v1
+        with:
+          command: receipt
+          archive: true
+          annotate: true
+          comment-pr: true
+          github-token: ${{ github.token }}
+```
+
+If a later job needs to run `ota` directly, install ota in that job or run `ota-run/action@v1`
+there as well. Job-level `PATH` changes do not cross into a different job.
 
 ## CI and PR annotation delivery
 

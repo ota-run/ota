@@ -37,7 +37,9 @@ For visual identity tokens and CLI/docs branding, see [brand-style.md](brand-sty
 For docs clarity rules and command-UX wording standards, see [docs-clarity-spec.md](docs-clarity-spec.md).
 For compatibility boundaries in the active version, see [compatibility-surface.md](compatibility-surface.md).
 For extension execution staging, see [extension-execution-boundary.md](extension-execution-boundary.md).
+For provider-neutral CI shells and receipt/annotation wiring, see [ci-pipeline-workflow.md](ci-pipeline-workflow.md).
 For hosted validation and PR-gating guidance, see [hosted-validation-workflow.md](hosted-validation-workflow.md).
+For the official GitHub Actions wrapper, see [github-action-workflow.md](github-action-workflow.md).
 
 Doctor first, contract second.
 
