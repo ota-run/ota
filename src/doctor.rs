@@ -21,7 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     Arc,
@@ -130,6 +130,33 @@ pub struct AdapterBootstrapDiagnostics {
 struct ContainerProbeContext {
     image: String,
     engine: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommandVersionProbe {
+    command: String,
+    resolved_path: Option<PathBuf>,
+    outcome: CommandVersionProbeOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommandVersionProbeOutcome {
+    Missing,
+    ProbeFailed {
+        exit_code: Option<i32>,
+        error: Option<String>,
+    },
+    Unparseable,
+    Version(String),
+}
+
+impl CommandVersionProbe {
+    fn version(self) -> Option<String> {
+        match self.outcome {
+            CommandVersionProbeOutcome::Version(version) => Some(version),
+            _ => None,
+        }
+    }
 }
 
 fn provisioning_action_audit_summary(action: &ProvisioningAction) -> String {
@@ -455,8 +482,14 @@ impl Finding {
             s if s.starts_with("Invalid environment value: ") => "OTA_ENV_INVALID",
             s if s.starts_with("Version mismatch for runtime: ") => "OTA_RUNTIME_VERSION_MISMATCH",
             s if s.starts_with("Missing runtime: ") => "OTA_RUNTIME_MISSING",
+            s if s.starts_with("Runtime probe failed: ") => "OTA_RUNTIME_PROBE_FAILED",
+            s if s.starts_with("Unparseable version for runtime: ") => {
+                "OTA_RUNTIME_VERSION_UNPARSEABLE"
+            }
             s if s.starts_with("Version mismatch for tool: ") => "OTA_TOOL_VERSION_MISMATCH",
             s if s.starts_with("Missing tool: ") => "OTA_TOOL_MISSING",
+            s if s.starts_with("Tool probe failed: ") => "OTA_TOOL_PROBE_FAILED",
+            s if s.starts_with("Unparseable version for tool: ") => "OTA_TOOL_VERSION_UNPARSEABLE",
             s if s.starts_with("Container apt cannot install pinned package version: ") => {
                 "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             }
@@ -529,8 +562,12 @@ impl Finding {
             | "OTA_ENV_INVALID"
             | "OTA_RUNTIME_VERSION_MISMATCH"
             | "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING" => "environment",
+            | "OTA_TOOL_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_UNPARSEABLE" => "environment",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -568,8 +605,12 @@ impl Finding {
             | "OTA_ENV_INVALID"
             | "OTA_RUNTIME_VERSION_MISMATCH"
             | "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING" => "host",
+            | "OTA_TOOL_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_UNPARSEABLE" => "host",
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -672,8 +713,8 @@ impl Finding {
                 "the installed version did not match the contract requirement".to_string(),
                 "the installed version satisfies the contract requirement".to_string(),
                 "host".to_string(),
-                String::new(),
-                String::new(),
+                finding_probe_command(&self.why).unwrap_or_default(),
+                finding_probe_path(&self.why).unwrap_or_default(),
             ),
             "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => (
                 "the required runtime or tool was not available".to_string(),
@@ -681,6 +722,22 @@ impl Finding {
                 "host".to_string(),
                 String::new(),
                 String::new(),
+            ),
+            "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED" => (
+                "the resolved executable could not report a version".to_string(),
+                "the resolved executable reports a version that satisfies the contract"
+                    .to_string(),
+                "host".to_string(),
+                finding_probe_command(&self.why).unwrap_or_default(),
+                finding_probe_path(&self.why).unwrap_or_default(),
+            ),
+            "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => (
+                "the resolved executable did not emit a parseable version".to_string(),
+                "the resolved executable emits a parseable version that satisfies the contract"
+                    .to_string(),
+                "host".to_string(),
+                finding_probe_command(&self.why).unwrap_or_default(),
+                finding_probe_path(&self.why).unwrap_or_default(),
             ),
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
                 "the configured container apt sources do not provide the pinned package version"
@@ -899,8 +956,12 @@ impl Finding {
             | "OTA_ENV_INVALID"
             | "OTA_RUNTIME_VERSION_MISMATCH"
             | "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_UNPARSEABLE"
             | "OTA_CHECK_FAILED"
             | "OTA_CHECK_TIMED_OUT" => Some(FindingProvenanceContext {
                 provenance: "repo contract",
@@ -2212,7 +2273,17 @@ fn diagnose_command_version(
         None
     };
 
-    let actual = if mode == DoctorMode::Container {
+    let native_probe = if mode == DoctorMode::Native {
+        Some(command_version_probe(executable_name))
+    } else {
+        None
+    };
+    let actual = if let Some(probe) = native_probe.as_ref() {
+        match &probe.outcome {
+            CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
+            _ => None,
+        }
+    } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
             return;
         };
@@ -2222,10 +2293,75 @@ fn diagnose_command_version(
             executable_name,
         )
     } else {
-        command_version(executable_name)
+        None
     };
 
     let Some(actual) = actual else {
+        if let Some(probe) = native_probe.as_ref() {
+            match &probe.outcome {
+                CommandVersionProbeOutcome::Missing => {}
+                CommandVersionProbeOutcome::ProbeFailed { exit_code, error } => {
+                    let resolved_path = probe
+                        .resolved_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| executable_name.to_string());
+                    findings.push(Finding {
+                        severity: if required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("{} probe failed: {display_name}", kind_label(kind)),
+                        why: match (error.as_deref(), exit_code) {
+                            (Some(message), _) => format!(
+                                "ota probed `{resolved_path}` with `{}`, but the command could not be executed: {message}",
+                                probe.command
+                            ),
+                            (None, Some(code)) => format!(
+                                "ota probed `{resolved_path}` with `{}`, but the command exited with code {code} before ota could read a version",
+                                probe.command
+                            ),
+                            (None, None) => format!(
+                                "ota probed `{resolved_path}` with `{}`, but the command failed before ota could read a version",
+                                probe.command
+                            ),
+                        },
+                        next: format!(
+                            "run `{}` directly, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor`",
+                            probe.command
+                        ),
+                    });
+                    return;
+                }
+                CommandVersionProbeOutcome::Unparseable => {
+                    let resolved_path = probe
+                        .resolved_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| executable_name.to_string());
+                    findings.push(Finding {
+                        severity: if required {
+                            FindingSeverity::Error
+                        } else {
+                            FindingSeverity::Warn
+                        },
+                        summary: format!("Unparseable version for {kind}: {display_name}"),
+                        why: format!(
+                            "ota probed `{resolved_path}` with `{}`, but the output did not contain a parseable version",
+                            probe.command
+                        ),
+                        next: format!(
+                            "run `{}` directly, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+                            probe.command
+                        ),
+                    });
+                    return;
+                }
+                CommandVersionProbeOutcome::Version(_) => {}
+            }
+        }
+
         if mode == DoctorMode::Container
             && let Some(failure) = container_installability_failure(
                 target_kind,
@@ -2322,6 +2458,15 @@ fn diagnose_command_version(
     }
 
     let container_image = container_probe.map(|probe| probe.image.as_str());
+    let native_probe_suffix = native_probe
+        .as_ref()
+        .and_then(|probe| {
+            probe
+                .resolved_path
+                .as_ref()
+                .map(|path| format!("; ota probed `{}` with `{}`", path.display(), probe.command))
+        })
+        .unwrap_or_default();
     findings.push(Finding {
         severity: if required {
             FindingSeverity::Error
@@ -2337,7 +2482,7 @@ fn diagnose_command_version(
                 "{display_name} resolved to `{actual}` inside the configured container image but the contract requires `{requirement}`"
             ),
             _ => format!(
-                "{display_name} resolved to `{actual}` but the contract requires `{requirement}`"
+                "{display_name} resolved to `{actual}` but the contract requires `{requirement}`{native_probe_suffix}"
             ),
         },
         next: match (mode, container_image) {
@@ -2651,32 +2796,145 @@ fn map_check_severity(severity: CheckSeverity) -> FindingSeverity {
 }
 
 pub(crate) fn command_version(name: &str) -> Option<String> {
-    let output = version_command(name).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let combined = format!(
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    extract_version_token(&combined)
+    command_version_probe(name).version()
 }
 
 pub(crate) fn command_available(name: &str) -> bool {
-    Command::new(name).output().is_ok()
+    resolve_command_path(name).is_some()
 }
 
-fn version_command(name: &str) -> Command {
-    let mut command = Command::new(name);
+fn command_version_probe(name: &str) -> CommandVersionProbe {
+    let command = version_command_string(name);
+    let Some(resolved_path) = resolve_command_path(name) else {
+        return CommandVersionProbe {
+            command,
+            resolved_path: None,
+            outcome: CommandVersionProbeOutcome::Missing,
+        };
+    };
+
+    let outcome = match version_command_at_path(&resolved_path, name).output() {
+        Ok(output) if output.status.success() => {
+            let combined = format!(
+                "{} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            extract_version_token(&combined)
+                .map(CommandVersionProbeOutcome::Version)
+                .unwrap_or(CommandVersionProbeOutcome::Unparseable)
+        }
+        Ok(output) => CommandVersionProbeOutcome::ProbeFailed {
+            exit_code: output.status.code(),
+            error: None,
+        },
+        Err(error) => CommandVersionProbeOutcome::ProbeFailed {
+            exit_code: None,
+            error: Some(error.to_string()),
+        },
+    };
+
+    CommandVersionProbe {
+        command,
+        resolved_path: Some(resolved_path),
+        outcome,
+    }
+}
+
+fn version_command_at_path(path: &Path, name: &str) -> Command {
+    let mut command = Command::new(path);
     if name == "go" {
         command.arg("version");
     } else {
         command.arg("--version");
     }
     command
+}
+
+fn resolve_command_path(name: &str) -> Option<PathBuf> {
+    if looks_like_command_path(name) {
+        return command_path_candidates(Path::new(name))
+            .into_iter()
+            .find(|candidate| is_probeable_file(candidate));
+    }
+
+    #[cfg(windows)]
+    if let Ok(current_dir) = std::env::current_dir()
+        && let Some(candidate) = command_path_candidates(&current_dir.join(name))
+            .into_iter()
+            .find(|candidate| is_probeable_file(candidate))
+    {
+        return Some(candidate);
+    }
+
+    let path = std::env::var_os("PATH")?;
+    for entry in std::env::split_paths(&path) {
+        if let Some(candidate) = command_path_candidates(&entry.join(name))
+            .into_iter()
+            .find(|candidate| is_probeable_file(candidate))
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn looks_like_command_path(name: &str) -> bool {
+    Path::new(name).is_absolute() || name.contains('/') || name.contains('\\')
+}
+
+fn command_path_candidates(path: &Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        if path.extension().is_some() {
+            return vec![path.to_path_buf()];
+        }
+
+        let mut candidates = vec![path.to_path_buf()];
+        let pathext = std::env::var_os("PATHEXT")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| String::from(".COM;.EXE;.BAT;.CMD"));
+        for ext in pathext
+            .split(';')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let mut candidate = path.as_os_str().to_os_string();
+            candidate.push(ext);
+            candidates.push(PathBuf::from(candidate));
+        }
+        candidates
+    }
+    #[cfg(not(windows))]
+    {
+        vec![path.to_path_buf()]
+    }
+}
+
+fn is_probeable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn kind_label(kind: &str) -> &'static str {
+    match kind {
+        "runtime" => "Runtime",
+        _ => "Tool",
+    }
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {
@@ -2697,6 +2955,20 @@ fn extract_version_token(output: &str) -> Option<String> {
                 .to_string()
         })
         .filter(|token| !token.is_empty())
+}
+
+fn extract_backticked_after(value: &str, marker: &str) -> Option<String> {
+    let rest = value.split_once(marker)?.1;
+    let end = rest.find('`')?;
+    Some(rest[..end].to_string())
+}
+
+fn finding_probe_path(why: &str) -> Option<String> {
+    extract_backticked_after(why, "ota probed `")
+}
+
+fn finding_probe_command(why: &str) -> Option<String> {
+    extract_backticked_after(why, " with `")
 }
 
 pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
@@ -3322,6 +3594,168 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("go1.24.2"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn resolve_command_path_checks_current_directory_before_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        let original_path = env::var_os("PATH");
+
+        let local_npm = write_fake_command(temp.path(), "npm", "@echo off\r\necho 9.9.9\r\n");
+
+        unsafe {
+            env::set_var("PATH", temp.path().join("missing-bin"));
+        }
+        env::set_current_dir(temp.path()).unwrap();
+
+        let resolved = super::resolve_command_path("npm");
+
+        env::set_current_dir(original_dir).unwrap();
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(resolved.as_deref(), Some(local_npm.as_path()));
+    }
+
+    #[test]
+    fn reports_tool_probe_failures_with_resolved_probe_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let npm_path = write_fake_command(
+            &bin_dir,
+            "npm",
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 1\r\n"
+            } else {
+                "#!/bin/sh\nexit 1\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  npm: "*"
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Tool probe failed: npm")
+            .expect("expected tool probe failure finding");
+        assert!(finding.why.contains(&format!(
+            "ota probed `{}` with `npm --version`",
+            npm_path.display()
+        )));
+        assert_eq!(finding.evidence().command, "npm --version");
+        assert_eq!(finding.evidence().path, npm_path.display().to_string());
+    }
+
+    #[test]
+    fn reports_unparseable_tool_versions_with_resolved_probe_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let npm_path = write_fake_command(
+            &bin_dir,
+            "npm",
+            if cfg!(windows) {
+                "@echo off\r\necho ready\r\n"
+            } else {
+                "#!/bin/sh\necho ready\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  npm: "*"
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Unparseable version for tool: npm")
+            .expect("expected unparseable tool version finding");
+        assert!(finding.why.contains(&format!(
+            "ota probed `{}` with `npm --version`",
+            npm_path.display()
+        )));
+        assert_eq!(finding.evidence().command, "npm --version");
+        assert_eq!(finding.evidence().path, npm_path.display().to_string());
     }
 
     #[test]

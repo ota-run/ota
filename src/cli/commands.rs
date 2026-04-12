@@ -13027,8 +13027,12 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
     match finding.code() {
         "OTA_RUNTIME_VERSION_MISMATCH"
         | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_PROBE_FAILED"
+        | "OTA_RUNTIME_VERSION_UNPARSEABLE"
         | "OTA_TOOL_VERSION_MISMATCH"
-        | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        | "OTA_TOOL_MISSING"
+        | "OTA_TOOL_PROBE_FAILED"
+        | "OTA_TOOL_VERSION_UNPARSEABLE" => String::from("tooling-version"),
         _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
@@ -13082,8 +13086,12 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
     match finding.code() {
         "OTA_RUNTIME_VERSION_MISMATCH"
         | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_PROBE_FAILED"
+        | "OTA_RUNTIME_VERSION_UNPARSEABLE"
         | "OTA_TOOL_VERSION_MISMATCH"
-        | "OTA_TOOL_MISSING" => String::from("tooling-version"),
+        | "OTA_TOOL_MISSING"
+        | "OTA_TOOL_PROBE_FAILED"
+        | "OTA_TOOL_VERSION_UNPARSEABLE" => String::from("tooling-version"),
         _ if summary.starts_with("Adapter bootstrap failed: ") => String::from("adapter-bootstrap"),
         "OTA_ENV_MISSING" => String::from("environment-missing"),
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
@@ -13129,8 +13137,12 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
     match finding.code() {
         "OTA_RUNTIME_VERSION_MISMATCH"
         | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_PROBE_FAILED"
+        | "OTA_RUNTIME_VERSION_UNPARSEABLE"
         | "OTA_TOOL_VERSION_MISMATCH"
-        | "OTA_TOOL_MISSING" => DoctorFindingGroupKind::ToolingVersion,
+        | "OTA_TOOL_MISSING"
+        | "OTA_TOOL_PROBE_FAILED"
+        | "OTA_TOOL_VERSION_UNPARSEABLE" => DoctorFindingGroupKind::ToolingVersion,
         _ if summary.starts_with("Adapter bootstrap failed: ") => {
             DoctorFindingGroupKind::AdapterBootstrap
         }
@@ -13260,10 +13272,36 @@ fn render_grouped_doctor_findings(
     stdout
 }
 
-fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
-    let has_missing_tooling = findings
+fn tooling_group_has_missing(findings: &[&Finding]) -> bool {
+    findings
         .iter()
-        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
+        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"))
+}
+
+fn tooling_group_has_probe_issues(findings: &[&Finding]) -> bool {
+    findings.iter().any(|finding| {
+        matches!(
+            finding.code(),
+            "OTA_RUNTIME_PROBE_FAILED"
+                | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+                | "OTA_TOOL_PROBE_FAILED"
+                | "OTA_TOOL_VERSION_UNPARSEABLE"
+        )
+    })
+}
+
+fn tooling_group_has_version_mismatches(findings: &[&Finding]) -> bool {
+    findings.iter().any(|finding| {
+        matches!(
+            finding.code(),
+            "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH"
+        )
+    })
+}
+
+fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
+    let has_missing_tooling = tooling_group_has_missing(findings);
+    let has_probe_issues = tooling_group_has_probe_issues(findings);
     let has_missing_env = findings
         .iter()
         .any(|finding| finding.code() == "OTA_ENV_MISSING");
@@ -13273,6 +13311,9 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
     match kind {
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => {
             String::from("Install required runtimes and tools")
+        }
+        DoctorFindingGroupKind::ToolingVersion if has_probe_issues => {
+            String::from("Diagnose runtime and tool probes")
         }
         DoctorFindingGroupKind::ToolingVersion => String::from("Fix version mismatches"),
         DoctorFindingGroupKind::AdapterBootstrap => String::from("Adapter bootstrap failed"),
@@ -13295,9 +13336,8 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
 }
 
 fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]) -> String {
-    let has_missing_tooling = findings
-        .iter()
-        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
+    let has_missing_tooling = tooling_group_has_missing(findings);
+    let has_probe_issues = tooling_group_has_probe_issues(findings);
     let has_missing_env = findings
         .iter()
         .any(|finding| finding.code() == "OTA_ENV_MISSING");
@@ -13305,8 +13345,16 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
         .iter()
         .any(|finding| finding.code() == "OTA_ENV_INVALID");
     match kind {
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling && has_probe_issues => {
+            String::from(
+                "one or more required runtimes or tools are missing, unprobeable, or do not match the contract",
+            )
+        }
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => String::from(
             "one or more required runtimes or tools are missing or do not match the contract",
+        ),
+        DoctorFindingGroupKind::ToolingVersion if has_probe_issues => String::from(
+            "one or more runtime or tool probes failed or returned unparseable versions",
         ),
         DoctorFindingGroupKind::ToolingVersion => {
             String::from("one or more runtime or tool entries do not match the contract")
@@ -13348,15 +13396,9 @@ fn doctor_finding_group_next(
     findings: &[&Finding],
     doctor_mode: Option<DoctorMode>,
 ) -> String {
-    let has_missing_tooling = findings
-        .iter()
-        .any(|finding| matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING"));
-    let has_version_mismatch = findings.iter().any(|finding| {
-        matches!(
-            finding.code(),
-            "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH"
-        )
-    });
+    let has_missing_tooling = tooling_group_has_missing(findings);
+    let has_probe_issues = tooling_group_has_probe_issues(findings);
+    let has_version_mismatch = tooling_group_has_version_mismatches(findings);
     let has_missing_env = findings
         .iter()
         .any(|finding| finding.code() == "OTA_ENV_MISSING");
@@ -13367,12 +13409,32 @@ fn doctor_finding_group_next(
         .iter()
         .any(|finding| finding.summary == "Policy-backed provisioning sources are declared");
     let next = match kind {
+        DoctorFindingGroupKind::ToolingVersion
+            if has_missing_tooling && has_probe_issues && has_version_mismatch =>
+        {
+            String::from(
+                "install the missing runtimes and tools, fix the listed probes, align any mismatched versions, then rerun `ota doctor`",
+            )
+        }
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling && has_version_mismatch => {
             String::from("install or align the listed runtimes and tools, then rerun `ota doctor`")
+        }
+        DoctorFindingGroupKind::ToolingVersion if has_missing_tooling && has_probe_issues => {
+            String::from(
+                "install the missing runtimes and tools, fix the listed probes, then rerun `ota doctor`",
+            )
         }
         DoctorFindingGroupKind::ToolingVersion if has_missing_tooling => {
             String::from("install the listed runtimes and tools, then rerun `ota doctor`")
         }
+        DoctorFindingGroupKind::ToolingVersion if has_probe_issues && has_version_mismatch => {
+            String::from(
+                "fix the listed runtime and tool probes, align any mismatched versions, then rerun `ota doctor`",
+            )
+        }
+        DoctorFindingGroupKind::ToolingVersion if has_probe_issues => String::from(
+            "run the listed version probes directly, fix the resolved executables, then rerun `ota doctor`",
+        ),
         DoctorFindingGroupKind::ToolingVersion => {
             String::from("install compatible runtimes and tools, then rerun `ota doctor`")
         }
@@ -13477,6 +13539,30 @@ fn doctor_finding_group_item_text(
             };
             if matches!(finding.code(), "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING") {
                 return format!("{subject} is missing{command_hint}");
+            }
+            if matches!(
+                finding.code(),
+                "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED"
+            ) {
+                let tokens = backticked_tokens(&finding.why);
+                return match tokens.as_slice() {
+                    [path, command, ..] => {
+                        format!("{subject} probe failed via `{path}` using `{command}`")
+                    }
+                    _ => format!("{subject} probe failed"),
+                };
+            }
+            if matches!(
+                finding.code(),
+                "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE"
+            ) {
+                let tokens = backticked_tokens(&finding.why);
+                return match tokens.as_slice() {
+                    [path, command, ..] => format!(
+                        "{subject} reported an unparseable version via `{path}` using `{command}`"
+                    ),
+                    _ => format!("{subject} reported an unparseable version"),
+                };
             }
             let (display_why, _) = strip_container_image_from_why(&finding.why);
             let tokens = backticked_tokens(&display_why);
@@ -15538,6 +15624,76 @@ tasks:
     }
 
     #[test]
+    fn up_preview_does_not_treat_probe_failures_as_provisionable() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  npm: "*"
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(crate::doctor::ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::SelectSource,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("npm"),
+                        requested_version: String::from("*"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: None,
+                        source: String::from("choco"),
+                        source_config: None,
+                        approved_version: Some(String::from("*")),
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Tool probe failed: npm"),
+                why: String::from(
+                    "ota probed `C:\\node\\npm.cmd` with `npm --version`, but the command exited with code 1 before ota could read a version",
+                ),
+                next: String::from(
+                    "run `npm --version` directly, inspect `C:\\node\\npm.cmd`, and make sure the probe succeeds before rerunning `ota doctor`",
+                ),
+            }],
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert!(
+            !preview
+                .plan
+                .actions
+                .contains(&String::from("provision `npm` `*` via `choco`"))
+        );
+        assert!(
+            preview
+                .plan
+                .skipped
+                .contains(&String::from("skip `npm`; already satisfies the contract"))
+        );
+    }
+
+    #[test]
     fn execution_policy_lines_show_package_aliases_when_policy_maps_packages() {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -15614,6 +15770,40 @@ policies:
             "install compatible runtimes and tools, then rerun `ota doctor`"
         );
         assert_eq!(groups[0].count, 2);
+    }
+
+    #[test]
+    fn doctor_group_summaries_distinguish_probe_issues_from_version_mismatches() {
+        let findings = [
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Tool probe failed: npm"),
+                why: String::from(
+                    "ota probed `/opt/node/bin/npm` with `npm --version`, but the command exited with code 1 before ota could read a version",
+                ),
+                next: String::from(
+                    "run `npm --version` directly, inspect `/opt/node/bin/npm`, and make sure the probe succeeds before rerunning `ota doctor`",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Unparseable version for runtime: node"),
+                why: String::from(
+                    "ota probed `/opt/node/bin/node` with `node --version`, but the output did not contain a parseable version",
+                ),
+                next: String::from(
+                    "run `node --version` directly, inspect `/opt/node/bin/node`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+                ),
+            },
+        ];
+
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].action_title, "Diagnose runtime and tool probes");
+        assert_eq!(
+            groups[0].action_next,
+            "run the listed version probes directly, fix the resolved executables, then rerun `ota doctor`"
+        );
     }
 
     #[test]
@@ -15759,6 +15949,65 @@ policies:
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
         assert_eq!(text.matches("Next:").count(), 2);
+    }
+
+    #[test]
+    fn doctor_text_groups_probe_failures_under_probe_action() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Tool probe failed: npm"),
+                    why: String::from(
+                        "ota probed `/opt/node/bin/npm` with `npm --version`, but the command exited with code 1 before ota could read a version",
+                    ),
+                    next: String::from(
+                        "run `npm --version` directly, inspect `/opt/node/bin/npm`, and make sure the probe succeeds before rerunning `ota doctor`",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Unparseable version for runtime: node"),
+                    why: String::from(
+                        "ota probed `/opt/node/bin/node` with `node --version`, but the output did not contain a parseable version",
+                    ),
+                    next: String::from(
+                        "run `node --version` directly, inspect `/opt/node/bin/node`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+                    ),
+                },
+            ],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::NotReady,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 2,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        assert!(text.contains("Diagnose runtime and tool probes (2)"));
+        assert!(text.contains("» npm probe failed via `/opt/node/bin/npm` using `npm --version`"));
+        assert!(text.contains(
+            "» node reported an unparseable version via `/opt/node/bin/node` using `node --version`"
+        ));
+        assert!(text.contains(
+            "run the listed version probes directly, fix the resolved executables, then rerun `ota doctor`"
+        ));
     }
 
     #[test]
