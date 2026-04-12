@@ -132,6 +132,8 @@ struct ContainerProbeContext {
     engine: String,
 }
 
+const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
     command: String,
@@ -610,7 +612,13 @@ impl Finding {
             | "OTA_TOOL_VERSION_MISMATCH"
             | "OTA_TOOL_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE" => "host",
+            | "OTA_TOOL_VERSION_UNPARSEABLE" => {
+                if finding_targets_container_image(&self.why) {
+                    "container_target"
+                } else {
+                    "host"
+                }
+            }
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -712,14 +720,22 @@ impl Finding {
             "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => (
                 "the installed version did not match the contract requirement".to_string(),
                 "the installed version satisfies the contract requirement".to_string(),
-                "host".to_string(),
+                if finding_targets_container_image(&self.why) {
+                    "container_target".to_string()
+                } else {
+                    "host".to_string()
+                },
                 finding_probe_command(&self.why).unwrap_or_default(),
                 finding_probe_path(&self.why).unwrap_or_default(),
             ),
             "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => (
                 "the required runtime or tool was not available".to_string(),
                 "the required runtime or tool is available on PATH".to_string(),
-                "host".to_string(),
+                if finding_targets_container_image(&self.why) {
+                    "container_target".to_string()
+                } else {
+                    "host".to_string()
+                },
                 String::new(),
                 String::new(),
             ),
@@ -727,7 +743,11 @@ impl Finding {
                 "the resolved executable could not report a version".to_string(),
                 "the resolved executable reports a version that satisfies the contract"
                     .to_string(),
-                "host".to_string(),
+                if finding_targets_container_image(&self.why) {
+                    "container_target".to_string()
+                } else {
+                    "host".to_string()
+                },
                 finding_probe_command(&self.why).unwrap_or_default(),
                 finding_probe_path(&self.why).unwrap_or_default(),
             ),
@@ -735,7 +755,11 @@ impl Finding {
                 "the resolved executable did not emit a parseable version".to_string(),
                 "the resolved executable emits a parseable version that satisfies the contract"
                     .to_string(),
-                "host".to_string(),
+                if finding_targets_container_image(&self.why) {
+                    "container_target".to_string()
+                } else {
+                    "host".to_string()
+                },
                 finding_probe_command(&self.why).unwrap_or_default(),
                 finding_probe_path(&self.why).unwrap_or_default(),
             ),
@@ -2273,31 +2297,31 @@ fn diagnose_command_version(
         None
     };
 
-    let native_probe = if mode == DoctorMode::Native {
+    let version_probe = if mode == DoctorMode::Native {
         Some(command_version_probe(executable_name))
-    } else {
-        None
-    };
-    let actual = if let Some(probe) = native_probe.as_ref() {
-        match &probe.outcome {
-            CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
-            _ => None,
-        }
     } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
             return;
         };
-        command_version_in_container(
+        Some(command_version_probe_in_container(
             &container_probe.engine,
             &container_probe.image,
             executable_name,
-        )
+        ))
+    } else {
+        None
+    };
+    let actual = if let Some(probe) = version_probe.as_ref() {
+        match &probe.outcome {
+            CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
+            _ => None,
+        }
     } else {
         None
     };
 
     let Some(actual) = actual else {
-        if let Some(probe) = native_probe.as_ref() {
+        if let Some(probe) = version_probe.as_ref() {
             match &probe.outcome {
                 CommandVersionProbeOutcome::Missing => {}
                 CommandVersionProbeOutcome::ProbeFailed { exit_code, error } => {
@@ -2306,6 +2330,53 @@ fn diagnose_command_version(
                         .as_ref()
                         .map(|path| path.display().to_string())
                         .unwrap_or_else(|| executable_name.to_string());
+                    let (why, next) = match mode {
+                        DoctorMode::Container => {
+                            let image = container_probe
+                                .map(|probe| probe.image.as_str())
+                                .unwrap_or("unknown");
+                            let why = match (error.as_deref(), exit_code) {
+                                (Some(message), _) => format!(
+                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command could not be executed: {message}",
+                                    probe.command
+                                ),
+                                (None, Some(code)) => format!(
+                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command exited with code {code} before ota could read a version",
+                                    probe.command
+                                ),
+                                (None, None) => format!(
+                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command failed before ota could read a version",
+                                    probe.command
+                                ),
+                            };
+                            let next = format!(
+                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor --mode container`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
+                        DoctorMode::Native => {
+                            let why = match (error.as_deref(), exit_code) {
+                                (Some(message), _) => format!(
+                                    "ota probed `{resolved_path}` with `{}`, but the command could not be executed: {message}",
+                                    probe.command
+                                ),
+                                (None, Some(code)) => format!(
+                                    "ota probed `{resolved_path}` with `{}`, but the command exited with code {code} before ota could read a version",
+                                    probe.command
+                                ),
+                                (None, None) => format!(
+                                    "ota probed `{resolved_path}` with `{}`, but the command failed before ota could read a version",
+                                    probe.command
+                                ),
+                            };
+                            let next = format!(
+                                "run `{}` directly, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
+                    };
                     findings.push(Finding {
                         severity: if required {
                             FindingSeverity::Error
@@ -2313,24 +2384,8 @@ fn diagnose_command_version(
                             FindingSeverity::Warn
                         },
                         summary: format!("{} probe failed: {display_name}", kind_label(kind)),
-                        why: match (error.as_deref(), exit_code) {
-                            (Some(message), _) => format!(
-                                "ota probed `{resolved_path}` with `{}`, but the command could not be executed: {message}",
-                                probe.command
-                            ),
-                            (None, Some(code)) => format!(
-                                "ota probed `{resolved_path}` with `{}`, but the command exited with code {code} before ota could read a version",
-                                probe.command
-                            ),
-                            (None, None) => format!(
-                                "ota probed `{resolved_path}` with `{}`, but the command failed before ota could read a version",
-                                probe.command
-                            ),
-                        },
-                        next: format!(
-                            "run `{}` directly, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor`",
-                            probe.command
-                        ),
+                        why,
+                        next,
                     });
                     return;
                 }
@@ -2340,6 +2395,33 @@ fn diagnose_command_version(
                         .as_ref()
                         .map(|path| path.display().to_string())
                         .unwrap_or_else(|| executable_name.to_string());
+                    let (why, next) = match mode {
+                        DoctorMode::Container => {
+                            let image = container_probe
+                                .map(|probe| probe.image.as_str())
+                                .unwrap_or("unknown");
+                            let why = format!(
+                                "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the output did not contain a parseable version",
+                                probe.command
+                            );
+                            let next = format!(
+                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor --mode container`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
+                        DoctorMode::Native => {
+                            let why = format!(
+                                "ota probed `{resolved_path}` with `{}`, but the output did not contain a parseable version",
+                                probe.command
+                            );
+                            let next = format!(
+                                "run `{}` directly, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
+                    };
                     findings.push(Finding {
                         severity: if required {
                             FindingSeverity::Error
@@ -2347,14 +2429,8 @@ fn diagnose_command_version(
                             FindingSeverity::Warn
                         },
                         summary: format!("Unparseable version for {kind}: {display_name}"),
-                        why: format!(
-                            "ota probed `{resolved_path}` with `{}`, but the output did not contain a parseable version",
-                            probe.command
-                        ),
-                        next: format!(
-                            "run `{}` directly, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor`",
-                            probe.command
-                        ),
+                        why,
+                        next,
                     });
                     return;
                 }
@@ -2458,7 +2534,7 @@ fn diagnose_command_version(
     }
 
     let container_image = container_probe.map(|probe| probe.image.as_str());
-    let native_probe_suffix = native_probe
+    let native_probe_suffix = version_probe
         .as_ref()
         .and_then(|probe| {
             probe
@@ -2532,23 +2608,6 @@ fn container_installability_failure(
     }
 }
 
-fn command_version_in_container(engine: &str, image: &str, name: &str) -> Option<String> {
-    let output = version_command_in_container(engine, image, name)
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    let combined = format!(
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    extract_version_token(&combined)
-}
-
 fn version_command_in_container(engine: &str, image: &str, name: &str) -> Command {
     let mut command = Command::new(engine);
     command
@@ -2558,7 +2617,7 @@ fn version_command_in_container(engine: &str, image: &str, name: &str) -> Comman
         .arg("sh")
         .arg(image)
         .arg("-c")
-        .arg(version_command_string(name));
+        .arg(version_probe_command_string(name));
     command
 }
 
@@ -2568,6 +2627,85 @@ fn version_command_string(name: &str) -> String {
     } else {
         format!("{name} --version")
     }
+}
+
+fn version_probe_command_string(name: &str) -> String {
+    let quoted_name = shell_single_quote(name);
+    let exec = if name == "go" {
+        String::from("\"$resolved\" version")
+    } else {
+        String::from("\"$resolved\" --version")
+    };
+
+    format!(
+        "resolved=\"$(command -v {quoted_name} 2>/dev/null)\" || exit 127\nprintf '%s%s\\n' '{CONTAINER_PROBE_PATH_MARKER}' \"$resolved\" >&2\nexec {exec}"
+    )
+}
+
+fn command_version_probe_in_container(
+    engine: &str,
+    image: &str,
+    name: &str,
+) -> CommandVersionProbe {
+    let command = version_command_string(name);
+    let output = version_command_in_container(engine, image, name).output();
+    let (resolved_path, outcome) = match output {
+        Ok(output) => {
+            let (resolved_path, combined) =
+                extract_container_probe_output(&output.stdout, &output.stderr);
+            let outcome = if output.status.success() {
+                extract_version_token(&combined)
+                    .map(CommandVersionProbeOutcome::Version)
+                    .unwrap_or(CommandVersionProbeOutcome::Unparseable)
+            } else if output.status.code() == Some(127) && resolved_path.is_none() {
+                CommandVersionProbeOutcome::Missing
+            } else {
+                CommandVersionProbeOutcome::ProbeFailed {
+                    exit_code: output.status.code(),
+                    error: None,
+                }
+            };
+            (resolved_path.map(PathBuf::from), outcome)
+        }
+        Err(error) => (
+            None,
+            CommandVersionProbeOutcome::ProbeFailed {
+                exit_code: None,
+                error: Some(error.to_string()),
+            },
+        ),
+    };
+
+    CommandVersionProbe {
+        command,
+        resolved_path,
+        outcome,
+    }
+}
+
+fn extract_container_probe_output(stdout: &[u8], stderr: &[u8]) -> (Option<String>, String) {
+    let (stdout_path, cleaned_stdout) =
+        strip_container_probe_marker(&String::from_utf8_lossy(stdout));
+    let (stderr_path, cleaned_stderr) =
+        strip_container_probe_marker(&String::from_utf8_lossy(stderr));
+    let resolved_path = stdout_path.or(stderr_path);
+    let combined = format!("{cleaned_stdout} {cleaned_stderr}")
+        .trim()
+        .to_string();
+    (resolved_path, combined)
+}
+
+fn strip_container_probe_marker(stream: &str) -> (Option<String>, String) {
+    let mut resolved_path = None;
+    let mut kept = Vec::new();
+    for line in stream.lines() {
+        if let Some(value) = line.strip_prefix(CONTAINER_PROBE_PATH_MARKER) {
+            resolved_path = Some(value.trim().to_string());
+        } else {
+            kept.push(line);
+        }
+    }
+    (resolved_path, kept.join("\n"))
 }
 
 fn compact_display_path(path: &Path) -> String {
@@ -2969,6 +3107,11 @@ fn finding_probe_path(why: &str) -> Option<String> {
 
 fn finding_probe_command(why: &str) -> Option<String> {
     extract_backticked_after(why, " with `")
+}
+
+fn finding_targets_container_image(why: &str) -> bool {
+    why.contains("inside container image `")
+        || why.contains("inside the configured container image")
 }
 
 pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
@@ -3756,6 +3899,166 @@ tasks:
         )));
         assert_eq!(finding.evidence().command, "npm --version");
         assert_eq!(finding.evidence().path, npm_path.display().to_string());
+    }
+
+    #[test]
+    fn reports_container_tool_probe_failures_with_resolved_probe_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                super::CONTAINER_PROBE_PATH_MARKER
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo '{}/usr/local/bin/npm' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                super::CONTAINER_PROBE_PATH_MARKER
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tools:
+  npm: "*"
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_in_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Tool probe failed: npm")
+            .expect("expected tool probe failure finding");
+        assert!(finding
+            .why
+            .contains("ota probed `/usr/local/bin/npm` inside container image `premium/test:latest` with `npm --version`"));
+        assert_eq!(finding.evidence().command, "npm --version");
+        assert_eq!(finding.evidence().path, "/usr/local/bin/npm");
+        assert_eq!(finding.evidence().source, "container_target");
+        assert_eq!(finding.owner(), "container_target");
+    }
+
+    #[test]
+    fn reports_container_unparseable_tool_versions_with_resolved_probe_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo ready\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                super::CONTAINER_PROBE_PATH_MARKER
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo 'ready'; echo '{}/usr/local/bin/npm' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                super::CONTAINER_PROBE_PATH_MARKER
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+tools:
+  npm: "*"
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_in_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Unparseable version for tool: npm")
+            .expect("expected unparseable tool version finding");
+        assert!(finding
+            .why
+            .contains("ota probed `/usr/local/bin/npm` inside container image `premium/test:latest` with `npm --version`"));
+        assert_eq!(finding.evidence().command, "npm --version");
+        assert_eq!(finding.evidence().path, "/usr/local/bin/npm");
+        assert_eq!(finding.evidence().source, "container_target");
+        assert_eq!(finding.owner(), "container_target");
     }
 
     #[test]
