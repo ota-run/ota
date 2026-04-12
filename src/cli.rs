@@ -4249,6 +4249,71 @@ tasks:
                 .unwrap()
                 .contains('T')
         );
+        assert_eq!(json["summary"]["invalid_archive_count"], 0);
+    }
+
+    #[test]
+    fn receipt_history_skips_invalid_archives_without_failing() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let archive = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+        assert_eq!(archive.exit_code, 0);
+
+        let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
+        fs::write(
+            receipts_dir.join("repo-receipt-20260412-091512-142Z.json"),
+            "{\"broken\":",
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["summary"]["archive_count"], 1);
+        assert_eq!(json["summary"]["invalid_archive_count"], 1);
+        assert_eq!(json["archives"].as_array().unwrap().len(), 1);
+        assert_eq!(json["invalid_archives"].as_array().unwrap().len(), 1);
+        assert!(
+            json["invalid_archives"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("failed to parse receipt archive")
+        );
+    }
+
+    #[test]
+    fn receipt_history_rejects_non_contract_file_paths() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("README.md", "# docs\n");
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--history",
+            fixture.dir.path().join("README.md").to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stderr.is_none());
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(
+            json["errors"][0]
+                .as_str()
+                .unwrap()
+                .contains("must point to `ota.yaml` or a repo directory")
+        );
     }
 
     #[test]

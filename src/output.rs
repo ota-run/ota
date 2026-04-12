@@ -659,6 +659,7 @@ pub struct ReceiptSuccess<'a> {
 #[derive(Debug, Serialize)]
 pub struct ReceiptHistorySummary {
     pub archive_count: usize,
+    pub invalid_archive_count: usize,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -674,6 +675,12 @@ pub struct ReceiptHistoryEntry {
     pub summary: ExecutionReceiptSummary,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct ReceiptHistoryInvalidArchive {
+    pub archive_path: String,
+    pub error: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ReceiptHistorySuccess<'a> {
     pub ok: bool,
@@ -681,6 +688,8 @@ pub struct ReceiptHistorySuccess<'a> {
     pub mode: &'a str,
     pub summary: ReceiptHistorySummary,
     pub archives: &'a [ReceiptHistoryEntry],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    pub invalid_archives: &'a [ReceiptHistoryInvalidArchive],
 }
 
 #[derive(Debug, Serialize)]

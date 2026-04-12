@@ -111,9 +111,10 @@
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["archive_count"],
+          "required": ["archive_count", "invalid_archive_count"],
           "properties": {
-            "archive_count": { "type": "integer", "minimum": 0 }
+            "archive_count": { "type": "integer", "minimum": 0 },
+            "invalid_archive_count": { "type": "integer", "minimum": 0 }
           }
         },
         "archives": {
@@ -143,6 +144,18 @@
                   "not_ready_count": { "type": "integer", "minimum": 0 }
                 }
               }
+            }
+          }
+        },
+        "invalid_archives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["archive_path", "error"],
+            "properties": {
+              "archive_path": { "type": "string" },
+              "error": { "type": "string" }
             }
           }
         }
