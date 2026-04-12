@@ -779,6 +779,7 @@ ota receipt [PATH]
 ota receipt --json [PATH]
 ota receipt --mode container [PATH]
 ota receipt --archive [PATH]
+ota receipt --history [PATH]
 ota receipt --member api [PATH]
 ```
 
@@ -793,11 +794,13 @@ Current behavior:
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
+- `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit directory paths are treated as the repo boundary for that read path
 
 Text output:
 
 - header: `RECEIPT <path>`
 - prints the receipt steps, summary, env sources, policy lines, and blocked items when present
+- `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts
 
 JSON output:
 
@@ -808,12 +811,13 @@ JSON output:
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`
 - `findings`
+- `--history` switches `mode` to `history` and returns `summary.archive_count` plus an `archives` array with `archive_path`, `archived_at`, `ok`, `contract`, optional backend/lifecycle, and summary counts for each archived receipt
 
 Current non-goals:
 
 - mutating repo state
 - replacing `ota doctor` as the full readiness explanation surface
-- retaining historical receipt state inside ota itself
+- separate receipt storage outside the explicit `.ota/receipts` archive directory
 - monorepo multi-member roll-up beyond the selected resolved contract target
 
 ## `ota up`

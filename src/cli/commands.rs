@@ -31,7 +31,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
 use time::OffsetDateTime;
@@ -60,10 +60,11 @@ use crate::output::{
     ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
     ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
     MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
-    PolicyReviewSummary, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    PolicyReviewSummary, ReceiptHistoryEntry, ReceiptHistorySuccess, ReceiptHistorySummary,
+    ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure,
+    TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure,
+    ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
     WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
@@ -3842,9 +3843,64 @@ pub fn receipt(
     member: Option<&str>,
     mode: DoctorMode,
     format: OutputFormat,
+    history: bool,
     archive: bool,
     debug: bool,
 ) -> CommandOutput {
+    if history {
+        let history_root = match resolve_receipt_history_root(path, file_override) {
+            Ok(root) => root,
+            Err(error) => {
+                let history_path = resolve_repo_path(path).display().to_string();
+                let errors = vec![error.to_string()];
+                return finalize_debug(
+                    match format {
+                        OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                            summary: None,
+                            ok: false,
+                            path: &history_path,
+                            errors,
+                            error: None,
+                        })),
+                    },
+                    debug,
+                    vec![String::from("DEBUG command=receipt.history")],
+                );
+            }
+        };
+        let history_path = history_root.display().to_string();
+        let debug_lines = vec![
+            String::from("DEBUG command=receipt.history"),
+            format!("DEBUG receipt_root={history_path}"),
+        ];
+        return finalize_debug(
+            match load_repo_receipt_history(&history_root) {
+                Ok(archives) => render_repo_receipt_history(
+                    &compact_repo_path(&history_root),
+                    &history_path,
+                    &RepoReceiptHistoryReport { archives },
+                    format,
+                ),
+                Err(error) => match format {
+                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Json => {
+                        let errors = vec![error];
+                        CommandOutput::failure(to_json(&ValidateFailure {
+                            summary: None,
+                            ok: false,
+                            path: &history_path,
+                            errors,
+                            error: None,
+                        }))
+                    }
+                },
+            },
+            debug,
+            debug_lines,
+        );
+    }
+
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -4270,11 +4326,15 @@ pub fn init(
 
     if contract_path.exists() {
         let next = command_for_repo("ota detect --merge", &root);
+        let json_error = format!(
+            "`{}` already exists; refusing to overwrite the existing contract",
+            compact_path_display
+        );
         let highlighted_path = paint_code(&compact_path_display);
         let highlighted_validate = paint_code("ota validate");
         let highlighted_doctor = paint_code("ota doctor");
         let highlighted_detect_merge = paint_code("ota detect --merge");
-        let error = format!(
+        let text_error = format!(
             "`{}` already exists; refusing to overwrite the existing contract{}",
             highlighted_path,
             format_next_timeline(&[
@@ -4286,12 +4346,12 @@ pub fn init(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(text_error),
                 OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
                     ok: false,
                     path: &path_display,
                     written: false,
-                    error: &error,
+                    error: &json_error,
                     next: Some(&next),
                 })),
             },
@@ -8399,6 +8459,134 @@ fn prune_receipt_archives(root: &Path, prefix: &str, keep: usize) -> Result<(), 
     }
 
     Ok(())
+}
+
+fn resolve_receipt_history_root(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+) -> Result<PathBuf, ResolveContractError> {
+    if let Some(file_override) = file_override {
+        return Ok(
+            contract_working_dir(&resolve_explicit_contract_path(file_override, "--file")?)
+                .to_path_buf(),
+        );
+    }
+
+    if let Some(file_override) = std::env::var_os("OTA_FILE") {
+        return Ok(contract_working_dir(&resolve_explicit_contract_path(
+            Path::new(&file_override),
+            "OTA_FILE",
+        )?)
+        .to_path_buf());
+    }
+
+    match path {
+        Some(path) if path.is_file() => Ok(path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()),
+        Some(path) if path.is_dir() => Ok(path.to_path_buf()),
+        Some(path) => Err(ResolveContractError::MissingExplicitPath {
+            path: path.display().to_string(),
+        }),
+        None => {
+            let current_dir = std::env::current_dir().map_err(|source| {
+                ResolveContractError::CurrentDirectory {
+                    message: source.to_string(),
+                }
+            })?;
+            if receipt_archive_dir(&current_dir).is_dir() {
+                Ok(current_dir)
+            } else {
+                Ok(contract_working_dir(&discover_contract_path(&current_dir)?).to_path_buf())
+            }
+        }
+    }
+}
+
+fn format_receipt_archive_timestamp(stamp: &str) -> String {
+    let bytes = stamp.as_bytes();
+    if bytes.len() != 20
+        || bytes[8] != b'-'
+        || bytes[15] != b'-'
+        || bytes[19] != b'Z'
+        || !bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 8 | 15 | 19) || byte.is_ascii_digit())
+    {
+        return stamp.to_string();
+    }
+
+    format!(
+        "{}-{}-{}T{}:{}:{}.{}Z",
+        &stamp[0..4],
+        &stamp[4..6],
+        &stamp[6..8],
+        &stamp[9..11],
+        &stamp[11..13],
+        &stamp[13..15],
+        &stamp[16..19]
+    )
+}
+
+fn load_repo_receipt_history(root: &Path) -> Result<Vec<ReceiptHistoryEntry>, String> {
+    let archive_dir = receipt_archive_dir(root);
+    if !archive_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = fs::read_dir(&archive_dir)
+        .map_err(|error| {
+            format!(
+                "failed to read receipt archive directory `{}`: {error}",
+                compact_path(&archive_dir, ".")
+            )
+        })?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if file_name.starts_with("repo-receipt-") && file_name.ends_with(".json") {
+                Some((file_name, entry.path()))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|(left, _), (right, _)| right.cmp(left));
+
+    entries
+        .into_iter()
+        .map(|(file_name, path)| {
+            let payload = fs::read_to_string(&path).map_err(|error| {
+                format!(
+                    "failed to read receipt archive `{}`: {error}",
+                    compact_path(&path, ".")
+                )
+            })?;
+            let archived: ArchivedRepoReceiptEnvelope =
+                serde_json::from_str(&payload).map_err(|error| {
+                    format!(
+                        "failed to parse receipt archive `{}`: {error}",
+                        compact_path(&path, ".")
+                    )
+                })?;
+            let stamp = file_name
+                .strip_prefix("repo-receipt-")
+                .and_then(|value| value.strip_suffix(".json"))
+                .unwrap_or(file_name.as_str());
+            Ok(ReceiptHistoryEntry {
+                archive_path: path.display().to_string(),
+                archived_at: format_receipt_archive_timestamp(stamp),
+                ok: archived.ok,
+                contract: archived.receipt.contract,
+                backend: archived.receipt.backend,
+                lifecycle: archived.receipt.lifecycle,
+                summary: archived.summary.into(),
+            })
+        })
+        .collect()
 }
 
 fn render_init(
@@ -18759,6 +18947,10 @@ pub(crate) fn plain_mode() -> bool {
     PLAIN_MODE.with(Cell::get)
 }
 
+fn json_mode() -> bool {
+    matches!(std::env::var("OTA_JSON_MODE").as_deref(), Ok("1"))
+}
+
 #[allow(dead_code)]
 fn concise_mode() -> bool {
     CONCISE_MODE.with(Cell::get)
@@ -18772,7 +18964,7 @@ fn format_command_header(command: &str, target: &str) -> String {
 }
 
 fn paint(value: &str, code: &str) -> String {
-    if plain_mode() {
+    if plain_mode() || json_mode() {
         return value.to_string();
     }
     if (std::io::stdout().is_terminal() || std::io::stderr().is_terminal())
@@ -19240,6 +19432,10 @@ struct RepoReceiptReport {
     archive_path: Option<PathBuf>,
 }
 
+struct RepoReceiptHistoryReport {
+    archives: Vec<ReceiptHistoryEntry>,
+}
+
 struct WorkspaceReceiptReport {
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoStatusReport>,
@@ -19262,6 +19458,56 @@ struct CommandRunResult {
     exit_code: i32,
     stdout: String,
     stderr: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ArchivedReceiptSummaryData {
+    #[serde(default)]
+    error_count: usize,
+    #[serde(default)]
+    warn_count: usize,
+    #[serde(default)]
+    info_count: usize,
+    #[serde(default)]
+    step_count: usize,
+    #[serde(default)]
+    repo_count: Option<usize>,
+    #[serde(default)]
+    ready_count: Option<usize>,
+    #[serde(default)]
+    not_ready_count: Option<usize>,
+}
+
+impl From<ArchivedReceiptSummaryData> for ExecutionReceiptSummary {
+    fn from(value: ArchivedReceiptSummaryData) -> Self {
+        Self {
+            error_count: value.error_count,
+            warn_count: value.warn_count,
+            info_count: value.info_count,
+            step_count: value.step_count,
+            repo_count: value.repo_count,
+            ready_count: value.ready_count,
+            not_ready_count: value.not_ready_count,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ArchivedRepoReceiptData {
+    #[serde(default)]
+    contract: String,
+    #[serde(default)]
+    backend: Option<String>,
+    #[serde(default)]
+    lifecycle: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArchivedRepoReceiptEnvelope {
+    ok: bool,
+    #[serde(default)]
+    summary: ArchivedReceiptSummaryData,
+    receipt: ArchivedRepoReceiptData,
 }
 
 fn execution_receipt_summary(
@@ -19524,6 +19770,87 @@ fn render_repo_receipt(
             },
             stderr: None,
             exit_code: if report.receipt.ok { 0 } else { 1 },
+        },
+    }
+}
+
+fn render_repo_receipt_history(
+    text_path: &str,
+    json_path: &str,
+    report: &RepoReceiptHistoryReport,
+    format: OutputFormat,
+) -> CommandOutput {
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header("RECEIPT HISTORY", text_path);
+            stdout.push_str("\n\n");
+            stdout.push_str(&paint_section_title("Overview"));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Archives:"),
+                report.archives.len()
+            ));
+
+            if report.archives.is_empty() {
+                stdout.push_str("\n\nno archived receipts");
+            } else {
+                for (index, archive) in report.archives.iter().enumerate() {
+                    stdout.push_str(&format!(
+                        "\n\n{}. {} {}",
+                        index + 1,
+                        render_execution_receipt_status(if archive.ok {
+                            "READY"
+                        } else {
+                            "NOT READY"
+                        }),
+                        archive.archived_at
+                    ));
+                    stdout.push_str(&format!(
+                        "\n   {} {}",
+                        paint_key("Contract:"),
+                        compact_path(Path::new(&archive.contract), ".")
+                    ));
+                    if let Some(backend) = archive.backend.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Backend:"), backend));
+                    }
+                    if let Some(lifecycle) = archive.lifecycle.as_deref() {
+                        stdout.push_str(&format!("\n   {} {}", paint_key("Lifecycle:"), lifecycle));
+                    }
+                    stdout.push_str(&format!(
+                        "\n   {} errors={}, warnings={}, info={}",
+                        paint_key("Summary:"),
+                        archive.summary.error_count,
+                        archive.summary.warn_count,
+                        archive.summary.info_count
+                    ));
+                    stdout.push_str(&format!(
+                        "\n   {} {}",
+                        paint_key("Archive:"),
+                        compact_path(Path::new(&archive.archive_path), ".")
+                    ));
+                }
+            }
+            stdout.push('\n');
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: 0,
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&ReceiptHistorySuccess {
+                ok: true,
+                path: json_path,
+                mode: "history",
+                summary: ReceiptHistorySummary {
+                    archive_count: report.archives.len(),
+                },
+                archives: &report.archives,
+            }),
+            stderr: None,
+            exit_code: 0,
         },
     }
 }
