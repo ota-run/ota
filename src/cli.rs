@@ -255,11 +255,14 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Compare the current receipt against `latest` or an archived receipt JSON file.
+        #[arg(long, value_name = "BASELINE", conflicts_with_all = ["archive", "history"])]
+        baseline: Option<String>,
         /// List archived receipt artifacts from `.ota/receipts`.
         #[arg(
             long,
             action = ArgAction::SetTrue,
-            conflicts_with_all = ["archive", "member", "mode"]
+            conflicts_with_all = ["archive", "member", "mode", "baseline"]
         )]
         history: bool,
         /// Archive the receipt JSON to `.ota/receipts`.
@@ -1334,6 +1337,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Receipt {
             json,
+            baseline,
             history,
             archive,
             mode,
@@ -1345,6 +1349,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             mode.into(),
             format_from_json(json),
+            baseline.as_deref(),
             history,
             archive,
             debug,
@@ -4314,6 +4319,466 @@ tasks:
                 .unwrap()
                 .contains("must point to `ota.yaml` or a repo directory")
         );
+    }
+
+    #[test]
+    fn receipt_json_diff_against_latest_archive_classifies_changes() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  OTA_BASELINE_REQUIRED:
+    required: true
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+        let unchanged = current_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "No tasks defined in contract")
+            .cloned()
+            .unwrap();
+
+        let baseline_payload = serde_json::json!({
+            "ok": false,
+            "path": fixture.file_path().display().to_string(),
+            "mode": "receipt",
+            "summary": {
+                "error_count": 2,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 1
+            },
+            "receipt": {
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "scope": "repo",
+                "contract": fixture.file_path().display().to_string(),
+                "backend": "native",
+                "summary": {
+                    "error_count": 2,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "steps": [
+                    {
+                        "order": 1,
+                        "label": "readiness",
+                        "status": "NOT READY"
+                    }
+                ]
+            },
+            "findings": [
+                unchanged,
+                {
+                    "severity": "error",
+                    "summary": "Missing tool: old-tool",
+                    "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                    "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                }
+            ]
+        });
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&baseline_payload).unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "latest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["baseline"]["source"], "latest");
+        assert_eq!(json["summary"]["introduced"]["count"], 1);
+        assert_eq!(json["summary"]["resolved"]["count"], 1);
+        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+        assert_eq!(
+            json["introduced"][0]["summary"],
+            "Missing environment variable: OTA_BASELINE_REQUIRED"
+        );
+        assert_eq!(json["resolved"][0]["summary"], "Missing tool: old-tool");
+        assert_eq!(
+            json["unchanged"][0]["summary"],
+            "No tasks defined in contract"
+        );
+    }
+
+    #[test]
+    fn receipt_json_diff_against_latest_archive_matches_moved_repo_contract_identity() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": "/old/location/ota.yaml",
+                "mode": "receipt",
+                "archive_path": "/old/location/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": "/old/location/ota.yaml",
+                    "scope": "repo",
+                    "contract": "/old/location/ota.yaml",
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    {
+                        "severity": "error",
+                        "summary": "No tasks defined in contract",
+                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "latest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["baseline"]["source"], "latest");
+        assert_eq!(json["summary"]["introduced"]["count"], 0);
+        assert_eq!(json["summary"]["resolved"]["count"], 0);
+        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+    }
+
+    #[test]
+    fn receipt_json_diff_against_latest_skips_semantically_invalid_newest_archive() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101011-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101011-123Z.json").display().to_string(),
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    {
+                        "severity": "error",
+                        "summary": "Missing tool: invalid-archive-tool",
+                        "why": "the contract requires `invalid-archive-tool`, but ota could not find it on PATH",
+                        "next": "install `invalid-archive-tool` and make it available on PATH, then rerun `ota doctor`"
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "archive_path": fixture.dir.path().join(".ota").join("receipts").join("repo-receipt-20260412-101010-123Z.json").display().to_string(),
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    {
+                        "severity": "error",
+                        "summary": "No tasks defined in contract",
+                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "latest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert!(
+            json["baseline"]["archive_path"]
+                .as_str()
+                .unwrap()
+                .ends_with("repo-receipt-20260412-101010-123Z.json")
+        );
+        assert_eq!(json["summary"]["introduced"]["count"], 0);
+        assert_eq!(json["summary"]["resolved"]["count"], 0);
+        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+    }
+
+    #[test]
+    fn receipt_json_diff_against_explicit_baseline_file_reports_source() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+        let unchanged = current_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "No tasks defined in contract")
+            .cloned()
+            .unwrap();
+
+        let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+        fs::write(
+            &baseline_file,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [unchanged]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            baseline_file.to_str().unwrap(),
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["baseline"]["source"], "file");
+        assert_eq!(
+            json["baseline"]["archive_path"],
+            baseline_file.display().to_string()
+        );
+        assert!(json["baseline"]["archived_at"].is_null());
+        assert_eq!(json["summary"]["introduced"]["count"], 0);
+        assert_eq!(json["summary"]["resolved"]["count"], 0);
+        assert_eq!(json["summary"]["unchanged"]["count"], 1);
+    }
+
+    #[test]
+    fn receipt_text_diff_reports_change_sections() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  OTA_BASELINE_REQUIRED:
+    required: true
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+        let unchanged = current_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "No tasks defined in contract")
+            .cloned()
+            .unwrap();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 2,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 2,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    unchanged,
+                    {
+                        "severity": "error",
+                        "summary": "Missing tool: old-tool",
+                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with(["ota", "receipt", "--baseline", "latest", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("RECEIPT DIFF"));
+        assert!(stdout.contains("Introduced Findings"));
+        assert!(stdout.contains("Resolved Findings"));
+        assert!(stdout.contains("Missing environment variable: OTA_BASELINE_REQUIRED"));
+        assert!(stdout.contains("Missing tool: old-tool"));
     }
 
     #[test]
