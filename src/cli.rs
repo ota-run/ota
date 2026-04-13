@@ -13740,9 +13740,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'curl'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/curl 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'curl'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/curl 1>&2\r\n    echo curl 8.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"apt-get\" >nul && (\r\n    echo E: Version '8.13.0' for 'curl' was not found 1>&2\r\n    exit /b 100\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'curl'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' '/usr/bin/curl' >&2; exit 1 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'curl'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' '/usr/bin/curl' >&2; printf '%s\\n' 'curl 8.14.1'; exit 0 ;;\n    *\"apt-get\"*) echo \"E: Version '8.13.0' for 'curl' was not found\" >&2; exit 100 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
