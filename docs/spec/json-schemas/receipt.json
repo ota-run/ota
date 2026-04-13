@@ -12,6 +12,16 @@
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
         "archive_path": { "type": "string" },
+        "promoted_baseline": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "archive_path", "promoted_at"],
+          "properties": {
+            "path": { "type": "string" },
+            "archive_path": { "type": "string" },
+            "promoted_at": { "type": "string" }
+          }
+        },
         "summary": {
           "type": "object",
           "additionalProperties": false,
@@ -124,9 +134,12 @@
           "additionalProperties": false,
           "required": ["source", "ok", "contract", "summary"],
           "properties": {
-            "source": { "enum": ["latest", "file"] },
+            "source": { "enum": ["latest", "promoted", "file"] },
+            "selection_path": { "type": "string" },
             "archive_path": { "type": "string" },
             "archived_at": { "type": "string" },
+            "promoted_at": { "type": "string" },
+            "contract_identity": { "type": "string" },
             "ok": { "type": "boolean" },
             "contract": { "type": "string" },
             "backend": { "type": "string" },

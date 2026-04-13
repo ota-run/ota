@@ -92,13 +92,18 @@ That includes persistent backends, remote targets, and named ephemeral task or d
 containers. Previews and host-side phases stay targetless.
 When `--archive` is set on receipt commands, ota persists the JSON receipt under
 `.ota/receipts` so CI or humans can audit the exact execution trail later.
+When `--archive --promote-baseline` is set, ota also writes a repo-local promoted baseline
+pointer under `.ota/receipts/repo-baseline.json` so later compares can target an explicit,
+provider-neutral repo-owned baseline instead of only the latest archived receipt.
 `ota receipt --history` is the read-only archive index for those repo receipt files; it lists the
 existing archived receipts directly from `.ota/receipts` without rerunning diagnosis, and it
 surfaces malformed archive files as skipped entries instead of failing the whole history read.
 `ota receipt --baseline` is the first compare surface on top of that archive model; it compares
-the current repo receipt against either the latest valid archived receipt for the same contract or
-an explicit repo receipt JSON file, then classifies findings as introduced, resolved, or unchanged
-without rerunning the baseline or writing new archive state.
+the current repo receipt against either the promoted repo baseline, the latest valid archived
+receipt for the same contract, or an explicit repo receipt JSON file, then classifies findings as
+introduced, resolved, or unchanged without rerunning the baseline or writing new archive state.
+Diff output now includes baseline provenance such as the selection path, promoted time, and
+contract identity when that metadata exists.
 
 ## Behavior
 

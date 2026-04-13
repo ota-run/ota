@@ -167,6 +167,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     let success = &schema["oneOf"][0]["properties"];
     let success_summary = &success["summary"]["properties"];
     let diff = &schema["oneOf"][1]["properties"];
+    let diff_baseline = &diff["baseline"]["properties"];
     let diff_summary = &diff["summary"]["properties"];
     let history = &schema["oneOf"][2]["properties"];
     let history_summary = &history["summary"]["properties"];
@@ -175,6 +176,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
     assert!(success.get("findings").is_some());
+    assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());
     assert!(success_summary.get("warn_count").is_some());
     assert!(success_summary.get("info_count").is_some());
@@ -185,6 +187,9 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff.get("resolved").is_some());
     assert!(diff.get("unchanged").is_some());
     assert!(diff.get("gate").is_some());
+    assert!(diff_baseline.get("selection_path").is_some());
+    assert!(diff_baseline.get("promoted_at").is_some());
+    assert!(diff_baseline.get("contract_identity").is_some());
     assert!(diff_summary.get("baseline_ok").is_some());
     assert!(diff_summary.get("current_ok").is_some());
     assert!(diff_summary.get("introduced").is_some());
