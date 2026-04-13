@@ -26,7 +26,7 @@
 
 ## Unreleased
 
-## 1.4.8
+## 1.4.10
 
 - added discoverable `-V, --version` help output so users can find the version flag directly from `ota --help`.
 - made the Windows bootstrap installer fail cleanly when `ota.exe` is locked by a running process, with direct guidance to close ota processes and rerun the installer.
