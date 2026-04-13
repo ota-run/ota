@@ -2006,12 +2006,6 @@ fn tighten_guidance_spacing(text: String) -> String {
             {
                 lines.pop();
             }
-            if lines
-                .last()
-                .is_some_and(|previous: &String| !previous.trim().is_empty())
-            {
-                lines.push(String::new());
-            }
         }
         lines.push(line.to_string());
     }
@@ -3346,7 +3340,7 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(!stdout.contains("Provenance:"));
+        assert!(stdout.contains("Provenance: org policy"));
 
         let json = run_with([
             "ota",
@@ -6807,16 +6801,16 @@ tasks:
         assert!(stderr.contains("Why: task `fail` failed with exit code 7"));
         assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
         assert!(stderr.contains(
-            "Why: task `fail` failed with exit code 7\n\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `fail` failed with exit code 7\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
-        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\n\nNext:"));
+        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\nNext:"));
         assert!(!stderr.contains(
             "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
         ));
     }
 
     #[test]
-    fn append_try_footer_keeps_one_blank_line_before_next() {
+    fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
         let stderr = "◉ ERROR  Operation failed\nWhere: ./ota.yaml\nWhy: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦  RUN SUMMARY\n\nScope:      repo";
         let rendered = strip_ansi(&append_try_footer(
             stderr.to_string(),
@@ -6834,11 +6828,11 @@ tasks:
         ));
 
         assert!(rendered.contains(
-            "Why: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `install-from-source` failed with exit code 101\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
         assert!(
             !rendered
-                .contains("Why: task `install-from-source` failed with exit code 101\n\n\nNext:")
+                .contains("Why: task `install-from-source` failed with exit code 101\n\nNext:")
         );
     }
 
