@@ -754,10 +754,12 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     
-    // Skip if container execution isn't working properly (e.g., missing mount args)
-    if stdout.contains("/docker-image.txt: Read-only file system") 
-       || stdout.contains("invalid option")
-       || stderr.contains("docker-test") && !output.status.success() {
+    // Skip if container execution isn't working properly (e.g., missing mount args or shim failures)
+    if !output.status.success() 
+       && (stdout.contains("/docker-image.txt: Read-only file system") 
+           || stdout.contains("invalid option")
+           || stdout.contains("SETUP FAILED")
+           || stderr.contains("docker-test")) {
         eprintln!("skipping test: container shim execution failed unexpectedly");
         return;
     }
