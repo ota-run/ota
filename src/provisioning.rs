@@ -3601,7 +3601,7 @@ fn execute_provisioning_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::env_mutex_lock;
     use std::env;
     use std::fs;
     use tempfile::TempDir;
@@ -3658,7 +3658,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_mise_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("mise.log");
         make_shim(shim_dir.path(), "mise", &log);
@@ -3703,7 +3703,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_in_container_with_engine_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("docker.log");
         make_shim(shim_dir.path(), "docker", &log);
@@ -3776,7 +3776,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_asdf_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("asdf.log");
         make_shim(shim_dir.path(), "asdf", &log);
@@ -3822,7 +3822,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_sdkman_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("sdk.log");
         make_shim(shim_dir.path(), "sdk", &log);
@@ -3868,7 +3868,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_sdkman_missing_sdk_reports_missing_command() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         make_passthrough_shim(shim_dir.path(), "bash", "/bin/bash");
 
@@ -3906,7 +3906,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_uv_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("uv.log");
         make_shim(shim_dir.path(), "uv", &log);
@@ -3952,7 +3952,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_winget_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("winget.log");
         make_shim(shim_dir.path(), "winget", &log);
@@ -4000,7 +4000,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_winget_source_name_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("winget.log");
         make_shim(shim_dir.path(), "winget", &log);
@@ -4049,7 +4049,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_choco_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("choco.log");
         make_shim(shim_dir.path(), "choco", &log);
@@ -4095,7 +4095,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_choco_feed_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("choco.log");
         make_shim(shim_dir.path(), "choco", &log);
@@ -4146,7 +4146,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_scoop_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("scoop.log");
         make_shim(shim_dir.path(), "scoop", &log);
@@ -4191,7 +4191,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_scoop_bucket_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("scoop.log");
         make_shim(shim_dir.path(), "scoop", &log);
@@ -4249,7 +4249,7 @@ mod tests {
 
     #[test]
     fn bootstraps_choco_source_manager_with_powershell_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("powershell.log");
         make_powershell_bootstrap_shim(shim_dir.path(), "choco", "2.0.0", &log);
@@ -4288,7 +4288,7 @@ mod tests {
 
     #[test]
     fn bootstraps_scoop_source_manager_with_powershell_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("powershell.log");
         make_powershell_bootstrap_shim(shim_dir.path(), "scoop", "2.0.0", &log);
@@ -4327,7 +4327,7 @@ mod tests {
 
     #[test]
     fn bootstraps_winget_source_manager_with_powershell_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("powershell.log");
         make_powershell_bootstrap_shim(shim_dir.path(), "winget", "1.8.0", &log);
@@ -4366,7 +4366,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_apt_sources_list_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("apt-get.log");
         make_shim(shim_dir.path(), "apt-get", &log);
@@ -4418,7 +4418,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_brew_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("brew.log");
         make_shim(shim_dir.path(), "brew", &log);
@@ -4463,7 +4463,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_brew_tap_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("brew.log");
         make_shim(shim_dir.path(), "brew", &log);
@@ -4520,7 +4520,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_pacman_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("pacman.log");
         make_shim(shim_dir.path(), "pacman", &log);
@@ -4566,7 +4566,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_apt_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("apt-get.log");
         make_shim(shim_dir.path(), "apt-get", &log);
@@ -4612,7 +4612,7 @@ mod tests {
 
     #[test]
     fn applies_container_apt_request_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -4680,7 +4680,7 @@ mod tests {
 
     #[test]
     fn apply_container_mise_request_refines_generic_install_failure_via_probe() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -4748,7 +4748,7 @@ mod tests {
 
     #[test]
     fn probes_container_apt_installability_reports_index_failure() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -4813,7 +4813,7 @@ mod tests {
 
     #[test]
     fn probes_container_brew_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -4878,7 +4878,7 @@ mod tests {
 
     #[test]
     fn probes_container_dnf_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -4943,7 +4943,7 @@ mod tests {
 
     #[test]
     fn probes_container_pacman_installability_reports_package_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5008,7 +5008,7 @@ mod tests {
 
     #[test]
     fn probes_container_winget_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5070,7 +5070,7 @@ mod tests {
 
     #[test]
     fn probes_container_choco_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5132,7 +5132,7 @@ mod tests {
 
     #[test]
     fn probes_container_scoop_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5194,7 +5194,7 @@ mod tests {
 
     #[test]
     fn probes_container_mise_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5256,7 +5256,7 @@ mod tests {
 
     #[test]
     fn probes_container_asdf_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5318,7 +5318,7 @@ mod tests {
 
     #[test]
     fn probes_container_sdkman_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5380,7 +5380,7 @@ mod tests {
 
     #[test]
     fn probes_container_uv_installability_reports_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let docker = shim_dir.path().join("docker");
         fs::write(
@@ -5442,7 +5442,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_dnf_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("dnf.log");
         make_shim(shim_dir.path(), "dnf", &log);
@@ -5488,7 +5488,7 @@ mod tests {
 
     #[test]
     fn applies_provisioning_request_with_dnf_baseurl_shim() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let shim_dir = TempDir::new().unwrap();
         let log = shim_dir.path().join("dnf.log");
         make_shim(shim_dir.path(), "dnf", &log);
