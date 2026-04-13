@@ -26,11 +26,12 @@
 
 ## Unreleased
 
-- added `ota receipt --fail-on-new-blockers` for baseline compare mode so receipt diffs can exit non-zero only when they introduce new blocker findings, while exposing additive diff gate metadata in JSON and text output.
-- added provider-neutral receipt baseline promotion with `ota receipt --archive --promote-baseline` and `ota receipt --baseline promoted`, plus additive baseline provenance fields so diff output can explain exactly which repo-owned baseline was selected.
-
 ## 1.4.8
 
+- added discoverable `-V, --version` help output so users can find the version flag directly from `ota --help`.
+- made the Windows bootstrap installer fail cleanly when `ota.exe` is locked by a running process, with direct guidance to close ota processes and rerun the installer.
+- added `ota receipt --fail-on-new-blockers` for baseline compare mode so receipt diffs can exit non-zero only when they introduce new blocker findings, while exposing additive diff gate metadata in JSON and text output.
+- added provider-neutral receipt baseline promotion with `ota receipt --archive --promote-baseline` and `ota receipt --baseline promoted`, plus additive baseline provenance fields so diff output can explain exactly which repo-owned baseline was selected.
 - added execution target reporting to execution receipts and container probe diagnostics so receipt targets reflect the actual execution target and failed container probes are classified more precisely.
 - enhanced execution summaries for ephemeral containers so they keep real target names and use stable ephemeral container naming during task execution and diagnosis.
 
