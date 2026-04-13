@@ -6,15 +6,14 @@ Backend: native
 
 ◉ WARN  Ephemeral lifecycle is advisory in native mode
 Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.
-Next: use `ota run <task>` for isolated execution; use `ota up` for readiness only
+Next: use `ota run <task> ./ota.yaml` for isolated execution; use `ota up ./ota.yaml` for readiness only
 
 🦦  UP SUMMARY
 
 Scope:      repo
 Path:       .
 Contract:   ./ota.yaml
-Lifecycle:  ephemeral
 Mode:       native
 Task:       post-setup diagnosis
 Status:     success
-Note:       running on the host environment; `execution.lifecycle: ephemeral` is advisory in native mode only
+Note:       running on the host environment
