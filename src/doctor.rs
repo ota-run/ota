@@ -2307,6 +2307,7 @@ fn diagnose_command_version(
             &container_probe.engine,
             &container_probe.image,
             executable_name,
+            contract_working_dir(contract_path),
         ))
     } else {
         None
@@ -2608,11 +2609,19 @@ fn container_installability_failure(
     }
 }
 
-fn version_command_in_container(engine: &str, image: &str, name: &str) -> Command {
+fn version_command_in_container(
+    engine: &str,
+    image: &str,
+    name: &str,
+    working_dir: &Path,
+) -> Command {
+    let container_name = crate::runner::ephemeral_container_name(working_dir, image, engine);
     let mut command = Command::new(engine);
     command
         .arg("run")
         .arg("--rm")
+        .arg("--name")
+        .arg(container_name)
         .arg("--entrypoint")
         .arg("sh")
         .arg(image)
@@ -2646,9 +2655,10 @@ fn command_version_probe_in_container(
     engine: &str,
     image: &str,
     name: &str,
+    working_dir: &Path,
 ) -> CommandVersionProbe {
     let command = version_command_string(name);
-    let output = version_command_in_container(engine, image, name).output();
+    let output = version_command_in_container(engine, image, name, working_dir).output();
     let (resolved_path, outcome) = match output {
         Ok(output) => {
             let (resolved_path, combined) =
@@ -2657,7 +2667,7 @@ fn command_version_probe_in_container(
                 extract_version_token(&combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
-            } else if output.status.code() == Some(127) && resolved_path.is_none() {
+            } else if resolved_path.is_none() {
                 CommandVersionProbeOutcome::Missing
             } else {
                 CommandVersionProbeOutcome::ProbeFailed {

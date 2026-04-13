@@ -2035,11 +2035,14 @@ fn execute_ephemeral_container_task_command(
     engine: &str,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    let container_name = ephemeral_container_name(working_dir, image, engine);
     let mut container = Command::new(engine);
     container
         .arg("run")
         .arg("--rm")
         .arg("-i")
+        .arg("--name")
+        .arg(&container_name)
         .arg("--entrypoint")
         .arg("sh")
         .arg("-v")
@@ -2072,7 +2075,7 @@ fn execute_ephemeral_container_task_command(
                 exit_code,
                 stdout: String::new(),
                 stderr: String::new(),
-                target: None,
+                target: Some(container_name.clone()),
             })
         }
         TaskExecutionMode::Capture => {
@@ -2091,7 +2094,7 @@ fn execute_ephemeral_container_task_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                target: None,
+                target: Some(container_name),
             })
         }
     }
@@ -2393,6 +2396,15 @@ pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine:
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
     format!("ota-{:x}", hasher.finish())
+}
+
+pub(crate) fn ephemeral_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    std::process::id().hash(&mut hasher);
+    working_dir.display().to_string().hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    format!("ota-ephemeral-{:x}", hasher.finish())
 }
 
 fn contract_working_dir(contract_path: &Path) -> &Path {

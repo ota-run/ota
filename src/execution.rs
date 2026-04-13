@@ -58,32 +58,62 @@ pub(crate) fn execution_target(
             .clone(),
         Backend::Container => {
             if lifecycle == Some(Lifecycle::Persistent) {
-                let image = contract
-                    .execution
-                    .as_ref()?
-                    .backends
-                    .as_ref()?
-                    .container
-                    .as_ref()?
-                    .image
-                    .clone();
-                let engine = selected_container_engine(contract).unwrap_or_else(|| {
-                    container_engine_candidates(contract)
-                        .into_iter()
-                        .next()
-                        .unwrap_or_else(|| String::from("docker"))
-                });
-                Some(crate::runner::persistent_container_name(
-                    contract_path.parent().unwrap_or(contract_path),
-                    &image,
-                    &engine,
-                ))
+                Some(persistent_container_target(contract, contract_path)?)
             } else {
                 None
             }
         }
         Backend::Native => None,
     }
+}
+
+pub(crate) fn ephemeral_container_target(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Option<String> {
+    let image = contract
+        .execution
+        .as_ref()?
+        .backends
+        .as_ref()?
+        .container
+        .as_ref()?
+        .image
+        .clone();
+    let engine = selected_container_engine(contract).unwrap_or_else(|| {
+        container_engine_candidates(contract)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| String::from("docker"))
+    });
+    Some(crate::runner::ephemeral_container_name(
+        contract_path.parent().unwrap_or(contract_path),
+        &image,
+        &engine,
+    ))
+}
+
+fn persistent_container_target(contract: &Contract, contract_path: &Path) -> Option<String> {
+    let image = contract
+        .execution
+        .as_ref()?
+        .backends
+        .as_ref()?
+        .container
+        .as_ref()?
+        .image
+        .clone();
+    let engine = selected_container_engine(contract).unwrap_or_else(|| {
+        container_engine_candidates(contract)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| String::from("docker"))
+    });
+    Some(crate::runner::persistent_container_name(
+        contract_path.parent().unwrap_or(contract_path),
+        &image,
+        &engine,
+    ))
 }
 
 pub(crate) fn execution_image(contract: &Contract, backend: Backend) -> Option<String> {
