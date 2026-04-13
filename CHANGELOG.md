@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.4.8
+
 - added execution target reporting to execution receipts and container probe diagnostics so receipt targets reflect the actual execution target and failed container probes are classified more precisely.
 - enhanced execution summaries for ephemeral containers so they keep real target names and use stable ephemeral container naming during task execution and diagnosis.
 
