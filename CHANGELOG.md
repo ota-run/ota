@@ -27,6 +27,7 @@
 ## Unreleased
 
 - added `ota receipt --fail-on-new-blockers` for baseline compare mode so receipt diffs can exit non-zero only when they introduce new blocker findings, while exposing additive diff gate metadata in JSON and text output.
+- added provider-neutral receipt baseline promotion with `ota receipt --archive --promote-baseline` and `ota receipt --baseline promoted`, plus additive baseline provenance fields so diff output can explain exactly which repo-owned baseline was selected.
 
 ## 1.4.8
 

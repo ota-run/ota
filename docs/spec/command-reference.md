@@ -781,6 +781,8 @@ ota receipt [PATH]
 ota receipt --json [PATH]
 ota receipt --mode container [PATH]
 ota receipt --archive [PATH]
+ota receipt --archive --promote-baseline [PATH]
+ota receipt --baseline promoted [PATH]
 ota receipt --baseline latest [PATH]
 ota receipt --baseline ./baseline-receipt.json [PATH]
 ota receipt --baseline latest --fail-on-new-blockers [PATH]
@@ -799,7 +801,9 @@ Current behavior:
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
+- `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
 - `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
+- `--baseline promoted` compares the current receipt against the explicit promoted baseline pointer under `.ota/receipts/repo-baseline.json`
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
 - compare mode is read-only and does not archive or mutate repo state; it exits `0` when the comparison itself succeeds, even if the current or baseline receipt is not ready
@@ -809,8 +813,9 @@ Text output:
 
 - header: `RECEIPT <path>`
 - prints the receipt steps, summary, env sources, policy lines, and blocked items when present
+- `--archive --promote-baseline` adds `Baseline:` and `Promoted:` summary lines so the operator can see which archive became the explicit repo baseline
 - `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts; malformed archived files are skipped and surfaced under `Skipped Archives`
-- `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
+- `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 - `--fail-on-new-blockers` adds a `Gate:` overview line showing whether the current diff passed or was blocked by newly introduced blockers
 
 JSON output:
@@ -819,11 +824,12 @@ JSON output:
 - `path`
 - `mode: "receipt"`
 - `archive_path` (when `--archive` is set)
+- `promoted_baseline.path`, `promoted_baseline.archive_path`, and `promoted_baseline.promoted_at` (when `--archive --promote-baseline` is set)
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `receipt`
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
-- `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`
+- `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
 - `--fail-on-new-blockers` adds `gate.rule`, `gate.passed`, and `gate.new_blocker_count` to diff JSON when the compare gate is active
 
 Current non-goals:

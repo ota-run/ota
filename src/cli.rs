@@ -255,7 +255,7 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
-        /// Compare the current receipt against `latest` or an archived receipt JSON file.
+        /// Compare the current receipt against `promoted`, `latest`, or an archived receipt JSON file.
         #[arg(long, value_name = "BASELINE", conflicts_with_all = ["archive", "history"])]
         baseline: Option<String>,
         /// Exit with status 1 when the baseline diff introduces new error findings.
@@ -276,6 +276,14 @@ enum Commands {
         /// Archive the receipt JSON to `.ota/receipts`.
         #[arg(long, action = ArgAction::SetTrue)]
         archive: bool,
+        /// Promote the archived receipt as the repo's explicit baseline under `.ota/receipts`.
+        #[arg(
+            long,
+            action = ArgAction::SetTrue,
+            requires = "archive",
+            conflicts_with_all = ["baseline", "history"]
+        )]
+        promote_baseline: bool,
         /// Capture the receipt in a specific execution context.
         #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
         mode: DoctorModeArg,
@@ -1353,6 +1361,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             fail_on_new_blockers,
             history,
             archive,
+            promote_baseline,
             mode,
             member,
             path,
@@ -1366,6 +1375,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             fail_on_new_blockers,
             history,
             archive,
+            promote_baseline,
             debug,
         ),
         Commands::Diff { json, base, target } => commands::diff(
@@ -4339,6 +4349,55 @@ tasks:
     }
 
     #[test]
+    fn receipt_json_archive_can_promote_baseline() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--archive",
+            "--promote-baseline",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let archive_path = json["archive_path"].as_str().unwrap();
+        let promoted = &json["promoted_baseline"];
+        assert_eq!(promoted["archive_path"], archive_path);
+        assert!(
+            promoted["path"]
+                .as_str()
+                .unwrap()
+                .ends_with(".ota/receipts/repo-baseline.json")
+        );
+        assert!(Path::new(promoted["path"].as_str().unwrap()).is_file());
+        let pointer: Value =
+            serde_json::from_str(&fs::read_to_string(promoted["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(pointer["kind"], "repo_receipt_baseline");
+        assert_eq!(pointer["contract_identity"], "ota.yaml");
+        assert_eq!(
+            pointer["archive_file"],
+            Path::new(archive_path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        );
+    }
+
+    #[test]
     fn receipt_json_diff_against_latest_archive_classifies_changes() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -4636,6 +4695,225 @@ project:
     }
 
     #[test]
+    fn receipt_json_diff_against_promoted_baseline_reports_provenance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let baseline = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--archive",
+            "--promote-baseline",
+            fixture.path(),
+        ]);
+        assert_eq!(baseline.exit_code, 0);
+        let baseline_json: Value = serde_json::from_str(&baseline.stdout).unwrap();
+        let baseline_archive_path = baseline_json["archive_path"].as_str().unwrap().to_string();
+
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  setup:
+    run: echo ready
+env:
+  OTA_PROMOTED_BASELINE_REQUIRED:
+    required: true
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "promoted",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["baseline"]["source"], "promoted");
+        assert_eq!(json["baseline"]["archive_path"], baseline_archive_path);
+        assert!(
+            json["baseline"]["selection_path"]
+                .as_str()
+                .unwrap()
+                .ends_with(".ota/receipts/repo-baseline.json")
+        );
+        assert_eq!(json["baseline"]["contract_identity"], "ota.yaml");
+        assert!(json["baseline"]["promoted_at"].is_string());
+        assert_eq!(json["summary"]["introduced"]["error_count"], 1);
+    }
+
+    #[test]
+    fn receipt_archive_pruning_preserves_promoted_baseline_archive() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+        let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
+        fs::create_dir_all(&receipts_dir).unwrap();
+
+        let payload = serde_json::json!({
+            "ok": true,
+            "path": fixture.file_path().display().to_string(),
+            "mode": "receipt",
+            "summary": {
+                "error_count": 0,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 1
+            },
+            "receipt": {
+                "ok": true,
+                "path": fixture.file_path().display().to_string(),
+                "scope": "repo",
+                "contract": fixture.file_path().display().to_string(),
+                "backend": "native",
+                "summary": {
+                    "error_count": 0,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "steps": [
+                    {
+                        "order": 1,
+                        "label": "readiness",
+                        "status": "READY"
+                    }
+                ]
+            },
+            "findings": []
+        });
+        for index in 0..50 {
+            fixture.write(
+                &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
+                &serde_json::to_string_pretty(&payload).unwrap(),
+            );
+        }
+        let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
+        fixture.write(
+            ".ota/receipts/repo-baseline.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "kind": "repo_receipt_baseline",
+                "archive_file": promoted_archive.file_name().unwrap().to_string_lossy().to_string(),
+                "contract_identity": "ota.yaml",
+                "promoted_at": "2026-04-12T10:10:00.123Z"
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(promoted_archive.is_file());
+        let remaining = fs::read_dir(&receipts_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name.starts_with("repo-receipt-") && name.ends_with(".json")
+            })
+            .count();
+        assert_eq!(remaining, 50);
+    }
+
+    #[test]
+    fn receipt_archive_fails_on_malformed_promoted_baseline_pointer_before_pruning() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+        let receipts_dir = fixture.dir.path().join(".ota").join("receipts");
+        fs::create_dir_all(&receipts_dir).unwrap();
+
+        let payload = serde_json::json!({
+            "ok": true,
+            "path": fixture.file_path().display().to_string(),
+            "mode": "receipt",
+            "summary": {
+                "error_count": 0,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 1
+            },
+            "receipt": {
+                "ok": true,
+                "path": fixture.file_path().display().to_string(),
+                "scope": "repo",
+                "contract": fixture.file_path().display().to_string(),
+                "backend": "native",
+                "summary": {
+                    "error_count": 0,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "steps": [
+                    {
+                        "order": 1,
+                        "label": "readiness",
+                        "status": "READY"
+                    }
+                ]
+            },
+            "findings": []
+        });
+        for index in 0..50 {
+            fixture.write(
+                &format!(".ota/receipts/repo-receipt-20260412-1010{index:02}-123Z.json"),
+                &serde_json::to_string_pretty(&payload).unwrap(),
+            );
+        }
+        let promoted_archive = receipts_dir.join("repo-receipt-20260412-101000-123Z.json");
+        fixture.write(".ota/receipts/repo-baseline.json", "{\"broken\":");
+
+        let output = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = output.stderr.unwrap_or_default();
+        assert!(stderr.contains("failed to parse promoted receipt baseline"));
+        assert!(promoted_archive.is_file());
+        let remaining = fs::read_dir(&receipts_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                name.starts_with("repo-receipt-") && name.ends_with(".json")
+            })
+            .count();
+        assert_eq!(remaining, 51);
+    }
+
+    #[test]
     fn receipt_json_diff_against_latest_skips_semantically_invalid_newest_archive() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -4834,6 +5112,10 @@ project:
         assert_eq!(json["baseline"]["source"], "file");
         assert_eq!(
             json["baseline"]["archive_path"],
+            baseline_file.display().to_string()
+        );
+        assert_eq!(
+            json["baseline"]["selection_path"],
             baseline_file.display().to_string()
         );
         assert!(json["baseline"]["archived_at"].is_null());

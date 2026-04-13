@@ -1285,10 +1285,17 @@ The nested `receipt` object can also include:
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.
 
+When `--archive --promote-baseline` is set, the receipt success shape also includes:
+
+- `promoted_baseline.path`
+- `promoted_baseline.archive_path`
+- `promoted_baseline.promoted_at`
+
 ## `ota receipt --json --baseline`
 
 `ota receipt --json --baseline` compares the current repo receipt against either:
 
+- `promoted`: the explicit promoted repo baseline under `.ota/receipts/repo-baseline.json`
 - `latest`: the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - an explicit repo receipt JSON file path
 
@@ -1303,9 +1310,12 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
   "path": "/abs/path/to/ota.yaml",
   "mode": "diff",
   "baseline": {
-    "source": "latest",
+    "source": "promoted",
+    "selection_path": "/abs/path/to/.ota/receipts/repo-baseline.json",
     "archive_path": "/abs/path/to/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
     "archived_at": "2026-04-12T10:10:10.123Z",
+    "promoted_at": "2026-04-12T10:20:30.456Z",
+    "contract_identity": "ota.yaml",
     "ok": false,
     "contract": "/abs/path/to/ota.yaml",
     "backend": "native",
@@ -1377,9 +1387,12 @@ Current receipt diff JSON fields:
 - `ok` (current receipt readiness, not diff success/failure)
 - `path`
 - `mode` (`diff`)
-- `baseline.source` (`latest` or `file`)
+- `baseline.source` (`promoted`, `latest`, or `file`)
+- `baseline.selection_path` when compare selection came from a promoted baseline pointer or explicit file path
 - `baseline.archive_path`
 - `baseline.archived_at` (when the baseline file name encodes an archived timestamp)
+- `baseline.promoted_at` when compare selection came from a promoted baseline pointer
+- `baseline.contract_identity` when ota can resolve the repo-local contract identity for the selected baseline
 - `baseline.ok`
 - `baseline.contract`
 - `baseline.backend` / `baseline.lifecycle` when recorded

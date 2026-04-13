@@ -663,7 +663,16 @@ pub struct ReceiptSuccess<'a> {
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promoted_baseline: Option<ReceiptPromotedBaseline>,
     pub findings: &'a [Finding],
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ReceiptPromotedBaseline {
+    pub path: String,
+    pub archive_path: String,
+    pub promoted_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -741,9 +750,15 @@ pub struct ReceiptDiffSide {
 pub struct ReceiptDiffBaseline {
     pub source: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promoted_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<String>,
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
