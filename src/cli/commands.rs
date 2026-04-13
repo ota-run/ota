@@ -3279,6 +3279,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
         ok: false,
         provisioning: None,
         adapter_bootstrap: None,
+        execution_target: None,
         findings,
     }
 }
@@ -15304,6 +15305,7 @@ mod tests {
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Warn,
@@ -15394,6 +15396,7 @@ mod tests {
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Warn,
@@ -15502,6 +15505,7 @@ tasks:
                 ok: true,
                 provisioning: None,
                 adapter_bootstrap: None,
+                execution_target: None,
                 findings: Vec::new(),
             },
             preview: None,
@@ -15584,6 +15588,7 @@ tasks:
                 },
             }),
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
@@ -15662,6 +15667,7 @@ tasks:
                 },
             }),
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Tool probe failed: npm"),
@@ -15719,6 +15725,7 @@ tasks:
             ok: true,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: Vec::new(),
         };
 
@@ -15929,6 +15936,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16000,6 +16008,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16059,6 +16068,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16113,6 +16123,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16168,6 +16179,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16217,6 +16229,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![
                 Finding {
                     severity: FindingSeverity::Error,
@@ -16273,6 +16286,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Ephemeral lifecycle is execution-only"),
@@ -16343,6 +16357,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Invalid org policy pack"),
@@ -16394,6 +16409,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Invalid org policy pack"),
@@ -16436,6 +16452,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
@@ -16495,6 +16512,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: vec![Finding {
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
@@ -16543,6 +16561,7 @@ policies:
             ok: true,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: Vec::new(),
         };
         let summary = super::DoctorSummary {
@@ -16594,6 +16613,7 @@ policies:
             ok: true,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: Vec::new(),
         };
 
@@ -16815,7 +16835,11 @@ execution:
         let receipt = super::repo_execution_receipt(
             Path::new("./ota.yaml"),
             &contract,
-            ExecutionOverrides::default(),
+            super::doctor_phase_execution_context(
+                &contract,
+                Path::new("./ota.yaml"),
+                DoctorMode::Container,
+            ),
             "READY",
             "post-setup diagnosis",
             None,
@@ -16857,7 +16881,7 @@ execution:
         let receipt = super::repo_execution_receipt(
             Path::new("./ota.yaml"),
             &contract,
-            ExecutionOverrides::default(),
+            super::native_phase_execution_context(),
             "NOT READY",
             "services",
             Some("postgres"),
@@ -16871,6 +16895,61 @@ execution:
             &receipt,
             Some("services"),
             "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Mode:       native"));
+        assert!(!rendered.contains("Image:"));
+        assert!(!rendered.contains("Target:"));
+    }
+
+    #[test]
+    fn repo_readiness_receipt_omits_ephemeral_target_without_container_probe_execution() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-test
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+"#,
+        )
+        .unwrap();
+
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from(
+                    "Host-bound readiness checks are not evaluated in container mode",
+                ),
+                why: String::from(
+                    "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
+                ),
+                next: String::from(
+                    "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                ),
+            }],
+        };
+
+        let receipt = super::repo_readiness_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            DoctorMode::Container,
+            &report,
+        );
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("readiness"),
+            "RECEIPT",
         ));
 
         assert!(rendered.contains("Mode:       container"));
@@ -17019,6 +17098,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings: {
                 let mut findings = bootstrap_failure_findings(
                     &ProvisioningBackendRequest {
@@ -17136,6 +17216,7 @@ policies:
             ok: false,
             provisioning: None,
             adapter_bootstrap: None,
+            execution_target: None,
             findings,
         };
 
@@ -20503,6 +20584,15 @@ struct CommandRunResult {
     exit_code: i32,
     stdout: String,
     stderr: String,
+    target: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PhaseExecutionContext {
+    backend: Option<String>,
+    lifecycle: Option<String>,
+    image: Option<String>,
+    target: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -20687,6 +20777,7 @@ fn aggregate_execution_summary_status(
     String::from("failed")
 }
 
+#[cfg(test)]
 fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
     ExecutionOverrides {
         backend: Some(match mode {
@@ -20703,10 +20794,14 @@ fn repo_readiness_receipt(
     mode: DoctorMode,
     report: &DoctorReport,
 ) -> ExecutionReceipt {
+    let mut context = doctor_phase_execution_context(contract, contract_path, mode);
+    if mode == DoctorMode::Container {
+        context.target = report.execution_target.clone();
+    }
     let mut receipt = repo_execution_receipt(
         contract_path,
         contract,
-        doctor_mode_execution_overrides(mode),
+        context,
         if report.ok { "READY" } else { "NOT READY" },
         "readiness",
         None,
@@ -20732,7 +20827,7 @@ fn repo_readiness_receipt(
 fn repo_execution_receipt(
     path: &Path,
     contract: &Contract,
-    overrides: ExecutionOverrides,
+    context: PhaseExecutionContext,
     status: &str,
     phase: &str,
     service: Option<&str>,
@@ -20741,13 +20836,11 @@ fn repo_execution_receipt(
     exit_code: Option<i32>,
     next: Option<String>,
 ) -> ExecutionReceipt {
-    let (backend, lifecycle) = effective_execution(contract, overrides);
-    let image = execution_image(contract, backend);
-    let target = repo_execution_target(contract, path, backend, lifecycle, phase, task);
     let task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| &task.env);
     let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
+    let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
     let detail = service
         .map(|service| format!("service `{service}`"))
         .or_else(|| task.map(|task| format!("task `{task}`")));
@@ -20766,10 +20859,10 @@ fn repo_execution_receipt(
         scope: String::from("repo"),
         contract: path.display().to_string(),
         workspace: None,
-        backend: Some(format_backend(backend).to_string()),
-        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
-        image,
-        target,
+        backend: context.backend,
+        lifecycle: context.lifecycle,
+        image: context.image,
+        target: context.target,
         acquired: Vec::new(),
         env: env_details
             .iter()
@@ -20783,7 +20876,7 @@ fn repo_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
-        policy: execution_policy_lines(contract, path, backend),
+        policy: execution_policy_lines(contract, path, execution_backend),
         steps,
         blocked: Vec::new(),
         summary: execution_receipt_summary(findings, 1, None, None, None),
@@ -20791,34 +20884,86 @@ fn repo_execution_receipt(
     }
 }
 
-fn repo_execution_target(
-    contract: &Contract,
-    path: &Path,
-    backend: Backend,
-    lifecycle: Option<Lifecycle>,
-    phase: &str,
-    task: Option<&str>,
-) -> Option<String> {
-    match (backend, lifecycle) {
-        (Backend::Container, Some(Lifecycle::Ephemeral))
-            if repo_execution_phase_uses_ephemeral_target(phase, task) =>
-        {
-            ephemeral_container_target(contract, path)
-        }
-        _ => execution_target(contract, path, backend, lifecycle),
+fn phase_execution_backend(context: &PhaseExecutionContext) -> Option<Backend> {
+    match context.backend.as_deref() {
+        Some("native") => Some(Backend::Native),
+        Some("container") => Some(Backend::Container),
+        Some("remote") => Some(Backend::Remote),
+        _ => None,
     }
 }
 
-fn repo_execution_phase_uses_ephemeral_target(phase: &str, task: Option<&str>) -> bool {
-    if phase == "preview" || phase == "services" {
-        return false;
+fn native_phase_execution_context() -> PhaseExecutionContext {
+    PhaseExecutionContext {
+        backend: Some(String::from("native")),
+        ..PhaseExecutionContext::default()
     }
+}
 
-    task.is_some()
-        || matches!(
-            phase,
-            "readiness" | "preconditions" | "post-setup diagnosis"
-        )
+fn selected_phase_execution_context(
+    contract: &Contract,
+    path: &Path,
+    overrides: ExecutionOverrides,
+) -> PhaseExecutionContext {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    PhaseExecutionContext {
+        backend: Some(format_backend(backend).to_string()),
+        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        image: execution_image(contract, backend),
+        target: execution_target(contract, path, backend, lifecycle),
+    }
+}
+
+fn task_phase_execution_context(
+    contract: &Contract,
+    path: &Path,
+    overrides: ExecutionOverrides,
+    target: Option<String>,
+) -> PhaseExecutionContext {
+    let mut context = selected_phase_execution_context(contract, path, overrides);
+    if target.is_some() {
+        context.target = target;
+    }
+    context
+}
+
+fn doctor_phase_execution_context(
+    contract: &Contract,
+    path: &Path,
+    mode: DoctorMode,
+) -> PhaseExecutionContext {
+    match mode {
+        DoctorMode::Native => native_phase_execution_context(),
+        DoctorMode::Container => PhaseExecutionContext {
+            backend: Some(String::from("container")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: execution_image(contract, Backend::Container),
+            target: ephemeral_container_target(contract, path),
+        },
+    }
+}
+
+fn provisioning_phase_execution_context(
+    contract: &Contract,
+    path: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> PhaseExecutionContext {
+    match target {
+        ProvisioningExecutionTarget::Native => native_phase_execution_context(),
+        ProvisioningExecutionTarget::Container {
+            image, lifecycle, ..
+        } => PhaseExecutionContext {
+            backend: Some(String::from("container")),
+            lifecycle: Some(format_lifecycle(*lifecycle).to_string()),
+            image: Some(image.clone()),
+            target: match lifecycle {
+                Lifecycle::Persistent => {
+                    execution_target(contract, path, Backend::Container, Some(*lifecycle))
+                }
+                Lifecycle::Ephemeral => None,
+            },
+        },
+    }
 }
 
 fn render_repo_receipt(
@@ -21232,6 +21377,7 @@ fn acquire_workspace_repo(
             exit_code: 0,
             stdout: String::new(),
             stderr: String::new(),
+            target: None,
         });
     }
 
@@ -21266,6 +21412,7 @@ fn acquire_workspace_repo(
             exit_code: clone.exit_code,
             stdout,
             stderr,
+            target: None,
         });
     }
 
@@ -21284,6 +21431,7 @@ fn acquire_workspace_repo(
                 exit_code: checkout.exit_code,
                 stdout,
                 stderr,
+                target: None,
             });
         }
     }
@@ -21292,6 +21440,7 @@ fn acquire_workspace_repo(
         exit_code: 0,
         stdout,
         stderr,
+        target: None,
     })
 }
 
@@ -21313,6 +21462,7 @@ fn run_git_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: None,
             })
         }
         RepoExecutionMode::Stream => {
@@ -21321,6 +21471,7 @@ fn run_git_command(
                 exit_code: status.code().unwrap_or(1),
                 stdout: String::new(),
                 stderr: String::new(),
+                target: None,
             })
         }
     }
@@ -21500,7 +21651,7 @@ fn preview_receipt(
     repo_execution_receipt(
         resolved_path,
         contract,
-        overrides,
+        selected_phase_execution_context(contract, resolved_path, overrides),
         status,
         "preview",
         None,
@@ -21532,6 +21683,7 @@ fn run_up_setup_task(
             exit_code: outcome.exit_code,
             stdout: String::new(),
             stderr: String::new(),
+            target: outcome.target,
         })
         .map_err(render_run_error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
@@ -21546,6 +21698,7 @@ fn run_up_setup_task(
             exit_code: outcome.exit_code,
             stdout: outcome.stdout,
             stderr: outcome.stderr,
+            target: outcome.target,
         })
         .map_err(render_run_error),
     }
@@ -21638,7 +21791,11 @@ fn execute_repo_up(
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
-                            overrides,
+                            provisioning_phase_execution_context(
+                                contract,
+                                resolved_path,
+                                &provisioning_target,
+                            ),
                             "PROVISION FAILED",
                             "provisioning",
                             None,
@@ -21675,7 +21832,11 @@ fn execute_repo_up(
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
-                            overrides,
+                            provisioning_phase_execution_context(
+                                contract,
+                                resolved_path,
+                                &provisioning_target,
+                            ),
                             "PROVISION FAILED",
                             "provisioning",
                             None,
@@ -21754,7 +21915,11 @@ fn execute_repo_up(
                                         receipt: repo_execution_receipt(
                                             resolved_path,
                                             contract,
-                                            overrides,
+                                            provisioning_phase_execution_context(
+                                                contract,
+                                                resolved_path,
+                                                &provisioning_target,
+                                            ),
                                             "PROVISION FAILED",
                                             "provisioning",
                                             None,
@@ -21846,7 +22011,11 @@ fn execute_repo_up(
                                     receipt: repo_execution_receipt(
                                         resolved_path,
                                         contract,
-                                        overrides,
+                                        provisioning_phase_execution_context(
+                                            contract,
+                                            resolved_path,
+                                            &provisioning_target,
+                                        ),
                                         "PROVISION FAILED",
                                         "provisioning",
                                         None,
@@ -21883,7 +22052,11 @@ fn execute_repo_up(
                                     receipt: repo_execution_receipt(
                                         resolved_path,
                                         contract,
-                                        overrides,
+                                        provisioning_phase_execution_context(
+                                            contract,
+                                            resolved_path,
+                                            &provisioning_target,
+                                        ),
                                         "PROVISION FAILED",
                                         "provisioning",
                                         None,
@@ -21975,7 +22148,12 @@ fn execute_repo_up(
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
-                            overrides,
+                            task_phase_execution_context(
+                                contract,
+                                resolved_path,
+                                overrides,
+                                outcome.target.clone(),
+                            ),
                             "SETUP FAILED",
                             "setup",
                             None,
@@ -21988,6 +22166,7 @@ fn execute_repo_up(
                             ok: false,
                             provisioning: None,
                             adapter_bootstrap: None,
+                            execution_target: None,
                             findings: Vec::new(),
                         },
                         service: None,
@@ -22013,7 +22192,11 @@ fn execute_repo_up(
                             receipt: repo_execution_receipt(
                                 resolved_path,
                                 contract,
-                                overrides,
+                                doctor_phase_execution_context(
+                                    contract,
+                                    resolved_path,
+                                    doctor_mode,
+                                ),
                                 "NOT READY",
                                 "provisioning",
                                 None,
@@ -22048,7 +22231,7 @@ fn execute_repo_up(
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
-                    overrides,
+                    doctor_phase_execution_context(contract, resolved_path, doctor_mode),
                     "NOT READY",
                     "preconditions",
                     None,
@@ -22096,7 +22279,7 @@ fn execute_repo_up(
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
-                            overrides,
+                            native_phase_execution_context(),
                             "SERVICE START FAILED",
                             "services",
                             Some(name.as_str()),
@@ -22109,6 +22292,7 @@ fn execute_repo_up(
                             ok: false,
                             provisioning: None,
                             adapter_bootstrap: None,
+                            execution_target: None,
                             findings: Vec::new(),
                         },
                         service: Some(name.clone()),
@@ -22134,7 +22318,7 @@ fn execute_repo_up(
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
-                    overrides,
+                    native_phase_execution_context(),
                     "NOT READY",
                     "services",
                     Some(name.as_str()),
@@ -22168,7 +22352,7 @@ fn execute_repo_up(
             receipt: repo_execution_receipt(
                 resolved_path,
                 contract,
-                overrides,
+                native_phase_execution_context(),
                 "NOT READY",
                 "services",
                 None,
@@ -22205,7 +22389,12 @@ fn execute_repo_up(
                     receipt: repo_execution_receipt(
                         resolved_path,
                         contract,
-                        overrides,
+                        task_phase_execution_context(
+                            contract,
+                            resolved_path,
+                            overrides,
+                            outcome.target.clone(),
+                        ),
                         "SETUP FAILED",
                         "setup",
                         None,
@@ -22218,6 +22407,7 @@ fn execute_repo_up(
                         ok: false,
                         provisioning: None,
                         adapter_bootstrap: None,
+                        execution_target: None,
                         findings: Vec::new(),
                     },
                     service: None,
@@ -22246,7 +22436,7 @@ fn execute_repo_up(
         receipt: repo_execution_receipt(
             resolved_path,
             contract,
-            overrides,
+            doctor_phase_execution_context(contract, resolved_path, doctor_mode),
             if report.ok { "READY" } else { "NOT READY" },
             "post-setup diagnosis",
             None,
@@ -23857,6 +24047,7 @@ fn run_workspace_repo_refresh_command(
                 exit_code: fetch.exit_code,
                 stdout,
                 stderr,
+                target: None,
             });
         }
 
@@ -23870,6 +24061,7 @@ fn run_workspace_repo_refresh_command(
             exit_code: reset.exit_code,
             stdout,
             stderr,
+            target: None,
         });
     }
 
@@ -24284,6 +24476,7 @@ fn run_workspace_repo_task(
                         exit_code: result.exit_code,
                         stdout: result.stdout,
                         stderr: result.stderr,
+                        target: result.target,
                     })
                 }
                 RepoExecutionMode::Stream => {
@@ -24300,6 +24493,7 @@ fn run_workspace_repo_task(
                         exit_code: result.exit_code,
                         stdout: String::new(),
                         stderr: String::new(),
+                        target: result.target,
                     })
                 }
             };
@@ -24742,6 +24936,7 @@ fn run_shell_command(
                     exit_code,
                     stdout: String::new(),
                     stderr: String::new(),
+                    target: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -24756,6 +24951,7 @@ fn run_shell_command(
                 exit_code: output.status.code().unwrap_or(1),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }

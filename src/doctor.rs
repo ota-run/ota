@@ -133,11 +133,13 @@ struct ContainerProbeContext {
 }
 
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
+const CONTAINER_PROBE_STARTED_MARKER: &str = "__OTA_CONTAINER_PROBE_STARTED__";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandVersionProbe {
     command: String,
     resolved_path: Option<PathBuf>,
+    probe_started: bool,
     outcome: CommandVersionProbeOutcome,
 }
 
@@ -1073,6 +1075,8 @@ pub struct DoctorReport {
     pub provisioning: Option<ProvisioningDiagnostics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_bootstrap: Option<AdapterBootstrapDiagnostics>,
+    #[serde(skip)]
+    pub execution_target: Option<String>,
     pub findings: Vec<Finding>,
 }
 
@@ -1126,6 +1130,7 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
             .any(|finding| finding.severity == FindingSeverity::Error),
         provisioning: None,
         adapter_bootstrap: None,
+        execution_target: None,
         findings,
     };
 
@@ -1181,6 +1186,7 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
             .any(|finding| finding.severity == FindingSeverity::Error),
         provisioning: None,
         adapter_bootstrap: None,
+        execution_target: None,
         findings,
     }
 }
@@ -1202,6 +1208,7 @@ fn diagnose_contract_with_scope(
     let mut findings = Vec::new();
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
+    let mut execution_target = None;
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
             Ok(policy) => policy,
@@ -1229,7 +1236,14 @@ fn diagnose_contract_with_scope(
         } else if contract_has_host_bound_readiness_surfaces(contract) {
             findings.push(container_mode_scope_note_finding(contract));
         }
-        diagnose_runtimes(
+        let container_probe_started = diagnose_runtimes(
+            contract,
+            contract_path,
+            mode,
+            container_probe.as_ref(),
+            &provisioning_actions,
+            &mut findings,
+        ) || diagnose_tools(
             contract,
             contract_path,
             mode,
@@ -1237,14 +1251,16 @@ fn diagnose_contract_with_scope(
             &provisioning_actions,
             &mut findings,
         );
-        diagnose_tools(
-            contract,
-            contract_path,
-            mode,
-            container_probe.as_ref(),
-            &provisioning_actions,
-            &mut findings,
-        );
+        if mode == DoctorMode::Container
+            && container_probe_started
+            && let Some(container_probe) = container_probe.as_ref()
+        {
+            execution_target = Some(crate::runner::ephemeral_container_name(
+                contract_working_dir(contract_path),
+                &container_probe.image,
+                &container_probe.engine,
+            ));
+        }
         provisioning = diagnose_org_policy(
             contract,
             contract_path,
@@ -1276,6 +1292,7 @@ fn diagnose_contract_with_scope(
             .any(|finding| finding.severity == FindingSeverity::Error),
         provisioning,
         adapter_bootstrap,
+        execution_target,
         findings,
     }
 }
@@ -1685,13 +1702,14 @@ fn diagnose_runtimes(
     container_probe: Option<&ContainerProbeContext>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
-) {
+) -> bool {
     if mode == DoctorMode::Container && container_probe.is_none() {
-        return;
+        return false;
     }
 
+    let mut container_probe_started = false;
     for (name, requirement) in &contract.runtimes {
-        diagnose_command_version(
+        container_probe_started |= diagnose_command_version(
             "runtime",
             name,
             name,
@@ -1705,6 +1723,7 @@ fn diagnose_runtimes(
             findings,
         );
     }
+    container_probe_started
 }
 
 fn diagnose_tools(
@@ -1714,18 +1733,19 @@ fn diagnose_tools(
     container_probe: Option<&ContainerProbeContext>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
-) {
+) -> bool {
     if mode == DoctorMode::Container && container_probe.is_none() {
-        return;
+        return false;
     }
 
+    let mut container_probe_started = false;
     for (name, requirement) in &contract.tools {
         let required = match requirement {
             crate::schema::ToolRequirement::Simple(_) => true,
             crate::schema::ToolRequirement::Detailed(detail) => detail.required,
         };
 
-        diagnose_command_version(
+        container_probe_started |= diagnose_command_version(
             "tool",
             name,
             tool_executable_name(name),
@@ -1739,6 +1759,7 @@ fn diagnose_tools(
             findings,
         );
     }
+    container_probe_started
 }
 
 fn runtime_provider_hint(requirement: &RuntimeRequirement) -> Option<&str> {
@@ -2279,7 +2300,7 @@ fn diagnose_command_version(
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
-) {
+) -> bool {
     let target_kind = match kind {
         "runtime" => ProvisioningTargetKind::Runtime,
         _ => ProvisioningTargetKind::Tool,
@@ -2301,7 +2322,7 @@ fn diagnose_command_version(
         Some(command_version_probe(executable_name))
     } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
-            return;
+            return false;
         };
         Some(command_version_probe_in_container(
             &container_probe.engine,
@@ -2312,6 +2333,10 @@ fn diagnose_command_version(
     } else {
         None
     };
+    let container_probe_started = version_probe
+        .as_ref()
+        .map(|probe| probe.probe_started)
+        .unwrap_or(false);
     let actual = if let Some(probe) = version_probe.as_ref() {
         match &probe.outcome {
             CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
@@ -2388,7 +2413,7 @@ fn diagnose_command_version(
                         why,
                         next,
                     });
-                    return;
+                    return container_probe_started;
                 }
                 CommandVersionProbeOutcome::Unparseable => {
                     let resolved_path = probe
@@ -2433,7 +2458,7 @@ fn diagnose_command_version(
                         why,
                         next,
                     });
-                    return;
+                    return container_probe_started;
                 }
                 CommandVersionProbeOutcome::Version(_) => {}
             }
@@ -2464,7 +2489,7 @@ fn diagnose_command_version(
                 },
                 "ota doctor --mode container",
             ));
-            return;
+            return container_probe_started;
         }
         let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding {
@@ -2499,11 +2524,11 @@ fn diagnose_command_version(
                     }),
             },
         });
-        return;
+        return container_probe_started;
     };
 
     if version_matches(requirement, &actual) {
-        return;
+        return container_probe_started;
     }
 
     if mode == DoctorMode::Container
@@ -2531,7 +2556,7 @@ fn diagnose_command_version(
             },
             "ota doctor --mode container",
         ));
-        return;
+        return container_probe_started;
     }
 
     let container_image = container_probe.map(|probe| probe.image.as_str());
@@ -2578,6 +2603,7 @@ fn diagnose_command_version(
                 }),
         },
     });
+    container_probe_started
 }
 
 fn container_installability_failure(
@@ -2647,7 +2673,7 @@ fn version_probe_command_string(name: &str) -> String {
     };
 
     format!(
-        "resolved=\"$(command -v {quoted_name} 2>/dev/null)\" || exit 127\nprintf '%s%s\\n' '{CONTAINER_PROBE_PATH_MARKER}' \"$resolved\" >&2\nexec {exec}"
+        "printf '%s\\n' '{CONTAINER_PROBE_STARTED_MARKER}' >&2\nresolved=\"$(command -v {quoted_name} 2>/dev/null)\" || exit 127\nprintf '%s%s\\n' '{CONTAINER_PROBE_PATH_MARKER}' \"$resolved\" >&2\nexec {exec}"
     )
 }
 
@@ -2659,9 +2685,9 @@ fn command_version_probe_in_container(
 ) -> CommandVersionProbe {
     let command = version_command_string(name);
     let output = version_command_in_container(engine, image, name, working_dir).output();
-    let (resolved_path, outcome) = match output {
+    let (probe_started, resolved_path, outcome) = match output {
         Ok(output) => {
-            let (resolved_path, combined) =
+            let (probe_started, resolved_path, combined) =
                 extract_container_probe_output(&output.stdout, &output.stderr);
             let outcome = if output.status.success() {
                 extract_version_token(&combined)
@@ -2675,9 +2701,10 @@ fn command_version_probe_in_container(
                     error: None,
                 }
             };
-            (resolved_path.map(PathBuf::from), outcome)
+            (probe_started, resolved_path.map(PathBuf::from), outcome)
         }
         Err(error) => (
+            false,
             None,
             CommandVersionProbeOutcome::ProbeFailed {
                 exit_code: None,
@@ -2689,33 +2716,38 @@ fn command_version_probe_in_container(
     CommandVersionProbe {
         command,
         resolved_path,
+        probe_started,
         outcome,
     }
 }
 
-fn extract_container_probe_output(stdout: &[u8], stderr: &[u8]) -> (Option<String>, String) {
-    let (stdout_path, cleaned_stdout) =
-        strip_container_probe_marker(&String::from_utf8_lossy(stdout));
-    let (stderr_path, cleaned_stderr) =
-        strip_container_probe_marker(&String::from_utf8_lossy(stderr));
+fn extract_container_probe_output(stdout: &[u8], stderr: &[u8]) -> (bool, Option<String>, String) {
+    let (stdout_started, stdout_path, cleaned_stdout) =
+        strip_container_probe_markers(&String::from_utf8_lossy(stdout));
+    let (stderr_started, stderr_path, cleaned_stderr) =
+        strip_container_probe_markers(&String::from_utf8_lossy(stderr));
+    let probe_started = stdout_started || stderr_started;
     let resolved_path = stdout_path.or(stderr_path);
     let combined = format!("{cleaned_stdout} {cleaned_stderr}")
         .trim()
         .to_string();
-    (resolved_path, combined)
+    (probe_started, resolved_path, combined)
 }
 
-fn strip_container_probe_marker(stream: &str) -> (Option<String>, String) {
+fn strip_container_probe_markers(stream: &str) -> (bool, Option<String>, String) {
+    let mut probe_started = false;
     let mut resolved_path = None;
     let mut kept = Vec::new();
     for line in stream.lines() {
-        if let Some(value) = line.strip_prefix(CONTAINER_PROBE_PATH_MARKER) {
+        if line.trim() == CONTAINER_PROBE_STARTED_MARKER {
+            probe_started = true;
+        } else if let Some(value) = line.strip_prefix(CONTAINER_PROBE_PATH_MARKER) {
             resolved_path = Some(value.trim().to_string());
         } else {
             kept.push(line);
         }
     }
-    (resolved_path, kept.join("\n"))
+    (probe_started, resolved_path, kept.join("\n"))
 }
 
 fn compact_display_path(path: &Path) -> String {
@@ -2957,6 +2989,7 @@ fn command_version_probe(name: &str) -> CommandVersionProbe {
         return CommandVersionProbe {
             command,
             resolved_path: None,
+            probe_started: false,
             outcome: CommandVersionProbeOutcome::Missing,
         };
     };
@@ -2985,6 +3018,7 @@ fn command_version_probe(name: &str) -> CommandVersionProbe {
     CommandVersionProbe {
         command,
         resolved_path: Some(resolved_path),
+        probe_started: true,
         outcome,
     }
 }

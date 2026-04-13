@@ -878,7 +878,7 @@ Current behavior:
 - `--stream` opts into raw live child output for provisioning, required service `start` commands, and the `setup` task
 - `--stream` is text-only and is only supported for mutating `ota up`
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
-- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, target, setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
+- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)
