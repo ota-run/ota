@@ -214,6 +214,16 @@
             }
           }
         },
+        "gate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule", "passed", "new_blocker_count"],
+          "properties": {
+            "rule": { "const": "fail_on_new_blockers" },
+            "passed": { "type": "boolean" },
+            "new_blocker_count": { "type": "integer", "minimum": 0 }
+          }
+        },
         "introduced": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }

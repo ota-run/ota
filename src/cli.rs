@@ -258,6 +258,14 @@ enum Commands {
         /// Compare the current receipt against `latest` or an archived receipt JSON file.
         #[arg(long, value_name = "BASELINE", conflicts_with_all = ["archive", "history"])]
         baseline: Option<String>,
+        /// Exit with status 1 when the baseline diff introduces new error findings.
+        #[arg(
+            long,
+            action = ArgAction::SetTrue,
+            requires = "baseline",
+            conflicts_with = "history"
+        )]
+        fail_on_new_blockers: bool,
         /// List archived receipt artifacts from `.ota/receipts`.
         #[arg(
             long,
@@ -1338,6 +1346,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Receipt {
             json,
             baseline,
+            fail_on_new_blockers,
             history,
             archive,
             mode,
@@ -1350,6 +1359,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             mode.into(),
             format_from_json(json),
             baseline.as_deref(),
+            fail_on_new_blockers,
             history,
             archive,
             debug,
@@ -4420,6 +4430,131 @@ env:
             json["unchanged"][0]["summary"],
             "No tasks defined in contract"
         );
+    }
+
+    #[test]
+    fn receipt_json_diff_fail_on_new_blockers_sets_gate_and_exits_nonzero() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  OTA_BASELINE_REQUIRED:
+    required: true
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+        let unchanged = current_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "No tasks defined in contract")
+            .cloned()
+            .unwrap();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 2,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 2,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    unchanged,
+                    {
+                        "severity": "error",
+                        "summary": "Missing tool: old-tool",
+                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                    }
+                ]
+            }))
+            .unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            "latest",
+            "--fail-on-new-blockers",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
+        assert_eq!(json["gate"]["passed"], false);
+        assert_eq!(json["gate"]["new_blocker_count"], 1);
+        assert_eq!(json["summary"]["introduced"]["error_count"], 1);
+    }
+
+    #[test]
+    fn receipt_json_diff_fail_on_new_blockers_passes_without_new_errors() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+
+        let baseline_file = fixture.dir.path().join("baseline-receipt.json");
+        fs::write(&baseline_file, current.stdout).unwrap();
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            baseline_file.to_str().unwrap(),
+            "--fail-on-new-blockers",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
+        assert_eq!(json["gate"]["passed"], true);
+        assert_eq!(json["gate"]["new_blocker_count"], 0);
+        assert_eq!(json["summary"]["introduced"]["error_count"], 0);
     }
 
     #[test]

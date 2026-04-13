@@ -184,6 +184,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff.get("introduced").is_some());
     assert!(diff.get("resolved").is_some());
     assert!(diff.get("unchanged").is_some());
+    assert!(diff.get("gate").is_some());
     assert!(diff_summary.get("baseline_ok").is_some());
     assert!(diff_summary.get("current_ok").is_some());
     assert!(diff_summary.get("introduced").is_some());
