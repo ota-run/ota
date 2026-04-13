@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added `ota receipt --fail-on-new-blockers` for baseline compare mode so receipt diffs can exit non-zero only when they introduce new blocker findings, while exposing additive diff gate metadata in JSON and text output.
+
 ## 1.4.8
 
 - added execution target reporting to execution receipts and container probe diagnostics so receipt targets reflect the actual execution target and failed container probes are classified more precisely.

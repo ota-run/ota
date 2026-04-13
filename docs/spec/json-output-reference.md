@@ -1294,7 +1294,8 @@ receipt success shape with `ok: false`.
 
 The compare path is read-only. It does not rerun the baseline receipt, does not archive the
 current receipt automatically, and exits `0` when comparison succeeds even if the current receipt
-or baseline receipt is not ready.
+or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want compare mode to exit
+`1` after a successful diff whenever the current receipt introduces new blocker findings.
 
 ```json
 {
@@ -1348,6 +1349,11 @@ or baseline receipt is not ready.
       "info_count": 0
     }
   },
+  "gate": {
+    "rule": "fail_on_new_blockers",
+    "passed": false,
+    "new_blocker_count": 1
+  },
   "introduced": [
     {
       "summary": "Missing environment variable: OTA_BASELINE_REQUIRED"
@@ -1387,6 +1393,7 @@ Current receipt diff JSON fields:
 - `summary.introduced`
 - `summary.resolved`
 - `summary.unchanged`
+- `gate.rule`, `gate.passed`, and `gate.new_blocker_count` when `--fail-on-new-blockers` is active
 - `introduced[]`
 - `resolved[]`
 - `unchanged[]`

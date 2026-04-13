@@ -720,6 +720,13 @@ pub struct ReceiptDiffSummary {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReceiptDiffGate {
+    pub rule: String,
+    pub passed: bool,
+    pub new_blocker_count: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReceiptDiffSide {
     pub ok: bool,
     pub contract: String,
@@ -754,6 +761,8 @@ pub struct ReceiptDiffSuccess<'a> {
     pub baseline: ReceiptDiffBaseline,
     pub current: ReceiptDiffSide,
     pub summary: ReceiptDiffSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<ReceiptDiffGate>,
     pub introduced: Vec<Finding>,
     pub resolved: Vec<Finding>,
     pub unchanged: Vec<Finding>,

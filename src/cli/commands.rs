@@ -62,7 +62,7 @@ use crate::output::{
     ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
     ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
     MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
-    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffSide,
+    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide,
     ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
     ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptSuccess, ServiceSummary, ServicesFailure,
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan,
@@ -3848,6 +3848,7 @@ pub fn receipt(
     mode: DoctorMode,
     format: OutputFormat,
     baseline: Option<&str>,
+    fail_on_new_blockers: bool,
     history: bool,
     archive: bool,
     debug: bool,
@@ -3953,6 +3954,7 @@ pub fn receipt(
                         &receipt,
                         &report.findings,
                         baseline,
+                        fail_on_new_blockers,
                         format,
                     );
                 }
@@ -8902,6 +8904,30 @@ fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
     )
 }
 
+fn build_receipt_diff_gate(
+    summary: &ReceiptDiffSummary,
+    fail_on_new_blockers: bool,
+) -> Option<ReceiptDiffGate> {
+    fail_on_new_blockers.then(|| ReceiptDiffGate {
+        rule: String::from("fail_on_new_blockers"),
+        passed: summary.introduced.error_count == 0,
+        new_blocker_count: summary.introduced.error_count,
+    })
+}
+
+fn render_receipt_diff_gate(gate: &ReceiptDiffGate) -> String {
+    if gate.passed {
+        String::from("fail on new blockers -> passed")
+    } else if gate.new_blocker_count == 1 {
+        String::from("fail on new blockers -> blocked (1 new blocker)")
+    } else {
+        format!(
+            "fail on new blockers -> blocked ({} new blockers)",
+            gate.new_blocker_count
+        )
+    }
+}
+
 fn append_receipt_diff_side_section(
     stdout: &mut String,
     title: &str,
@@ -8984,6 +9010,7 @@ fn render_repo_receipt_diff(
     current_receipt: &ExecutionReceipt,
     current_findings: &[Finding],
     baseline: &str,
+    fail_on_new_blockers: bool,
     format: OutputFormat,
 ) -> CommandOutput {
     let root = contract_working_dir(contract_path);
@@ -9013,6 +9040,11 @@ fn render_repo_receipt_diff(
         current_receipt,
         current_findings,
     );
+    let gate = build_receipt_diff_gate(&report.summary, fail_on_new_blockers);
+    let exit_code = gate
+        .as_ref()
+        .map(|gate| if gate.passed { 0 } else { 1 })
+        .unwrap_or(0);
 
     match format {
         OutputFormat::Text => {
@@ -9071,6 +9103,14 @@ fn render_repo_receipt_diff(
                 paint_key("Unchanged:"),
                 render_receipt_diff_counts(&report.summary.unchanged)
             ));
+            if let Some(gate) = gate.as_ref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Gate:"),
+                    render_receipt_diff_gate(gate)
+                ));
+            }
 
             append_receipt_diff_side_section(
                 &mut stdout,
@@ -9112,7 +9152,7 @@ fn render_repo_receipt_diff(
             CommandOutput {
                 stdout,
                 stderr: None,
-                exit_code: 0,
+                exit_code,
             }
         }
         OutputFormat::Json => CommandOutput {
@@ -9123,12 +9163,13 @@ fn render_repo_receipt_diff(
                 baseline: report.baseline,
                 current: report.current,
                 summary: report.summary,
+                gate,
                 introduced: report.introduced,
                 resolved: report.resolved,
                 unchanged: report.unchanged,
             }),
             stderr: None,
-            exit_code: 0,
+            exit_code,
         },
     }
 }
