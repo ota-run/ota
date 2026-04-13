@@ -8603,7 +8603,7 @@ runtimes:
         let docker_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  shift\n  while [ \"$#\" -gt 1 ]; do\n    if [ \"$1\" = \"-lc\" ]; then\n      echo unsupported >&2\n      exit 1\n    fi\n    if [ \"$1\" = \"-c\" ] && [ \"$2\" = \"node --version\" ]; then\n      echo 'v22.0.0'\n      exit 0\n    fi\n    shift\n  done\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -13799,9 +13799,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v\" >nul && echo %* | findstr /C:\"node\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *command\\ -v*node*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -14142,9 +14142,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*ls-remote*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -14198,9 +14198,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"asdf\" >nul && echo %* | findstr /C:\"list\" >nul && (\r\n    echo 21.0.0\r\n    echo 21.1.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__node 1>&2\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"asdf\" >nul && echo %* | findstr /C:\"list\" >nul && (\r\n    echo 21.0.0\r\n    echo 21.1.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *asdf*list*all*) printf '21.0.0\\n21.1.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; printf '%s%s\\n' '__OTA_RESOLVED_PATH__' 'node' >&2; printf 'v24.14.1\\n'; exit 0 ;;\n    *asdf*list*all*) printf '21.0.0\\n21.1.0\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -15114,9 +15114,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"brew\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo Error: No available formula with the name \"node@22\" 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *brew*node@22*) echo 'Error: No available formula with the name \"node@22\"' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
@@ -15173,9 +15173,9 @@ policies:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"node --version\" >nul && exit /b 1\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo node\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"node --version\" >nul && (\r\n    echo v24.14.1\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"install\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo mise install failed 1>&2\r\n    exit /b 1\r\n  )\r\n  echo %* | findstr /C:\"mise\" >nul && echo %* | findstr /C:\"ls-remote\" >nul && echo %* | findstr /C:\"node@22\" >nul && (\r\n    echo [\"21.0.0\",\"21.1.0\"]\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"node --version\"*) exit 1 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) printf 'node\\n'; exit 0 ;;\n    *\"node --version\"*) printf 'v24.14.1\\n'; exit 0 ;;\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
