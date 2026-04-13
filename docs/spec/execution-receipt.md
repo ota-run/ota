@@ -69,6 +69,7 @@ The receipt includes:
 - `backend`
 - `lifecycle`
 - `image`
+- `target`
 - `acquired`
 - `env`
 - `policy`
@@ -78,14 +79,17 @@ The receipt includes:
 - `next`
 
 The current shipped surface records `ok`, `path`, `scope`, `contract`, `backend`,
-`lifecycle`, `image`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`, `ota run`,
-`ota up`, and workspace execution flows. Repo receipts now also include a `Policy:`
+`lifecycle`, `image`, `target`, `steps`, `blocked`, `summary`, and `next` for `ota receipt`,
+`ota run`, `ota up`, and workspace execution flows. Repo receipts now also include a `Policy:`
 section when policy-backed provisioning is present, listing the selected source and
 any backend-specific source config. When semver-aware policy approval selects an
 exact install candidate, that `Policy:` section also shows the requested version,
 the resolved install version, and the matched policy rule. On failure, the normal text output keeps `Why`
 and `Next` before the trailing summary block. The receipt keeps the structured
 summary data for JSON and optional receipt output.
+`target` is only present when the actual recorded execution phase used a real named target.
+That includes persistent backends, remote targets, and named ephemeral task or diagnosis
+containers. Previews and host-side phases stay targetless.
 When `--archive` is set on receipt commands, ota persists the JSON receipt under
 `.ota/receipts` so CI or humans can audit the exact execution trail later.
 `ota receipt --history` is the read-only archive index for those repo receipt files; it lists the

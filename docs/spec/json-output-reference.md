@@ -1212,7 +1212,7 @@ Current preview JSON fields:
 - `execution.backend`
 - `execution.lifecycle` when one is selected
 - `execution.image` when container execution is selected
-- `execution.target` when a persistent backend target exists
+- `execution.target` when the selected execution context has a real named target
 - `execution.task` when `up` would run `setup`
 - `plan.actions`
 - `plan.skipped`
@@ -1280,7 +1280,7 @@ The nested `receipt` object can also include:
 - `backend`
 - `lifecycle`
 - `image` when container execution is selected
-- `target` when a stable named execution target exists, such as a persistent container or remote target
+- `target` when the recorded execution phase had a real named target, such as a persistent container, a named ephemeral task or diagnosis container, or a remote target
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.
