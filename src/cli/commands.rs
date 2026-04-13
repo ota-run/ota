@@ -272,7 +272,6 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         }
         if !next_steps.is_empty() {
             if next_steps.len() == 1 {
-                out.push('\n');
                 append_wrapped_labeled_text(
                     &mut out,
                     "Next:",
@@ -16845,15 +16844,15 @@ tasks:
     }
 
     #[test]
-    fn stylize_text_failure_keeps_one_blank_line_before_next() {
+    fn stylize_text_failure_keeps_next_immediately_after_why() {
         let rendered = strip_ansi_codes(&stylize_text_failure(
             "ota run",
             "task failed\nWhy: missing tool\nNext: install the missing tool and rerun",
         ));
 
         assert!(rendered.contains("Why: task failed | Why: missing tool"));
-        assert!(rendered.contains("\n\nNext: install the missing tool and rerun"));
-        assert!(!rendered.contains("\n\n\nNext: install the missing tool and rerun"));
+        assert!(rendered.contains("\nNext: install the missing tool and rerun"));
+        assert!(!rendered.contains("\n\nNext: install the missing tool and rerun"));
     }
 
     #[test]
@@ -17000,18 +16999,16 @@ execution:
     }
 
     #[test]
-    fn stylize_text_failure_keeps_one_blank_line_before_run_task_usage_footer() {
+    fn stylize_text_failure_collapses_run_task_usage_footer_spacing() {
         let rendered = strip_ansi_codes(&stylize_text_failure(
             "ota run",
             "task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage",
         ));
 
         assert!(rendered.contains("Why: task `install-from-source` failed with exit code 101"));
-        assert!(rendered.contains(
-            "\n\nNext: run `ota tasks --use` to inspect runnable task usage"
-        ));
+        assert!(rendered.contains("\nNext: run `ota tasks --use` to inspect runnable task usage"));
         assert!(
-            !rendered.contains("\n\n\nNext: run `ota tasks --use` to inspect runnable task usage")
+            !rendered.contains("\n\nNext: run `ota tasks --use` to inspect runnable task usage")
         );
     }
 
@@ -18688,7 +18685,7 @@ fn render_run_captured_failure_text(
     }
     next_steps.push(task_use_details_step(member));
     if next_steps.len() == 1 {
-        output.push_str(&format!("\n\n{} {}", error_next_key("Next:"), next_steps[0]));
+        output.push_str(&format!("\n{} {}", error_next_key("Next:"), next_steps[0]));
     } else {
         output.push_str(&format_error_next_timeline(&next_steps));
     }
