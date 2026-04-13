@@ -549,6 +549,7 @@ Update documentation when changing:
 - exit code semantics
 - adoption workflow (`doctor`, `init`, `detect`, `up`)
 - `CHANGELOG.md` for every user-visible change and every release/version bump
+- keep `CHANGELOG.md` in descending release order with `## Unreleased` first; move only shipped items into the matching version heading and leave post-release work under `Unreleased`
 
 Documentation quality rule for OSS adoption:
 - command docs must explain **when to use**, **why it exists**, and at least one concrete **use-case**
