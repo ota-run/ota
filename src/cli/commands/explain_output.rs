@@ -131,6 +131,9 @@ pub(super) fn render_explain_steps_text(findings: &[Finding], contract_path: &Pa
                     |value| render_backticked_text(value, Some(contract_path)),
                 );
                 if let Some(provenance) = finding.provenance() {
+                    if matches!(group.kind, DoctorFindingGroupKind::SharedAction(_)) {
+                        continue;
+                    }
                     append_wrapped_labeled_text(
                         &mut stdout,
                         "Provenance:",

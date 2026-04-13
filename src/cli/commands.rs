@@ -50,7 +50,9 @@ use crate::doctor::{
     diagnose_services_only, provisioning_installability_finding,
 };
 use crate::execution::selected_container_engine;
-use crate::execution::{execution_image, execution_target, format_backend, format_lifecycle};
+use crate::execution::{
+    ephemeral_container_target, execution_image, execution_target, format_backend, format_lifecycle,
+};
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
     ContractFieldProvenance, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
@@ -91,7 +93,7 @@ use crate::runner::{
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
     run_task_with_progress_and_args_and_overrides_with_policy,
 };
-use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, TaskSpec};
+use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskSpec};
 use crate::update;
 use crate::validator::{ValidationErrors, validate_contract};
 use crate::workspace::{
@@ -15293,7 +15295,7 @@ mod tests {
         assert!(text.contains("ota detect --merge"));
         assert!(text.contains("3. Review approved policy surfaces (1)"));
         assert!(!text.contains("Code:"));
-        assert!(!text.contains("Provenance:"));
+        assert!(text.contains("Provenance: org policy"));
     }
 
     #[test]
@@ -15691,6 +15693,47 @@ tasks:
                 .skipped
                 .contains(&String::from("skip `npm`; already satisfies the contract"))
         );
+    }
+
+    #[test]
+    fn up_preview_omits_ephemeral_container_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert_eq!(
+            preview.execution.image.as_deref(),
+            Some("ghcr.io/ota/dev:latest")
+        );
+        assert_eq!(preview.execution.target, None);
     }
 
     #[test]
@@ -16752,36 +16795,81 @@ tasks:
     }
 
     #[test]
-    fn execution_summary_renders_container_image_without_ephemeral_target() {
-        let receipt = ExecutionReceipt {
-            ok: true,
-            path: String::from("./ota.yaml"),
-            scope: String::from("repo"),
-            contract: String::from("./ota.yaml"),
-            workspace: None,
-            backend: Some(String::from("container")),
-            lifecycle: Some(String::from("ephemeral")),
-            image: Some(String::from("ghcr.io/ota/dev:latest")),
-            target: None,
-            acquired: Vec::new(),
-            env: BTreeMap::new(),
-            env_sources: Vec::new(),
-            policy: Vec::new(),
-            steps: vec![execution_receipt_step(
-                1,
-                "post-setup diagnosis",
-                "READY",
-                None,
-                None,
-            )],
-            blocked: Vec::new(),
-            summary: ExecutionReceiptSummary::default(),
-            next: None,
-        };
+    fn repo_execution_receipt_renders_ephemeral_container_target() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-test
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::repo_execution_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            ExecutionOverrides::default(),
+            "READY",
+            "post-setup diagnosis",
+            None,
+            None,
+            &[],
+            None,
+            None,
+        );
 
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
             &receipt,
             Some("post-setup diagnosis"),
+            "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Mode:       container"));
+        assert!(rendered.contains("Image:      ghcr.io/ota/dev:latest"));
+        assert!(rendered.contains("Target:     ota-ephemeral-"));
+    }
+
+    #[test]
+    fn repo_execution_receipt_omits_ephemeral_target_for_service_phase() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-test
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::repo_execution_receipt(
+            Path::new("./ota.yaml"),
+            &contract,
+            ExecutionOverrides::default(),
+            "NOT READY",
+            "services",
+            Some("postgres"),
+            None,
+            &[],
+            None,
+            None,
+        );
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            Some("services"),
             "UP SUMMARY",
         ));
 
@@ -20655,7 +20743,7 @@ fn repo_execution_receipt(
 ) -> ExecutionReceipt {
     let (backend, lifecycle) = effective_execution(contract, overrides);
     let image = execution_image(contract, backend);
-    let target = execution_target(contract, path, backend, lifecycle);
+    let target = repo_execution_target(contract, path, backend, lifecycle, phase, task);
     let task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| &task.env);
@@ -20701,6 +20789,36 @@ fn repo_execution_receipt(
         summary: execution_receipt_summary(findings, 1, None, None, None),
         next,
     }
+}
+
+fn repo_execution_target(
+    contract: &Contract,
+    path: &Path,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+    phase: &str,
+    task: Option<&str>,
+) -> Option<String> {
+    match (backend, lifecycle) {
+        (Backend::Container, Some(Lifecycle::Ephemeral))
+            if repo_execution_phase_uses_ephemeral_target(phase, task) =>
+        {
+            ephemeral_container_target(contract, path)
+        }
+        _ => execution_target(contract, path, backend, lifecycle),
+    }
+}
+
+fn repo_execution_phase_uses_ephemeral_target(phase: &str, task: Option<&str>) -> bool {
+    if phase == "preview" || phase == "services" {
+        return false;
+    }
+
+    task.is_some()
+        || matches!(
+            phase,
+            "readiness" | "preconditions" | "post-setup diagnosis"
+        )
 }
 
 fn render_repo_receipt(
