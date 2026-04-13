@@ -24,9 +24,18 @@
 
 # Changelog
 
-## 1.4.4
+## Unreleased
 
-- added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
+- added execution target reporting to execution receipts and container probe diagnostics so receipt targets reflect the actual execution target and failed container probes are classified more precisely.
+- enhanced execution summaries for ephemeral containers so they keep real target names and use stable ephemeral container naming during task execution and diagnosis.
+
+## 1.4.7
+
+- expanded diagnosis provenance so `ota doctor --json` findings and `ota explain` steps can trace repo-contract, org-policy, and repo-signal sources without inventing a parallel diagnosis schema.
+- clarified policy-backed provisioning text so execution summaries show mapped package aliases like `node (package: nodejs)` instead of only the contract key.
+- made native and container tool/runtime diagnosis probe-aware so `ota doctor` now distinguishes missing commands from failed or unparseable version probes, and surfaces the resolved executable path plus probe command in both text and JSON evidence.
+- added `Image:` to execution summaries and receipt JSON when container execution is selected, while keeping `Target:` reserved for real named targets such as persistent containers and remote backends.
+- made update-check failures honest but non-spammy across platforms by showing a lightweight failure notice only after successful commands and rate-limiting repeated failed checks locally, while keeping the existing newer-version notice unchanged.
 
 ## 1.4.6
 
@@ -38,15 +47,9 @@
 - added a provider-neutral CI workflow reference that explains the canonical `validate` + `doctor` + plain annotations + archived receipt split for non-GitHub runners such as GitLab CI, Jenkins, and CircleCI.
 - fixed execution-summary status rendering so `NOT READY` post-execution failures render as `failed`, kept only pre-execution blockers as `blocked`, lowered the summary status labels, and pinned the internal GitHub readiness workflow to ota `1.4.4`.
 
-## Unreleased
+## 1.4.4
 
-## 1.4.7
-
-- expanded diagnosis provenance so `ota doctor --json` findings and `ota explain` steps can trace repo-contract, org-policy, and repo-signal sources without inventing a parallel diagnosis schema.
-- clarified policy-backed provisioning text so execution summaries show mapped package aliases like `node (package: nodejs)` instead of only the contract key.
-- made native and container tool/runtime diagnosis probe-aware so `ota doctor` now distinguishes missing commands from failed or unparseable version probes, and surfaces the resolved executable path plus probe command in both text and JSON evidence.
-- added `Image:` to execution summaries and receipt JSON when container execution is selected, and now expose real `Target:` names for persistent containers plus task-execution and diagnosis phases that actually run inside ephemeral containers, while previews and host-side phases stay targetless.
-- made update-check failures honest but non-spammy across platforms by showing a lightweight failure notice only after successful commands and rate-limiting repeated failed checks locally, while keeping the existing newer-version notice unchanged.
+- added a canonical `Status:` line to the shared execution-summary block so `ota run`, `ota up`, and workspace execution summaries now show an explicit execution outcome without changing receipt JSON shape.
 
 ## 1.4.3
 
