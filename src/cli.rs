@@ -35,7 +35,6 @@ use crate::runner::ExecutionOverrides;
 mod commands;
 
 #[derive(Debug, Parser)]
-#[command(disable_version_flag = true)]
 #[command(name = "ota")]
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",

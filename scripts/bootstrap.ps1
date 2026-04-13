@@ -275,7 +275,15 @@ function Install-ReleaseBinary {
 
         $binDir = Get-OtaBinDir
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-        Copy-Item -Path $binary.FullName -Destination (Join-Path $binDir $binaryName) -Force
+        try {
+            Copy-Item -Path $binary.FullName -Destination (Join-Path $binDir $binaryName) -Force
+        } catch [System.IO.IOException] {
+            if ($IsWindows) {
+                Write-OtaError "error: ota is still running from $binDir; close every ota process and rerun the installer"
+                return $false
+            }
+            throw
+        }
         Ensure-OtaOnPath $binDir
         Write-OtaInfo "installed ota to $(Join-Path $binDir $binaryName)"
         return $true
