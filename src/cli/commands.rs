@@ -20191,7 +20191,7 @@ fn json_mode() -> bool {
 }
 
 #[allow(dead_code)]
-fn concise_mode() -> bool {
+pub(crate) fn concise_mode() -> bool {
     CONCISE_MODE.with(Cell::get)
 }
 

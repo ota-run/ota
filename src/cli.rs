@@ -852,22 +852,24 @@ where
     T: Into<OsString> + Clone,
 {
     struct RunStateGuard {
-        original_plain_mode: Option<OsString>,
-        original_json_mode: Option<OsString>,
+        original_plain_mode: bool,
+        original_concise_mode: bool,
+        original_plain_env: Option<OsString>,
+        original_json_env: Option<OsString>,
     }
 
     impl Drop for RunStateGuard {
         fn drop(&mut self) {
-            commands::set_plain_mode(false);
-            commands::set_concise_mode(false);
-            commands::set_json_mode(false);
+            commands::set_plain_mode(self.original_plain_mode);
+            commands::set_concise_mode(self.original_concise_mode);
+            commands::set_json_mode(self.original_json_env.is_some());
 
             unsafe {
-                match self.original_plain_mode.take() {
+                match self.original_plain_env.take() {
                     Some(value) => std::env::set_var("OTA_PLAIN_MODE", value),
                     None => std::env::remove_var("OTA_PLAIN_MODE"),
                 }
-                match self.original_json_mode.take() {
+                match self.original_json_env.take() {
                     Some(value) => std::env::set_var("OTA_JSON_MODE", value),
                     None => std::env::remove_var("OTA_JSON_MODE"),
                 }
@@ -876,8 +878,10 @@ where
     }
 
     let _guard = RunStateGuard {
-        original_plain_mode: std::env::var_os("OTA_PLAIN_MODE"),
-        original_json_mode: std::env::var_os("OTA_JSON_MODE"),
+        original_plain_mode: commands::plain_mode(),
+        original_concise_mode: commands::concise_mode(),
+        original_plain_env: std::env::var_os("OTA_PLAIN_MODE"),
+        original_json_env: std::env::var_os("OTA_JSON_MODE"),
     };
     commands::set_plain_mode(true);
     commands::take_failure_locus();

@@ -708,6 +708,33 @@ fn up_uses_container_provisioning_target_on_real_command_path() {
 #[cfg(unix)]
 #[test]
 fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
+    struct PathGuard {
+        original: Option<std::ffi::OsString>,
+    }
+    
+    impl PathGuard {
+        fn set(path: std::ffi::OsString) -> Self {
+            let original = std::env::var_os("PATH");
+            unsafe {
+                std::env::set_var("PATH", path);
+            }
+            Self { original }
+        }
+    }
+    
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(path) => unsafe {
+                    std::env::set_var("PATH", path);
+                },
+                None => unsafe {
+                    std::env::remove_var("PATH");
+                },
+            }
+        }
+    }
+
     let _guard = ENV_MUTEX.lock().unwrap();
     let fixture = copy_fixture_to_temp("container-path-probe");
 
@@ -716,28 +743,16 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
     install_fake_container_engine(&bin_dir.join("docker-test"));
     install_fake_cargo(&bin_dir.join("cargo"));
 
-    let original_path = std::env::var_os("PATH");
     let mut path_entries = vec![bin_dir.clone()];
-    if let Some(existing) = original_path.as_ref() {
-        path_entries.extend(std::env::split_paths(existing));
+    if let Some(existing) = std::env::var_os("PATH") {
+        path_entries.extend(std::env::split_paths(&existing));
     }
     let joined_path = std::env::join_paths(path_entries).expect("test PATH should join");
-    unsafe {
-        std::env::set_var("PATH", &joined_path);
-    }
+    let _path_guard = PathGuard::set(joined_path);
 
     let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-
-    match original_path {
-        Some(path) => unsafe {
-            std::env::set_var("PATH", path);
-        },
-        None => unsafe {
-            std::env::remove_var("PATH");
-        },
-    }
 
     assert!(output.status.success(), "stderr was: {stderr}");
     assert!(stdout.contains("➤ READY"));
