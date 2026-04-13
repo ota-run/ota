@@ -17177,6 +17177,88 @@ policies:
     }
 
     #[test]
+    fn up_post_setup_diagnosis_keeps_container_scope_for_host_bound_checks() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let shim_dir = TempDir::new().unwrap();
+        write_executable_script(&shim_dir.path().join("docker"), "#!/bin/sh\nexit 0\n");
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        let original_path = env::var("PATH").unwrap_or_default();
+        unsafe {
+            env::set_var("PATH", shim_dir.path().display().to_string());
+        }
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: ota
+  type: library
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+checks:
+  - name: host-health
+    kind: health
+    severity: error
+    run: exit 1
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+
+        assert!(
+            result.ok,
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert_eq!(result.phase, "post-setup diagnosis");
+        assert_eq!(result.receipt.backend.as_deref(), Some("container"));
+        assert_eq!(result.receipt.lifecycle.as_deref(), Some("ephemeral"));
+        assert_eq!(
+            result.receipt.image.as_deref(),
+            Some("ghcr.io/ota/dev:latest")
+        );
+        assert!(result.receipt.target.is_none());
+        assert!(result.report.findings.iter().any(|finding| finding.summary
+            == "Host-bound readiness checks are not evaluated in container mode"));
+        assert!(
+            !result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Check failed: host-health")
+        );
+    }
+
+    #[test]
     fn up_groups_multiple_adapter_bootstrap_failures_into_concise_list() {
         let findings = bootstrap_failure_findings(
             &ProvisioningBackendRequest {
@@ -20794,10 +20876,7 @@ fn repo_readiness_receipt(
     mode: DoctorMode,
     report: &DoctorReport,
 ) -> ExecutionReceipt {
-    let mut context = doctor_phase_execution_context(contract, contract_path, mode);
-    if mode == DoctorMode::Container {
-        context.target = report.execution_target.clone();
-    }
+    let context = doctor_report_execution_context(contract, contract_path, mode, report);
     let mut receipt = repo_execution_receipt(
         contract_path,
         contract,
@@ -20941,6 +21020,19 @@ fn doctor_phase_execution_context(
             target: ephemeral_container_target(contract, path),
         },
     }
+}
+
+fn doctor_report_execution_context(
+    contract: &Contract,
+    path: &Path,
+    mode: DoctorMode,
+    report: &DoctorReport,
+) -> PhaseExecutionContext {
+    let mut context = doctor_phase_execution_context(contract, path, mode);
+    if mode == DoctorMode::Container {
+        context.target = report.execution_target.clone();
+    }
+    context
 }
 
 fn provisioning_phase_execution_context(
@@ -22192,10 +22284,11 @@ fn execute_repo_up(
                             receipt: repo_execution_receipt(
                                 resolved_path,
                                 contract,
-                                doctor_phase_execution_context(
+                                doctor_report_execution_context(
                                     contract,
                                     resolved_path,
                                     doctor_mode,
+                                    &refreshed,
                                 ),
                                 "NOT READY",
                                 "provisioning",
@@ -22231,7 +22324,12 @@ fn execute_repo_up(
                 receipt: repo_execution_receipt(
                     resolved_path,
                     contract,
-                    doctor_phase_execution_context(contract, resolved_path, doctor_mode),
+                    doctor_report_execution_context(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        &preflight,
+                    ),
                     "NOT READY",
                     "preconditions",
                     None,
@@ -22427,7 +22525,7 @@ fn execute_repo_up(
         }
     }
 
-    let report = diagnose_contract(contract, resolved_path);
+    let report = diagnose_contract_in_mode(contract, resolved_path, doctor_mode);
     Ok(RepoUpResult {
         ok: report.ok,
         status: if report.ok { "READY" } else { "NOT READY" },
@@ -22436,7 +22534,7 @@ fn execute_repo_up(
         receipt: repo_execution_receipt(
             resolved_path,
             contract,
-            doctor_phase_execution_context(contract, resolved_path, doctor_mode),
+            doctor_report_execution_context(contract, resolved_path, doctor_mode, &report),
             if report.ok { "READY" } else { "NOT READY" },
             "post-setup diagnosis",
             None,
