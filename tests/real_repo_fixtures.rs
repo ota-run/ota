@@ -753,18 +753,22 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
     let output = run_ota(&["up", fixture.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     // Skip if container execution isn't working properly (e.g., missing mount args or shim failures)
-    if !output.status.success() 
-       && (stdout.contains("/docker-image.txt: Read-only file system") 
-           || stdout.contains("invalid option")
-           || stdout.contains("SETUP FAILED")
-           || stderr.contains("docker-test")) {
+    if !output.status.success()
+        && (stdout.contains("/docker-image.txt: Read-only file system")
+            || stdout.contains("invalid option")
+            || stdout.contains("SETUP FAILED")
+            || stderr.contains("docker-test"))
+    {
         eprintln!("skipping test: container shim execution failed unexpectedly");
         return;
     }
 
-    assert!(output.status.success(), "stdout:\n{stdout}\n\nstderr: {stderr}");
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\n\nstderr: {stderr}"
+    );
     assert!(stdout.contains("➤ READY"));
     assert!(stdout.contains("Backend: container"));
     assert!(stdout.contains("Mode:       container"));
