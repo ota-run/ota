@@ -1427,7 +1427,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::env_mutex_lock;
 
     use super::{
         OrgPolicyPack, PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
@@ -1440,7 +1440,7 @@ mod tests {
 
     #[test]
     fn ignores_ancestor_lookup_for_missing_bare_relative_contract_reference() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let original = env::current_dir().unwrap();
         let fixture = TempDir::new().unwrap();
         env::set_current_dir(fixture.path()).unwrap();
@@ -1491,7 +1491,7 @@ policies:
 
     #[test]
     fn loads_policy_pack_from_ota_policy_env_override_before_ancestor() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
         write_contract(
@@ -1551,7 +1551,7 @@ policies:
 
     #[test]
     fn reports_policy_pack_source_for_ota_policy_env_override() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
         write_contract(
@@ -1608,7 +1608,7 @@ policies:
 
     #[test]
     fn loads_policy_pack_from_ota_policy_url_override_before_ancestor() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
         write_contract(
@@ -1677,7 +1677,7 @@ policies:
 
     #[test]
     fn loads_policy_pack_from_workspace_policy_fallback() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join("workspace").join("repo")).unwrap();
         fs::write(

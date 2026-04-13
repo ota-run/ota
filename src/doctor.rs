@@ -3294,7 +3294,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::parser::parse_contract_str;
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::env_mutex_lock;
     use tempfile::TempDir;
 
     use super::{
@@ -3398,7 +3398,7 @@ tasks:
 
     #[test]
     fn preconditions_in_container_mode_skip_host_bound_env_checks() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let tempdir = TempDir::new().unwrap();
         let bin_dir = tempdir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -3554,7 +3554,7 @@ tasks:
 
     #[test]
     fn reports_missing_container_backend_cli() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let original_path = env::var_os("PATH");
         unsafe {
             env::set_var("PATH", "/definitely-not-a-real-bin");
@@ -3600,7 +3600,7 @@ tasks:
 
     #[test]
     fn reports_missing_remote_backend_cli() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let original_path = env::var_os("PATH");
         unsafe {
             env::set_var("PATH", "/definitely-not-a-real-bin");
@@ -3647,7 +3647,7 @@ tasks:
 
     #[test]
     fn reports_missing_tsh_remote_backend_cli() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let original_path = env::var_os("PATH");
         unsafe {
             env::set_var("PATH", "/definitely-not-a-real-bin");
@@ -3694,7 +3694,7 @@ tasks:
 
     #[test]
     fn reports_missing_kubectl_remote_backend_cli() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let original_path = env::var_os("PATH");
         unsafe {
             env::set_var("PATH", "/definitely-not-a-real-bin");
@@ -3742,7 +3742,7 @@ tasks:
     #[test]
     #[cfg(unix)]
     fn command_version_handles_go_subcommand() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -3786,7 +3786,7 @@ tasks:
     #[test]
     #[cfg(windows)]
     fn resolve_command_path_checks_current_directory_before_path() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let original_dir = env::current_dir().unwrap();
         let original_path = env::var_os("PATH");
@@ -3815,7 +3815,7 @@ tasks:
 
     #[test]
     fn reports_tool_probe_failures_with_resolved_probe_path() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -3881,7 +3881,7 @@ tasks:
 
     #[test]
     fn reports_unparseable_tool_versions_with_resolved_probe_path() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -3947,7 +3947,7 @@ tasks:
 
     #[test]
     fn reports_container_tool_probe_failures_with_resolved_probe_path() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -4027,7 +4027,7 @@ tasks:
 
     #[test]
     fn reports_container_unparseable_tool_versions_with_resolved_probe_path() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -4348,7 +4348,7 @@ tasks:
 
     #[test]
     fn reports_optional_tool_version_mismatches_as_warnings() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -4673,7 +4673,7 @@ tasks:
 
     #[test]
     fn reports_invalid_org_policy_pack() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -4711,7 +4711,7 @@ unexpected: true
 
     #[test]
     fn reports_policy_backed_provisioning_sources_as_info() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -4770,7 +4770,7 @@ policies:
 
     #[test]
     fn reports_policy_provisioning_missing_package_mapping() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -4823,7 +4823,7 @@ policies:
 
     #[test]
     fn reports_missing_policy_required_sections() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -4863,7 +4863,7 @@ policies:
 
     #[test]
     fn reports_missing_policy_required_files() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),

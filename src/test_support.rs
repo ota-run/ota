@@ -24,3 +24,13 @@ use std::sync::Mutex;
 
 pub static ENV_MUTEX: Mutex<()> = Mutex::new(());
 pub static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Acquire the ENV_MUTEX, recovering from poison if a previous test panicked.
+pub fn env_mutex_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Acquire the CWD_MUTEX, recovering from poison if a previous test panicked.
+pub fn cwd_mutex_lock() -> std::sync::MutexGuard<'static, ()> {
+    CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+}

@@ -2006,6 +2006,12 @@ fn tighten_guidance_spacing(text: String) -> String {
             {
                 lines.pop();
             }
+            if lines
+                .last()
+                .is_some_and(|previous: &String| !previous.trim().is_empty())
+            {
+                lines.push(String::new());
+            }
         }
         lines.push(line.to_string());
     }
@@ -2152,7 +2158,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::doctor::{Finding, FindingSeverity};
-    use crate::test_support::{CWD_MUTEX, ENV_MUTEX};
+    use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
         Cli, Commands, PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines,
@@ -2936,7 +2942,7 @@ project:
 
     #[test]
     fn validate_member_rejects_unknown_monorepo_member() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3255,7 +3261,7 @@ project:
 
     #[test]
     fn explain_json_reports_policy_provenance_for_policy_findings() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
         fs::write(
@@ -3294,7 +3300,7 @@ policies:
 
     #[test]
     fn workspace_explain_reports_policy_provenance_for_policy_findings() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let api_dir = fixture.path().join("api");
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
@@ -4089,7 +4095,7 @@ project:
 
     #[test]
     fn up_json_runs_inherited_setup_in_monorepo_member_directory() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -4126,7 +4132,7 @@ project:
 
     #[test]
     fn up_json_reports_root_monorepo_summary_with_members() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -4340,7 +4346,7 @@ tasks:
 
     #[test]
     fn receipt_json_diff_against_latest_archive_classifies_changes() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4438,7 +4444,7 @@ env:
 
     #[test]
     fn receipt_json_diff_fail_on_new_blockers_sets_gate_and_exits_nonzero() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4527,7 +4533,7 @@ env:
 
     #[test]
     fn receipt_json_diff_fail_on_new_blockers_passes_without_new_errors() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4563,7 +4569,7 @@ project:
 
     #[test]
     fn receipt_json_diff_against_latest_archive_matches_moved_repo_contract_identity() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4637,7 +4643,7 @@ project:
 
     #[test]
     fn receipt_json_diff_against_latest_skips_semantically_invalid_newest_archive() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4760,7 +4766,7 @@ project:
 
     #[test]
     fn receipt_json_diff_against_explicit_baseline_file_reports_source() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4844,7 +4850,7 @@ project:
 
     #[test]
     fn receipt_text_diff_reports_change_sections() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5079,7 +5085,7 @@ env:
 
     #[test]
     fn up_dry_run_json_reports_root_monorepo_preview_with_members() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -5203,7 +5209,7 @@ project:
     #[cfg(unix)]
     #[test]
     fn clean_reports_persistent_container_cleanup() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5319,7 +5325,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn clean_stale_dry_run_lists_labelled_and_legacy_ota_containers() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -5398,7 +5404,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn clean_stale_json_reports_removed_containers() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -5484,7 +5490,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn clean_stale_fails_when_container_engine_query_fails() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -5556,7 +5562,7 @@ exit 1
     #[cfg(unix)]
     #[test]
     fn clean_stale_continues_when_one_engine_queries_successfully() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -5706,7 +5712,7 @@ project:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_ephemeral_container_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5776,7 +5782,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_ssh_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -5862,7 +5868,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_tsh_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -5948,7 +5954,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn up_runs_setup_in_kubectl_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6034,7 +6040,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn up_overrides_native_contract_to_use_ephemeral_container_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6123,7 +6129,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_daytona_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6206,7 +6212,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_ssh_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6291,7 +6297,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_tsh_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6376,7 +6382,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_uses_kubectl_remote_backend() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6461,7 +6467,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn run_remote_failure_preserves_child_exit_code() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -6532,7 +6538,7 @@ tasks:
 
     #[test]
     fn run_with_unsupported_remote_provider_fails_cleanly() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6565,7 +6571,7 @@ tasks:
 
     #[test]
     fn run_with_kubectl_remote_provider_missing_target_fails_with_guidance() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6782,7 +6788,7 @@ tasks:
 
     #[test]
     fn run_failure_try_footer_stays_tight_before_run_summary() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -6801,16 +6807,16 @@ tasks:
         assert!(stderr.contains("Why: task `fail` failed with exit code 7"));
         assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
         assert!(stderr.contains(
-            "Why: task `fail` failed with exit code 7\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `fail` failed with exit code 7\n\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
-        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\nNext:"));
+        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\n\nNext:"));
         assert!(!stderr.contains(
             "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
         ));
     }
 
     #[test]
-    fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
+    fn append_try_footer_keeps_one_blank_line_before_next() {
         let stderr = "◉ ERROR  Operation failed\nWhere: ./ota.yaml\nWhy: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦  RUN SUMMARY\n\nScope:      repo";
         let rendered = strip_ansi(&append_try_footer(
             stderr.to_string(),
@@ -6828,11 +6834,11 @@ tasks:
         ));
 
         assert!(rendered.contains(
-            "Why: task `install-from-source` failed with exit code 101\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
         assert!(
             !rendered
-                .contains("Why: task `install-from-source` failed with exit code 101\n\nNext:")
+                .contains("Why: task `install-from-source` failed with exit code 101\n\n\nNext:")
         );
     }
 
@@ -7789,7 +7795,7 @@ metadata:
 
     #[test]
     fn doctor_does_not_report_semantically_equivalent_runtime_drift() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
@@ -7863,7 +7869,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn doctor_reports_tool_drift_warning_without_duplicate_blocker_line() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
@@ -8179,7 +8185,7 @@ tasks:
 
     #[test]
     fn doctor_json_includes_policy_provenance() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -8281,7 +8287,7 @@ policies:
 
     #[test]
     fn doctor_json_includes_policy_backed_provisioning_sources() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -8443,7 +8449,7 @@ policies:
 
     #[test]
     fn doctor_json_surfaces_requested_resolved_and_policy_match_for_semver_policy() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -8574,7 +8580,7 @@ tasks:
 
     #[test]
     fn doctor_json_reports_selected_mode() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -9000,7 +9006,7 @@ tasks:
 
     #[test]
     fn doctor_text_reports_env_precedence_and_policy() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -9079,7 +9085,7 @@ tasks:
 
     #[test]
     fn env_text_reports_contract_and_task_sources() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -9118,7 +9124,7 @@ tasks:
 
     #[test]
     fn env_json_reports_missing_required_env() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -9972,7 +9978,7 @@ agent:
 
     #[test]
     fn init_bootstrap_falls_back_to_current_directory_name_for_project() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let node_dir = fixture.path().join("node");
         fs::create_dir_all(&node_dir).unwrap();
@@ -9984,7 +9990,7 @@ agent:
         )
         .unwrap();
 
-        let _guard = CWD_MUTEX.lock().unwrap();
+        let _guard = cwd_mutex_lock();
         let _cwd = CurrentDirGuard::enter(&node_dir);
         let output = run_with(["ota", "init", "--bootstrap"]);
 
@@ -10496,7 +10502,7 @@ tasks:
             "http://localhost:8080"
         );
 
-        let _guard = CWD_MUTEX.lock().unwrap();
+        let _guard = cwd_mutex_lock();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "run", "setup", "--base-url", "http://localhost:8080"]);
 
@@ -10524,7 +10530,7 @@ tasks:
 "#,
         );
 
-        let _guard = CWD_MUTEX.lock().unwrap();
+        let _guard = cwd_mutex_lock();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "run", "bump-version", "--version", "0.1.3"]);
 
@@ -10537,7 +10543,7 @@ tasks:
 
     #[test]
     fn run_reports_ephemeral_lifecycle_as_advisory_note() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -10574,7 +10580,7 @@ tasks:
     fn run_reports_container_execution_banner_with_container_name() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -10723,7 +10729,7 @@ project:
     #[test]
     #[cfg(unix)]
     fn doctor_without_contract_inspects_repo_and_host_signals() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("Cargo.toml"),
@@ -11151,7 +11157,7 @@ tasks:
 
     #[test]
     fn doctor_text_orders_error_warn_and_info_findings() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11215,7 +11221,7 @@ tasks:
 
     #[test]
     fn up_reports_setup_failure_with_exit_code() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let bin_dir = TempDir::new().unwrap();
         let contract = r#"
 version: 1
@@ -11290,7 +11296,7 @@ tasks:
     #[test]
     #[cfg(unix)]
     fn up_runs_setup_before_preconditions_fail() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let bin_dir = TempDir::new().unwrap();
         let contract = format!(
             r#"
@@ -11349,7 +11355,7 @@ tasks:
     #[test]
     #[cfg(unix)]
     fn up_reports_not_ready_when_setup_does_not_fix_prerequisites() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11504,7 +11510,7 @@ tasks:
 
     #[test]
     fn up_json_reports_ready_status_and_phase() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11528,7 +11534,7 @@ tasks:
 
     #[test]
     fn up_dry_run_text_reports_plan_without_mutating_repo() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11558,7 +11564,7 @@ tasks:
 
     #[test]
     fn up_dry_run_json_reports_execution_plan_without_mutation() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11595,7 +11601,7 @@ tasks:
 
     #[test]
     fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11644,7 +11650,7 @@ tools:
 
     #[test]
     fn up_dry_run_container_json_includes_execution_image() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11691,7 +11697,7 @@ tasks:
 
     #[test]
     fn up_dry_run_service_preview_distinguishes_start_from_readiness_checks() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11791,7 +11797,7 @@ tasks:
 
     #[test]
     fn up_json_reports_service_start_failure_details() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13457,7 +13463,7 @@ agent:
 
     #[test]
     fn doctor_text_snapshot_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13507,7 +13513,7 @@ runtimes:
 
     #[test]
     fn doctor_plain_text_snapshot_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13557,7 +13563,7 @@ runtimes:
 
     #[test]
     fn doctor_container_mode_reports_container_context() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13596,7 +13602,7 @@ agent:
 
     #[test]
     fn doctor_container_mode_probes_the_container_image() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13654,7 +13660,7 @@ runtimes:
 
     #[test]
     fn doctor_container_mode_missing_runtime_mentions_configured_image() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13703,7 +13709,7 @@ runtimes:
 
     #[test]
     fn doctor_container_mode_reports_apt_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13767,7 +13773,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_brew_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13823,7 +13829,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_dnf_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13880,7 +13886,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_pacman_package_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13937,7 +13943,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_winget_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -13996,7 +14002,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_choco_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14053,7 +14059,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_scoop_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14110,7 +14116,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_mise_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14166,7 +14172,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_asdf_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14222,7 +14228,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_sdkman_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14278,7 +14284,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_reports_uv_version_unavailable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14334,7 +14340,7 @@ policies:
 
     #[test]
     fn doctor_native_mode_keeps_host_failure_for_apt_backed_policy() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14390,7 +14396,7 @@ policies:
 
     #[test]
     fn doctor_container_mode_skips_host_bound_readiness_checks() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14471,7 +14477,7 @@ agent:
 
     #[test]
     fn doctor_uses_uv_python_remediation_when_repo_signals_uv() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14508,7 +14514,7 @@ tasks:
 
     #[test]
     fn doctor_uses_pyenv_python_remediation_when_repo_signals_python_version() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14544,7 +14550,7 @@ tasks:
 
     #[test]
     fn doctor_uses_sdkman_java_remediation_when_repo_signals_sdkman() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14580,7 +14586,7 @@ tasks:
 
     #[test]
     fn doctor_uses_sdkman_maven_remediation_when_repo_signals_sdkman() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14616,7 +14622,7 @@ tasks:
 
     #[test]
     fn doctor_uses_dotnet_install_script_when_repo_signals_global_json() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14667,7 +14673,7 @@ tasks:
 
     #[test]
     fn doctor_external_contract_rewrites_next_steps_with_explicit_target() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14714,7 +14720,7 @@ tasks:
 
     #[test]
     fn explain_external_contract_rewrites_next_steps_with_explicit_target() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14760,7 +14766,7 @@ tasks:
 
     #[test]
     fn doctor_uses_volta_node_remediation_when_contract_provider_is_volta() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14797,7 +14803,7 @@ tasks:
 
     #[test]
     fn doctor_uses_nodenv_node_remediation_when_repo_signals_node_version() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14833,7 +14839,7 @@ tasks:
 
     #[test]
     fn doctor_uses_rbenv_ruby_remediation_when_repo_signals_ruby_version() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14869,7 +14875,7 @@ tasks:
 
     #[test]
     fn doctor_uses_asdf_tool_remediation_when_repo_signals_tool_versions() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14911,7 +14917,7 @@ tasks:
 
     #[test]
     fn up_external_contract_rewrites_next_steps_with_explicit_target() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14980,7 +14986,7 @@ tasks:
 
     #[test]
     fn explain_narrow_text_snapshot_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15023,7 +15029,7 @@ tools:
 
     #[test]
     fn up_container_mode_surfaces_apt_version_unavailable_finding() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15082,7 +15088,7 @@ policies:
 
     #[test]
     fn up_container_mode_surfaces_generic_backend_failure_finding() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15141,7 +15147,7 @@ policies:
 
     #[test]
     fn up_container_mode_refines_generic_runtime_backend_failure_via_probe() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15221,7 +15227,7 @@ tasks:
 
     #[test]
     fn run_failure_text_snapshot_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15467,7 +15473,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_commands_json_success_contract_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let single_repo = WorkspaceFixture::new();
         let multi_repo = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(multi_repo.dir.path());
@@ -16596,7 +16602,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_commands_exit_code_contract_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let usage_fixture = WorkspaceFixture::new();
         let usage = run_with([
             "ota",
@@ -17068,7 +17074,7 @@ repos:
 
     #[test]
     fn validate_not_found_splits_why_and_next_actions() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with(["ota", "validate", fixture.path().to_str().unwrap()]);
@@ -17083,7 +17089,7 @@ repos:
 
     #[test]
     fn doctor_not_found_uses_shared_next_actions() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
@@ -17364,7 +17370,7 @@ tasks:
 
     #[test]
     fn workspace_validate_discovers_workspace_from_nested_directory() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new();
         let nested = fixture.dir.path().join("apps").join("web").join("src");
         fs::create_dir_all(&nested).unwrap();
@@ -17383,7 +17389,7 @@ tasks:
 
     #[test]
     fn workspace_validate_does_not_walk_past_repo_root_to_parent_workspace() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let outer = TempDir::new().unwrap();
         fs::write(
             outer.path().join("ota.workspace.yaml"),
@@ -17740,7 +17746,7 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_text_status_contract_is_stable() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -17762,7 +17768,7 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_up_quiet_suppresses_progress_output() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -17869,7 +17875,7 @@ env:
 
     #[test]
     fn workspace_doctor_json_includes_policy_provenance() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
@@ -17930,7 +17936,7 @@ policies:
 
     #[test]
     fn workspace_doctor_json_includes_provisioning_request() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.workspace.yaml"),
@@ -18174,7 +18180,7 @@ repos:
     #[cfg(unix)]
     #[test]
     fn workspace_parallel_commands_preserve_dependency_order_in_json() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -18429,7 +18435,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_up_respects_repo_dependency_order() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 
@@ -18500,7 +18506,7 @@ tasks:
 
     #[test]
     fn workspace_up_rejects_stream_with_json() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new();
 
         let output = run_with([
@@ -18521,7 +18527,7 @@ tasks:
 
     #[test]
     fn workspace_up_rejects_stream_with_parallel_jobs() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new();
 
         let output = run_with([
@@ -19001,7 +19007,7 @@ tasks:
     #[cfg(unix)]
     #[test]
     fn workspace_run_respects_repo_dependency_order() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(fixture.dir.path());
 

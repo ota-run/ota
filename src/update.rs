@@ -604,7 +604,7 @@ mod tests {
     use std::thread;
 
     #[cfg(unix)]
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::env_mutex_lock;
     use tempfile::tempdir;
 
     use super::UpdateTrack;
@@ -625,7 +625,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn reports_update_notice_when_latest_release_is_newer() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -709,7 +709,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn skips_install_when_current_version_matches_latest_release() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 
@@ -758,7 +758,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn resolves_latest_channel_from_release_list() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
 

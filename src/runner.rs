@@ -2466,7 +2466,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::parser::parse_contract_str;
-    use crate::test_support::ENV_MUTEX;
+    use crate::test_support::env_mutex_lock;
 
     use super::{
         CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
@@ -2536,7 +2536,7 @@ tasks:
 
     #[test]
     fn reports_env_resolution_sources_for_process_and_default_values() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -2589,7 +2589,7 @@ tasks:
 
     #[test]
     fn composes_path_from_process_env_and_contract_entries() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -2653,7 +2653,7 @@ tasks:
 
     #[test]
     fn task_env_overrides_process_and_repo_defaults() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -2693,7 +2693,7 @@ tasks:
 
     #[test]
     fn policy_env_overrides_process_env_before_defaults() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -2883,7 +2883,7 @@ tasks:
 
     #[test]
     fn run_task_can_execute_without_progress_output() {
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         fs::write(
@@ -3171,7 +3171,7 @@ tasks:
     fn runs_tasks_in_configured_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3248,7 +3248,7 @@ tasks:
     fn composes_path_and_injects_process_env_into_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3310,7 +3310,7 @@ tasks:
     fn runs_tasks_in_configured_container_backend_with_podman_when_docker_is_missing() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3389,7 +3389,7 @@ tasks:
     fn reports_container_backend_probe_failure_before_setup_command() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3462,7 +3462,7 @@ exit 1
     fn reuses_persistent_container_backend_across_runs() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3536,7 +3536,7 @@ tasks:
     fn recreates_stopped_persistent_container_before_exec() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3613,7 +3613,7 @@ tasks:
     fn overrides_native_contract_to_use_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3684,7 +3684,7 @@ tasks:
     fn runs_tasks_in_daytona_remote_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let contents = format!(
@@ -3757,7 +3757,7 @@ tasks:
     fn runs_tasks_in_ssh_remote_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let log_path = dir.path().join("ssh-log.txt");
@@ -3841,7 +3841,7 @@ tasks:
     fn runs_tasks_in_tsh_remote_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let log_path = dir.path().join("tsh-log.txt");
@@ -3925,7 +3925,7 @@ tasks:
     fn runs_tasks_in_kubectl_remote_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let file_path = dir.path().join("ota.yaml");
         let log_path = dir.path().join("kubectl-log.txt");
@@ -4034,7 +4034,7 @@ tasks:
     fn cleans_persistent_container_backend() {
         use std::os::unix::fs::PermissionsExt;
 
-        let _guard = ENV_MUTEX.lock().unwrap();
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
