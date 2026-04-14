@@ -38,6 +38,17 @@ fn slice_is_empty<T>(value: &[T]) -> bool {
     value.is_empty()
 }
 
+fn contract_identity_metadata_is_empty(value: &ContractIdentityMetadata) -> bool {
+    value.owner.is_none() && value.team.is_none() && value.repo_class.is_none()
+}
+
+fn contract_identity_execution_is_empty(value: &ContractIdentityExecution) -> bool {
+    value.preferred.is_none()
+        && value.lifecycle.is_none()
+        && value.supported.is_empty()
+        && value.image.is_none()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
     Text,
@@ -200,11 +211,63 @@ pub struct ExecutionReceiptEnvSource {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractIdentityProject {
+    pub name: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub project_type: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractIdentityMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_class: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractIdentityExecution {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub supported: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractIdentityCounts {
+    pub runtimes: usize,
+    pub tools: usize,
+    pub env: usize,
+    pub services: usize,
+    pub checks: usize,
+    pub tasks: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ContractIdentity {
+    pub version: u32,
+    pub project: ContractIdentityProject,
+    #[serde(default, skip_serializing_if = "contract_identity_metadata_is_empty")]
+    pub metadata: ContractIdentityMetadata,
+    #[serde(default, skip_serializing_if = "contract_identity_execution_is_empty")]
+    pub execution: ContractIdentityExecution,
+    pub counts: ContractIdentityCounts,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceipt {
     pub ok: bool,
     pub path: String,
     pub scope: String,
     pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<ContractIdentity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1007,6 +1070,7 @@ pub struct UpPreviewStatus<'a> {
     pub dry_run: bool,
     pub status: &'a str,
     pub phase: &'a str,
+    pub contract_identity: ContractIdentity,
     pub execution: UpPreviewExecution,
     pub plan: UpPreviewPlan,
     #[serde(skip_serializing_if = "<[Finding]>::is_empty")]

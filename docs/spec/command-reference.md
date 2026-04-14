@@ -812,7 +812,7 @@ Current behavior:
 Text output:
 
 - header: `RECEIPT <path>`
-- prints the receipt steps, summary, env sources, policy lines, and blocked items when present
+- prints the receipt steps, compact contract identity, summary, env sources, policy lines, and blocked items when present
 - `--archive --promote-baseline` adds `Baseline:` and `Promoted:` summary lines so the operator can see which archive became the explicit repo baseline
 - `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, readiness result, and summary counts; malformed archived files are skipped and surfaced under `Skipped Archives`
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
@@ -826,7 +826,7 @@ JSON output:
 - `archive_path` (when `--archive` is set)
 - `promoted_baseline.path`, `promoted_baseline.archive_path`, and `promoted_baseline.promoted_at` (when `--archive --promote-baseline` is set)
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
-- `receipt`
+- `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, and compact contract counts
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
 - `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
@@ -887,8 +887,8 @@ Current behavior:
 - keeps child output compact by default and surfaces failed service/setup output inside the final report
 - `--stream` opts into raw live child output for provisioning, required service `start` commands, and the `setup` task
 - `--stream` is text-only and is only supported for mutating `ota up`
-- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in JSON output
-- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, and the first blocking readiness finding when one exists
+- prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in repo-target JSON output; monorepo aggregate JSON keeps grouped `members` results instead of inventing a top-level receipt
+- `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, the compact contract identity, and the first blocking readiness finding when one exists
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)

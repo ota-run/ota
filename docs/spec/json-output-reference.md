@@ -1133,7 +1133,7 @@ Root monorepo summary output can also include grouped member findings under `mem
 
 `ota up --json` has two failure classes:
 
-- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, `findings`, optional `service`/`task`/`exit_code`)
+- execution reached the `up` pipeline: returns `UpStatus` (`status`, `phase`, `findings`, `receipt`, optional `service`/`task`/`exit_code`)
 - contract load/validation failed before the `up` pipeline: returns `ValidateFailure` shape (`ok`, `path`, and either `errors` or `error`)
 
 ```json
@@ -1142,12 +1142,57 @@ Root monorepo summary output can also include grouped member findings under `mem
   "path": "/abs/path/to/ota.yaml",
   "status": "READY",
   "phase": "post-setup diagnosis",
-  "findings": []
+  "findings": [],
+  "receipt": {
+    "ok": true,
+    "path": "/abs/path/to/ota.yaml",
+    "scope": "repo",
+    "contract": "/abs/path/to/ota.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "ota",
+        "type": "application"
+      },
+      "metadata": {
+        "owner": "ota"
+      },
+      "execution": {
+        "preferred": "container",
+        "lifecycle": "ephemeral",
+        "supported": ["native", "container"],
+        "image": "rust:1.94-bookworm"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 1
+      }
+    },
+    "backend": "native",
+    "steps": [
+      {
+        "order": 1,
+        "label": "post-setup diagnosis",
+        "status": "READY"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  }
 }
 ```
 
 Optional fields:
 
+- `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
 - `service`: present when a required service start command fails
 - `task`: present when a task failure is reported
 - `exit_code`: present when a child command failure is reported
@@ -1188,6 +1233,24 @@ Example contract-validation failure (before `up` execution starts):
   "dry_run": true,
   "status": "READY",
   "phase": "preview",
+  "contract_identity": {
+    "version": 1,
+    "project": {
+      "name": "ota"
+    },
+    "execution": {
+      "preferred": "native",
+      "lifecycle": "ephemeral"
+    },
+    "counts": {
+      "runtimes": 0,
+      "tools": 0,
+      "env": 0,
+      "services": 0,
+      "checks": 0,
+      "tasks": 1
+    }
+  },
   "execution": {
     "backend": "native",
     "lifecycle": "ephemeral",
@@ -1209,6 +1272,7 @@ Current preview JSON fields:
 - `dry_run`
 - `status`
 - `phase` (`preview`)
+- `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
 - `execution.backend`
 - `execution.lifecycle` when one is selected
 - `execution.image` when container execution is selected
@@ -1246,6 +1310,20 @@ load/validation failures still emit the shared `ValidateFailure` JSON shape on s
     "path": "/abs/path/to/ota.yaml",
     "scope": "repo",
     "contract": "/abs/path/to/ota.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "receipt-demo"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 1
+      }
+    },
     "backend": "native",
     "steps": [
       {
@@ -1277,6 +1355,7 @@ Current receipt JSON fields:
 
 The nested `receipt` object can also include:
 
+- `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
 - `backend`
 - `lifecycle`
 - `image` when container execution is selected

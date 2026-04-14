@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added compact `contract_identity` output on repo execution surfaces so `ota receipt`, `ota up --json`, `ota up --dry-run` text/JSON, and monorepo preview members can show declared project, selected metadata, execution intent, and compact contract counts without inlining the full contract.
+- made update notices more reliable on Windows by preferring the faster curl-based release check there when available, hardening the PowerShell fallback for GitHub TLS, and giving the background notice path a less brittle wait budget.
+
 ## 1.4.10
 
 - added discoverable `-V, --version` help output so users can find the version flag directly from `ota --help`.

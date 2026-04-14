@@ -55,25 +55,27 @@ use crate::execution::{
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
-    ContractFieldProvenance, DetectComparison, DetectComparisonChange, DetectComparisonRemoval,
-    DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess, DiffSummary,
-    DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict,
-    EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary, ExecutionReceipt,
-    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitSuccess,
-    MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
-    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess,
-    WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
-    WorkspaceRepoDiffReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    ContractFieldProvenance, ContractIdentity, ContractIdentityCounts, ContractIdentityExecution,
+    ContractIdentityMetadata, ContractIdentityProject, DetectComparison, DetectComparisonChange,
+    DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
+    DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
+    DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary,
+    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
+    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
+    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
+    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
+    WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -8873,6 +8875,64 @@ fn repo_receipt_contract_identity(root: &Path, contract: &Path) -> String {
     }
 }
 
+fn metadata_scalar_string(value: Option<&serde_yaml::Value>) -> Option<String> {
+    match value? {
+        serde_yaml::Value::Bool(value) => Some(value.to_string()),
+        serde_yaml::Value::Number(value) => Some(value.to_string()),
+        serde_yaml::Value::String(value) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+fn repo_contract_identity(contract: &Contract) -> ContractIdentity {
+    let metadata = ContractIdentityMetadata {
+        owner: metadata_scalar_string(contract.metadata.get("owner")),
+        team: metadata_scalar_string(contract.metadata.get("team")),
+        repo_class: metadata_scalar_string(contract.metadata.get("repo_class")),
+    };
+    let execution =
+        contract
+            .execution
+            .as_ref()
+            .map_or_else(ContractIdentityExecution::default, |execution| {
+                ContractIdentityExecution {
+                    preferred: execution.preferred.map(format_backend).map(str::to_string),
+                    lifecycle: execution
+                        .lifecycle
+                        .map(format_lifecycle)
+                        .map(str::to_string),
+                    supported: execution
+                        .supported
+                        .iter()
+                        .map(|backend| format_backend(*backend).to_string())
+                        .collect(),
+                    image: execution
+                        .backends
+                        .as_ref()
+                        .and_then(|backends| backends.container.as_ref())
+                        .map(|container| container.image.clone()),
+                }
+            });
+
+    ContractIdentity {
+        version: contract.version,
+        project: ContractIdentityProject {
+            name: contract.project.name.clone(),
+            project_type: contract.project.project_type.clone(),
+        },
+        metadata,
+        execution,
+        counts: ContractIdentityCounts {
+            runtimes: contract.runtimes.len(),
+            tools: contract.tools.len(),
+            env: contract.env.len(),
+            services: contract.services.len(),
+            checks: contract.checks.len(),
+            tasks: contract.tasks.len(),
+        },
+    }
+}
+
 fn repo_root_from_archive_path(path: &Path) -> Option<&Path> {
     let receipts_dir = path.parent()?;
     if receipts_dir.file_name().and_then(|value| value.to_str()) != Some("receipts") {
@@ -14522,6 +14582,7 @@ fn render_up_result(
             text_path,
             result.status,
             result.phase,
+            &preview.contract_identity,
             &preview.execution,
             &preview.plan,
             &preview.blockers,
@@ -14572,6 +14633,7 @@ fn render_up_preview_result(
     text_path: &str,
     status: &str,
     phase: &str,
+    contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
     blockers: &[Finding],
@@ -14580,7 +14642,14 @@ fn render_up_preview_result(
 ) -> CommandOutput {
     match format {
         OutputFormat::Text => CommandOutput {
-            stdout: render_up_preview_text(text_path, status, execution, plan, blockers),
+            stdout: render_up_preview_text(
+                text_path,
+                status,
+                contract_identity,
+                execution,
+                plan,
+                blockers,
+            ),
             stderr: None,
             exit_code: if ready { 0 } else { 1 },
         },
@@ -14591,6 +14660,7 @@ fn render_up_preview_result(
                 dry_run: true,
                 status,
                 phase,
+                contract_identity: contract_identity.clone(),
                 execution: execution.clone(),
                 plan: plan.clone(),
                 blockers,
@@ -14609,6 +14679,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "dry_run": true,
             "status": result.status,
             "phase": result.phase,
+            "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
             "blockers": preview.blockers,
@@ -14636,6 +14707,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "dry_run": true,
             "status": result.status,
             "phase": result.phase,
+            "contract_identity": preview.contract_identity,
             "execution": preview.execution,
             "plan": preview.plan,
             "blockers": preview.blockers,
@@ -16984,6 +17056,7 @@ tasks:
             path: String::from("./ota.yaml"),
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
+            contract_identity: None,
             workspace: None,
             backend: Some(String::from("native")),
             lifecycle: None,
@@ -17021,6 +17094,7 @@ tasks:
             path: String::from("./ota.yaml"),
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
+            contract_identity: None,
             workspace: None,
             backend: Some(String::from("native")),
             lifecycle: None,
@@ -19146,6 +19220,7 @@ fn run_execution_receipt(
         path: contract_path.display().to_string(),
         scope: String::from("repo"),
         contract: contract_path.display().to_string(),
+        contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
@@ -19280,6 +19355,7 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         return render_up_preview_text(
             path,
             result.status,
+            &preview.contract_identity,
             &preview.execution,
             &preview.plan,
             &preview.blockers,
@@ -19323,6 +19399,7 @@ fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receip
 fn render_up_preview_text(
     path: &str,
     status: &str,
+    contract_identity: &ContractIdentity,
     execution: &UpPreviewExecution,
     plan: &UpPreviewPlan,
     blockers: &[Finding],
@@ -19373,6 +19450,89 @@ fn render_up_preview_text(
             paint_backticked_code(task)
         ));
     }
+
+    let project = contract_identity
+        .project
+        .project_type
+        .as_deref()
+        .map(|project_type| format!("{} ({project_type})", contract_identity.project.name))
+        .unwrap_or_else(|| contract_identity.project.name.clone());
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Contract")));
+    stdout.push_str(&format!(
+        " {}  {} {}",
+        detail_arrow(),
+        paint_key("Project:"),
+        project
+    ));
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        detail_arrow(),
+        paint_key("Version:"),
+        contract_identity.version
+    ));
+    let metadata = [
+        contract_identity
+            .metadata
+            .owner
+            .as_ref()
+            .map(|value| format!("owner={value}")),
+        contract_identity
+            .metadata
+            .team
+            .as_ref()
+            .map(|value| format!("team={value}")),
+        contract_identity
+            .metadata
+            .repo_class
+            .as_ref()
+            .map(|value| format!("repo_class={value}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if !metadata.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Metadata:"),
+            metadata.join(", ")
+        ));
+    }
+    let mut execution_identity = Vec::new();
+    if let Some(preferred) = contract_identity.execution.preferred.as_deref() {
+        execution_identity.push(format!("preferred={preferred}"));
+    }
+    if let Some(lifecycle) = contract_identity.execution.lifecycle.as_deref() {
+        execution_identity.push(format!("lifecycle={lifecycle}"));
+    }
+    if !contract_identity.execution.supported.is_empty() {
+        execution_identity.push(format!(
+            "supported={}",
+            contract_identity.execution.supported.join(", ")
+        ));
+    }
+    if let Some(image) = contract_identity.execution.image.as_deref() {
+        execution_identity.push(format!("image={image}"));
+    }
+    if !execution_identity.is_empty() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            detail_arrow(),
+            paint_key("Execution:"),
+            execution_identity.join(", ")
+        ));
+    }
+    stdout.push_str(&format!(
+        "\n {}  {} runtimes={}, tools={}, env={}, services={}, checks={}, tasks={}",
+        detail_arrow(),
+        paint_key("Counts:"),
+        contract_identity.counts.runtimes,
+        contract_identity.counts.tools,
+        contract_identity.counts.env,
+        contract_identity.counts.services,
+        contract_identity.counts.checks,
+        contract_identity.counts.tasks
+    ));
 
     stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
     if plan.actions.is_empty() {
@@ -19608,6 +19768,91 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             }
         }
         stdout.push_str("\n\n");
+    }
+
+    if let Some(identity) = receipt.contract_identity.as_ref() {
+        let project = identity
+            .project
+            .project_type
+            .as_deref()
+            .map(|project_type| format!("{} ({project_type})", identity.project.name))
+            .unwrap_or_else(|| identity.project.name.clone());
+        stdout.push_str(&paint_section_title("Contract"));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Project:"),
+            project
+        ));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Version:"),
+            identity.version
+        ));
+        let metadata = [
+            identity
+                .metadata
+                .owner
+                .as_ref()
+                .map(|value| format!("owner={value}")),
+            identity
+                .metadata
+                .team
+                .as_ref()
+                .map(|value| format!("team={value}")),
+            identity
+                .metadata
+                .repo_class
+                .as_ref()
+                .map(|value| format!("repo_class={value}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        if !metadata.is_empty() {
+            stdout.push_str(&format!(
+                "\n{} {} {}",
+                summary_bullet(),
+                paint_key("Metadata:"),
+                metadata.join(", ")
+            ));
+        }
+        let mut execution = Vec::new();
+        if let Some(preferred) = identity.execution.preferred.as_deref() {
+            execution.push(format!("preferred={preferred}"));
+        }
+        if let Some(lifecycle) = identity.execution.lifecycle.as_deref() {
+            execution.push(format!("lifecycle={lifecycle}"));
+        }
+        if !identity.execution.supported.is_empty() {
+            execution.push(format!(
+                "supported={}",
+                identity.execution.supported.join(", ")
+            ));
+        }
+        if let Some(image) = identity.execution.image.as_deref() {
+            execution.push(format!("image={image}"));
+        }
+        if !execution.is_empty() {
+            stdout.push_str(&format!(
+                "\n{} {} {}",
+                summary_bullet(),
+                paint_key("Execution:"),
+                execution.join(", ")
+            ));
+        }
+        stdout.push_str(&format!(
+            "\n{} {} runtimes={}, tools={}, env={}, services={}, checks={}, tasks={}\n\n",
+            summary_bullet(),
+            paint_key("Counts:"),
+            identity.counts.runtimes,
+            identity.counts.tools,
+            identity.counts.env,
+            identity.counts.services,
+            identity.counts.checks,
+            identity.counts.tasks
+        ));
     }
 
     stdout.push_str(&paint_section_title("Summary"));
@@ -20853,6 +21098,7 @@ struct RepoUpResult {
 
 #[derive(Debug, Clone)]
 struct RepoUpPreview {
+    contract_identity: ContractIdentity,
     execution: UpPreviewExecution,
     plan: UpPreviewPlan,
     blockers: Vec<Finding>,
@@ -21204,6 +21450,7 @@ fn repo_execution_receipt(
         path: path.display().to_string(),
         scope: String::from("repo"),
         contract: path.display().to_string(),
+        contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: context.backend,
         lifecycle: context.lifecycle,
@@ -21582,6 +21829,7 @@ fn workspace_up_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
+        contract_identity: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -21645,6 +21893,7 @@ fn workspace_status_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
+        contract_identity: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -21711,6 +21960,7 @@ fn workspace_run_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
+        contract_identity: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -21987,6 +22237,7 @@ fn build_up_preview(
     actions.push(String::from("re-check repo readiness"));
 
     RepoUpPreview {
+        contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
             lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),

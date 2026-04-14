@@ -36,12 +36,64 @@
         "receipt": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["ok", "path", "scope", "contract", "steps", "summary"],
+          "required": ["ok", "path", "scope", "contract", "contract_identity", "steps", "summary"],
           "properties": {
             "ok": { "type": "boolean" },
             "path": { "type": "string" },
             "scope": { "const": "repo" },
             "contract": { "type": "string" },
+            "contract_identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "project", "counts"],
+              "properties": {
+                "version": { "type": "integer", "minimum": 1 },
+                "project": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "type": "string" }
+                  }
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "owner": { "type": "string" },
+                    "team": { "type": "string" },
+                    "repo_class": { "type": "string" }
+                  }
+                },
+                "execution": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "preferred": { "type": "string" },
+                    "lifecycle": { "type": "string" },
+                    "supported": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "image": { "type": "string" }
+                  }
+                },
+                "counts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+                  "properties": {
+                    "runtimes": { "type": "integer", "minimum": 0 },
+                    "tools": { "type": "integer", "minimum": 0 },
+                    "env": { "type": "integer", "minimum": 0 },
+                    "services": { "type": "integer", "minimum": 0 },
+                    "checks": { "type": "integer", "minimum": 0 },
+                    "tasks": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              }
+            },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "lifecycle": { "type": "string" },
