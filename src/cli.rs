@@ -5326,6 +5326,7 @@ checks:
 "#,
         );
 
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "receipt", "--json", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
@@ -5388,6 +5389,7 @@ tasks:
 "#,
         );
 
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "receipt", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
@@ -12005,6 +12007,7 @@ tasks:
 "#,
         );
 
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let output = run_with(["ota", "up", "--json", fixture.path()]);
 
         assert_eq!(output.exit_code, 0);
