@@ -2809,7 +2809,13 @@ tasks:
 
         let output = run_with(["ota", "validate", fixture.file_path().to_str().unwrap()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code,
+            0,
+            "stdout:\n{}\nstderr:\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         let stdout = strip_ansi(&output.stdout);
         let contract_path = fs::canonicalize(fixture.file_path())
             .unwrap()
@@ -2831,7 +2837,13 @@ project:
 
         let output = run_with(["ota", "validate", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code,
+            0,
+            "stdout:\n{}\nstderr:\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         assert_text_snapshot_for_dir(
             "validate_premium.txt",
             &strip_ansi(&output.stdout),
@@ -2852,7 +2864,13 @@ project:
         let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("48"));
         let output = run_with(["ota", "validate", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code,
+            0,
+            "stdout:\n{}\nstderr:\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         assert_text_snapshot_for_dir(
             "validate_narrow_premium.txt",
             &strip_ansi(&output.stdout),
