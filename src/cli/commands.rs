@@ -10864,6 +10864,10 @@ fn bullet_wrap_reserve(indent: &str, bullet: &str) -> usize {
     indent.chars().count() + visible_display_width(bullet) + 1
 }
 
+fn labeled_value_continuation_indent(indent: &str, label: &str) -> String {
+    format!("{indent}{}", " ".repeat(visible_display_width(label) + 1))
+}
+
 fn append_wrapped_labeled_text<F, K>(
     output: &mut String,
     label: &str,
@@ -10878,11 +10882,34 @@ fn append_wrapped_labeled_text<F, K>(
     K: Fn(&str) -> String,
 {
     if label == "Next:" || label == "Why:" {
-        let rendered = render_value(value);
-        if rendered.is_empty() {
+        if value.is_empty() {
             output.push_str(&format!("\n{indent}{} -", render_key(label)));
-        } else {
-            output.push_str(&format!("\n{indent}{} {}", render_key(label), rendered));
+            return;
+        }
+
+        if value.contains('\n') {
+            output.push_str(&format!("\n{indent}{} {}", render_key(label), render_value(value)));
+            return;
+        }
+
+        let wrapped = wrap_display_tokens_for_terminal(
+            value,
+            fallback_max_width,
+            labeled_wrap_reserve(indent, label),
+        );
+        if wrapped.is_empty() {
+            output.push_str(&format!("\n{indent}{} -", render_key(label)));
+            return;
+        }
+
+        output.push_str(&format!(
+            "\n{indent}{} {}",
+            render_key(label),
+            render_value(&wrapped[0])
+        ));
+        let continuation_indent = labeled_value_continuation_indent(indent, label);
+        for line in wrapped.iter().skip(1) {
+            output.push_str(&format!("\n{continuation_indent}{}", render_value(line)));
         }
         return;
     }
@@ -11102,7 +11129,7 @@ fn render_detect_change_section(
 
 fn render_diff_summary_text(summary: &DiffSummary) -> String {
     let mut stdout = String::from("\n\n");
-    stdout.push_str(&format!("{}:", paint_section_title("SUMMARY")));
+    stdout.push_str(&paint_section_title("Summary"));
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
@@ -13101,8 +13128,8 @@ fn render_report_section(
                     value
                 )
             });
-            let provenance_block = provenance_line.as_deref().unwrap_or("");
             if concise_mode() {
+                let provenance_block = provenance_line.as_deref().unwrap_or("");
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
                     "{}  {}{}{}",
@@ -13127,11 +13154,9 @@ fn render_report_section(
             } else {
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
-                    "{}  {}{}{}",
+                    "{}  {}",
                     render_severity(finding.severity),
                     render_finding_summary(finding.severity, &finding.summary),
-                    source_block,
-                    provenance_block,
                 ));
                 append_wrapped_labeled_text(
                     &mut stdout,
@@ -13143,6 +13168,13 @@ fn render_report_section(
                     |key| finding_detail_key(finding.severity, key),
                     |value| render_backticked_text(value, contract_path),
                 );
+                if let Some(source_line) = source_line.as_deref() {
+                    stdout.push('\n');
+                    stdout.push_str(source_line);
+                }
+                if let Some(provenance_line) = provenance_line.as_deref() {
+                    stdout.push_str(provenance_line);
+                }
                 if let Some(image) = container_image.as_deref() {
                     append_container_image_detail(&mut stdout, image, "", finding.severity);
                 }
@@ -15771,6 +15803,52 @@ mod tests {
     }
 
     #[test]
+    fn single_finding_doctor_text_renders_provenance_after_why() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Adapter bootstrap sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap, sdkman via sdkman-bootstrap",
+                ),
+                next: String::from(
+                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                ),
+            }],
+        };
+        let summary = super::DoctorSummary {
+            verdict: super::DoctorVerdict::Risky,
+            agent_verdict: super::DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+            primary_blocker: None,
+        };
+
+        let text = strip_ansi_codes(&render_report_section(
+            "DOCTOR",
+            "./ota.yaml",
+            None,
+            None,
+            None,
+            None,
+            &report,
+            Some(&summary),
+        ));
+
+        let why = text.find("Why:").expect("why");
+        let provenance = text.find("Provenance:").expect("provenance");
+        let next = text.find("Next:").expect("next");
+
+        assert!(why < provenance);
+        assert!(provenance < next);
+    }
+
+    #[test]
     fn up_text_groups_shared_actions_by_remediation() {
         let report = DoctorReport {
             ok: false,
@@ -16827,6 +16905,27 @@ policies:
     }
 
     #[test]
+    fn diff_summary_matches_standard_section_header_and_bullet_style() {
+        let rendered = strip_ansi_codes(&super::render_diff_summary_text(&super::DiffSummary {
+            readiness_impact: "unchanged",
+            added_count: 0,
+            removed_count: 0,
+            changed_count: 0,
+            weakened_count: 0,
+            strengthened_count: 0,
+        }));
+
+        assert!(rendered.contains("\n\nSummary\n"));
+        assert!(rendered.contains("\n» Readiness impact: unchanged"));
+        assert!(rendered.contains("\n» Added: 0"));
+        assert!(rendered.contains("\n» Missing in target: 0"));
+        assert!(rendered.contains("\n» Changed: 0"));
+        assert!(rendered.contains("\n» Weakened: 0"));
+        assert!(rendered.contains("\n» Strengthened: 0"));
+        assert!(!rendered.contains("\n\nSummary:"));
+    }
+
+    #[test]
     fn doctor_text_container_primary_blocker_renders_image_detail_line() {
         let report = DoctorReport {
             ok: false,
@@ -17365,6 +17464,64 @@ execution:
             super::paint_code("ota up --mode container")
         )));
         assert!(strip_ansi_codes(&rendered).contains("Next: rerun `ota up --mode container`"));
+    }
+
+    #[test]
+    fn wrapped_why_and_next_indent_continuations_under_the_value() {
+        let _guard = env_mutex_lock();
+        let original_columns = env::var_os("COLUMNS");
+        unsafe {
+            env::set_var("COLUMNS", "56");
+        }
+
+        let mut output = String::new();
+        super::append_wrapped_labeled_text(
+            &mut output,
+            "Why:",
+            "container mode checks the execution image and keeps host checks separate",
+            "",
+            88,
+            false,
+            |label| label.to_string(),
+            |value| value.to_string(),
+        );
+        super::append_wrapped_labeled_text(
+            &mut output,
+            "Next:",
+            "use `ota doctor --mode native` or `ota up --mode container`",
+            "",
+            88,
+            false,
+            |label| label.to_string(),
+            |value| value.to_string(),
+        );
+
+        unsafe {
+            match original_columns {
+                Some(value) => env::set_var("COLUMNS", value),
+                None => env::remove_var("COLUMNS"),
+            }
+        }
+
+        let lines = output
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        let why_continuation_indent = lines[1]
+            .chars()
+            .take_while(|ch| *ch == ' ')
+            .count();
+        let next_continuation_indent = lines[3]
+            .chars()
+            .take_while(|ch| *ch == ' ')
+            .count();
+
+        assert!(lines[0].starts_with("Why: "));
+        assert!(lines[1].starts_with("     "));
+        assert_eq!(why_continuation_indent, 5);
+        assert!(lines[2].starts_with("Next: "));
+        assert!(lines[3].starts_with("      "));
+        assert_eq!(next_continuation_indent, 6);
     }
 
     #[test]
