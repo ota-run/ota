@@ -5321,14 +5321,8 @@ metadata:
   team: Engineering
   repo_class: open-core
 execution:
-  preferred: container
+  preferred: native
   lifecycle: ephemeral
-  supported:
-    - native
-    - container
-  backends:
-    container:
-      image: rust:1.94-bookworm
 env:
   PATH:
     prepend:
@@ -5368,15 +5362,11 @@ checks:
         );
         assert_eq!(
             json["receipt"]["contract_identity"]["execution"]["preferred"],
-            "container"
+            "native"
         );
         assert_eq!(
             json["receipt"]["contract_identity"]["execution"]["lifecycle"],
             "ephemeral"
-        );
-        assert_eq!(
-            json["receipt"]["contract_identity"]["execution"]["image"],
-            "rust:1.94-bookworm"
         );
         assert_eq!(json["receipt"]["contract_identity"]["counts"]["env"], 1);
         assert_eq!(json["receipt"]["contract_identity"]["counts"]["checks"], 1);
@@ -5396,11 +5386,8 @@ project:
 metadata:
   owner: ota
 execution:
-  preferred: container
+  preferred: native
   lifecycle: ephemeral
-  backends:
-    container:
-      image: rust:1.94-bookworm
 tasks:
   setup:
     run: echo ready
@@ -5415,9 +5402,7 @@ tasks:
         assert!(stdout.contains("Contract"));
         assert!(stdout.contains("Project: identity-demo (application)"));
         assert!(stdout.contains("Metadata: owner=ota"));
-        assert!(stdout.contains(
-            "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
-        ));
+        assert!(stdout.contains("Execution: preferred=native, lifecycle=ephemeral"));
         assert!(
             stdout.contains("Counts: runtimes=0, tools=0, env=0, services=0, checks=0, tasks=1")
         );
@@ -12011,14 +11996,8 @@ project:
 metadata:
   owner: ota
 execution:
-  preferred: container
+  preferred: native
   lifecycle: ephemeral
-  supported:
-    - native
-    - container
-  backends:
-    container:
-      image: rust:1.94-bookworm
 tasks:
   setup:
     run: printf ready > prepared.txt
@@ -12048,11 +12027,7 @@ tasks:
         );
         assert_eq!(
             json["receipt"]["contract_identity"]["execution"]["preferred"],
-            "container"
-        );
-        assert_eq!(
-            json["receipt"]["contract_identity"]["execution"]["image"],
-            "rust:1.94-bookworm"
+            "native"
         );
     }
 
