@@ -6,13 +6,65 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "dry_run", "status", "phase", "execution", "plan"],
+      "required": ["ok", "path", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "dry_run": { "const": true },
         "status": { "type": "string" },
         "phase": { "const": "preview" },
+        "contract_identity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "project", "counts"],
+          "properties": {
+            "version": { "type": "integer", "minimum": 1 },
+            "project": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" }
+              }
+            },
+            "metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "owner": { "type": "string" },
+                "team": { "type": "string" },
+                "repo_class": { "type": "string" }
+              }
+            },
+            "execution": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "preferred": { "type": "string" },
+                "lifecycle": { "type": "string" },
+                "supported": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "image": { "type": "string" }
+              }
+            },
+            "counts": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+              "properties": {
+                "runtimes": { "type": "integer", "minimum": 0 },
+                "tools": { "type": "integer", "minimum": 0 },
+                "env": { "type": "integer", "minimum": 0 },
+                "services": { "type": "integer", "minimum": 0 },
+                "checks": { "type": "integer", "minimum": 0 },
+                "tasks": { "type": "integer", "minimum": 0 }
+              }
+            }
+          }
+        },
         "execution": {
           "type": "object",
           "additionalProperties": false,
@@ -49,13 +101,65 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["member", "ok", "dry_run", "status", "phase", "execution", "plan"],
+            "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
             "properties": {
               "member": { "type": "string" },
               "ok": { "type": "boolean" },
               "dry_run": { "const": true },
               "status": { "type": "string" },
               "phase": { "const": "preview" },
+              "contract_identity": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["version", "project", "counts"],
+                "properties": {
+                  "version": { "type": "integer", "minimum": 1 },
+                  "project": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["name"],
+                    "properties": {
+                      "name": { "type": "string" },
+                      "type": { "type": "string" }
+                    }
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "owner": { "type": "string" },
+                      "team": { "type": "string" },
+                      "repo_class": { "type": "string" }
+                    }
+                  },
+                  "execution": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "preferred": { "type": "string" },
+                      "lifecycle": { "type": "string" },
+                      "supported": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "image": { "type": "string" }
+                    }
+                  },
+                  "counts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+                    "properties": {
+                      "runtimes": { "type": "integer", "minimum": 0 },
+                      "tools": { "type": "integer", "minimum": 0 },
+                      "env": { "type": "integer", "minimum": 0 },
+                      "services": { "type": "integer", "minimum": 0 },
+                      "checks": { "type": "integer", "minimum": 0 },
+                      "tasks": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
+              },
               "execution": {
                 "type": "object",
                 "additionalProperties": false,
@@ -95,18 +199,142 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "status", "phase", "findings"],
+      "required": ["ok", "path", "status", "phase", "findings", "receipt"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "dry_run": { "type": "boolean" },
         "status": { "type": "string" },
         "phase": {
-          "enum": ["preconditions", "services", "setup", "post-setup diagnosis", "aggregate"]
+          "enum": ["preconditions", "services", "setup", "post-setup diagnosis"]
         },
         "findings": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
+        },
+        "receipt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "path", "scope", "contract", "contract_identity", "steps", "summary"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "path": { "type": "string" },
+            "scope": { "const": "repo" },
+            "contract": { "type": "string" },
+            "contract_identity": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "project", "counts"],
+              "properties": {
+                "version": { "type": "integer", "minimum": 1 },
+                "project": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "type": { "type": "string" }
+                  }
+                },
+                "metadata": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "owner": { "type": "string" },
+                    "team": { "type": "string" },
+                    "repo_class": { "type": "string" }
+                  }
+                },
+                "execution": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "preferred": { "type": "string" },
+                    "lifecycle": { "type": "string" },
+                    "supported": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "image": { "type": "string" }
+                  }
+                },
+                "counts": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+                  "properties": {
+                    "runtimes": { "type": "integer", "minimum": 0 },
+                    "tools": { "type": "integer", "minimum": 0 },
+                    "env": { "type": "integer", "minimum": 0 },
+                    "services": { "type": "integer", "minimum": 0 },
+                    "checks": { "type": "integer", "minimum": 0 },
+                    "tasks": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              }
+            },
+            "workspace": { "type": "string" },
+            "backend": { "type": "string" },
+            "lifecycle": { "type": "string" },
+            "image": { "type": "string" },
+            "target": { "type": "string" },
+            "acquired": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            },
+            "env_sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "value", "source"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "value": { "type": "string" },
+                  "source": { "type": "string" }
+                }
+              }
+            },
+            "policy": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["order", "label", "status"],
+                "properties": {
+                  "order": { "type": "integer", "minimum": 1 },
+                  "label": { "type": "string" },
+                  "status": { "type": "string" },
+                  "detail": { "type": "string" },
+                  "exit_code": { "type": "integer" }
+                }
+              }
+            },
+            "blocked": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "summary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["error_count", "warn_count", "info_count", "step_count"],
+              "properties": {
+                "error_count": { "type": "integer", "minimum": 0 },
+                "warn_count": { "type": "integer", "minimum": 0 },
+                "info_count": { "type": "integer", "minimum": 0 },
+                "step_count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "next": { "type": "string" }
+          }
         },
         "service": { "type": "string" },
         "task": { "type": "string" },
@@ -136,13 +364,201 @@
               {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["member", "ok", "dry_run", "status", "phase", "execution", "plan"],
+                "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
                 "properties": {
                   "member": { "type": "string" },
                   "ok": { "type": "boolean" },
                   "dry_run": { "const": true },
                   "status": { "type": "string" },
                   "phase": { "const": "preview" },
+                  "contract_identity": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["version", "project", "counts"],
+                    "properties": {
+                      "version": { "type": "integer", "minimum": 1 },
+                      "project": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["name"],
+                        "properties": {
+                          "name": { "type": "string" },
+                          "type": { "type": "string" }
+                        }
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "owner": { "type": "string" },
+                          "team": { "type": "string" },
+                          "repo_class": { "type": "string" }
+                        }
+                      },
+                      "execution": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "preferred": { "type": "string" },
+                          "lifecycle": { "type": "string" },
+                          "supported": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "image": { "type": "string" }
+                        }
+                      },
+                      "counts": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+                        "properties": {
+                          "runtimes": { "type": "integer", "minimum": 0 },
+                          "tools": { "type": "integer", "minimum": 0 },
+                          "env": { "type": "integer", "minimum": 0 },
+                          "services": { "type": "integer", "minimum": 0 },
+                          "checks": { "type": "integer", "minimum": 0 },
+                          "tasks": { "type": "integer", "minimum": 0 }
+                        }
+                      }
+                    }
+                  },
+                  "execution": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["backend"],
+                    "properties": {
+                      "backend": { "type": "string" },
+                      "lifecycle": { "type": "string" },
+                      "image": { "type": "string" },
+                      "target": { "type": "string" },
+                      "task": { "type": "string" }
+                    }
+                  },
+                  "plan": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["actions"],
+                    "properties": {
+                      "actions": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "skipped": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      }
+                    }
+                  },
+                  "blockers": {
+                    "type": "array",
+                    "items": { "$ref": "./shared.json#/$defs/finding" }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "dry_run", "status", "phase", "findings", "members"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "dry_run": { "type": "boolean" },
+        "status": { "type": "string" },
+        "phase": { "const": "aggregate" },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/finding" }
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["member", "ok", "status", "phase", "findings"],
+                "properties": {
+                  "member": { "type": "string" },
+                  "ok": { "type": "boolean" },
+                  "status": { "type": "string" },
+                  "phase": { "type": "string" },
+                  "findings": {
+                    "type": "array",
+                    "items": { "$ref": "./shared.json#/$defs/finding" }
+                  },
+                  "service": { "type": "string" },
+                  "task": { "type": "string" },
+                  "exit_code": { "type": "integer" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["member", "ok", "dry_run", "status", "phase", "contract_identity", "execution", "plan"],
+                "properties": {
+                  "member": { "type": "string" },
+                  "ok": { "type": "boolean" },
+                  "dry_run": { "const": true },
+                  "status": { "type": "string" },
+                  "phase": { "const": "preview" },
+                  "contract_identity": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["version", "project", "counts"],
+                    "properties": {
+                      "version": { "type": "integer", "minimum": 1 },
+                      "project": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["name"],
+                        "properties": {
+                          "name": { "type": "string" },
+                          "type": { "type": "string" }
+                        }
+                      },
+                      "metadata": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "owner": { "type": "string" },
+                          "team": { "type": "string" },
+                          "repo_class": { "type": "string" }
+                        }
+                      },
+                      "execution": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "preferred": { "type": "string" },
+                          "lifecycle": { "type": "string" },
+                          "supported": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
+                          "image": { "type": "string" }
+                        }
+                      },
+                      "counts": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["runtimes", "tools", "env", "services", "checks", "tasks"],
+                        "properties": {
+                          "runtimes": { "type": "integer", "minimum": 0 },
+                          "tools": { "type": "integer", "minimum": 0 },
+                          "env": { "type": "integer", "minimum": 0 },
+                          "services": { "type": "integer", "minimum": 0 },
+                          "checks": { "type": "integer", "minimum": 0 },
+                          "tasks": { "type": "integer", "minimum": 0 }
+                        }
+                      }
+                    }
+                  },
                   "execution": {
                     "type": "object",
                     "additionalProperties": false,

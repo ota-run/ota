@@ -1106,6 +1106,14 @@ fn should_show_update_notice(cli: &Cli) -> bool {
         )
 }
 
+fn update_notice_wait_timeout() -> Duration {
+    if cfg!(windows) {
+        Duration::from_millis(1200)
+    } else {
+        Duration::from_millis(500)
+    }
+}
+
 fn maybe_append_update_notice(
     output: CommandOutput,
     update_notice_rx: Option<mpsc::Receiver<Option<String>>>,
@@ -1118,7 +1126,7 @@ fn maybe_append_update_notice(
         return output;
     };
 
-    match rx.recv_timeout(Duration::from_millis(500)) {
+    match rx.recv_timeout(update_notice_wait_timeout()) {
         Ok(Some(notice)) => output.with_stderr(Some(format!("\n\x1b[1m{notice}\x1b[0m"))),
         _ => output,
     }
@@ -2152,8 +2160,10 @@ mod tests {
     #[cfg(unix)]
     use std::process::Command;
     use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
     #[cfg(unix)]
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     use clap::Parser;
     use serde_json::Value;
@@ -2165,7 +2175,7 @@ mod tests {
 
     use super::{
         Cli, Commands, PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines,
-        commands, maybe_append_update_notice, run_with,
+        commands, maybe_append_update_notice, run_with, update_notice_wait_timeout,
     };
     use crate::output::CommandOutput;
 
@@ -5257,6 +5267,117 @@ tasks:
     }
 
     #[test]
+    fn receipt_json_includes_compact_contract_identity() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: identity-demo
+  type: application
+metadata:
+  owner: ota
+  team: Engineering
+  repo_class: open-core
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: rust:1.94-bookworm
+env:
+  PATH:
+    prepend:
+      - /usr/local/cargo/bin
+tasks:
+  setup:
+    run: echo ready
+checks:
+  - name: rust-installed
+    kind: precondition
+    severity: error
+    run: rustc --version
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["receipt"]["contract_identity"]["version"], 1);
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["name"],
+            "identity-demo"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["type"],
+            "application"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["metadata"]["owner"],
+            "ota"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["metadata"]["team"],
+            "Engineering"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["execution"]["preferred"],
+            "container"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["execution"]["lifecycle"],
+            "ephemeral"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["execution"]["image"],
+            "rust:1.94-bookworm"
+        );
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["env"], 1);
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["checks"], 1);
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["tasks"], 1);
+    }
+
+    #[test]
+    fn receipt_text_renders_contract_identity_block() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: identity-demo
+  type: application
+metadata:
+  owner: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Contract"));
+        assert!(stdout.contains("Project: identity-demo (application)"));
+        assert!(stdout.contains("Metadata: owner=ota"));
+        assert!(stdout.contains(
+            "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
+        ));
+        assert!(
+            stdout.contains("Counts: runtimes=0, tools=0, env=0, services=0, checks=0, tasks=1")
+        );
+    }
+
+    #[test]
     fn receipt_text_reports_selected_monorepo_member() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -5392,11 +5513,14 @@ project:
         assert_eq!(json["dry_run"], true);
         assert_eq!(json["status"], "READY");
         assert_eq!(json["phase"], "preview");
+        assert_eq!(json["contract_identity"]["project"]["name"], "ota-monorepo");
         assert!(json["execution"]["task"] == "setup");
         let members = json["members"].as_array().unwrap();
         assert_eq!(members[0]["member"], "api");
         assert_eq!(members[0]["dry_run"], true);
         assert_eq!(members[0]["phase"], "preview");
+        assert_eq!(members[0]["contract_identity"]["project"]["name"], "api");
+        assert_eq!(members[0]["contract_identity"]["counts"]["tasks"], 1);
         assert!(!fixture.dir.path().join("ready.txt").is_file());
         assert!(!fixture.dir.path().join("api").join("ready.txt").is_file());
     }
@@ -7196,6 +7320,24 @@ tasks:
                 "\n\x1b[1mA newer `\x1b[38;5;130mota\x1b[39m` release is available: \x1b[92mv9.9.9\x1b[39m\nRun `\x1b[38;5;130mota self-update\x1b[39m` or `\x1b[38;5;130mota upgrade\x1b[39m` to update.\x1b[0m"
             ))
         );
+    }
+
+    #[test]
+    fn waits_long_enough_for_background_update_notice() {
+        let (tx, rx) = mpsc::channel();
+        let delay = update_notice_wait_timeout()
+            .checked_sub(Duration::from_millis(50))
+            .unwrap_or_else(|| Duration::from_millis(0));
+        thread::spawn(move || {
+            thread::sleep(delay);
+            let _ = tx.send(Some(String::from("notice")));
+        });
+
+        let output =
+            maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
+
+        assert_eq!(output.stdout, "ok");
+        assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
     }
 
     #[test]
@@ -11791,6 +11933,18 @@ tasks:
 version: 1
 project:
   name: ota
+  type: application
+metadata:
+  owner: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: rust:1.94-bookworm
 tasks:
   setup:
     run: printf ready > prepared.txt
@@ -11804,7 +11958,27 @@ tasks:
         assert_eq!(json["ok"], true);
         assert_eq!(json["status"], "READY");
         assert_eq!(json["phase"], "post-setup diagnosis");
-        assert!(json["findings"].as_array().unwrap().is_empty());
+        assert!(json["findings"].is_array());
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["name"],
+            "ota"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["type"],
+            "application"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["metadata"]["owner"],
+            "ota"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["execution"]["preferred"],
+            "container"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["execution"]["image"],
+            "rust:1.94-bookworm"
+        );
     }
 
     #[test]
@@ -11846,6 +12020,7 @@ version: 1
 project:
   name: ota
 execution:
+  preferred: native
   lifecycle: ephemeral
 tasks:
   setup:
@@ -11860,6 +12035,16 @@ tasks:
         assert_eq!(json["dry_run"], true);
         assert_eq!(json["status"], "READY");
         assert_eq!(json["phase"], "preview");
+        assert_eq!(json["contract_identity"]["project"]["name"], "ota");
+        assert_eq!(
+            json["contract_identity"]["execution"]["preferred"],
+            "native"
+        );
+        assert_eq!(
+            json["contract_identity"]["execution"]["lifecycle"],
+            "ephemeral"
+        );
+        assert_eq!(json["contract_identity"]["counts"]["tasks"], 1);
         assert_eq!(json["execution"]["backend"], "native");
         assert_eq!(json["execution"]["lifecycle"], "ephemeral");
         assert!(json["execution"].get("image").is_none());
@@ -11915,6 +12100,11 @@ tools:
         assert!(stdout.contains("➤ Primary Blocker"));
         assert!(!stdout.contains("Blocked by"));
         assert!(stdout.contains("Image: `rust:1.94-bookworm`"));
+        assert!(stdout.contains("Contract"));
+        assert!(stdout.contains("Project: ota"));
+        assert!(stdout.contains(
+            "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
+        ));
         assert!(stdout.contains(
             "Why: cargo is declared in the contract but is not available inside the configured"
         ));

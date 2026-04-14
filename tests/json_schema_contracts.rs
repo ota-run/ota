@@ -86,11 +86,47 @@ fn doctor_schema_includes_agent_summary() {
 fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
-    let preview_member_execution = &schema["oneOf"][0]["properties"]["members"]["items"]["properties"]
-        ["execution"]["properties"];
+    let preview_contract_identity =
+        &schema["oneOf"][0]["properties"]["contract_identity"]["properties"];
+    let preview_member_properties =
+        &schema["oneOf"][0]["properties"]["members"]["items"]["properties"];
+    let preview_member_execution = &preview_member_properties["execution"]["properties"];
 
     assert!(preview_execution.get("image").is_some());
+    assert!(preview_contract_identity.get("project").is_some());
+    assert!(preview_contract_identity.get("execution").is_some());
+    assert!(preview_contract_identity.get("counts").is_some());
+    assert!(preview_member_properties.get("contract_identity").is_some());
     assert!(preview_member_execution.get("image").is_some());
+}
+
+#[test]
+fn up_schema_keeps_aggregate_member_output_separate_from_repo_receipts() {
+    let schema = load_schema("docs/spec/json-schemas/up.json");
+    let aggregate = schema["oneOf"]
+        .as_array()
+        .expect("up schema oneOf should be an array")
+        .iter()
+        .find(|branch| branch["properties"]["phase"]["const"] == serde_json::json!("aggregate"))
+        .expect("up schema should include an aggregate branch");
+    let aggregate_member_variants = &aggregate["properties"]["members"]["items"]["oneOf"];
+
+    assert_eq!(
+        aggregate["properties"]["phase"]["const"],
+        serde_json::json!("aggregate")
+    );
+    assert_eq!(
+        aggregate["required"],
+        serde_json::json!([
+            "ok", "path", "dry_run", "status", "phase", "findings", "members"
+        ])
+    );
+    assert!(aggregate["properties"].get("receipt").is_none());
+    assert!(
+        aggregate_member_variants[1]["properties"]
+            .get("contract_identity")
+            .is_some()
+    );
 }
 
 #[test]
@@ -166,6 +202,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
     let success = &schema["oneOf"][0]["properties"];
     let success_summary = &success["summary"]["properties"];
+    let success_receipt = &success["receipt"]["properties"];
     let diff = &schema["oneOf"][1]["properties"];
     let diff_baseline = &diff["baseline"]["properties"];
     let diff_summary = &diff["summary"]["properties"];
@@ -175,6 +212,7 @@ fn receipt_schema_includes_receipt_and_findings() {
 
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
+    assert!(success_receipt.get("contract_identity").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
     assert!(success_summary.get("error_count").is_some());

@@ -44,6 +44,7 @@ const ANSI_GOLD_ACCENT: &str = "\x1b[1;38;2;214;161;95m";
 const ANSI_BOLD_WHITE: &str = "\x1b[1;37m";
 const ANSI_FG_RESET: &str = "\x1b[39m";
 const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 24 * 60 * 60;
+const UPDATE_CHECK_HTTP_TIMEOUT_SECS: &str = "2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateTrack {
@@ -312,6 +313,10 @@ where
     output
 }
 
+fn powershell_escape_single_quotes(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 fn download_installer(url: &str, path: &Path) -> CommandOutput {
     if cfg!(windows) {
         let script = format!(
@@ -500,70 +505,64 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
     )
 }
 
+fn fetch_release_json_via_curl(url: &str) -> Option<String> {
+    let mut command = Command::new("curl");
+    command
+        .args([
+            "-fsSL",
+            "--max-time",
+            UPDATE_CHECK_HTTP_TIMEOUT_SECS,
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            "User-Agent: ota",
+            url,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match command.output() {
+        Ok(output) if output.status.success() => Some(command_output_to_string(output).stdout),
+        Ok(_) => None,
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(_) => None,
+    }
+}
+
+fn fetch_release_json_via_powershell(url: &str) -> Option<String> {
+    let script = format!(
+        "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; (Invoke-WebRequest -UseBasicParsing -Headers @{{'Accept'='application/vnd.github+json'; 'User-Agent'='ota'}} -TimeoutSec {} -Uri '{}').Content",
+        UPDATE_CHECK_HTTP_TIMEOUT_SECS,
+        powershell_escape_single_quotes(url)
+    );
+    let mut pwsh = Command::new("pwsh");
+    pwsh.args(["-NoLogo", "-NoProfile", "-Command", &script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match pwsh.output() {
+        Ok(output) if output.status.success() => Some(command_output_to_string(output).stdout),
+        Ok(_) => None,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let mut powershell = Command::new("powershell");
+            powershell
+                .args(["-NoLogo", "-NoProfile", "-Command", &script])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let output = run_command(powershell);
+            (output.exit_code == 0).then_some(output.stdout)
+        }
+        Err(_) => None,
+    }
+}
+
 fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
     let url = match track {
         UpdateTrack::Stable => latest_release_url(),
         UpdateTrack::Latest => release_list_url(),
     };
     let raw = if cfg!(windows) {
-        let script = format!(
-            "(Invoke-WebRequest -UseBasicParsing -Headers @{{'Accept'='application/vnd.github+json'; 'User-Agent'='ota'}} -TimeoutSec 2 -Uri '{}').Content",
-            url
-        );
-        let mut pwsh = Command::new("pwsh");
-        pwsh.args(["-NoLogo", "-NoProfile", "-Command", &script])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        match pwsh.output() {
-            Ok(output) if output.status.success() => command_output_to_string(output).stdout,
-            Ok(output) => {
-                let output = command_output_to_string(output);
-                if output.exit_code != 0 {
-                    return None;
-                }
-                output.stdout
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                let mut powershell = Command::new("powershell");
-                powershell
-                    .args(["-NoLogo", "-NoProfile", "-Command", &script])
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                let output = run_command(powershell);
-                if output.exit_code != 0 {
-                    return None;
-                }
-                output.stdout
-            }
-            Err(_) => return None,
-        }
+        fetch_release_json_via_curl(&url).or_else(|| fetch_release_json_via_powershell(&url))?
     } else {
-        let mut command = Command::new("curl");
-        command
-            .args([
-                "-fsSL",
-                "--max-time",
-                "2",
-                "-H",
-                "Accept: application/vnd.github+json",
-                "-H",
-                "User-Agent: ota",
-                &url,
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        match command.output() {
-            Ok(output) if output.status.success() => command_output_to_string(output).stdout,
-            Ok(output) => {
-                let output = command_output_to_string(output);
-                if output.exit_code != 0 {
-                    return None;
-                }
-                output.stdout
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => return None,
-            Err(_) => return None,
-        }
+        fetch_release_json_via_curl(&url)?
     };
 
     match track {
@@ -622,7 +621,6 @@ mod tests {
         assert_eq!(normalize_version("0.1.2"), "0.1.2");
     }
 
-    #[cfg(unix)]
     #[test]
     fn reports_update_notice_when_latest_release_is_newer() {
         let _guard = env_mutex_lock();
