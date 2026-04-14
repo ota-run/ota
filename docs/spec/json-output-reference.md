@@ -953,6 +953,23 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
       "path": "/abs/path/to/ota.workspace.yaml",
       "scope": "workspace",
       "contract": "/abs/path/to/ota.workspace.yaml",
+      "contract_identity": {
+        "version": 1,
+        "project": {
+          "name": "ota-dev",
+          "type": "workspace"
+        },
+        "counts": {
+          "runtimes": 0,
+          "tools": 0,
+          "env": 0,
+          "services": 0,
+          "checks": 0,
+          "tasks": 0,
+          "repos": 1,
+          "policies": 0
+        }
+      },
       "workspace": "ota-dev",
       "env_sources": [
         {
@@ -994,8 +1011,9 @@ Non-acquired repos keep `acquired: false` and `tasks: []`.
 }
 ```
 
-`receipt` mirrors the workspace execution roll-up and keeps backend-aware execution metadata on the
-same surface as the repo-level execution commands.
+`receipt` mirrors the workspace execution roll-up, keeps backend-aware execution metadata on the
+same surface as the repo-level execution commands, and includes additive
+`receipt.contract_identity` with workspace name/type plus compact workspace repo and policy counts.
 
 Optional per-repo fields:
 
@@ -1395,6 +1413,14 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
     "archived_at": "2026-04-12T10:10:10.123Z",
     "promoted_at": "2026-04-12T10:20:30.456Z",
     "contract_identity": "ota.yaml",
+    "contract_identity_details": {
+      "project": {
+        "name": "receipt-diff"
+      },
+      "counts": {
+        "tasks": 1
+      }
+    },
     "ok": false,
     "contract": "/abs/path/to/ota.yaml",
     "backend": "native",
@@ -1408,6 +1434,16 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
   "current": {
     "ok": false,
     "contract": "/abs/path/to/ota.yaml",
+    "contract_identity": "ota.yaml",
+    "contract_identity_details": {
+      "project": {
+        "name": "receipt-diff"
+      },
+      "counts": {
+        "env": 1,
+        "tasks": 1
+      }
+    },
     "backend": "native",
     "summary": {
       "error_count": 2,
@@ -1472,12 +1508,15 @@ Current receipt diff JSON fields:
 - `baseline.archived_at` (when the baseline file name encodes an archived timestamp)
 - `baseline.promoted_at` when compare selection came from a promoted baseline pointer
 - `baseline.contract_identity` when ota can resolve the repo-local contract identity for the selected baseline
+- `baseline.contract_identity_details` with the compact declared contract identity when the archived receipt recorded it
 - `baseline.ok`
 - `baseline.contract`
 - `baseline.backend` / `baseline.lifecycle` when recorded
 - `baseline.summary`
 - `current.ok`
 - `current.contract`
+- `current.contract_identity` with the current repo-local contract identity
+- `current.contract_identity_details` with the compact declared contract identity for the current receipt
 - `current.backend` / `current.lifecycle` when recorded
 - `current.summary`
 - `summary.baseline_ok`
@@ -1693,6 +1732,23 @@ Failure example:
     "path": "/abs/path/to/ota.workspace.yaml",
     "scope": "workspace",
     "contract": "/abs/path/to/ota.workspace.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "ota-dev",
+        "type": "workspace"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 0,
+        "repos": 1,
+        "policies": 0
+      }
+    },
     "workspace": "ota-dev",
     "env_sources": [
       {
@@ -1752,6 +1808,10 @@ the output also includes `archive_path` pointing at the persisted receipt JSON.
 
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
+
+`receipt.contract_identity` uses the same compact identity block as repo execution receipts, but
+identifies the workspace contract with `project.type = "workspace"` and workspace-level `repos` /
+`policies` counts.
 
 Optional per-repo fields:
 

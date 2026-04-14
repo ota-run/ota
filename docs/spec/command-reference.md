@@ -1508,6 +1508,7 @@ ota workspace run version:bump --version 0.2.0
 ```
 
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
+- the workspace receipt includes additive `receipt.contract_identity` with workspace name/type and compact workspace repo/policy counts
 
 Text output:
 
@@ -1675,6 +1676,7 @@ Current behavior:
 - `--stream` is text-only and currently requires `--jobs 1`
 - does not pull or update repos that already exist locally
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and a `receipt` object in JSON output
+- the workspace receipt includes additive `receipt.contract_identity` with workspace name/type and compact workspace repo/policy counts
 
 Text output:
 
@@ -1845,6 +1847,7 @@ Current behavior:
 - can inspect independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - `--json` returns a workspace receipt roll-up with `mode: "receipt"`
+- the workspace receipt includes additive `receipt.contract_identity` with workspace name/type and compact workspace repo/policy counts
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically
 

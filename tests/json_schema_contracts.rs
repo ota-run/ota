@@ -228,6 +228,17 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff_baseline.get("selection_path").is_some());
     assert!(diff_baseline.get("promoted_at").is_some());
     assert!(diff_baseline.get("contract_identity").is_some());
+    assert!(diff_baseline.get("contract_identity_details").is_some());
+    assert!(
+        diff["current"]["properties"]
+            .get("contract_identity")
+            .is_some()
+    );
+    assert!(
+        diff["current"]["properties"]
+            .get("contract_identity_details")
+            .is_some()
+    );
     assert!(diff_summary.get("baseline_ok").is_some());
     assert!(diff_summary.get("current_ok").is_some());
     assert!(diff_summary.get("introduced").is_some());
@@ -419,8 +430,13 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
 #[test]
 fn workspace_run_schema_exists_and_covers_repo_run_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-run.json");
+    let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let receipt = &properties["receipt"]["properties"];
 
+    assert!(properties.get("summary").is_some());
+    assert!(properties.get("receipt").is_some());
+    assert!(receipt.get("contract_identity").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("task").is_some());
     assert!(repo.get("findings").is_some());
@@ -466,8 +482,11 @@ fn workspace_up_schema_exists_and_covers_repo_status_fields() {
     let schema = load_schema("docs/spec/json-schemas/workspace-up.json");
     let properties = &schema["properties"];
     let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let receipt = &properties["receipt"]["properties"];
 
     assert!(properties.get("summary").is_some());
+    assert!(properties.get("receipt").is_some());
+    assert!(receipt.get("contract_identity").is_some());
     assert!(repo.get("status").is_some());
     assert!(repo.get("phase").is_some());
     assert!(repo.get("exit_code").is_some());

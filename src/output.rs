@@ -247,6 +247,10 @@ pub struct ContractIdentityCounts {
     pub services: usize,
     pub checks: usize,
     pub tasks: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repos: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policies: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -803,6 +807,10 @@ pub struct ReceiptDiffSide {
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity_details: Option<ContractIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
@@ -822,6 +830,8 @@ pub struct ReceiptDiffBaseline {
     pub promoted_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity_details: Option<ContractIdentity>,
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]

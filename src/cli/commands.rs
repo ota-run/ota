@@ -8929,6 +8929,30 @@ fn repo_contract_identity(contract: &Contract) -> ContractIdentity {
             services: contract.services.len(),
             checks: contract.checks.len(),
             tasks: contract.tasks.len(),
+            repos: None,
+            policies: None,
+        },
+    }
+}
+
+fn workspace_contract_identity(contract: &WorkspaceContract) -> ContractIdentity {
+    ContractIdentity {
+        version: contract.version,
+        project: ContractIdentityProject {
+            name: contract.workspace.name.clone(),
+            project_type: Some(String::from("workspace")),
+        },
+        metadata: ContractIdentityMetadata::default(),
+        execution: ContractIdentityExecution::default(),
+        counts: ContractIdentityCounts {
+            runtimes: 0,
+            tools: 0,
+            env: 0,
+            services: 0,
+            checks: 0,
+            tasks: 0,
+            repos: Some(contract.repos.len()),
+            policies: Some(contract.policies.len()),
         },
     }
 }
@@ -9066,6 +9090,7 @@ fn load_repo_receipt_baseline(
 
 fn build_repo_receipt_diff_report(
     baseline: ResolvedRepoReceiptBaseline,
+    current_contract_identity: String,
     current_receipt: &ExecutionReceipt,
     current_findings: &[Finding],
 ) -> RepoReceiptDiffReport {
@@ -9116,6 +9141,7 @@ fn build_repo_receipt_diff_report(
         archived_at: baseline.record.archived_at,
         promoted_at: baseline.promoted_at,
         contract_identity: baseline.contract_identity,
+        contract_identity_details: baseline.record.payload.receipt.contract_identity,
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         backend: baseline.record.payload.receipt.backend,
@@ -9125,6 +9151,8 @@ fn build_repo_receipt_diff_report(
     let current = ReceiptDiffSide {
         ok: current_receipt.ok,
         contract: current_receipt.contract.clone(),
+        contract_identity: Some(current_contract_identity),
+        contract_identity_details: current_receipt.contract_identity.clone(),
         backend: current_receipt.backend.clone(),
         lifecycle: current_receipt.lifecycle.clone(),
         summary: current_receipt.summary,
@@ -9283,7 +9311,13 @@ fn render_repo_receipt_diff(
             };
         }
     };
-    let report = build_repo_receipt_diff_report(baseline, current_receipt, current_findings);
+    let current_contract_identity = repo_receipt_contract_identity(root, contract_path);
+    let report = build_repo_receipt_diff_report(
+        baseline,
+        current_contract_identity,
+        current_receipt,
+        current_findings,
+    );
     let gate = build_receipt_diff_gate(&report.summary, fail_on_new_blockers);
     let exit_code = gate
         .as_ref()
@@ -9343,6 +9377,30 @@ fn render_repo_receipt_diff(
                     summary_bullet(),
                     paint_key("Identity:"),
                     contract_identity
+                ));
+            }
+            if let Some(contract_identity) = report.baseline.contract_identity_details.as_ref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Baseline contract:"),
+                    render_compact_contract_identity(contract_identity)
+                ));
+            }
+            if let Some(contract_identity) = report.current.contract_identity.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Current identity:"),
+                    contract_identity
+                ));
+            }
+            if let Some(contract_identity) = report.current.contract_identity_details.as_ref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Current contract:"),
+                    render_compact_contract_identity(contract_identity)
                 ));
             }
             if let Some(archive_path) = report.baseline.archive_path.as_deref() {
@@ -19522,16 +19580,25 @@ fn render_up_preview_text(
             execution_identity.join(", ")
         ));
     }
+    let mut count_parts = vec![
+        format!("runtimes={}", contract_identity.counts.runtimes),
+        format!("tools={}", contract_identity.counts.tools),
+        format!("env={}", contract_identity.counts.env),
+        format!("services={}", contract_identity.counts.services),
+        format!("checks={}", contract_identity.counts.checks),
+        format!("tasks={}", contract_identity.counts.tasks),
+    ];
+    if let Some(repos) = contract_identity.counts.repos {
+        count_parts.push(format!("repos={repos}"));
+    }
+    if let Some(policies) = contract_identity.counts.policies {
+        count_parts.push(format!("policies={policies}"));
+    }
     stdout.push_str(&format!(
-        "\n {}  {} runtimes={}, tools={}, env={}, services={}, checks={}, tasks={}",
+        "\n {}  {} {}",
         detail_arrow(),
         paint_key("Counts:"),
-        contract_identity.counts.runtimes,
-        contract_identity.counts.tools,
-        contract_identity.counts.env,
-        contract_identity.counts.services,
-        contract_identity.counts.checks,
-        contract_identity.counts.tasks
+        count_parts.join(", ")
     ));
 
     stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
@@ -19588,6 +19655,32 @@ fn render_up_preview_text(
     }
 
     stdout
+}
+
+fn render_compact_contract_identity(contract_identity: &ContractIdentity) -> String {
+    let mut parts = vec![
+        contract_identity
+            .project
+            .project_type
+            .as_deref()
+            .map(|project_type| format!("{} ({project_type})", contract_identity.project.name))
+            .unwrap_or_else(|| contract_identity.project.name.clone()),
+    ];
+    if let Some(preferred) = contract_identity.execution.preferred.as_deref() {
+        parts.push(format!("preferred={preferred}"));
+    }
+    if let Some(lifecycle) = contract_identity.execution.lifecycle.as_deref() {
+        parts.push(format!("lifecycle={lifecycle}"));
+    }
+    if let Some(image) = contract_identity.execution.image.as_deref() {
+        parts.push(format!("image={image}"));
+    }
+    if let Some(repos) = contract_identity.counts.repos {
+        parts.push(format!("repos={repos}"));
+    } else {
+        parts.push(format!("tasks={}", contract_identity.counts.tasks));
+    }
+    parts.join(", ")
 }
 
 fn render_backticked_preview_value(value: &str) -> String {
@@ -19842,16 +19935,25 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 execution.join(", ")
             ));
         }
+        let mut count_parts = vec![
+            format!("runtimes={}", identity.counts.runtimes),
+            format!("tools={}", identity.counts.tools),
+            format!("env={}", identity.counts.env),
+            format!("services={}", identity.counts.services),
+            format!("checks={}", identity.counts.checks),
+            format!("tasks={}", identity.counts.tasks),
+        ];
+        if let Some(repos) = identity.counts.repos {
+            count_parts.push(format!("repos={repos}"));
+        }
+        if let Some(policies) = identity.counts.policies {
+            count_parts.push(format!("policies={policies}"));
+        }
         stdout.push_str(&format!(
-            "\n{} {} runtimes={}, tools={}, env={}, services={}, checks={}, tasks={}\n\n",
+            "\n{} {} {}\n\n",
             summary_bullet(),
             paint_key("Counts:"),
-            identity.counts.runtimes,
-            identity.counts.tools,
-            identity.counts.env,
-            identity.counts.services,
-            identity.counts.checks,
-            identity.counts.tasks
+            count_parts.join(", ")
         ));
     }
 
@@ -21212,6 +21314,8 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     contract: String,
     #[serde(default)]
+    contract_identity: Option<ContractIdentity>,
+    #[serde(default)]
     backend: Option<String>,
     #[serde(default)]
     lifecycle: Option<String>,
@@ -21776,6 +21880,7 @@ fn workspace_env_sources(
 
 fn workspace_up_receipt(
     workspace_path: &Path,
+    contract_identity: &ContractIdentity,
     workspace_name: &str,
     repos: &[WorkspaceRepoUpReport],
 ) -> ExecutionReceipt {
@@ -21829,7 +21934,7 @@ fn workspace_up_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
-        contract_identity: None,
+        contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -21857,6 +21962,7 @@ fn workspace_up_receipt(
 
 fn workspace_status_receipt(
     workspace_path: &Path,
+    contract_identity: &ContractIdentity,
     workspace_name: &str,
     report: &WorkspaceStatusReport,
 ) -> ExecutionReceipt {
@@ -21893,7 +21999,7 @@ fn workspace_status_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
-        contract_identity: None,
+        contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -21918,6 +22024,7 @@ fn workspace_status_receipt(
 
 fn workspace_run_receipt(
     workspace_path: &Path,
+    contract_identity: &ContractIdentity,
     workspace_name: &str,
     task: &str,
     repos: &[WorkspaceRepoRunReport],
@@ -21960,7 +22067,7 @@ fn workspace_run_receipt(
         path: workspace_path.display().to_string(),
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
-        contract_identity: None,
+        contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
         lifecycle: None,
@@ -23093,11 +23200,18 @@ fn load_and_run_workspace_up(
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
+    let workspace_identity = workspace_contract_identity(&workspace);
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
-        return run_workspace_up_streaming(&workspace_name, path, repo_refs, emit_progress);
+        return run_workspace_up_streaming(
+            &workspace_identity,
+            &workspace_name,
+            path,
+            repo_refs,
+            emit_progress,
+        );
     }
 
     let mut repos = BTreeMap::new();
@@ -23210,7 +23324,7 @@ fn load_and_run_workspace_up(
     }
 
     let repos = repos.into_values().collect::<Vec<_>>();
-    let receipt = workspace_up_receipt(path, &workspace_name, &repos);
+    let receipt = workspace_up_receipt(path, &workspace_identity, &workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok,
         receipt,
@@ -23275,9 +23389,10 @@ fn load_and_run_workspace_diff(
 fn load_workspace_status_report(
     path: &Path,
     jobs: usize,
-) -> Result<(String, WorkspaceStatusReport), WorkspaceProblem> {
+) -> Result<(String, ContractIdentity, WorkspaceStatusReport), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
+    let workspace_identity = workspace_contract_identity(&workspace);
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
@@ -23323,6 +23438,7 @@ fn load_workspace_status_report(
 
     Ok((
         workspace_name,
+        workspace_identity,
         WorkspaceStatusReport {
             repos: repos.into_values().collect(),
         },
@@ -23333,15 +23449,15 @@ fn load_and_run_workspace_status(
     path: &Path,
     jobs: usize,
 ) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
-    load_workspace_status_report(path, jobs).map(|(_, report)| report)
+    load_workspace_status_report(path, jobs).map(|(_, _, report)| report)
 }
 
 fn load_and_run_workspace_receipt(
     path: &Path,
     jobs: usize,
 ) -> Result<WorkspaceReceiptReport, WorkspaceProblem> {
-    let (workspace_name, report) = load_workspace_status_report(path, jobs)?;
-    let receipt = workspace_status_receipt(path, &workspace_name, &report);
+    let (workspace_name, workspace_identity, report) = load_workspace_status_report(path, jobs)?;
+    let receipt = workspace_status_receipt(path, &workspace_identity, &workspace_name, &report);
 
     Ok(WorkspaceReceiptReport {
         receipt,
@@ -23367,11 +23483,13 @@ fn load_and_run_workspace_refresh(
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
+    let workspace_identity = workspace_contract_identity(&workspace);
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
         return run_workspace_refresh_streaming(
+            &workspace_identity,
             &workspace_name,
             path,
             repo_refs,
@@ -23505,7 +23623,7 @@ fn load_and_run_workspace_refresh(
     }
 
     let repos = repos.into_values().collect::<Vec<_>>();
-    let receipt = workspace_up_receipt(path, &workspace_name, &repos);
+    let receipt = workspace_up_receipt(path, &workspace_identity, &workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok: if options.dry_run { true } else { ok },
         receipt,
@@ -23524,11 +23642,13 @@ fn load_and_run_workspace_task(
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
+    let workspace_identity = workspace_contract_identity(&workspace);
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
     if stream {
         return run_workspace_task_streaming(
+            &workspace_identity,
             &workspace_name,
             path,
             task,
@@ -23669,11 +23789,12 @@ fn load_and_run_workspace_task(
     }
 
     let repos = repos.into_values().collect::<Vec<_>>();
-    let receipt = workspace_run_receipt(path, &workspace_name, task, &repos);
+    let receipt = workspace_run_receipt(path, &workspace_identity, &workspace_name, task, &repos);
     Ok(WorkspaceRunReport { ok, receipt, repos })
 }
 
 fn run_workspace_refresh_streaming(
+    workspace_identity: &ContractIdentity,
     workspace_name: &str,
     workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
@@ -23735,7 +23856,7 @@ fn run_workspace_refresh_streaming(
         repos.push(report);
     }
 
-    let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
+    let receipt = workspace_up_receipt(workspace_path, workspace_identity, workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok: if options.dry_run { true } else { ok },
         receipt,
@@ -23745,6 +23866,7 @@ fn run_workspace_refresh_streaming(
 }
 
 fn run_workspace_task_streaming(
+    workspace_identity: &ContractIdentity,
     workspace_name: &str,
     workspace_path: &Path,
     task: &str,
@@ -23799,11 +23921,18 @@ fn run_workspace_task_streaming(
         repos.push(report);
     }
 
-    let receipt = workspace_run_receipt(workspace_path, workspace_name, task, &repos);
+    let receipt = workspace_run_receipt(
+        workspace_path,
+        workspace_identity,
+        workspace_name,
+        task,
+        &repos,
+    );
     Ok(WorkspaceRunReport { ok, receipt, repos })
 }
 
 fn run_workspace_up_streaming(
+    workspace_identity: &ContractIdentity,
     workspace_name: &str,
     workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
@@ -23858,7 +23987,7 @@ fn run_workspace_up_streaming(
         repos.push(report);
     }
 
-    let receipt = workspace_up_receipt(workspace_path, workspace_name, &repos);
+    let receipt = workspace_up_receipt(workspace_path, workspace_identity, workspace_name, &repos);
     Ok(WorkspaceUpReport {
         ok,
         receipt,

@@ -4765,6 +4765,23 @@ env:
                 .ends_with(".ota/receipts/repo-baseline.json")
         );
         assert_eq!(json["baseline"]["contract_identity"], "ota.yaml");
+        assert_eq!(
+            json["baseline"]["contract_identity_details"]["project"]["name"],
+            "receipt-diff"
+        );
+        assert_eq!(
+            json["baseline"]["contract_identity_details"]["counts"]["tasks"],
+            1
+        );
+        assert_eq!(json["current"]["contract_identity"], "ota.yaml");
+        assert_eq!(
+            json["current"]["contract_identity_details"]["project"]["name"],
+            "receipt-diff"
+        );
+        assert_eq!(
+            json["current"]["contract_identity_details"]["counts"]["env"],
+            1
+        );
         assert!(json["baseline"]["promoted_at"].is_string());
         assert_eq!(json["summary"]["introduced"]["error_count"], 1);
     }
@@ -5475,8 +5492,35 @@ env:
         let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.starts_with('\n'));
         assert!(stdout.contains("WORKSPACE RECEIPT "));
+        assert!(stdout.contains("Project: ota-dev (workspace)"));
+        assert!(stdout.contains("Counts:"));
+        assert!(stdout.contains("repos=1"));
         assert!(stdout.contains("Steps:"));
         assert!(stdout.contains("Summary"));
+    }
+
+    #[test]
+    fn workspace_receipt_json_includes_compact_contract_identity() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with(["ota", "workspace", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["receipt"]["scope"], "workspace");
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["name"],
+            "ota-dev"
+        );
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["type"],
+            "workspace"
+        );
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["repos"], 1);
+        assert_eq!(
+            json["receipt"]["contract_identity"]["counts"]["policies"],
+            0
+        );
     }
 
     #[test]
@@ -18857,6 +18901,11 @@ tasks:
         assert_eq!(json["repos"][0]["task"], "setup");
         assert_eq!(json["repos"][0]["exit_code"], 9);
         assert_eq!(json["receipt"]["scope"], "workspace");
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["name"],
+            "ota-dev"
+        );
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["repos"], 1);
     }
 
     #[test]
@@ -19200,6 +19249,11 @@ tasks:
         assert_eq!(json["summary"]["error_count"], 1);
         assert_eq!(json["receipt"]["scope"], "workspace");
         assert_eq!(json["receipt"]["summary"]["step_count"], 1);
+        assert_eq!(
+            json["receipt"]["contract_identity"]["project"]["name"],
+            "ota-dev"
+        );
+        assert_eq!(json["receipt"]["contract_identity"]["counts"]["repos"], 1);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["status"], "TASK FAILED");
         assert_eq!(json["repos"][0]["task"], "setup");
