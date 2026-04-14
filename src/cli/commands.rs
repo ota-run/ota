@@ -21032,7 +21032,7 @@ fn next_bullet() -> String {
     if plain_mode() {
         return String::from("-");
     }
-    paint("▸", "38;2;0;255;255")
+    paint("▸", "38;2;214;161;95")
 }
 
 const NEXT_TIMELINE_INDENT: &str = "  ";
