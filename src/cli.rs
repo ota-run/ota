@@ -1061,6 +1061,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
     );
 
     io::stderr().is_terminal()
+        && !commands::plain_mode()
         && !cli.plain
         && !cli.debug
         && command_supports_spinner(&cli.command)
