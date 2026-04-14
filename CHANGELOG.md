@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.4.11
+
 - added compact `contract_identity` output on repo execution surfaces so `ota receipt`, `ota up --json`, `ota up --dry-run` text/JSON, and monorepo preview members can show declared project, selected metadata, execution intent, and compact contract counts without inlining the full contract.
 - extended compact `contract_identity` output into workspace execution receipts so `ota workspace up`, `ota workspace run`, and `ota workspace receipt` expose the workspace contract identity and workspace repo/policy counts in both JSON and receipt text.
 - expanded `ota receipt --baseline ...` diff output with symmetric current/baseline contract identity details so compare consumers can see both the stable repo-local identity key and the compact declared contract summary on each side.
