@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
@@ -179,9 +179,49 @@ fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContra
     })
 }
 
+pub(crate) fn normalized_path_identity(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| normalize_path_lexically(path))
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let can_pop = matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                );
+                if can_pop {
+                    normalized.pop();
+                } else if normalized.as_os_str().is_empty()
+                    || matches!(
+                        normalized.components().next_back(),
+                        Some(Component::ParentDir)
+                    )
+                {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Normal(_) | Component::RootDir | Component::Prefix(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+
+    if normalized.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        normalized
+    }
+}
+
 fn find_monorepo_root_for_member(
     path: &Path,
 ) -> Result<Option<(PathBuf, String)>, LoadContractError> {
+    let normalized_path = normalized_path_identity(path);
     let member_dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut current = member_dir.parent();
 
@@ -191,7 +231,9 @@ fn find_monorepo_root_for_member(
             let contract = load_contract(&candidate)?;
             if let Some(workspace) = contract.workspace {
                 for member in workspace.members {
-                    if dir.join(&member).join("ota.yaml") == path {
+                    if normalized_path_identity(&dir.join(&member).join("ota.yaml"))
+                        == normalized_path
+                    {
                         return Ok(Some((candidate, member)));
                     }
                 }
@@ -415,6 +457,43 @@ project:
 
         let (contract, effective_path) =
             load_contract_auto(&fixture.path().join("api").join("ota.yaml")).unwrap();
+
+        assert_eq!(effective_path, fixture.path().join("api").join("ota.yaml"));
+        assert_eq!(contract.project.name, "api");
+        assert!(contract.tasks.contains_key("setup"));
+    }
+
+    #[test]
+    fn auto_loads_member_contract_from_normalized_alias_path() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+tasks:
+  setup:
+    run: printf root
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+
+        let (contract, effective_path) =
+            load_contract_auto(&fixture.path().join("api").join(".").join("ota.yaml")).unwrap();
 
         assert_eq!(effective_path, fixture.path().join("api").join("ota.yaml"));
         assert_eq!(contract.project.name, "api");
