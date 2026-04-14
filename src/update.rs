@@ -602,7 +602,6 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    #[cfg(unix)]
     use crate::test_support::env_mutex_lock;
     use tempfile::tempdir;
 
