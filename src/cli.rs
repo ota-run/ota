@@ -1042,6 +1042,10 @@ fn spawn_update_notice() -> mpsc::Receiver<Option<String>> {
 }
 
 fn should_show_command_spinner(cli: &Cli) -> bool {
+    io::stderr().is_terminal() && command_requests_spinner_when_interactive(cli)
+}
+
+fn command_requests_spinner_when_interactive(cli: &Cli) -> bool {
     let json_spinner_exception = matches!(
         &cli.command,
         Commands::Doctor { .. }
@@ -1060,9 +1064,7 @@ fn should_show_command_spinner(cli: &Cli) -> bool {
             }
     );
 
-    io::stderr().is_terminal()
-        && !commands::plain_mode()
-        && !cli.plain
+    !cli.plain
         && !cli.debug
         && command_supports_spinner(&cli.command)
         && (!command_requests_json(&cli.command) || json_spinner_exception)
@@ -7436,6 +7438,35 @@ tasks:
             receipt: false,
             member: Vec::new(),
         }));
+    }
+
+    #[test]
+    fn up_requests_spinner_even_when_bootstrap_plain_mode_is_true() {
+        let original_plain_mode = super::commands::plain_mode();
+        super::commands::set_plain_mode(true);
+
+        let cli = super::Cli {
+            debug: false,
+            plain: false,
+            concise: false,
+            verbose: false,
+            file: None,
+            command: super::Commands::Up {
+                path: None,
+                json: false,
+                dry_run: false,
+                stream: false,
+                backend: None,
+                lifecycle: None,
+                ephemeral: false,
+                receipt: false,
+                member: Vec::new(),
+            },
+        };
+
+        assert!(super::command_requests_spinner_when_interactive(&cli));
+
+        super::commands::set_plain_mode(original_plain_mode);
     }
 
     #[test]
