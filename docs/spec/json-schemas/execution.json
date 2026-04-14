@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/execution.json",
+  "title": "ota execution plan --json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "contract", "contract_identity", "resolved"],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "contract": { "type": "string" },
+        "member": { "type": "string" },
+        "contract_identity": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+        },
+        "declared_execution": {
+          "$ref": "./doctor.json#/properties/execution"
+        },
+        "resolved": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["backend", "backend_source", "target_strategy"],
+          "properties": {
+            "backend": { "enum": ["native", "container", "remote"] },
+            "backend_source": { "type": "string" },
+            "lifecycle": { "enum": ["persistent", "ephemeral"] },
+            "lifecycle_source": { "type": "string" },
+            "image": { "type": "string" },
+            "engine": { "type": "string" },
+            "engine_candidates": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "provider": { "type": "string" },
+            "target": { "type": "string" },
+            "target_strategy": { "type": "string" },
+            "cwd": { "type": "string" }
+          }
+        },
+        "overrides": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": { "enum": ["native", "container", "remote"] },
+            "lifecycle": { "enum": ["persistent", "ephemeral"] }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path"],
+      "properties": {
+        "ok": { "const": false },
+        "path": { "type": "string" },
+        "member": { "type": "string" },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "error": { "type": "string" }
+      }
+    }
+  ]
+}
