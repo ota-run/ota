@@ -60,7 +60,9 @@
                 "env": { "type": "integer", "minimum": 0 },
                 "services": { "type": "integer", "minimum": 0 },
                 "checks": { "type": "integer", "minimum": 0 },
-                "tasks": { "type": "integer", "minimum": 0 }
+                "tasks": { "type": "integer", "minimum": 0 },
+                "repos": { "type": "integer", "minimum": 0 },
+                "policies": { "type": "integer", "minimum": 0 }
               }
             }
           }
@@ -155,7 +157,9 @@
                       "env": { "type": "integer", "minimum": 0 },
                       "services": { "type": "integer", "minimum": 0 },
                       "checks": { "type": "integer", "minimum": 0 },
-                      "tasks": { "type": "integer", "minimum": 0 }
+                      "tasks": { "type": "integer", "minimum": 0 },
+                      "repos": { "type": "integer", "minimum": 0 },
+                      "policies": { "type": "integer", "minimum": 0 }
                     }
                   }
                 }
@@ -268,7 +272,9 @@
                     "env": { "type": "integer", "minimum": 0 },
                     "services": { "type": "integer", "minimum": 0 },
                     "checks": { "type": "integer", "minimum": 0 },
-                    "tasks": { "type": "integer", "minimum": 0 }
+                    "tasks": { "type": "integer", "minimum": 0 },
+                    "repos": { "type": "integer", "minimum": 0 },
+                    "policies": { "type": "integer", "minimum": 0 }
                   }
                 }
               }
@@ -418,7 +424,9 @@
                           "env": { "type": "integer", "minimum": 0 },
                           "services": { "type": "integer", "minimum": 0 },
                           "checks": { "type": "integer", "minimum": 0 },
-                          "tasks": { "type": "integer", "minimum": 0 }
+                          "tasks": { "type": "integer", "minimum": 0 },
+                          "repos": { "type": "integer", "minimum": 0 },
+                          "policies": { "type": "integer", "minimum": 0 }
                         }
                       }
                     }
@@ -554,7 +562,9 @@
                           "env": { "type": "integer", "minimum": 0 },
                           "services": { "type": "integer", "minimum": 0 },
                           "checks": { "type": "integer", "minimum": 0 },
-                          "tasks": { "type": "integer", "minimum": 0 }
+                          "tasks": { "type": "integer", "minimum": 0 },
+                          "repos": { "type": "integer", "minimum": 0 },
+                          "policies": { "type": "integer", "minimum": 0 }
                         }
                       }
                     }

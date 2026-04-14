@@ -89,7 +89,9 @@
                     "env": { "type": "integer", "minimum": 0 },
                     "services": { "type": "integer", "minimum": 0 },
                     "checks": { "type": "integer", "minimum": 0 },
-                    "tasks": { "type": "integer", "minimum": 0 }
+                    "tasks": { "type": "integer", "minimum": 0 },
+                    "repos": { "type": "integer", "minimum": 0 },
+                    "policies": { "type": "integer", "minimum": 0 }
                   }
                 }
               }
@@ -192,6 +194,9 @@
             "archived_at": { "type": "string" },
             "promoted_at": { "type": "string" },
             "contract_identity": { "type": "string" },
+            "contract_identity_details": {
+              "$ref": "#/oneOf/0/properties/receipt/properties/contract_identity"
+            },
             "ok": { "type": "boolean" },
             "contract": { "type": "string" },
             "backend": { "type": "string" },
@@ -219,6 +224,10 @@
           "properties": {
             "ok": { "type": "boolean" },
             "contract": { "type": "string" },
+            "contract_identity": { "type": "string" },
+            "contract_identity_details": {
+              "$ref": "#/oneOf/0/properties/receipt/properties/contract_identity"
+            },
             "backend": { "type": "string" },
             "lifecycle": { "type": "string" },
             "summary": {

@@ -4,11 +4,104 @@
   "title": "ota workspace run --json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ok", "path", "task", "repos"],
+  "required": ["ok", "path", "task", "summary", "receipt", "repos"],
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
     "task": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error_count", "warn_count", "info_count", "step_count"],
+      "properties": {
+        "error_count": { "type": "integer", "minimum": 0 },
+        "warn_count": { "type": "integer", "minimum": 0 },
+        "info_count": { "type": "integer", "minimum": 0 },
+        "step_count": { "type": "integer", "minimum": 0 },
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "ready_count": { "type": "integer", "minimum": 0 },
+        "not_ready_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "path", "scope", "contract", "contract_identity", "workspace", "steps", "summary"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "path": { "type": "string" },
+        "scope": { "const": "workspace" },
+        "contract": { "type": "string" },
+        "contract_identity": {
+          "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+        },
+        "workspace": { "type": "string" },
+        "backend": { "type": "string" },
+        "lifecycle": { "type": "string" },
+        "image": { "type": "string" },
+        "target": { "type": "string" },
+        "acquired": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "env_sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value", "source"],
+            "properties": {
+              "name": { "type": "string" },
+              "value": { "type": "string" },
+              "source": { "type": "string" }
+            }
+          }
+        },
+        "policy": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["order", "label", "status"],
+            "properties": {
+              "order": { "type": "integer", "minimum": 1 },
+              "label": { "type": "string" },
+              "status": { "type": "string" },
+              "detail": { "type": "string" },
+              "task": { "type": "string" },
+              "exit_code": { "type": "integer" }
+            }
+          }
+        },
+        "blocked": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["error_count", "warn_count", "info_count", "step_count"],
+          "properties": {
+            "error_count": { "type": "integer", "minimum": 0 },
+            "warn_count": { "type": "integer", "minimum": 0 },
+            "info_count": { "type": "integer", "minimum": 0 },
+            "step_count": { "type": "integer", "minimum": 0 },
+            "repo_count": { "type": "integer", "minimum": 0 },
+            "ready_count": { "type": "integer", "minimum": 0 },
+            "not_ready_count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "next": { "type": "string" }
+      }
+    },
     "repos": {
       "type": "array",
       "items": {
