@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+## 1.4.12
+
+- stabilized the release-gate test harness under parallel execution by serializing CLI test invocations and locking cwd-sensitive receipt fixtures so macOS CI no longer races the compact contract identity checks.
+
 ## 1.4.11
 
 - added compact `contract_identity` output on repo execution surfaces so `ota receipt`, `ota up --json`, `ota up --dry-run` text/JSON, and monorepo preview members can show declared project, selected metadata, execution intent, and compact contract counts without inlining the full contract.

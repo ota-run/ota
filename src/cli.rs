@@ -5291,6 +5291,7 @@ tasks:
     #[test]
     fn receipt_json_includes_compact_contract_identity() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5366,6 +5367,7 @@ checks:
     #[test]
     fn receipt_text_renders_contract_identity_block() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -11979,6 +11981,7 @@ tasks:
     #[test]
     fn up_json_reports_ready_status_and_phase() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
