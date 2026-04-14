@@ -49,9 +49,9 @@ use crate::doctor::{
     diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
     diagnose_services_only, provisioning_installability_finding,
 };
-use crate::execution::selected_container_engine;
 use crate::execution::{
-    ephemeral_container_target, execution_image, execution_target, format_backend, format_lifecycle,
+    container_engine_candidates, ephemeral_container_target, execution_image, execution_target,
+    format_backend, format_lifecycle, selected_container_engine,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -60,6 +60,7 @@ use crate::output::{
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
     DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
     DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary,
+    ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
     ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
     InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
@@ -89,11 +90,11 @@ use crate::provisioning::{
     ProvisioningOutputMode, apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, RunError, StaleContainerOwnership,
-    clean_execution, clean_stale_execution, effective_execution, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides_with_policy,
+    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, RunError,
+    StaleContainerOwnership, clean_execution, clean_stale_execution, effective_execution,
+    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskSpec};
 use crate::update;
@@ -721,6 +722,288 @@ fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> Str
     };
 
     format_next_timeline(&[doctor, tasks])
+}
+
+pub fn execution_plan(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_contract_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=execution-plan")],
+            );
+        }
+    };
+
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_contract_path(&resolved_path);
+    let text_path_display = display_contract_target(&compact_path_display, member);
+    let mut debug_lines = vec![
+        String::from("DEBUG command=execution-plan"),
+        format!("DEBUG contract_path={path_display}"),
+    ];
+    if let Some(member) = member {
+        debug_lines.push(format!("DEBUG member={member}"));
+    }
+    if let Some(backend) = overrides.backend {
+        debug_lines.push(format!(
+            "DEBUG backend_override={}",
+            format_backend(backend)
+        ));
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        debug_lines.push(format!(
+            "DEBUG lifecycle_override={}",
+            format_lifecycle(lifecycle)
+        ));
+    }
+
+    finalize_debug(
+        match load_and_validate_target(&resolved_path, member) {
+            Ok(target) => {
+                let contract_path_display = target.contract_path.display().to_string();
+                let contract_identity = repo_contract_identity(&target.contract);
+                let declared_execution = ExecutionSummary::from_contract(&target.contract);
+                match resolve_execution_plan(&target.contract, &target.contract_path, overrides) {
+                    Ok(resolved_execution) => {
+                        let applied_overrides = execution_plan_overrides(overrides);
+
+                        match format {
+                            OutputFormat::Text => {
+                                CommandOutput::success(render_execution_plan_text(
+                                    &text_path_display,
+                                    &target.contract_path,
+                                    &contract_identity,
+                                    declared_execution.as_ref(),
+                                    &resolved_execution,
+                                    applied_overrides.as_ref(),
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::success(to_json(&ExecutionPlanSuccess {
+                                    ok: true,
+                                    path: &path_display,
+                                    contract: &contract_path_display,
+                                    member,
+                                    contract_identity,
+                                    declared_execution,
+                                    resolved: resolved_execution,
+                                    overrides: applied_overrides,
+                                }))
+                            }
+                        }
+                    }
+                    Err(error) => match format {
+                        OutputFormat::Text => CommandOutput::failure(execution_plan_error(&error)),
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json(&ExecutionPlanFailure {
+                                ok: false,
+                                path: &path_display,
+                                member,
+                                errors: Vec::new(),
+                                error: Some(execution_plan_error(&error)),
+                            }))
+                        }
+                    },
+                }
+            }
+            Err(ContractProblem::Validation(errors)) => match format {
+                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionPlanFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    errors: errors.errors().iter().map(ToString::to_string).collect(),
+                    error: None,
+                })),
+            },
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionPlanFailure {
+                    ok: false,
+                    path: &path_display,
+                    member,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+fn execution_plan_overrides(overrides: ExecutionOverrides) -> Option<ExecutionPlanOverrides> {
+    let overrides = ExecutionPlanOverrides {
+        backend: overrides.backend.map(format_backend).map(str::to_string),
+        lifecycle: overrides
+            .lifecycle
+            .map(format_lifecycle)
+            .map(str::to_string),
+    };
+
+    if overrides.backend.is_none() && overrides.lifecycle.is_none() {
+        None
+    } else {
+        Some(overrides)
+    }
+}
+
+fn execution_plan_error(error: &RunError) -> String {
+    match error {
+        RunError::MissingContainerImage { .. } => String::from(
+            "`ota execution plan` requires `execution.backends.container.image` for container execution",
+        ),
+        RunError::MissingContainerLifecycle { .. } => String::from(
+            "`ota execution plan` requires an explicit `execution.lifecycle` for container execution",
+        ),
+        RunError::MissingContainerBackendCli { engines, .. } => format!(
+            "container execution requires one of the supported container backend CLIs on PATH: {engines}"
+        ),
+        RunError::MissingRemoteProvider { .. } => String::from(
+            "`ota execution plan` requires `execution.backends.remote.provider` for remote execution",
+        ),
+        RunError::MissingRemoteTarget {
+            provider,
+            example_target,
+            ..
+        } => format!(
+            "remote provider `{provider}` requires `execution.backends.remote.target` (example: `{example_target}`)"
+        ),
+        RunError::MissingBackendProvider { provider, .. } => format!(
+            "remote provider `{provider}` is not declared as a backend provider in ota.yaml"
+        ),
+        RunError::UnsupportedBackendProviderVersion {
+            provider,
+            api_version,
+            ..
+        } => format!(
+            "backend provider `{provider}` has unsupported `api_version` `{api_version}`; expected `1`"
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn resolve_execution_plan(
+    contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
+) -> Result<ExecutionPlanResolved, RunError> {
+    let (backend, lifecycle) = effective_execution(contract, overrides);
+    let resolved_backend = resolve_execution_backend(contract, "execution plan", overrides)?;
+    let backend_source = if overrides.backend.is_some() {
+        "override"
+    } else if contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.preferred)
+        .is_some()
+    {
+        "contract preferred"
+    } else {
+        "default"
+    };
+    let lifecycle_source = lifecycle.map(|_| {
+        if overrides.lifecycle.is_some() {
+            String::from("override")
+        } else if contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.lifecycle)
+            .is_some()
+        {
+            String::from("contract lifecycle")
+        } else {
+            String::from("implicit")
+        }
+    });
+
+    let (image, engine, engine_candidates, provider, target, target_strategy, cwd) =
+        match resolved_backend {
+            ResolvedExecutionBackend::Native => (
+                None,
+                None,
+                Vec::new(),
+                None,
+                None,
+                String::from("host process"),
+                None,
+            ),
+            ResolvedExecutionBackend::Container {
+                image,
+                engine,
+                lifecycle,
+            } => {
+                let target = match lifecycle {
+                    Lifecycle::Persistent => {
+                        execution_target(contract, contract_path, backend, Some(lifecycle))
+                    }
+                    Lifecycle::Ephemeral => ephemeral_container_target(contract, contract_path),
+                };
+                let target_strategy = match lifecycle {
+                    Lifecycle::Persistent => String::from("persistent container"),
+                    Lifecycle::Ephemeral => String::from("ephemeral per-run container"),
+                };
+                (
+                    Some(image),
+                    Some(engine),
+                    container_engine_candidates(contract),
+                    None,
+                    target,
+                    target_strategy,
+                    None,
+                )
+            }
+            ResolvedExecutionBackend::Remote {
+                provider,
+                target,
+                cwd,
+            } => (
+                None,
+                None,
+                Vec::new(),
+                Some(provider),
+                Some(target),
+                String::from("remote target"),
+                cwd,
+            ),
+            ResolvedExecutionBackend::BackendProvider {
+                provider,
+                target,
+                cwd,
+                ..
+            } => (
+                None,
+                None,
+                Vec::new(),
+                Some(provider),
+                Some(target),
+                String::from("remote target"),
+                cwd,
+            ),
+        };
+
+    Ok(ExecutionPlanResolved {
+        backend: format_backend(backend).to_string(),
+        backend_source: backend_source.to_string(),
+        lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
+        lifecycle_source,
+        image,
+        engine,
+        engine_candidates,
+        provider,
+        target,
+        target_strategy,
+        cwd,
+    })
 }
 
 struct EnvReport {
@@ -10887,7 +11170,11 @@ fn append_wrapped_labeled_text<F, K>(
         }
 
         if value.contains('\n') {
-            output.push_str(&format!("\n{indent}{} {}", render_key(label), render_value(value)));
+            output.push_str(&format!(
+                "\n{indent}{} {}",
+                render_key(label),
+                render_value(value)
+            ));
             return;
         }
 
@@ -11054,6 +11341,14 @@ fn append_wrapped_bullet_text<F>(
 
 pub(crate) fn section_list_row(bullet: &str, label: &str, value: &str) -> String {
     format!(" {}  {} {}", bullet, label, value)
+}
+
+fn detail_list_row(label: &str, value: &str) -> String {
+    format!("{} {} {}", detail_arrow(), label, value)
+}
+
+fn detail_list_item(value: &str) -> String {
+    format!("{} {}", detail_arrow(), value)
 }
 
 fn append_explain_next_text(
@@ -14072,70 +14367,48 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     let mut stdout = String::new();
     stdout.push_str(&format!("{}\n", paint_section_title("Execution")));
     if let Some(preferred) = execution.preferred {
-        stdout.push_str(&format!(
-            " {}  {} {}",
-            detail_arrow(),
-            paint_key("Preferred:"),
-            preferred
-        ));
+        stdout.push_str(&detail_list_row(&paint_key("Preferred:"), preferred));
     }
     if !execution.supported.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Supported:"),
-            execution.supported.join(", ")
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Supported:"),
+            &execution.supported.join(", "),
         ));
     }
     if let Some(lifecycle) = execution.lifecycle {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Lifecycle:"),
-            lifecycle
-        ));
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(&paint_key("Lifecycle:"), lifecycle));
     }
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
-            stdout.push_str(&format!(
-                "\n {}  {} {}",
-                detail_arrow(),
-                paint_key("Container:"),
-                container.image
-            ));
+            stdout.push('\n');
+            stdout.push_str(&detail_list_row(&paint_key("Container:"), container.image));
         }
         if let Some(remote) = backends.remote.as_ref() {
-            stdout.push_str(&format!(
-                "\n {}  {} {}",
-                detail_arrow(),
-                paint_key("Remote Provider:"),
-                remote.provider
+            stdout.push('\n');
+            stdout.push_str(&detail_list_row(
+                &paint_key("Remote Provider:"),
+                remote.provider,
             ));
             if let Some(target) = remote.target {
-                stdout.push_str(&format!(
-                    "\n {}  {} {}",
-                    detail_arrow(),
-                    paint_key("Remote Target:"),
-                    target
-                ));
+                stdout.push('\n');
+                stdout.push_str(&detail_list_row(&paint_key("Remote Target:"), target));
             }
             if let Some(cwd) = remote.cwd {
-                stdout.push_str(&format!(
-                    "\n {}  {} {}",
-                    detail_arrow(),
-                    paint_key("Remote Cwd:"),
-                    cwd
-                ));
+                stdout.push('\n');
+                stdout.push_str(&detail_list_row(&paint_key("Remote Cwd:"), cwd));
             }
         }
     }
     if !execution.env.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {} policy env > process env > contract default > required missing",
-            detail_arrow(),
-            paint_key("Env precedence:")
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Env precedence:"),
+            "policy env > process env > contract default > required missing",
         ));
-        stdout.push_str(&format!("\n {}  Env:", detail_arrow()));
+        stdout.push('\n');
+        stdout.push_str(&format!("{} {}", detail_arrow(), paint_key("Env:")));
         for item in &execution.env {
             let mut details = Vec::new();
             let source = if item.policy.is_some() {
@@ -14164,6 +14437,133 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
             stdout.push_str(&format!("\n      {} {source}", paint_key("Source:")));
         }
     }
+    stdout
+}
+
+fn render_execution_plan_text(
+    path: &str,
+    contract_path: &Path,
+    contract_identity: &ContractIdentity,
+    declared_execution: Option<&ExecutionSummary<'_>>,
+    resolved: &ExecutionPlanResolved,
+    overrides: Option<&ExecutionPlanOverrides>,
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}",
+        format_command_header("EXECUTION PLAN", path),
+        render_resolved_status()
+    );
+
+    stdout.push_str(&format!("\n\n{}\n", paint_section_title("Resolved")));
+    stdout.push_str(&format!(
+        "{} {} {} ({})",
+        summary_bullet(),
+        paint_key("Backend:"),
+        paint_backticked_code(&resolved.backend),
+        resolved.backend_source
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Contract:"),
+        compact_contract_path(contract_path)
+    ));
+    if let Some(lifecycle) = resolved.lifecycle.as_deref() {
+        let source = resolved.lifecycle_source.as_deref().unwrap_or("implicit");
+        stdout.push_str(&format!(
+            "\n{} {} {} ({})",
+            summary_bullet(),
+            paint_key("Lifecycle:"),
+            paint_backticked_code(lifecycle),
+            source
+        ));
+    }
+    if let Some(image) = resolved.image.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Image:"),
+            paint_backticked_code(image)
+        ));
+    }
+    if let Some(engine) = resolved.engine.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Engine:"),
+            paint_backticked_code(engine)
+        ));
+    }
+    if !resolved.engine_candidates.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Engine candidates:"),
+            render_inline_code_list(&resolved.engine_candidates)
+        ));
+    }
+    if let Some(provider) = resolved.provider.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Provider:"),
+            paint_backticked_code(provider)
+        ));
+    }
+    if let Some(target) = resolved.target.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Target:"),
+            paint_backticked_code(target)
+        ));
+    }
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Target strategy:"),
+        resolved.target_strategy
+    ));
+    if let Some(cwd) = resolved.cwd.as_deref() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Cwd:"),
+            paint_backticked_code(cwd)
+        ));
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{}",
+        render_contract_identity_text(contract_identity)
+    ));
+
+    if let Some(execution) = declared_execution {
+        stdout.push_str(&format!("\n\n{}", render_execution_summary_text(execution)));
+    }
+
+    if let Some(overrides) = overrides {
+        stdout.push_str(&format!("\n\n{}\n", paint_section_title("Overrides")));
+        let mut first = true;
+        if let Some(backend) = overrides.backend.as_deref() {
+            stdout.push_str(&format!(
+                "{} {} {}",
+                if first { "" } else { "\n" },
+                paint_key("Backend:"),
+                paint_backticked_code(backend)
+            ));
+            first = false;
+        }
+        if let Some(lifecycle) = overrides.lifecycle.as_deref() {
+            stdout.push_str(&format!(
+                "{} {} {}",
+                if first { "" } else { "\n" },
+                paint_key("Lifecycle:"),
+                paint_backticked_code(lifecycle)
+            ));
+        }
+    }
+
     stdout
 }
 
@@ -16981,6 +17381,39 @@ policies:
     }
 
     #[test]
+    fn execution_summary_uses_compact_detail_arrow_spacing() {
+        let execution = crate::output::ExecutionSummary {
+            preferred: Some("container"),
+            supported: vec!["native", "container"],
+            lifecycle: Some("ephemeral"),
+            backends: Some(crate::output::ExecutionBackendsSummary {
+                container: Some(crate::output::ExecutionContainerSummary {
+                    image: "rust:1.94-bookworm",
+                }),
+                remote: None,
+            }),
+            env: vec![crate::output::ExecutionEnvSummary {
+                name: "PATH",
+                required: false,
+                default: None,
+                policy: None,
+                allowed: Vec::new(),
+            }],
+        };
+
+        let rendered = strip_ansi_codes(&super::render_execution_summary_text(&execution));
+
+        assert!(rendered.contains("\n→ Preferred: container"));
+        assert!(rendered.contains("\n→ Supported: native, container"));
+        assert!(rendered.contains("\n→ Lifecycle: ephemeral"));
+        assert!(rendered.contains("\n→ Container: rust:1.94-bookworm"));
+        assert!(rendered.contains("\n→ Env precedence:"));
+        assert!(rendered.contains("\n→ Env:"));
+        assert!(!rendered.contains("\n →  Preferred:"));
+        assert!(!rendered.contains("\n →  Env precedence:"));
+    }
+
+    #[test]
     fn doctor_text_container_primary_blocker_renders_image_detail_line() {
         let report = DoctorReport {
             ok: false,
@@ -17562,14 +17995,8 @@ execution:
             .lines()
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>();
-        let why_continuation_indent = lines[1]
-            .chars()
-            .take_while(|ch| *ch == ' ')
-            .count();
-        let next_continuation_indent = lines[3]
-            .chars()
-            .take_while(|ch| *ch == ' ')
-            .count();
+        let why_continuation_indent = lines[1].chars().take_while(|ch| *ch == ' ').count();
+        let next_continuation_indent = lines[3].chars().take_while(|ch| *ch == ' ').count();
 
         assert!(lines[0].starts_with("Why: "));
         assert!(lines[1].starts_with("     "));
@@ -19697,42 +20124,30 @@ fn render_up_preview_text(
     );
 
     stdout.push_str(&format!("\n\n{}\n", paint_section_title("Execution")));
-    stdout.push_str(&format!(
-        " {}  {} {}",
-        detail_arrow(),
-        paint_key("Backend:"),
-        execution.backend
-    ));
+    stdout.push_str(&detail_list_row(&paint_key("Backend:"), &execution.backend));
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Lifecycle:"),
-            lifecycle
-        ));
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(&paint_key("Lifecycle:"), lifecycle));
     }
     if let Some(image) = execution.image.as_deref() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Image:"),
-            paint_backticked_code(image)
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Image:"),
+            &paint_backticked_code(image),
         ));
     }
     if let Some(target) = execution.target.as_deref() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Target:"),
-            paint_backticked_code(target)
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Target:"),
+            &paint_backticked_code(target),
         ));
     }
     if let Some(task) = execution.task.as_deref() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Task:"),
-            paint_backticked_code(task)
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Task:"),
+            &paint_backticked_code(task),
         ));
     }
 
@@ -19743,17 +20158,11 @@ fn render_up_preview_text(
         .map(|project_type| format!("{} ({project_type})", contract_identity.project.name))
         .unwrap_or_else(|| contract_identity.project.name.clone());
     stdout.push_str(&format!("\n\n{}\n", paint_section_title("Contract")));
-    stdout.push_str(&format!(
-        " {}  {} {}",
-        detail_arrow(),
-        paint_key("Project:"),
-        project
-    ));
-    stdout.push_str(&format!(
-        "\n {}  {} {}",
-        detail_arrow(),
-        paint_key("Version:"),
-        contract_identity.version
+    stdout.push_str(&detail_list_row(&paint_key("Project:"), &project));
+    stdout.push('\n');
+    stdout.push_str(&detail_list_row(
+        &paint_key("Version:"),
+        &contract_identity.version.to_string(),
     ));
     let metadata = [
         contract_identity
@@ -19776,11 +20185,10 @@ fn render_up_preview_text(
     .flatten()
     .collect::<Vec<_>>();
     if !metadata.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Metadata:"),
-            metadata.join(", ")
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Metadata:"),
+            &metadata.join(", "),
         ));
     }
     let mut execution_identity = Vec::new();
@@ -19800,11 +20208,10 @@ fn render_up_preview_text(
         execution_identity.push(format!("image={image}"));
     }
     if !execution_identity.is_empty() {
-        stdout.push_str(&format!(
-            "\n {}  {} {}",
-            detail_arrow(),
-            paint_key("Execution:"),
-            execution_identity.join(", ")
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Execution:"),
+            &execution_identity.join(", "),
         ));
     }
     let mut count_parts = vec![
@@ -19821,16 +20228,16 @@ fn render_up_preview_text(
     if let Some(policies) = contract_identity.counts.policies {
         count_parts.push(format!("policies={policies}"));
     }
-    stdout.push_str(&format!(
-        "\n {}  {} {}",
-        detail_arrow(),
-        paint_key("Counts:"),
-        count_parts.join(", ")
+    stdout.push('\n');
+    stdout.push_str(&detail_list_row(
+        &paint_key("Counts:"),
+        &count_parts.join(", "),
     ));
 
     stdout.push_str(&format!("\n\n{}", paint_section_title("Plan")));
     if plan.actions.is_empty() {
-        stdout.push_str(&format!("\n {}  none", detail_arrow()));
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item("none"));
     } else {
         for action in &plan.actions {
             append_wrapped_bullet_text(
@@ -19878,7 +20285,8 @@ fn render_up_preview_text(
         "no services started",
         "no repo files changed",
     ] {
-        stdout.push_str(&format!("\n {}  {}", detail_arrow(), line));
+        stdout.push('\n');
+        stdout.push_str(&detail_list_item(line));
     }
 
     stdout
@@ -20091,97 +20499,8 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     }
 
     if let Some(identity) = receipt.contract_identity.as_ref() {
-        let project = identity
-            .project
-            .project_type
-            .as_deref()
-            .map(|project_type| format!("{} ({project_type})", identity.project.name))
-            .unwrap_or_else(|| identity.project.name.clone());
-        stdout.push_str(&paint_section_title("Contract"));
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            summary_bullet(),
-            paint_key("Project:"),
-            project
-        ));
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            summary_bullet(),
-            paint_key("Version:"),
-            identity.version
-        ));
-        let metadata = [
-            identity
-                .metadata
-                .owner
-                .as_ref()
-                .map(|value| format!("owner={value}")),
-            identity
-                .metadata
-                .team
-                .as_ref()
-                .map(|value| format!("team={value}")),
-            identity
-                .metadata
-                .repo_class
-                .as_ref()
-                .map(|value| format!("repo_class={value}")),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
-        if !metadata.is_empty() {
-            stdout.push_str(&format!(
-                "\n{} {} {}",
-                summary_bullet(),
-                paint_key("Metadata:"),
-                metadata.join(", ")
-            ));
-        }
-        let mut execution = Vec::new();
-        if let Some(preferred) = identity.execution.preferred.as_deref() {
-            execution.push(format!("preferred={preferred}"));
-        }
-        if let Some(lifecycle) = identity.execution.lifecycle.as_deref() {
-            execution.push(format!("lifecycle={lifecycle}"));
-        }
-        if !identity.execution.supported.is_empty() {
-            execution.push(format!(
-                "supported={}",
-                identity.execution.supported.join(", ")
-            ));
-        }
-        if let Some(image) = identity.execution.image.as_deref() {
-            execution.push(format!("image={image}"));
-        }
-        if !execution.is_empty() {
-            stdout.push_str(&format!(
-                "\n{} {} {}",
-                summary_bullet(),
-                paint_key("Execution:"),
-                execution.join(", ")
-            ));
-        }
-        let mut count_parts = vec![
-            format!("runtimes={}", identity.counts.runtimes),
-            format!("tools={}", identity.counts.tools),
-            format!("env={}", identity.counts.env),
-            format!("services={}", identity.counts.services),
-            format!("checks={}", identity.counts.checks),
-            format!("tasks={}", identity.counts.tasks),
-        ];
-        if let Some(repos) = identity.counts.repos {
-            count_parts.push(format!("repos={repos}"));
-        }
-        if let Some(policies) = identity.counts.policies {
-            count_parts.push(format!("policies={policies}"));
-        }
-        stdout.push_str(&format!(
-            "\n{} {} {}\n\n",
-            summary_bullet(),
-            paint_key("Counts:"),
-            count_parts.join(", ")
-        ));
+        stdout.push_str(&render_contract_identity_text(identity));
+        stdout.push_str("\n\n");
     }
 
     stdout.push_str(&paint_section_title("Summary"));
@@ -20253,6 +20572,102 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
 
     stdout.push('\n');
 
+    stdout
+}
+
+fn render_contract_identity_text(identity: &ContractIdentity) -> String {
+    let project = identity
+        .project
+        .project_type
+        .as_deref()
+        .map(|project_type| format!("{} ({project_type})", identity.project.name))
+        .unwrap_or_else(|| identity.project.name.clone());
+    let mut stdout = String::new();
+    stdout.push_str(&paint_section_title("Contract"));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Project:"),
+        project
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Version:"),
+        identity.version
+    ));
+    let metadata = [
+        identity
+            .metadata
+            .owner
+            .as_ref()
+            .map(|value| format!("owner={value}")),
+        identity
+            .metadata
+            .team
+            .as_ref()
+            .map(|value| format!("team={value}")),
+        identity
+            .metadata
+            .repo_class
+            .as_ref()
+            .map(|value| format!("repo_class={value}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if !metadata.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Metadata:"),
+            metadata.join(", ")
+        ));
+    }
+    let mut execution = Vec::new();
+    if let Some(preferred) = identity.execution.preferred.as_deref() {
+        execution.push(format!("preferred={preferred}"));
+    }
+    if let Some(lifecycle) = identity.execution.lifecycle.as_deref() {
+        execution.push(format!("lifecycle={lifecycle}"));
+    }
+    if !identity.execution.supported.is_empty() {
+        execution.push(format!(
+            "supported={}",
+            identity.execution.supported.join(", ")
+        ));
+    }
+    if let Some(image) = identity.execution.image.as_deref() {
+        execution.push(format!("image={image}"));
+    }
+    if !execution.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Execution:"),
+            execution.join(", ")
+        ));
+    }
+    let mut count_parts = vec![
+        format!("runtimes={}", identity.counts.runtimes),
+        format!("tools={}", identity.counts.tools),
+        format!("env={}", identity.counts.env),
+        format!("services={}", identity.counts.services),
+        format!("checks={}", identity.counts.checks),
+        format!("tasks={}", identity.counts.tasks),
+    ];
+    if let Some(repos) = identity.counts.repos {
+        count_parts.push(format!("repos={repos}"));
+    }
+    if let Some(policies) = identity.counts.policies {
+        count_parts.push(format!("policies={policies}"));
+    }
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Counts:"),
+        count_parts.join(", ")
+    ));
     stdout
 }
 
@@ -20845,6 +21260,18 @@ fn render_valid_status() -> String {
             "{} {}",
             primary_success_marker(),
             paint("VALID", "1;38;2;0;255;120")
+        )
+    }
+}
+
+fn render_resolved_status() -> String {
+    if plain_mode() {
+        String::from("RESOLVED")
+    } else {
+        format!(
+            "{} {}",
+            primary_success_marker(),
+            paint("RESOLVED", "1;38;2;0;255;120")
         )
     }
 }

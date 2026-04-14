@@ -15,6 +15,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 
 - [json-schemas/validate.json](json-schemas/validate.json)
 - [json-schemas/env.json](json-schemas/env.json)
+- [json-schemas/execution.json](json-schemas/execution.json)
 - [json-schemas/tasks.json](json-schemas/tasks.json)
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
@@ -47,6 +48,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
 - use `ota env --json` for read-only environment inspection and validation
+- use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota policy init --json` when you want the starter org policy pack preview or write result
@@ -68,6 +70,7 @@ human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
+- `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
@@ -197,6 +200,61 @@ Failure:
   "path": "/abs/path/to/ota.yaml",
   "task": "test",
   "error": "task `test` is not defined in ota.yaml"
+}
+```
+
+## `ota execution plan --json`
+
+Success:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "contract": "/abs/path/to/ota.yaml",
+  "contract_identity": {
+    "version": 1,
+    "project": {
+      "name": "ota"
+    },
+    "counts": {
+      "runtimes": 0,
+      "tools": 1,
+      "env": 1,
+      "services": 0,
+      "checks": 1,
+      "tasks": 4
+    }
+  },
+  "declared_execution": {
+    "preferred": "container",
+    "supported": ["native", "container"],
+    "lifecycle": "ephemeral",
+    "backends": {
+      "container": {
+        "image": "rust:1.94-bookworm"
+      }
+    }
+  },
+  "resolved": {
+    "backend": "container",
+    "backend_source": "contract preferred",
+    "lifecycle": "ephemeral",
+    "lifecycle_source": "contract lifecycle",
+    "image": "rust:1.94-bookworm",
+    "engine_candidates": ["docker", "podman"],
+    "target_strategy": "ephemeral per-run container"
+  }
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "errors": ["..."]
 }
 ```
 

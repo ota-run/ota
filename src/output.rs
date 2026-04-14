@@ -299,6 +299,64 @@ pub struct ExecutionReceipt {
     pub next: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionPlanResolved {
+    pub backend: String,
+    pub backend_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub engine_candidates: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub target_strategy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionPlanOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionPlanSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub contract: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<&'a str>,
+    pub contract_identity: ContractIdentity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_execution: Option<ExecutionSummary<'a>>,
+    pub resolved: ExecutionPlanResolved,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<ExecutionPlanOverrides>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionPlanFailure<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub member: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ExplainStep {
     pub order: usize,

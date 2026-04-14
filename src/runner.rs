@@ -967,7 +967,7 @@ struct TaskCommandOutput {
 }
 
 #[derive(Debug, Clone)]
-enum ResolvedExecutionBackend {
+pub(crate) enum ResolvedExecutionBackend {
     Native,
     Container {
         image: String,
@@ -1342,7 +1342,7 @@ pub fn effective_execution(
     (backend, lifecycle)
 }
 
-fn resolve_execution_backend(
+pub(crate) fn resolve_execution_backend(
     contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,

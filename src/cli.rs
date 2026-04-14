@@ -39,7 +39,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -127,6 +127,12 @@ enum Commands {
         task: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
+    },
+    #[command(display_order = 10)]
+    /// Inspect the resolved execution context without running anything.
+    Execution {
+        #[command(subcommand)]
+        command: ExecutionCommands,
     },
     #[command(display_order = 4)]
     /// Run a validated task from an Ota contract.
@@ -456,6 +462,30 @@ enum PolicyCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Path to an ota.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum ExecutionCommands {
+    /// Show the execution backend, lifecycle, image, and target ota would select.
+    Plan {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Override the execution mode for this inspection.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Override the execution lifecycle for this inspection.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        ephemeral: bool,
+        /// Inspect one merged monorepo member contract declared by the root contract.
+        #[arg(long)]
+        member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
@@ -1254,6 +1284,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             | Commands::Init { json: true, .. }
             | Commands::Agents { json: true, .. }
             | Commands::Detect { json: true, .. }
+            | Commands::Execution {
+                command: ExecutionCommands::Plan { json: true, .. },
+            }
             | Commands::Policy { json: true, .. }
             | Commands::Policy {
                 command: Some(PolicyCommands::Init { json: true, .. }),
@@ -1305,6 +1338,31 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             task.as_deref(),
+            format_from_json(json),
+            debug,
+        ),
+        Commands::Execution {
+            command:
+                ExecutionCommands::Plan {
+                    json,
+                    backend,
+                    lifecycle,
+                    ephemeral,
+                    member,
+                    path,
+                },
+        } => commands::execution_plan(
+            path.as_deref(),
+            file.as_deref(),
+            member.as_deref(),
+            ExecutionOverrides {
+                backend: backend.map(Into::into),
+                lifecycle: if ephemeral {
+                    Some(crate::schema::Lifecycle::Ephemeral)
+                } else {
+                    lifecycle.map(Into::into)
+                },
+            },
             format_from_json(json),
             debug,
         ),
@@ -1896,6 +1954,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Tasks { .. } => "run `ota tasks` to inspect available task names",
         Commands::Services { .. } => "run `ota services` to inspect declared services",
         Commands::Env { .. } => "run `ota env --task <name>` to inspect task env requirements",
+        Commands::Execution { .. } => {
+            "run `ota doctor` to inspect readiness, or `ota up --dry-run` to preview preparation"
+        }
         Commands::Run { .. } => "run `ota tasks --use` to inspect runnable task usage",
         Commands::Doctor { .. } => "run `ota init` to create a starter contract",
         Commands::Explain { .. } => {
@@ -2076,6 +2137,9 @@ fn command_requests_json(command: &Commands) -> bool {
             command: None,
             ..
         } => *json,
+        Commands::Execution {
+            command: ExecutionCommands::Plan { json, .. },
+        } => *json,
         Commands::Policy {
             command: Some(PolicyCommands::Init { json, .. }),
             ..
@@ -2114,6 +2178,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Tasks { .. } => "ota tasks",
         Commands::Services { .. } => "ota services",
         Commands::Env { .. } => "ota env",
+        Commands::Execution { .. } => "ota execution plan",
         Commands::Run { .. } => "./ota.yaml",
         Commands::Doctor { .. } => "ota doctor",
         Commands::Annotations { .. } => "ota annotations",
@@ -5408,6 +5473,174 @@ tasks:
         assert!(
             stdout.contains("Counts: runtimes=0, tools=0, env=0, services=0, checks=0, tasks=1")
         );
+    }
+
+    #[test]
+    fn execution_plan_json_reports_resolved_container_execution_and_overrides() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: execution-demo
+  type: application
+metadata:
+  owner: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: rust:1.94-bookworm
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--json",
+            "--mode",
+            "container",
+            "--ephemeral",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(
+            json["contract_identity"]["project"]["name"],
+            "execution-demo"
+        );
+        assert_eq!(json["declared_execution"]["preferred"], "container");
+        assert_eq!(json["resolved"]["backend"], "container");
+        assert_eq!(json["resolved"]["backend_source"], "override");
+        assert_eq!(json["resolved"]["lifecycle"], "ephemeral");
+        assert_eq!(json["resolved"]["lifecycle_source"], "override");
+        assert_eq!(json["resolved"]["image"], "rust:1.94-bookworm");
+        assert_eq!(
+            json["resolved"]["target_strategy"],
+            "ephemeral per-run container"
+        );
+        assert_eq!(json["resolved"]["engine_candidates"][0], "docker");
+        assert_eq!(json["overrides"]["backend"], "container");
+        assert_eq!(json["overrides"]["lifecycle"], "ephemeral");
+        assert!(json["resolved"]["target"].as_str().is_some());
+    }
+
+    #[test]
+    fn execution_plan_text_reports_selected_member_and_resolved_target_strategy() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: rust:1.94-bookworm
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--member",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("EXECUTION PLAN"));
+        assert!(stdout.contains("[member api]"));
+        assert!(stdout.contains("RESOLVED"));
+        assert!(stdout.contains("Backend: `container` (contract preferred)"));
+        assert!(stdout.contains("Contract:"));
+        assert!(stdout.contains("api/ota.yaml"));
+        assert!(stdout.contains("Target strategy: ephemeral per-run container"));
+        assert!(stdout.contains("Project: api"));
+    }
+
+    #[test]
+    fn execution_plan_json_fails_when_container_override_lacks_required_backend_config() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: execution-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--json",
+            "--mode",
+            "container",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(
+            json["error"],
+            "`ota execution plan` requires `execution.backends.container.image` for container execution"
+        );
+    }
+
+    #[test]
+    fn execution_plan_text_fails_when_remote_override_lacks_provider_config() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: execution-demo
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--mode",
+            "remote",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let normalized = stderr.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains(
+            "`ota execution plan` requires `execution.backends.remote.provider` for remote execution"
+        ));
     }
 
     #[test]
