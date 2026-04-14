@@ -78,6 +78,7 @@ ota currently ships these commands:
 - `ota run <task>`
 - `ota init`
 - `ota env`
+- `ota execution plan`
 - `ota detect`
 - `ota validate`
 - `ota tasks`
@@ -341,6 +342,41 @@ JSON output:
 - success with task scope also includes `task`
 - `summary` includes contract, task, resolved, missing, and invalid counts
 - failure: `ok`, `path`, `task` when relevant, and `error`
+
+## `ota execution plan`
+
+Inspect the resolved execution context without provisioning, starting services, or running tasks.
+
+```bash
+ota execution plan [PATH]
+ota execution plan --json [PATH]
+ota execution plan --mode container --ephemeral [PATH]
+ota execution plan --member api [PATH]
+```
+
+Current behavior:
+
+- validates the contract first
+- when `--member` is set, inspects the merged member contract
+- reuses the same backend and lifecycle resolution path as `ota run` and `ota up`
+- reports the resolved backend, lifecycle, image, container-engine selection, and target strategy
+- fails with the same backend-configuration errors as runtime execution when the selected native/container/remote path is not actually runnable from the current contract
+- shows the deterministic per-run target name for ephemeral containers, but does not create that target
+- stays read-only
+
+Text output:
+
+- header: `EXECUTION PLAN <path>`
+- status line: `RESOLVED`
+- `Resolved` section with selected backend, lifecycle, image, engine candidates, target, and target strategy
+- `Contract` section with the same compact contract identity used by receipts
+- `Execution` section when the contract declares execution intent
+- `Overrides` section when `--mode`, `--lifecycle`, or `--ephemeral` changed the resolved result
+
+JSON output:
+
+- success: `ok`, `path`, `contract`, `member` when relevant, `contract_identity`, `declared_execution`, `resolved`, and `overrides`
+- failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 
 ## `ota diff`
 

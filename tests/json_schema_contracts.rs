@@ -83,6 +83,27 @@ fn doctor_schema_includes_agent_summary() {
 }
 
 #[test]
+fn execution_schema_includes_resolved_and_declared_execution_fields() {
+    let schema = load_schema("docs/spec/json-schemas/execution.json");
+    let success = &schema["oneOf"][0]["properties"];
+    let resolved = &success["resolved"]["properties"];
+    let overrides = &success["overrides"]["properties"];
+
+    assert!(success.get("contract_identity").is_some());
+    assert!(success.get("declared_execution").is_some());
+    assert_eq!(
+        success["declared_execution"]["$ref"],
+        serde_json::json!("./doctor.json#/properties/execution")
+    );
+    assert!(resolved.get("backend").is_some());
+    assert!(resolved.get("backend_source").is_some());
+    assert!(resolved.get("engine_candidates").is_some());
+    assert!(resolved.get("target_strategy").is_some());
+    assert!(overrides.get("backend").is_some());
+    assert!(overrides.get("lifecycle").is_some());
+}
+
+#[test]
 fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];
