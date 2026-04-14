@@ -515,8 +515,14 @@ fn up_schema_includes_member_grouping() {
         &runtime_properties["members"]["items"]["oneOf"][0]["properties"];
     let preview_member_properties =
         &runtime_properties["members"]["items"]["oneOf"][1]["properties"];
-    let validate_failure_ref = schema["oneOf"][2]["$ref"]
-        .as_str()
+    let validate_failure_ref = schema["oneOf"]
+        .as_array()
+        .and_then(|branches| {
+            branches
+                .iter()
+                .filter_map(|branch| branch.get("$ref").and_then(Value::as_str))
+                .find(|reference| *reference == "./validate.json#/oneOf/1")
+        })
         .expect("up schema should include validate failure shape");
 
     assert!(preview_properties.get("dry_run").is_some());

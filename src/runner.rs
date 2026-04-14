@@ -457,8 +457,10 @@ pub fn resolve_task_env_details_with_policy(
             .cloned()
             .or_else(|| repo_policy_env.get(name).cloned());
         let process_value = std::env::var(name).ok();
-        let resolved = policy_value
-            .map(|value| (value, EnvResolutionSource::Policy))
+        let task_value = task_env.and_then(|values| values.get(name)).cloned();
+        let resolved = task_value
+            .map(|value| (value, EnvResolutionSource::Task))
+            .or_else(|| policy_value.map(|value| (value, EnvResolutionSource::Policy)))
             .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
             .or_else(|| {
                 requirement
@@ -503,21 +505,15 @@ pub fn resolve_task_env_details_with_policy(
 
     if let Some(task_env) = task_env {
         for (name, value) in task_env {
-            let secret = resolved_values
-                .get(name)
-                .map(|resolved| resolved.secret)
-                .unwrap_or_else(|| {
-                    contract
-                        .env
-                        .get(name)
-                        .is_some_and(|requirement| requirement.secret)
-                });
+            if contract.env.contains_key(name) {
+                continue;
+            }
             resolved_values.insert(
                 name.clone(),
                 ResolvedEnvValue {
                     value: value.clone(),
                     source: EnvResolutionSource::Task,
-                    secret,
+                    secret: false,
                 },
             );
         }
@@ -2652,6 +2648,36 @@ tasks:
     }
 
     #[test]
+    fn task_env_satisfies_required_env_values() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_TEST_REQUIRED:
+    required: true
+tasks:
+  test:
+    env:
+      OTA_TEST_REQUIRED: task-value
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let task_env = &contract.tasks.get("test").unwrap().env;
+        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
+
+        assert_eq!(
+            resolved["OTA_TEST_REQUIRED"].source,
+            EnvResolutionSource::Task
+        );
+        assert_eq!(resolved["OTA_TEST_REQUIRED"].value, "task-value");
+    }
+
+    #[test]
     fn task_env_overrides_process_and_repo_defaults() {
         let _guard = env_mutex_lock();
         let contract = parse_contract_str(
@@ -2689,6 +2715,66 @@ tasks:
             Some(value) => unsafe { env::set_var("OTA_TEST_ENV", value) },
             None => unsafe { env::remove_var("OTA_TEST_ENV") },
         }
+    }
+
+    #[test]
+    fn rejects_disallowed_task_env_override_values() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  OTA_MODE:
+    allowed:
+      - safe
+tasks:
+  test:
+    env:
+      OTA_MODE: unsafe
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let task_env = &contract.tasks.get("test").unwrap().env;
+        let error = resolve_task_env_details(&contract, Some(task_env)).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::InvalidEnvValue { name, value, .. }
+                if name == "OTA_MODE" && value == "unsafe"
+        ));
+    }
+
+    #[test]
+    fn composes_path_from_task_env_and_contract_entries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  PATH:
+    prepend:
+      - /opt/ota/bin
+tasks:
+  test:
+    env:
+      PATH: /usr/bin
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let task_env = &contract.tasks.get("test").unwrap().env;
+        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
+
+        assert_eq!(resolved["PATH"].source, EnvResolutionSource::Task);
+        assert!(resolved["PATH"].value.starts_with("/opt/ota/bin:"));
+        assert!(resolved["PATH"].value.contains("/usr/bin"));
     }
 
     #[test]

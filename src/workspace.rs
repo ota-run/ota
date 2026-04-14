@@ -35,7 +35,7 @@ use crate::doctor::{
 };
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
-use crate::parser::{LoadContractError, load_contract};
+use crate::parser::{LoadContractError, load_contract, normalized_path_identity};
 use crate::runner::policy_env_values;
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
@@ -505,7 +505,7 @@ pub fn validate_workspace_shape(
         }
 
         let repo_root = workspace_root.join(&repo.path);
-        if !seen_repo_paths.insert(repo_root.display().to_string()) {
+        if !seen_repo_paths.insert(normalized_path_identity(&repo_root)) {
             errors.push(WorkspaceValidationError::new(format!(
                 "workspace repo path `{}` is declared more than once",
                 repo.path
@@ -1063,6 +1063,46 @@ repos:
         .unwrap();
 
         validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract).unwrap();
+    }
+
+    #[test]
+    fn rejects_duplicate_workspace_repo_alias_paths() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+  web_alias:
+    path: apps/../apps/web
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("workspace repo path `apps/../apps/web` is declared more than once")
+        }));
     }
 
     #[test]
