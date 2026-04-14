@@ -5705,16 +5705,17 @@ fn render_backticked_text(value: &str, contract_path: Option<&Path>) -> String {
         };
 
         let token = &after_start[..end];
-        output.push('`');
-        if let Some(contract_path) = contract_path
+        let rendered = if let Some(contract_path) = contract_path
             && let Some(command) = contextualize_repo_command(token, contract_path)
         {
-            output.push_str(&command);
+            command
         } else if token.starts_with('/') {
-            output.push_str(&compact_path(Path::new(token), DEFAULT_CONTRACT_FILE));
+            compact_path(Path::new(token), DEFAULT_CONTRACT_FILE)
         } else {
-            output.push_str(token);
-        }
+            token.to_string()
+        };
+        output.push('`');
+        output.push_str(&paint_code(&rendered));
         output.push('`');
         rest = &after_start[end + 1..];
     }
@@ -17350,6 +17351,20 @@ execution:
         assert!(
             !rendered.contains("\n\nNext: run `ota tasks --use` to inspect runnable task usage")
         );
+    }
+
+    #[test]
+    fn stylize_text_failure_routes_backticked_ota_commands_through_command_painter() {
+        let rendered = stylize_text_failure(
+            "ota run",
+            "task failed\nNext: rerun `ota up --mode container`",
+        );
+
+        assert!(rendered.contains(&format!(
+            "Next: rerun `{}`",
+            super::paint_code("ota up --mode container")
+        )));
+        assert!(strip_ansi_codes(&rendered).contains("Next: rerun `ota up --mode container`"));
     }
 
     #[test]
