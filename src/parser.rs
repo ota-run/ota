@@ -22,9 +22,9 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::UNIX_EPOCH;
 
 use serde_yaml::{Mapping, Value};
 
@@ -35,8 +35,7 @@ static CONTRACT_CACHE: OnceLock<Mutex<HashMap<ContractCacheKey, Contract>>> = On
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ContractCacheKey {
     path: PathBuf,
-    len: u64,
-    modified_nanos: Option<u128>,
+    fingerprint: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -64,12 +63,12 @@ pub enum LoadContractError {
 }
 
 pub fn load_contract(path: &Path) -> Result<Contract, LoadContractError> {
-    let key = contract_cache_key(path)?;
+    let contents = read_contract_contents(path)?;
+    let key = contract_cache_key(path, &contents);
     if let Some(contract) = contract_cache().lock().unwrap().get(&key).cloned() {
         return Ok(contract);
     }
 
-    let contents = read_contract_contents(path)?;
     let contract = parse_contract_str(path, &contents)?;
     contract_cache()
         .lock()
@@ -152,24 +151,17 @@ fn contract_cache() -> &'static Mutex<HashMap<ContractCacheKey, Contract>> {
     CONTRACT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn contract_cache_key(path: &Path) -> Result<ContractCacheKey, LoadContractError> {
-    let metadata = fs::metadata(path).map_err(|source| LoadContractError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
+pub(crate) fn content_fingerprint(contents: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    contents.hash(&mut hasher);
+    hasher.finish()
+}
 
-    let modified_nanos = metadata.modified().ok().and_then(|modified| {
-        modified
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|duration| duration.as_nanos())
-    });
-
-    Ok(ContractCacheKey {
-        path: path.to_path_buf(),
-        len: metadata.len(),
-        modified_nanos,
-    })
+fn contract_cache_key(path: &Path, contents: &str) -> ContractCacheKey {
+    ContractCacheKey {
+        path: normalized_path_identity(path),
+        fingerprint: content_fingerprint(contents),
+    }
 }
 
 fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContractError> {
@@ -424,6 +416,38 @@ project:
 
         let second = super::load_contract(&contract_path).unwrap();
         assert_eq!(second.project.name, "alphabet");
+    }
+
+    #[test]
+    fn load_contract_reloads_when_same_length_file_changes() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: alpha
+"#,
+        )
+        .unwrap();
+
+        let first = super::load_contract(&contract_path).unwrap();
+        assert_eq!(first.project.name, "alpha");
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: bravo
+"#,
+        )
+        .unwrap();
+
+        let second = super::load_contract(&contract_path).unwrap();
+        assert_eq!(second.project.name, "bravo");
     }
 
     #[test]

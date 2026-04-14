@@ -25,7 +25,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,7 +34,9 @@ use crate::doctor::{
 };
 use crate::execution::{format_backend, format_lifecycle};
 use crate::output::DoctorVerdict;
-use crate::parser::{LoadContractError, load_contract, normalized_path_identity};
+use crate::parser::{
+    LoadContractError, content_fingerprint, load_contract, normalized_path_identity,
+};
 use crate::runner::policy_env_values;
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
@@ -48,8 +49,7 @@ static WORKSPACE_CACHE: OnceLock<Mutex<HashMap<WorkspaceCacheKey, WorkspaceContr
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct WorkspaceCacheKey {
     path: PathBuf,
-    len: u64,
-    modified_nanos: Option<u128>,
+    fingerprint: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -308,15 +308,14 @@ impl WorkspaceValidationErrors {
 }
 
 pub fn load_workspace_contract(path: &Path) -> Result<WorkspaceContract, LoadWorkspaceError> {
-    let key = workspace_cache_key(path)?;
-    if let Some(contract) = workspace_cache().lock().unwrap().get(&key).cloned() {
-        return Ok(contract);
-    }
-
     let contents = fs::read_to_string(path).map_err(|source| LoadWorkspaceError::Read {
         path: path.display().to_string(),
         source,
     })?;
+    let key = workspace_cache_key(path, &contents);
+    if let Some(contract) = workspace_cache().lock().unwrap().get(&key).cloned() {
+        return Ok(contract);
+    }
 
     let contract = parse_workspace_contract_str(path, &contents)?;
     workspace_cache()
@@ -340,24 +339,11 @@ fn workspace_cache() -> &'static Mutex<HashMap<WorkspaceCacheKey, WorkspaceContr
     WORKSPACE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn workspace_cache_key(path: &Path) -> Result<WorkspaceCacheKey, LoadWorkspaceError> {
-    let metadata = fs::metadata(path).map_err(|source| LoadWorkspaceError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
-
-    let modified_nanos = metadata.modified().ok().and_then(|modified| {
-        modified
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|duration| duration.as_nanos())
-    });
-
-    Ok(WorkspaceCacheKey {
-        path: path.to_path_buf(),
-        len: metadata.len(),
-        modified_nanos,
-    })
+fn workspace_cache_key(path: &Path, contents: &str) -> WorkspaceCacheKey {
+    WorkspaceCacheKey {
+        path: normalized_path_identity(path),
+        fingerprint: content_fingerprint(contents),
+    }
 }
 
 pub fn validate_workspace_contract(
@@ -1171,6 +1157,44 @@ repos:
 
         let second = load_workspace_contract(&workspace_path).unwrap();
         assert_eq!(second.workspace.name, "demo-workspace");
+    }
+
+    #[test]
+    fn load_workspace_contract_reloads_when_same_length_file_changes() {
+        let fixture = TempDir::new().unwrap();
+        let workspace_path = fixture.path().join("ota.workspace.yaml");
+
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let first = load_workspace_contract(&workspace_path).unwrap();
+        assert_eq!(first.workspace.name, "demo");
+
+        std::fs::write(
+            &workspace_path,
+            r#"
+version: 1
+workspace:
+  name: live
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let second = load_workspace_contract(&workspace_path).unwrap();
+        assert_eq!(second.workspace.name, "live");
     }
 
     #[test]
