@@ -858,6 +858,10 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    static RUN_WITH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    let _run_guard = RUN_WITH_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
     struct RunStateGuard {
         original_plain_mode: bool,
         original_concise_mode: bool,
@@ -5285,6 +5289,7 @@ tasks:
 
     #[test]
     fn receipt_json_includes_compact_contract_identity() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5359,6 +5364,7 @@ checks:
 
     #[test]
     fn receipt_text_renders_contract_identity_block() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
