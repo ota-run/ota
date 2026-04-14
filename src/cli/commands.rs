@@ -2690,16 +2690,11 @@ fn render_policy_review_text(
                     value
                 )
             });
-            let source_block = source_line
-                .as_ref()
-                .map(|value| format!("\n{}", value))
-                .unwrap_or_default();
             stdout.push_str("\n\n");
             stdout.push_str(&format!(
-                "{}  {}{}",
+                "{}  {}",
                 render_severity(finding.severity),
                 render_finding_summary(finding.severity, &finding.summary),
-                source_block,
             ));
             append_wrapped_labeled_text(
                 &mut stdout,
@@ -2711,6 +2706,10 @@ fn render_policy_review_text(
                 |key| finding_detail_key(finding.severity, key),
                 |value| render_backticked_text(value, None),
             );
+            if let Some(source_line) = source_line.as_deref() {
+                stdout.push('\n');
+                stdout.push_str(source_line);
+            }
             append_wrapped_labeled_text(
                 &mut stdout,
                 "Next:",
@@ -13634,16 +13633,6 @@ fn render_grouped_doctor_findings(
             |value| render_backticked_text(value, contract_path),
         );
     }
-    for item in display_items {
-        append_wrapped_bullet_text(
-            &mut stdout,
-            finding_detail_bullet(group.severity),
-            &item,
-            "  ",
-            84,
-            |value| render_backticked_text(value, contract_path),
-        );
-    }
     if let Some(source) = group
         .findings
         .iter()
@@ -13661,6 +13650,16 @@ fn render_grouped_doctor_findings(
             finding_detail_key(group.severity, "Provenance:"),
             provenance
         ));
+    }
+    for item in display_items {
+        append_wrapped_bullet_text(
+            &mut stdout,
+            finding_detail_bullet(group.severity),
+            &item,
+            "  ",
+            84,
+            |value| render_backticked_text(value, contract_path),
+        );
     }
     append_wrapped_labeled_text(
         &mut stdout,
@@ -15800,6 +15799,20 @@ mod tests {
         assert!(text.contains(
             "use this policy surface when provisioning or bootstrap needs an approved source"
         ));
+
+        let policy_group = &text[text
+            .find("Review approved policy surfaces (2)")
+            .expect("policy group")..];
+        let why = policy_group.find("Why:").expect("why");
+        let provenance = policy_group.find("Provenance:").expect("provenance");
+        let item = policy_group
+            .find("» Policy-backed provisioning sources are declared")
+            .expect("item");
+        let next = policy_group.find("Next:").expect("next");
+
+        assert!(why < provenance);
+        assert!(provenance < item);
+        assert!(item < next);
     }
 
     #[test]
@@ -15846,6 +15859,48 @@ mod tests {
 
         assert!(why < provenance);
         assert!(provenance < next);
+    }
+
+    #[test]
+    fn policy_review_single_finding_renders_source_after_why() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Repo does not satisfy org policy pack"),
+                why: String::from(
+                    "`./.ota/org-policy.yaml` requires `AGENTS.md`, but the repo does not declare it",
+                ),
+                next: String::from(
+                    "declare `AGENTS.md` in the repo or repair the org policy pack before rerunning `ota policy review`",
+                ),
+            }],
+        };
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
+            source: PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_review_text(
+            "./ota.yaml",
+            "repo policy",
+            Some("./.ota/org-policy.yaml"),
+            Some(&loaded),
+            &report,
+        ));
+
+        let why = text.find("Why:").expect("why");
+        let source = text.find("Source:").expect("source");
+        let next = text.find("Next:").expect("next");
+
+        assert!(why < source);
+        assert!(source < next);
     }
 
     #[test]
