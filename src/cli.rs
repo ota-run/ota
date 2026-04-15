@@ -597,7 +597,7 @@ enum UpdateChannel {
     Latest,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum CompletionShell {
     Bash,
     Zsh,
@@ -2628,14 +2628,16 @@ fn completion_setup_target_path(
 fn completion_support_target_path(
     shell: CompletionShell,
     home_dir: Option<&Path>,
-    xdg_config_home: Option<&Path>,
 ) -> Option<PathBuf> {
     let home_dir = home_dir?;
-    let xdg_config_dir = xdg_config_home
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| home_dir.join(".config"));
     match shell {
-        CompletionShell::Zsh => Some(xdg_config_dir.join("ota").join("zsh").join("_ota")),
+        CompletionShell::Zsh => Some(
+            home_dir
+                .join(".config")
+                .join("ota")
+                .join("zsh")
+                .join("_ota"),
+        ),
         _ => None,
     }
 }
@@ -2648,6 +2650,21 @@ fn completion_setup_target_label(shell: CompletionShell) -> &'static str {
         CompletionShell::Powershell => "$PROFILE",
         CompletionShell::Elvish => "~/.elvish/rc.elv",
     }
+}
+
+fn completion_support_target_label(shell: CompletionShell) -> Option<&'static str> {
+    match shell {
+        CompletionShell::Zsh => Some("~/.config/ota/zsh/_ota"),
+        _ => None,
+    }
+}
+
+fn shell_double_quote(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
 }
 
 fn render_zsh_completion_file() -> String {
@@ -2690,28 +2707,39 @@ _ota() {
     )
 }
 
-fn completion_setup_snippet(shell: CompletionShell) -> &'static str {
+fn render_zsh_completion_setup_snippet(support_target: &str) -> String {
+    format!(
+        "if command -v ota >/dev/null 2>&1; then\n  _ota_completion_file=\"{support_target}\"\n  if [[ -f \"$_ota_completion_file\" ]]; then\n    _ota_completion_dir=\"${{_ota_completion_file:h}}\"\n    if (( ${{fpath[(Ie)$_ota_completion_dir]}} == 0 )); then\n      fpath=(\"$_ota_completion_dir\" $fpath)\n    fi\n    autoload -Uz _ota 2>/dev/null\n    if typeset -p _comps >/dev/null 2>&1; then\n      _comps[ota]=_ota\n    elif whence compdef >/dev/null 2>&1; then\n      compdef _ota ota\n    else\n      autoload -Uz compinit\n      compinit\n      _comps[ota]=_ota\n    fi\n  fi\n  unset _ota_completion_file _ota_completion_dir\nfi"
+    )
+}
+
+fn completion_setup_snippet(shell: CompletionShell, support_target: Option<&Path>) -> String {
     match shell {
-        CompletionShell::Bash => {
-            "if command -v ota >/dev/null 2>&1; then\n  source <(COMPLETE=bash ota)\nfi"
+        CompletionShell::Bash => String::from(
+            "if command -v ota >/dev/null 2>&1; then\n  source <(COMPLETE=bash ota)\nfi",
+        ),
+        CompletionShell::Zsh => render_zsh_completion_setup_snippet(&shell_double_quote(
+            &support_target
+                .expect("zsh completion setup requires a support target")
+                .display()
+                .to_string(),
+        )),
+        CompletionShell::Fish => {
+            String::from("if type -q ota\n    COMPLETE=fish ota | source\nend")
         }
-        CompletionShell::Zsh => {
-            "if command -v ota >/dev/null 2>&1; then\n  _ota_completion_dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/ota/zsh\"\n  if [[ -d \"$_ota_completion_dir\" ]]; then\n    if (( ${fpath[(Ie)$_ota_completion_dir]} == 0 )); then\n      fpath=(\"$_ota_completion_dir\" $fpath)\n    fi\n    autoload -Uz _ota 2>/dev/null\n    if typeset -p _comps >/dev/null 2>&1; then\n      _comps[ota]=_ota\n    elif whence compdef >/dev/null 2>&1; then\n      compdef _ota ota\n    else\n      autoload -Uz compinit\n      compinit\n    fi\n  fi\n  unset _ota_completion_dir\nfi"
-        }
-        CompletionShell::Fish => "if type -q ota\n    COMPLETE=fish ota | source\nend",
-        CompletionShell::Powershell => {
-            "if (Get-Command ota -ErrorAction SilentlyContinue) {\n  $env:COMPLETE = \"powershell\"\n  ota | Out-String | Invoke-Expression\n  Remove-Item Env:\\COMPLETE -ErrorAction SilentlyContinue\n}"
-        }
-        CompletionShell::Elvish => {
-            "if (has-external-command ota) {\n  eval (E:COMPLETE=elvish ota | slurp)\n}"
-        }
+        CompletionShell::Powershell => String::from(
+            "if (Get-Command ota -ErrorAction SilentlyContinue) {\n  $env:COMPLETE = \"powershell\"\n  ota | Out-String | Invoke-Expression\n  Remove-Item Env:\\COMPLETE -ErrorAction SilentlyContinue\n}",
+        ),
+        CompletionShell::Elvish => String::from(
+            "if (has-external-command ota) {\n  eval (E:COMPLETE=elvish ota | slurp)\n}",
+        ),
     }
 }
 
-fn completion_setup_block(shell: CompletionShell) -> String {
+fn completion_setup_block(shell: CompletionShell, support_target: Option<&Path>) -> String {
     format!(
         "{COMPLETION_SETUP_MARKER_START}\n{}\n{COMPLETION_SETUP_MARKER_END}\n",
-        completion_setup_snippet(shell)
+        completion_setup_snippet(shell, support_target)
     )
 }
 
@@ -2780,16 +2808,16 @@ fn completion_setup_plan(shell: CompletionShell) -> Result<CompletionSetupPlan, 
     let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
     let target =
         completion_setup_target_path(shell, home_dir.as_deref(), xdg_config_home.as_deref())?;
-    let support_target =
-        completion_support_target_path(shell, home_dir.as_deref(), xdg_config_home.as_deref());
+    let support_target = completion_support_target_path(shell, home_dir.as_deref());
     let support_contents = match shell {
         CompletionShell::Zsh => Some(render_zsh_completion_file()),
         _ => None,
     };
+    let block = completion_setup_block(shell, support_target.as_deref());
     Ok(CompletionSetupPlan {
         shell,
         target,
-        block: completion_setup_block(shell),
+        block,
         support_target,
         support_contents,
     })
@@ -2966,11 +2994,28 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
 }
 
 fn render_completion_instructions(shell: CompletionShell) -> String {
+    if shell == CompletionShell::Zsh {
+        let support_label = completion_support_target_label(shell)
+            .expect("zsh completion should have a support label");
+        let block = format!(
+            "{COMPLETION_SETUP_MARKER_START}\n{}\n{COMPLETION_SETUP_MARKER_END}",
+            render_zsh_completion_setup_snippet("$HOME/.config/ota/zsh/_ota"),
+        );
+        return format!(
+            "Auto setup:\nota completion {} --setup\n\nManual completion file ({}):\n{}\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+            completion_shell_name(shell),
+            support_label,
+            render_zsh_completion_file().trim_end(),
+            completion_setup_target_label(shell),
+            block,
+        );
+    }
+
     format!(
         "Auto setup:\nota completion {} --setup\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
         completion_shell_name(shell),
         completion_setup_target_label(shell),
-        completion_setup_block(shell).trim_end()
+        completion_setup_block(shell, None).trim_end()
     )
 }
 
@@ -16456,7 +16501,17 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("ota completion zsh --setup"));
-        assert!(output.stdout.contains("_ota_completion_dir"));
+        assert!(
+            output
+                .stdout
+                .contains("Manual completion file (~/.config/ota/zsh/_ota):")
+        );
+        assert!(output.stdout.contains("#compdef ota"));
+        assert!(
+            output
+                .stdout
+                .contains("_ota_completion_file=\"$HOME/.config/ota/zsh/_ota\"")
+        );
         assert!(output.stdout.contains("_comps[ota]=_ota"));
         assert!(
             output
@@ -16535,6 +16590,44 @@ edition = "2024"
             fs::read_to_string(&completion_file).expect("zsh completion file should exist");
         assert!(completion_written.contains("#compdef ota"));
         assert!(completion_written.contains("_ota()"));
+    }
+
+    #[test]
+    fn completion_setup_zsh_uses_stable_support_path_even_with_custom_xdg_config_home() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let custom_xdg_config_home = dir.path().join("custom-xdg");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            custom_xdg_config_home.as_os_str().to_os_string(),
+        );
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
+
+        let output = run_with(["ota", "completion", "--setup"]);
+
+        assert_eq!(output.exit_code, 0);
+        let profile = dir.path().join(".zshrc");
+        let written = fs::read_to_string(&profile).expect("completion profile should exist");
+        let completion_file = dir
+            .path()
+            .join(".config")
+            .join("ota")
+            .join("zsh")
+            .join("_ota");
+        assert!(
+            completion_file.exists(),
+            "stable zsh completion file should exist"
+        );
+        assert!(written.contains(&completion_file.display().to_string()));
+        assert!(!written.contains("XDG_CONFIG_HOME"));
+        assert!(
+            !custom_xdg_config_home
+                .join("ota")
+                .join("zsh")
+                .join("_ota")
+                .exists()
+        );
     }
 
     #[test]
