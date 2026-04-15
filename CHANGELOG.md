@@ -30,7 +30,7 @@
 - added `ota execution plan` as a read-only execution inspector so users and automation can see the resolved backend, lifecycle, image, engine selection, target strategy, compact contract identity, and effective overrides without running `ota up` or `ota run`.
 - added `ota workspace execution plan` as the workspace-level execution inspector so users and automation can see per-repo resolved backend, lifecycle, image/provider/target selection, compact repo contract identity, and honest unrunnable execution failures without running `ota workspace up` or `ota workspace run`.
 - tightened execution and dry-run detail rows so `Execution`, `Contract`, `Plan`, and `Dry run only` sections now render `→ Label: value` without the extra padded spacing around the arrow.
-- added shell-completion guidance with contract-aware dynamic suggestions so `ota <TAB>` completes commands, `ota run <TAB>` completes task names from the active contract, and `ota run <task> <TAB>` completes declared task input flags plus allowed values.
+- added shell-completion guidance with contract-aware dynamic suggestions so `ota <TAB>` completes commands, `ota run <TAB>` completes task names from the active contract, `ota run <task> <TAB>` completes declared task input flags plus allowed values, `--member <TAB>` completes monorepo member names, and workspace task/repo filters complete from the active workspace contract while keeping `ota workspace run <TAB>` limited to workspace-wide runnable tasks.
 
 ## 1.4.13
 

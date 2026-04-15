@@ -306,7 +306,7 @@ Current behavior:
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
-- `ota completion <shell>` shows how to enable shell completion; once sourced, `ota <TAB>` completes commands, `ota run <TAB>` completes task names, and `ota run <task> <TAB>` completes declared task input flags
+- `ota completion <shell>` shows how to enable shell completion; once sourced, `ota <TAB>` completes commands, `ota run <TAB>` completes task names, `ota run <task> <TAB>` completes declared task input flags, `--member <TAB>` completes monorepo member names, and workspace completion suggests workspace-wide runnable task names plus declared repo names
 - `ota detect --write` writes a contract conservatively from `high` confidence fields only
 - `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing and surfaces stale contract fields that no longer match repo reality
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
