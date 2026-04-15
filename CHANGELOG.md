@@ -29,6 +29,10 @@
 - added `ota execution plan` as a read-only execution inspector so users and automation can see the resolved backend, lifecycle, image, engine selection, target strategy, compact contract identity, and effective overrides without running `ota up` or `ota run`.
 - tightened execution and dry-run detail rows so `Execution`, `Contract`, `Plan`, and `Dry run only` sections now render `→ Label: value` without the extra padded spacing around the arrow.
 
+## 1.4.13
+
+- made receipt archive parsing backward compatible with older archived receipts that do not carry `contract_identity.execution.supported`, so baseline history and receipt compare flows keep working across schema drift.
+
 ## 1.4.12
 
 - stabilized the release-gate test harness under parallel execution by serializing CLI test invocations and locking cwd-sensitive receipt fixtures so macOS CI no longer races the compact contract identity checks.

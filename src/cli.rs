@@ -4423,6 +4423,54 @@ tasks:
     }
 
     #[test]
+    fn receipt_history_accepts_archives_missing_supported_execution_field() {
+        let fixture = ContractFixture::new_dir();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            r#"
+{
+  "ok": true,
+  "mode": "receipt",
+  "summary": {},
+  "receipt": {
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "receipt-demo"
+      },
+      "execution": {
+        "preferred": "native",
+        "lifecycle": "ephemeral"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 1
+      }
+    }
+  },
+  "findings": []
+}
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", "--history", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["summary"]["archive_count"], 1);
+        assert_eq!(json["summary"]["invalid_archive_count"], 0);
+        assert_eq!(json["archives"].as_array().unwrap().len(), 1);
+        assert_eq!(json["archives"][0]["contract"], "./ota.yaml");
+    }
+
+    #[test]
     fn receipt_history_rejects_non_contract_file_paths() {
         let fixture = ContractFixture::new_dir();
         fixture.write("README.md", "# docs\n");
