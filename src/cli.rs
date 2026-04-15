@@ -4537,6 +4537,81 @@ tasks:
     }
 
     #[test]
+    fn receipt_diff_accepts_baselines_missing_supported_execution_field() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  demo:
+    run: echo ok
+"#,
+        );
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260414-183513-599Z.json",
+            r#"
+{
+  "ok": true,
+  "mode": "receipt",
+  "summary": {},
+  "receipt": {
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "receipt-demo"
+      },
+      "execution": {
+        "preferred": "native",
+        "lifecycle": "ephemeral"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 1
+      }
+    }
+  },
+  "findings": []
+}
+"#,
+        );
+
+        let baseline_path = fixture
+            .dir
+            .path()
+            .join(".ota/receipts/repo-receipt-20260414-183513-599Z.json");
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            baseline_path.to_str().unwrap(),
+            "--fail-on-new-blockers",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "diff");
+        assert_eq!(json["baseline"]["source"], "file");
+        assert_eq!(
+            json["baseline"]["contract_identity_details"]["execution"]["preferred"],
+            "native"
+        );
+        assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
+        assert_eq!(json["gate"]["passed"], true);
+    }
+
+    #[test]
     fn receipt_history_rejects_non_contract_file_paths() {
         let fixture = ContractFixture::new_dir();
         fixture.write("README.md", "# docs\n");
