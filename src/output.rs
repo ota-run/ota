@@ -233,7 +233,7 @@ pub struct ContractIdentityExecution {
     pub preferred: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
