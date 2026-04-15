@@ -252,15 +252,16 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
     contract
 }
 
-fn pack_task(task_name: &str, run: &str, note: Option<String>) -> DetectTask {
+fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectTask {
     let mut notes = String::from("Run `ota run ");
     notes.push_str(task_name);
     notes.push_str("` to execute this task.\n");
-    if let Some(note) = note {
+    if let Some(note) = description.as_deref() {
         notes.push_str(&note);
     }
 
     DetectTask {
+        description,
         run: String::from(run),
         notes: Some(notes),
         safe_for_agent: false,

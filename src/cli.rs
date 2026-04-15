@@ -29,6 +29,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use clap::builder::StyledStr;
 use clap::{
     Arg, ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, error::ErrorKind,
 };
@@ -88,7 +89,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one monorepo member declared by the root contract.
-        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
+        #[arg(long)]
         member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -271,7 +272,12 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Compare the current receipt against `promoted`, `latest`, or an archived receipt JSON file.
-        #[arg(long, value_name = "BASELINE", conflicts_with_all = ["archive", "history"])]
+        #[arg(
+            long,
+            value_name = "BASELINE",
+            conflicts_with_all = ["archive", "history"],
+            add = ArgValueCompleter::new(complete_receipt_baseline_candidates)
+        )]
         baseline: Option<String>,
         /// Exit with status 1 when the baseline diff introduces new error findings.
         #[arg(
@@ -507,7 +513,7 @@ enum ExecutionCommands {
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
         ephemeral: bool,
         /// Inspect one merged monorepo member contract declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -1424,10 +1430,10 @@ fn complete_env_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCand
         return Vec::new();
     };
 
-    load_repo_run_task_names(&contract_path, &members)
+    load_repo_run_task_candidates(&contract_path, &members)
         .into_iter()
-        .filter(|name| current.is_empty() || name.starts_with(current))
-        .map(CompletionCandidate::new)
+        .filter(|candidate| current.is_empty() || candidate.name.starts_with(current))
+        .map(completion_task_candidate)
         .collect()
 }
 
@@ -1452,15 +1458,72 @@ fn complete_extension_name_candidates(current: &std::ffi::OsStr) -> Vec<Completi
         .collect()
 }
 
+fn load_receipt_baseline_candidates(contract_path: Option<&Path>) -> Vec<String> {
+    let mut candidates = vec![String::from("latest"), String::from("promoted")];
+
+    let Some(contract_path) = contract_path else {
+        return candidates;
+    };
+    let Some(repo_root) = contract_path.parent() else {
+        return candidates;
+    };
+    let receipts_dir = repo_root.join(".ota").join("receipts");
+    let cwd = std::env::current_dir().ok();
+
+    let mut archived = std::fs::read_dir(receipts_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .map(|path| {
+            cwd.as_ref()
+                .and_then(|cwd| path.strip_prefix(cwd).ok().map(PathBuf::from))
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    archived.sort();
+    archived.dedup();
+    candidates.extend(archived);
+    candidates
+}
+
+fn complete_receipt_baseline_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let contract_path = resolve_completion_contract_path(explicit_path.as_deref(), &words);
+
+    load_receipt_baseline_candidates(contract_path.as_deref())
+        .into_iter()
+        .filter(|candidate| current.is_empty() || candidate.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
 fn load_workspace_repo_names(workspace_path: &Path) -> Vec<String> {
     crate::workspace::load_workspace_contract(workspace_path)
         .map(|workspace| workspace.repos.keys().cloned().collect())
         .unwrap_or_default()
 }
 
-fn shared_task_names_from_contracts(
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompletionTaskCandidate {
+    name: String,
+    description: Option<String>,
+}
+
+fn shared_task_candidates_from_contracts(
     contracts: impl IntoIterator<Item = crate::schema::Contract>,
-) -> Vec<String> {
+) -> Vec<CompletionTaskCandidate> {
     let contracts = contracts.into_iter().collect::<Vec<_>>();
     let mut shared: Option<std::collections::BTreeSet<String>> = None;
 
@@ -1480,6 +1543,24 @@ fn shared_task_names_from_contracts(
         .unwrap_or_default()
         .into_iter()
         .filter(|task| task_is_satisfiable_across_contracts(&contracts, task))
+        .map(|name| {
+            let descriptions = contracts
+                .iter()
+                .map(|contract| {
+                    contract
+                        .tasks
+                        .get(&name)
+                        .and_then(|task| task.description.clone())
+                })
+                .collect::<Vec<_>>();
+            let first = descriptions.first().cloned().unwrap_or(None);
+            let description = descriptions
+                .iter()
+                .all(|description| *description == first)
+                .then_some(first)
+                .flatten();
+            CompletionTaskCandidate { name, description }
+        })
         .collect()
 }
 
@@ -1670,8 +1751,8 @@ fn load_workspace_contracts(workspace_path: &Path) -> Vec<crate::schema::Contrac
     contracts
 }
 
-fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
-    shared_task_names_from_contracts(load_workspace_contracts(workspace_path))
+fn load_workspace_task_candidates(workspace_path: &Path) -> Vec<CompletionTaskCandidate> {
+    shared_task_candidates_from_contracts(load_workspace_contracts(workspace_path))
 }
 
 fn load_workspace_run_task_inputs(
@@ -1710,10 +1791,10 @@ fn complete_workspace_run_task_candidates(current: &std::ffi::OsStr) -> Vec<Comp
         return Vec::new();
     };
 
-    load_workspace_task_names(&workspace_path)
+    load_workspace_task_candidates(&workspace_path)
         .into_iter()
-        .filter(|name| current.is_empty() || name.starts_with(current))
-        .map(CompletionCandidate::new)
+        .filter(|candidate| current.is_empty() || candidate.name.starts_with(current))
+        .map(completion_task_candidate)
         .collect()
 }
 
@@ -1862,10 +1943,13 @@ fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionCon
     context
 }
 
-fn load_repo_run_task_names(contract_path: &Path, members: &[String]) -> Vec<String> {
+fn load_repo_run_task_candidates(
+    contract_path: &Path,
+    members: &[String],
+) -> Vec<CompletionTaskCandidate> {
     if members.is_empty() {
         if let Ok(contract) = crate::parser::load_contract(contract_path) {
-            return shared_task_names_from_contracts([contract]);
+            return shared_task_candidates_from_contracts([contract]);
         }
     } else {
         let mut contracts = Vec::new();
@@ -1878,7 +1962,7 @@ fn load_repo_run_task_names(contract_path: &Path, members: &[String]) -> Vec<Str
                 return Vec::new();
             }
         }
-        return shared_task_names_from_contracts(contracts);
+        return shared_task_candidates_from_contracts(contracts);
     }
 
     Vec::new()
@@ -2016,11 +2100,15 @@ fn complete_repo_run_task_candidates(current: &std::ffi::OsStr) -> Vec<Completio
         return Vec::new();
     };
 
-    load_repo_run_task_names(&contract_path, &context.members)
+    load_repo_run_task_candidates(&contract_path, &context.members)
         .into_iter()
-        .filter(|name| name.starts_with(current))
-        .map(CompletionCandidate::new)
+        .filter(|candidate| candidate.name.starts_with(current))
+        .map(completion_task_candidate)
         .collect()
+}
+
+fn completion_task_candidate(candidate: CompletionTaskCandidate) -> CompletionCandidate {
+    CompletionCandidate::new(candidate.name).help(candidate.description.map(StyledStr::from))
 }
 
 fn complete_repo_run_input_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
@@ -3853,8 +3941,8 @@ mod tests {
     use super::{
         COMPLETION_SETUP_MARKER_START, Cli, Commands, CompletionRequest, CompletionRequestGuard,
         PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines, commands,
-        complete_repo_run_task_candidates, completion_command, maybe_append_update_notice,
-        maybe_handle_shell_completion, run_with,
+        complete_repo_run_task_candidates, completion_command, load_repo_run_task_candidates,
+        maybe_append_update_notice, maybe_handle_shell_completion, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -12741,10 +12829,13 @@ agent:
         assert!(written.contains("severity: error"));
         assert!(written.contains("run: node --version"));
         assert!(written.contains("setup:"));
+        assert!(written.contains("description: Install repo dependencies."));
         assert!(written.contains("run: pnpm install"));
         assert!(written.contains("dev:"));
+        assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("test:"));
+        assert!(written.contains("description: Run the default automated test command."));
         assert!(written.contains("run: pnpm test"));
     }
 
@@ -12771,6 +12862,14 @@ agent:
         assert_eq!(json["inferred"], json!([]));
         assert_eq!(json["config"]["runtimes"]["python"], "3.12");
         assert_eq!(json["config"]["checks"][0]["name"], "python-installed");
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["description"],
+            "Install Python dependencies from requirements.txt."
+        );
+        assert_eq!(
+            json["config"]["tasks"]["test"]["description"],
+            "Run the default Python test command."
+        );
         let provenance = json["provenance"].as_array().expect("provenance array");
         let project_name = provenance
             .iter()
@@ -16378,6 +16477,38 @@ edition = "2024"
     }
 
     #[test]
+    fn repo_run_task_completion_candidates_include_task_descriptions() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    description: Prepare the repo
+    run: echo setup
+  test:
+    description: Run tests
+    run: echo test
+"#,
+        );
+
+        let candidates = load_repo_run_task_candidates(fixture.file_path(), &[]);
+
+        let setup = candidates
+            .iter()
+            .find(|candidate| candidate.name == "setup")
+            .expect("setup completion candidate");
+        assert_eq!(setup.description.as_deref(), Some("Prepare the repo"));
+
+        let test = candidates
+            .iter()
+            .find(|candidate| candidate.name == "test")
+            .expect("test completion candidate");
+        assert_eq!(test.description.as_deref(), Some("Run tests"));
+    }
+
+    #[test]
     fn maybe_handle_shell_completion_intercepts_bash_completion_request() {
         let _guard = env_mutex_lock();
         let _complete = EnvVarGuard::set("COMPLETE", OsString::from("bash"));
@@ -16484,6 +16615,32 @@ tasks:
     }
 
     #[test]
+    fn receipt_baseline_shell_completion_suggests_literal_targets() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "receipt".into(),
+                "--baseline".into(),
+                "p".into(),
+            ],
+        });
+
+        let values = shell_completion_values(&["ota", "receipt", "--baseline", "p"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("promoted")]);
+    }
+
+    #[test]
     fn extensions_shell_completion_suggests_root_extension_names() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -16566,6 +16723,49 @@ extensions:
         .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("member-demo")]);
+    }
+
+    #[test]
+    fn receipt_baseline_shell_completion_suggests_archived_receipts() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".ota").join("receipts")).unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join(".ota")
+                .join("receipts")
+                .join("repo-receipt-20260415-120000-000Z.json"),
+            "{}",
+        )
+        .unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "receipt".into(),
+                "--baseline".into(),
+                ".ota/receipts/r".into(),
+            ],
+        });
+
+        let values =
+            shell_completion_values(&["ota", "receipt", "--baseline", ".ota/receipts/r"], 3)
+                .expect("shell completion should succeed");
+
+        assert_eq!(
+            values,
+            vec![String::from(
+                ".ota/receipts/repo-receipt-20260415-120000-000Z.json"
+            )]
+        );
     }
 
     #[test]
