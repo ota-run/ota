@@ -17325,7 +17325,7 @@ policies:
         let _guard = env_mutex_lock();
         let original_columns = env::var_os("COLUMNS");
         unsafe {
-            env::set_var("COLUMNS", "80");
+            env::set_var("COLUMNS", "160");
         }
 
         let report = DoctorReport {

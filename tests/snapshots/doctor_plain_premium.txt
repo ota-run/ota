@@ -8,7 +8,8 @@ Verdict
 
 -> Primary Blocker
 Version mismatch for runtime: node
-Why: node resolved to `24.14.1` but the contract requires `22`; ota probed `./bin/node` with `node --version`
+Why: node resolved to `24.14.1` but the contract requires `22`; ota probed
+     `./bin/node` with `node --version`
 Provenance: repo contract
 Next: run `nvm install 22 && nvm use 22` and rerun `ota doctor`
 
@@ -25,6 +26,6 @@ Agent
  -  Protected paths: `ota.yaml`, `Cargo.lock`
 
 WARN  Ephemeral lifecycle is advisory in native mode
-Provenance: repo contract
 Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.
+Provenance: repo contract
 Next: use `ota run <task>` for isolated execution; use `ota up` for readiness only

@@ -4,10 +4,12 @@
 
 Plan
  1. Fix version mismatches (1)
-  Why: one or more runtime or tool entries do not match the contract
+  Why: one or more runtime or tool entries do
+       not match the contract
   » node resolved `24.14.1`, requires `22`
     Provenance: repo contract
-  Next: install compatible runtimes and tools, then rerun `ota doctor`
+  Next: install compatible runtimes and tools,
+        then rerun `ota doctor`
 
 Overview
  »  Findings: 1
