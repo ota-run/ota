@@ -3294,6 +3294,8 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::parser::parse_contract_str;
+    #[cfg(windows)]
+    use crate::test_support::cwd_mutex_lock;
     use crate::test_support::env_mutex_lock;
     use tempfile::TempDir;
 
@@ -3787,6 +3789,7 @@ tasks:
     #[cfg(windows)]
     fn resolve_command_path_checks_current_directory_before_path() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let temp = TempDir::new().unwrap();
         let original_dir = env::current_dir().unwrap();
         let original_path = env::var_os("PATH");

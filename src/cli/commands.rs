@@ -15815,6 +15815,7 @@ mod tests {
 
     #[test]
     fn policy_text_uses_standalone_header_and_gap() {
+        let _guard = cwd_mutex_lock();
         let cwd = env::current_dir().unwrap();
         let repo = tempfile::tempdir().unwrap();
         let contract = repo.path().join("ota.yaml");

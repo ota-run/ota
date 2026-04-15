@@ -1427,7 +1427,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::test_support::env_mutex_lock;
+    use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
         OrgPolicyPack, PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
@@ -1441,6 +1441,7 @@ mod tests {
     #[test]
     fn ignores_ancestor_lookup_for_missing_bare_relative_contract_reference() {
         let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let original = env::current_dir().unwrap();
         let fixture = TempDir::new().unwrap();
         env::set_current_dir(fixture.path()).unwrap();
