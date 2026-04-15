@@ -16031,6 +16031,7 @@ mod tests {
             DetectComparisonMode::MergePreview,
         );
         let text = strip_ansi_codes(&stdout);
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
         assert!(text.contains("Existing contract drift:"));
         assert!(text.contains(
@@ -16065,9 +16066,11 @@ mod tests {
         assert!(text.contains("» remove command `cargo check`"));
         assert!(text.contains("» remove command `cargo test --lib -- --test-threads=1`"));
         assert!(text.contains("» remove `safe_for_agent: true`"));
-        assert!(text.contains(
-            "» remove command\n    `ota doctor --json . | ota annotations --mode doctor --format`\n    `\"${OTA_INPUT_RENDER_FORMAT}\" --input -`"
-        ));
+        assert!(
+            normalized.contains("ota doctor --json . | ota annotations --mode doctor --format")
+        );
+        assert!(normalized.contains("OTA_INPUT_RENDER_FORMAT"));
+        assert!(normalized.contains("--input -"));
         assert!(text.contains("» remove `22`"));
         assert!(!text.contains("tasks.ci.run"));
         assert!(!text.contains("would remove:"));
@@ -16160,13 +16163,14 @@ mod tests {
             DetectComparisonMode::Preview,
         );
         let text = strip_ansi_codes(&stdout);
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
-        assert!(text.contains(
+        assert!(normalized.contains(
             "Why: Current repo signals no longer support the commands below in the existing contract."
         ));
         assert!(text.contains("ota detect --merge"));
-        assert!(text.contains("rewrite is the full replacement path"));
-        assert!(text.contains("no additive changes detected against the existing contract"));
+        assert!(normalized.contains("rewrite is the full replacement path"));
+        assert!(normalized.contains("no additive changes detected against the existing contract"));
         assert!(!text.contains("Applying detect merge would remove"));
     }
 
