@@ -1101,7 +1101,10 @@ Use this when you need to understand what policy ota enforced, why a repo-contra
 Show how to enable shell completion for ota.
 
 ```bash
+ota completion --setup
+ota completion check
 ota completion bash
+ota completion bash --script
 ota completion zsh
 ota completion fish
 ota completion powershell
@@ -1110,7 +1113,11 @@ ota completion elvish
 
 Current behavior:
 
-- prints the shell setup line ota expects for the selected shell
+- `ota completion --setup` detects the current shell when possible and installs ota's managed hook into the shell profile or completion file idempotently
+- `ota completion <shell> --setup` installs the managed hook for one explicit shell without relying on auto-detection
+- `ota completion check` verifies the detected shell, the current ota binary path, the target profile or completion file, and whether the managed hook is present or needs refresh
+- `ota completion <shell>` prints the managed shell hook ota expects for that shell
+- `ota completion <shell> --script` prints the exact raw registration script clap generates for that shell so users can inspect the shell-side function directly
 - the setup line uses ota's dynamic completion runtime (`COMPLETE=<shell> ota`) rather than a stale generated file
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
 - once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set
@@ -1122,48 +1129,94 @@ Current behavior:
 - once the shell has sourced that setup, `ota workspace run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the currently available workspace repos
 - once the shell has sourced that setup, `ota workspace doctor --repo <TAB>` and related `--repo` filters complete declared workspace repo names
 - when no repo contract is available, shell completion falls back to static command and flag suggestions
+- the auto-installed hook is managed between `# >>> ota completion >>>` and `# <<< ota completion <<<` markers so rerunning setup updates or reuses the same block instead of appending duplicates
 - users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync
 
 Use this when you want contract-aware shell suggestions instead of memorizing task names and task input flags.
 
-Shell setup examples:
+Automatic setup:
+
+```bash
+ota completion --setup
+ota completion zsh --setup
+```
+
+Verification and inspection:
+
+```bash
+ota completion check
+ota completion bash --script
+```
+
+Manual setup examples:
 
 `bash`
 
 ```bash
 ota completion bash
-source <(COMPLETE=bash ota)
+# >>> ota completion >>>
+if command -v ota >/dev/null 2>&1; then
+  source <(COMPLETE=bash ota)
+fi
+# <<< ota completion <<<
 ```
 
 `zsh`
 
 ```zsh
 ota completion zsh
-source <(COMPLETE=zsh ota)
+# >>> ota completion >>>
+if command -v ota >/dev/null 2>&1; then
+  if ! whence compdef >/dev/null 2>&1; then
+    autoload -Uz compinit
+    compinit
+  fi
+  source <(COMPLETE=zsh ota)
+fi
+# <<< ota completion <<<
 ```
 
 `fish`
 
 ```fish
 ota completion fish
-COMPLETE=fish ota | source
+# >>> ota completion >>>
+if type -q ota
+    COMPLETE=fish ota | source
+end
+# <<< ota completion <<<
 ```
 
 `PowerShell`
 
 ```powershell
 ota completion powershell
-$env:COMPLETE = "powershell"
-ota | Out-String | Invoke-Expression
-Remove-Item Env:\COMPLETE
+# >>> ota completion >>>
+if (Get-Command ota -ErrorAction SilentlyContinue) {
+  $env:COMPLETE = "powershell"
+  ota | Out-String | Invoke-Expression
+  Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
+}
+# <<< ota completion <<<
 ```
 
 `elvish`
 
 ```elvish
 ota completion elvish
-eval (E:COMPLETE=elvish ota | slurp)
+# >>> ota completion >>>
+if (has-external-command ota) {
+  eval (E:COMPLETE=elvish ota | slurp)
+}
+# <<< ota completion <<<
 ```
+
+Troubleshooting:
+
+- `zsh`: if completions still do not appear after setup, reopen the shell or run `autoload -Uz compinit && compinit` once in the current session before retrying
+- `bash`: if completions still do not appear after setup, reopen the shell or source the profile again with `. ~/.bashrc`
+- `ota completion check` should report `Hook: present`; if it reports `missing` or `needs update`, rerun `ota completion --setup`
+- `ota completion <shell> --script` lets you inspect the exact raw registration script when the shell-side behavior itself looks wrong
 
 ## `ota uninstall`
 
