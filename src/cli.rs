@@ -2820,11 +2820,19 @@ exec /bin/sh -lc "$1"
     }
 
     fn normalize_snapshot_dynamic_fields(name: &str, value: &str) -> String {
-        if name != "help_root.txt" {
-            return value.to_string();
+        let mut normalized = value.to_string();
+        if matches!(name, "doctor_premium.txt" | "doctor_plain_premium.txt") {
+            normalized = normalized.replace(
+                "`./bin/node` with\n     `node --version`",
+                "`./bin/node` with `node --version`",
+            );
         }
 
-        value
+        if name != "help_root.txt" {
+            return normalized;
+        }
+
+        normalized
             .lines()
             .enumerate()
             .map(|(index, line)| {
@@ -8168,6 +8176,7 @@ tasks:
 
     #[test]
     fn validate_discovers_contract_from_nested_directory() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -8684,6 +8693,7 @@ tasks:
 
     #[test]
     fn doctor_reports_contract_drift_as_warning_findings() {
+        let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("ota.yaml"),
@@ -8742,6 +8752,7 @@ version = "0.1.0"
 
     #[test]
     fn doctor_ignores_manual_detected_update_for_contract_drift() {
+        let _guard = env_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("ota.yaml"),
@@ -14555,6 +14566,7 @@ edition = "2024"
 
     #[test]
     fn agents_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16337,6 +16349,7 @@ policies:
 
     #[test]
     fn up_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -16409,6 +16422,7 @@ project:
 
     #[test]
     fn workspace_validate_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -16523,6 +16537,7 @@ project:
 
     #[test]
     fn workspace_up_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -16565,6 +16580,7 @@ tasks:
 
     #[test]
     fn workspace_run_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -18452,6 +18468,7 @@ project:
 
     #[test]
     fn workspace_tasks_discovers_workspace_from_nested_directory() {
+        let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new();
         let nested = fixture.dir.path().join("apps").join("web").join("src");
         fs::create_dir_all(&nested).unwrap();
