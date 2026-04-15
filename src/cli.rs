@@ -2313,7 +2313,7 @@ mod tests {
 
     use super::{
         Cli, Commands, PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines,
-        commands, maybe_append_update_notice, run_with, update_notice_wait_timeout,
+        commands, maybe_append_update_notice, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -5666,6 +5666,7 @@ tasks:
 
     #[test]
     fn execution_plan_json_reports_resolved_container_execution_and_overrides() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5728,6 +5729,7 @@ tasks:
 
     #[test]
     fn execution_plan_text_reports_selected_member_and_resolved_target_strategy() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -7967,9 +7969,7 @@ tasks:
     #[test]
     fn waits_long_enough_for_background_update_notice() {
         let (tx, rx) = mpsc::channel();
-        let delay = update_notice_wait_timeout()
-            .checked_sub(Duration::from_millis(50))
-            .unwrap_or_else(|| Duration::from_millis(0));
+        let delay = Duration::from_millis(100);
         thread::spawn(move || {
             thread::sleep(delay);
             let _ = tx.send(Some(String::from("notice")));
@@ -14632,6 +14632,7 @@ runtimes:
         write_fake_command(&bin_dir, "node", node_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("120"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "."]);
@@ -14682,6 +14683,7 @@ runtimes:
         write_fake_command(&bin_dir, "node", node_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("120"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "--plain", "doctor", "."]);
