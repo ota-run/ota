@@ -1116,9 +1116,9 @@ Current behavior:
 - `ota completion --setup` detects the current shell when possible and installs ota's managed hook into the shell profile or completion file idempotently
 - `ota completion <shell> --setup` installs the managed hook for one explicit shell without relying on auto-detection
 - `ota completion check` verifies the detected shell, the current ota binary path, the target profile or completion file, any managed zsh completion file, and whether the managed hook is present or needs refresh
-- `ota completion <shell>` prints the managed shell hook ota expects for that shell
+- `ota completion <shell>` prints the manual shell setup ota expects for that shell; for zsh it includes both the `_ota` completion file and the `.zshrc` loader
 - `ota completion <shell> --script` prints the exact raw registration script clap generates for that shell so users can inspect the shell-side function directly
-- zsh setup writes a managed `_ota` completion file and loads it through the shell completion path instead of relying on late runtime `compdef` registration alone
+- zsh setup writes a managed `_ota` completion file under `~/.config/ota/zsh/_ota` and loads that exact file through the shell completion path instead of relying on late runtime `compdef` registration alone
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
 - once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set, and shells that support candidate help can also show each task description when the contract declares one
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the selected repo/member target set
@@ -1166,10 +1166,48 @@ fi
 
 ```zsh
 ota completion zsh
+Manual completion file (~/.config/ota/zsh/_ota):
+#compdef ota
+_ota() {
+    local _CLAP_COMPLETE_INDEX=$(expr $CURRENT - 1)
+    local _CLAP_IFS=$'\n'
+
+    local completions=("${(@f)$( \
+        _CLAP_IFS="$_CLAP_IFS" \
+        _CLAP_COMPLETE_INDEX="$_CLAP_COMPLETE_INDEX" \
+        COMPLETE="zsh" \
+        ota -- "${words[@]}" 2>/dev/null \
+    )}")
+
+    if [[ -n $completions ]]; then
+        local -a dirs=()
+        local -a other=()
+        local completion
+        for completion in $completions; do
+            local value="${completion%%:*}"
+            if [[ "$value" == */ ]]; then
+                local dir_no_slash="${value%/}"
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${completion#*:}"
+                    dirs+=("$dir_no_slash:$desc")
+                else
+                    dirs+=("$dir_no_slash")
+                fi
+            else
+                other+=("$completion")
+            fi
+        done
+        [[ -n $dirs ]] && _describe 'values' dirs -S '/' -r '/'
+        [[ -n $other ]] && _describe 'values' other
+    fi
+}
+
+Manual setup (~/.zshrc):
 # >>> ota completion >>>
 if command -v ota >/dev/null 2>&1; then
-  _ota_completion_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ota/zsh"
-  if [[ -d "$_ota_completion_dir" ]]; then
+  _ota_completion_file="$HOME/.config/ota/zsh/_ota"
+  if [[ -f "$_ota_completion_file" ]]; then
+    _ota_completion_dir="${_ota_completion_file:h}"
     if (( ${fpath[(Ie)$_ota_completion_dir]} == 0 )); then
       fpath=("$_ota_completion_dir" $fpath)
     fi
@@ -1181,9 +1219,10 @@ if command -v ota >/dev/null 2>&1; then
     else
       autoload -Uz compinit
       compinit
+      _comps[ota]=_ota
     fi
   fi
-  unset _ota_completion_dir
+  unset _ota_completion_file _ota_completion_dir
 fi
 # <<< ota completion <<<
 ```
