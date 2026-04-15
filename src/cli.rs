@@ -128,7 +128,7 @@ enum Commands {
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Inspect one task's environment requirements in addition to contract env.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_env_task_candidates))]
         task: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -313,10 +313,10 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Execute a named extension descriptor via its configured command.
-        #[arg(long, conflicts_with = "publish")]
+        #[arg(long, conflicts_with = "publish", add = ArgValueCompleter::new(complete_extension_name_candidates))]
         run: Option<String>,
         /// Publish a named extension descriptor via its configured command.
-        #[arg(long, conflicts_with = "run")]
+        #[arg(long, conflicts_with = "run", add = ArgValueCompleter::new(complete_extension_name_candidates))]
         publish: Option<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
@@ -1328,6 +1328,17 @@ fn selected_option_values(
     values
 }
 
+fn selected_repo_members_for_completion(words: &[OsString], current: &str) -> Option<Vec<String>> {
+    let members = selected_option_values(words, "--member", current)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if members.len() <= 1 {
+        Some(members)
+    } else {
+        None
+    }
+}
+
 fn load_repo_member_names(contract_path: &Path) -> Vec<String> {
     crate::parser::load_contract(contract_path)
         .ok()
@@ -1350,6 +1361,64 @@ fn complete_repo_member_candidates(current: &std::ffi::OsStr) -> Vec<CompletionC
     load_repo_member_names(&contract_path)
         .into_iter()
         .filter(|name| !selected.contains(name))
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn load_extension_names(contract_path: &Path, members: &[String]) -> Vec<String> {
+    if members.is_empty() {
+        return crate::parser::load_contract(contract_path)
+            .map(|contract| contract.extensions.keys().cloned().collect())
+            .unwrap_or_default();
+    }
+
+    if members.len() != 1 {
+        return Vec::new();
+    }
+
+    crate::parser::load_contract_for_member(contract_path, &members[0])
+        .map(|(contract, _)| contract.extensions.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn complete_env_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let Some(contract_path) = resolve_completion_contract_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+    let Some(members) = selected_repo_members_for_completion(&words, current) else {
+        return Vec::new();
+    };
+
+    load_repo_run_task_names(&contract_path, &members)
+        .into_iter()
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn complete_extension_name_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let Some(contract_path) = resolve_completion_contract_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+    let Some(members) = selected_repo_members_for_completion(&words, current) else {
+        return Vec::new();
+    };
+
+    load_extension_names(&contract_path, &members)
+        .into_iter()
         .filter(|name| current.is_empty() || name.starts_with(current))
         .map(CompletionCandidate::new)
         .collect()
@@ -15768,6 +15837,165 @@ edition = "2024"
                 .stdout
                 .contains("Reload your shell after updating ota")
         );
+    }
+
+    #[test]
+    fn completion_command_shell_guidance_snapshot_is_stable() {
+        let shells = ["bash", "zsh", "fish", "powershell", "elvish"];
+        let mut sections = Vec::new();
+
+        for shell in shells {
+            let output = run_with(["ota", "completion", shell]);
+            assert_eq!(output.exit_code, 0, "{shell} guidance should succeed");
+            sections.push(format!(
+                "$ ota completion {shell}\n{}",
+                output.stdout.trim_end()
+            ));
+        }
+
+        assert_text_snapshot("completion_guidance.txt", &sections.join("\n\n---\n\n"));
+    }
+
+    #[test]
+    fn env_task_shell_completion_respects_selected_member_contract() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  deploy:
+    run: npm run deploy
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "env".into(),
+                "--member".into(),
+                "api".into(),
+                "--task".into(),
+                "t".into(),
+            ],
+        });
+
+        let values = shell_completion_values(&["ota", "env", "--member", "api", "--task", "t"], 5)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("test")]);
+    }
+
+    #[test]
+    fn extensions_shell_completion_suggests_root_extension_names() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: extension-demo
+extensions:
+  demo:
+    kind: export_provider
+    command: ./demo
+    api_version: 1
+  backend-demo:
+    kind: backend_provider
+    command: ./backend-demo
+    api_version: 1
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "extensions".into(),
+                "--run".into(),
+                "d".into(),
+            ],
+        });
+
+        let values = shell_completion_values(&["ota", "extensions", "--run", "d"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("demo")]);
+    }
+
+    #[test]
+    fn extensions_shell_completion_respects_selected_member_contract() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+version: 1
+project:
+  name: api
+extensions:
+  member-demo:
+    kind: export_provider
+    command: ./member-demo
+    api_version: 1
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "extensions".into(),
+                "--member".into(),
+                "api".into(),
+                "--publish".into(),
+                "m".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &["ota", "extensions", "--member", "api", "--publish", "m"],
+            5,
+        )
+        .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("member-demo")]);
     }
 
     #[test]
