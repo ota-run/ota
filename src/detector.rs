@@ -71,6 +71,8 @@ pub struct DetectProject {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectTask {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub run: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -190,6 +192,7 @@ impl DetectReport {
                         contract.tasks.insert(
                             task_name.to_string(),
                             DetectTask {
+                                description: None,
                                 run: inference.value.clone(),
                                 notes,
                                 safe_for_agent: false,
@@ -3689,6 +3692,7 @@ impl DetectBuilder {
             self.contract.tasks.insert(
                 name.clone(),
                 DetectTask {
+                    description: None,
                     run: run.clone(),
                     notes,
                     safe_for_agent: false,

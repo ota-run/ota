@@ -696,7 +696,7 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
-- `--pack <node|python>` skips detector-led starter selection and seeds an explicit conventional starter contract pack
+- `--pack <node|python>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
@@ -1120,14 +1120,15 @@ Current behavior:
 - `ota completion <shell> --script` prints the exact raw registration script clap generates for that shell so users can inspect the shell-side function directly
 - the setup line uses ota's dynamic completion runtime (`COMPLETE=<shell> ota`) rather than a stale generated file
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
-- once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set
+- once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set, and shells that support candidate help can also show each task description when the contract declares one
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the selected repo/member target set
-- once the shell has sourced that setup, `ota env --task <TAB>` completes task names from the active repo or selected monorepo member
+- once the shell has sourced that setup, `ota env --task <TAB>` completes task names from the active repo or selected monorepo member, using the same task-description metadata when available
 - once the shell has sourced that setup, `ota extensions --run <TAB>` and `ota extensions --publish <TAB>` complete declared extension names for the active repo or selected member target
+- once the shell has sourced that setup, `ota receipt --baseline <TAB>` completes `latest`, `promoted`, and archived receipt JSON files from the active repo's `.ota/receipts`
 - once the shell has sourced that setup, `--member <TAB>` completes monorepo member names from the active repo contract
-- once the shell has sourced that setup, `ota workspace run <TAB>` completes task names only when one shared invocation can satisfy the currently available workspace repos
+- once the shell has sourced that setup, `ota workspace run <TAB>` completes task names only when one shared invocation can satisfy the currently available workspace repos, with shared task descriptions when the participating repos agree on that description
 - once the shell has sourced that setup, `ota workspace run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the currently available workspace repos
-- once the shell has sourced that setup, `ota workspace doctor --repo <TAB>` and related `--repo` filters complete declared workspace repo names
+- once the shell has sourced that setup, `ota workspace doctor --repo <TAB>`, `ota workspace explain --repo <TAB>`, and `ota workspace list --repo <TAB>` complete declared workspace repo names
 - when no repo contract is available, shell completion falls back to static command and flag suggestions
 - the auto-installed hook is managed between `# >>> ota completion >>>` and `# <<< ota completion <<<` markers so rerunning setup updates or reuses the same block instead of appending duplicates
 - users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync

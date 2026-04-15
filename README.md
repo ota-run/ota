@@ -301,12 +301,12 @@ Current behavior:
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, and supports `ota doctor --mode container` for container-targeted readiness
-- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`
+- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, and starter-pack tasks seed short `description` fields so users can see and refine that authoring pattern immediately
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness
 - `ota detect` (default) infers a candidate contract and prints provenance/confidence without writing
-- `ota completion --setup` auto-installs shell completion for the current shell, `ota completion check` verifies the managed hook and current binary path, and `ota completion <shell> --script` prints the raw generated registration script; once sourced, `ota <TAB>` completes commands, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set, `ota run <task> <TAB>` completes shared task input flags plus constrained values, `ota env --task <TAB>` completes task names, `ota extensions --run/--publish <TAB>` completes declared extension names, `--member <TAB>` completes monorepo member names, and workspace completion suggests workspace-wide task names only when one shared invocation can satisfy the available repos, shared workspace task inputs, and declared repo names
+- `ota completion --setup` auto-installs shell completion for the current shell, `ota completion check` verifies the managed hook and current binary path, and `ota completion <shell> --script` prints the raw generated registration script; once sourced, `ota <TAB>` completes commands, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set and now includes task descriptions when the contract declares them, `ota run <task> <TAB>` completes shared task input flags plus constrained values, `ota env --task <TAB>` completes task names, `ota extensions --run/--publish <TAB>` completes declared extension names, `ota receipt --baseline <TAB>` completes `latest`, `promoted`, and archived receipt files from the active repo, `--member <TAB>` completes monorepo member names, and workspace completion suggests workspace-wide task names only when one shared invocation can satisfy the available repos, shared workspace task inputs, and declared repo names
 - `ota detect --write` writes a contract conservatively from `high` confidence fields only
 - `ota detect --merge --dry-run` compares detected repo signals against an existing `ota.yaml` without writing and surfaces stale contract fields that no longer match repo reality
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
@@ -327,6 +327,28 @@ Current behavior:
 - `ota workspace status` combines readiness and drift into one read-only workspace summary
 - `ota workspace receipt` captures the same workspace state as a read-only receipt artifact for CI and archiving
 - editor and CI consumers should prefer `--json` surfaces such as `ota doctor --json`, `ota workspace doctor --json`, `ota workspace list --json`, and `ota up --json` instead of scraping text output
+
+### Shell completion quickstart
+
+Use the managed shell hook first:
+
+```bash
+ota completion --setup
+ota completion check
+```
+
+If auto-detection is not available or you want one explicit shell:
+
+```bash
+ota completion zsh --setup
+ota completion bash --setup
+ota completion fish --setup
+ota completion powershell --setup
+ota completion elvish --setup
+```
+
+Once the shell has sourced that hook, ota keeps completion contract-aware instead of static: repo commands complete member names, task names, and task inputs from the active contract, while workspace commands complete declared repo names and only suggest workspace task names that remain runnable across the selected repo set.
+Receipt compare flows also complete `latest`, `promoted`, and archived receipt JSON files from `.ota/receipts` so baseline selection stays discoverable at the shell.
 
 ## Execution Modes and Provisioning
 
