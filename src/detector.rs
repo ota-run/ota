@@ -56,6 +56,8 @@ pub struct DetectContract {
     pub tools: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub services: BTreeMap<String, DetectService>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<DetectCheck>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tasks: BTreeMap<String, DetectTask>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,6 +88,28 @@ pub struct DetectService {
     pub stop: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub healthcheck: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectCheck {
+    pub name: String,
+    pub kind: DetectCheckKind,
+    pub severity: DetectCheckSeverity,
+    pub run: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectCheckKind {
+    Precondition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectCheckSeverity {
+    Error,
+    Warn,
+    Info,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

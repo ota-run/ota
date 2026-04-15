@@ -161,6 +161,14 @@ ota init
 ota detect --write .
 ```
 
+If you want an explicit conventional starter instead of detector-led init, use a pack:
+
+```bash
+ota init --pack node
+# or:
+ota init --pack python --dry-run
+```
+
 ### Existing repo with `ota.yaml`, but contract drift is suspected
 
 Review the delta before writing:
