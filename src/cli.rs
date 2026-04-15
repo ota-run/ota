@@ -2692,10 +2692,13 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         CompletionSetupStatus::Updated => "updated",
         CompletionSetupStatus::AlreadyConfigured => "already configured",
     };
-    CommandOutput::success(format!(
-        "Shell: {}\nFile: {}\nStatus: {status_label}\nNext: reopen your shell so completions are active",
+    CommandOutput::success(commands::render_completion_success_text(
         completion_shell_name(plan.shell),
-        plan.target.display(),
+        &plan.target.display().to_string(),
+        Some(status_label),
+        None,
+        None,
+        "reopen your shell so completions are active",
     ))
 }
 
@@ -2742,7 +2745,16 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         plan.target.display(),
     );
     match hook {
-        CompletionHookStatus::Present => CommandOutput::success(output),
+        CompletionHookStatus::Present => {
+            CommandOutput::success(commands::render_completion_success_text(
+                completion_shell_name(shell),
+                &plan.target.display().to_string(),
+                None,
+                Some(hook_label),
+                Some(&binary.display().to_string()),
+                next,
+            ))
+        }
         CompletionHookStatus::Stale | CompletionHookStatus::Missing => {
             CommandOutput::failure(output)
         }
@@ -16273,6 +16285,7 @@ edition = "2024"
         let output = run_with(["ota", "completion", "--setup"]);
 
         assert_eq!(output.exit_code, 0);
+        assert!(strip_ansi(&output.stdout).contains("COMPLETION"));
         assert!(output.stdout.contains("Shell: zsh"));
         let profile = dir.path().join(".zshrc");
         let written = fs::read_to_string(&profile).expect("completion profile should exist");
@@ -16359,6 +16372,7 @@ edition = "2024"
         let output = run_with(["ota", "completion", "check"]);
 
         assert_eq!(output.exit_code, 0);
+        assert!(strip_ansi(&output.stdout).contains("COMPLETION"));
         assert!(output.stdout.contains("Shell: bash"));
         assert!(output.stdout.contains("Hook: present"));
     }

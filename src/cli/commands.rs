@@ -21552,6 +21552,58 @@ fn render_status_word(status: &str) -> String {
     }
 }
 
+fn render_completion_status_word(status: &str) -> String {
+    let trimmed = status.trim();
+    if plain_mode() {
+        return trimmed.to_string();
+    }
+    match trimmed {
+        "installed" | "updated" | "already configured" | "present" => {
+            paint(trimmed, "1;38;2;0;255;120")
+        }
+        "needs update" | "missing" => paint(trimmed, "1;38;2;255;235;59"),
+        other => paint(other, "1;37"),
+    }
+}
+
+pub(crate) fn render_completion_success_text(
+    shell: &str,
+    file: &str,
+    status: Option<&str>,
+    hook: Option<&str>,
+    binary: Option<&str>,
+    next: &str,
+) -> String {
+    let title = if plain_mode() {
+        String::from("COMPLETION")
+    } else {
+        paint("🦦  COMPLETION", "1")
+    };
+
+    let mut lines = vec![title, String::new()];
+    lines.push(format!("{} {}", paint_key("Shell:"), paint(shell, "1")));
+    if let Some(binary) = binary {
+        lines.push(format!("{} {}", paint_key("Binary:"), paint_code(binary)));
+    }
+    lines.push(format!("{} {}", paint_key("File:"), paint_code(file)));
+    if let Some(status) = status {
+        lines.push(format!(
+            "{} {}",
+            paint_key("Status:"),
+            render_completion_status_word(status)
+        ));
+    }
+    if let Some(hook) = hook {
+        lines.push(format!(
+            "{} {}",
+            paint_key("Hook:"),
+            render_completion_status_word(hook)
+        ));
+    }
+    lines.push(format!("{} {}", paint_key("Next:"), next));
+    lines.join("\n")
+}
+
 fn paint_why_key() -> String {
     if plain_mode() {
         return String::from("Why:");
