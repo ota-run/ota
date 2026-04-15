@@ -12223,6 +12223,15 @@ fn init_contract_provenance(
             format!("tasks.{name}.run"),
             starter_contract_source,
         );
+        if task.description.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("tasks.{name}.description"),
+                starter_contract_source,
+            );
+        }
         if task.notes.is_some() {
             provenance.push(template_field_provenance(
                 format!("tasks.{name}.notes"),
