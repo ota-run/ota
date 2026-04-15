@@ -2986,6 +2986,7 @@ project:
 
     #[test]
     fn validate_narrow_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -14632,7 +14633,7 @@ runtimes:
         write_fake_command(&bin_dir, "node", node_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
-        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("120"));
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("89"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "."]);
@@ -14683,7 +14684,7 @@ runtimes:
         write_fake_command(&bin_dir, "node", node_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
-        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("120"));
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("89"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "--plain", "doctor", "."]);
@@ -16449,6 +16450,7 @@ tasks:
 
     #[test]
     fn workspace_doctor_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
