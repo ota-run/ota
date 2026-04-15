@@ -28,6 +28,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/policy-review.json](json-schemas/policy-review.json)
 - [json-schemas/workspace-init.json](json-schemas/workspace-init.json)
 - [json-schemas/workspace-tasks.json](json-schemas/workspace-tasks.json)
+- [json-schemas/workspace-execution.json](json-schemas/workspace-execution.json)
 - [json-schemas/workspace-run.json](json-schemas/workspace-run.json)
 - [json-schemas/workspace-check.json](json-schemas/workspace-check.json)
 - [json-schemas/workspace-doctor.json](json-schemas/workspace-doctor.json)
@@ -49,6 +50,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
+- use `ota workspace execution plan --json` when you want per-repo execution resolution across a workspace without running anything
 - use `ota agents --json` when you want a repo-local `AGENTS.md` export preview or sync report
 - use `ota doctor --json` or `ota workspace doctor --json` for readiness diagnosis and blocking findings
 - use `ota policy init --json` when you want the starter org policy pack preview or write result
@@ -71,6 +73,7 @@ human text output:
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
+- `ota workspace execution plan --json`: use the top-level `summary`, per-repo `resolved`, per-repo `error` / `next`, and optional top-level `overrides`
 - `ota doctor --json` and `ota workspace doctor --json`: use the top-level `summary`, `finding_groups` when present, per-repo `findings`, and `execution`; repo doctor also includes `mode`
 - `ota workspace explain --json`: use the top-level `summary`, per-repo `findings`, and per-repo `steps` with stable codes
 - `ota workspace tasks --json`: use the top-level `summary`, per-repo `tasks`, and dependency order
@@ -255,6 +258,87 @@ Failure:
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
   "errors": ["..."]
+}
+```
+
+## `ota workspace execution plan --json`
+
+Workspace execution planning stays read-only, but reports one resolved or unresolved execution
+decision per selected repo.
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.workspace.yaml",
+  "mode": "execution-plan",
+  "summary": {
+    "repo_count": 2,
+    "resolved_count": 1,
+    "unresolved_count": 1,
+    "required_unresolved_count": 1,
+    "not_acquired_count": 0,
+    "missing_contract_count": 0
+  },
+  "overrides": {
+    "backend": "container",
+    "lifecycle": "ephemeral"
+  },
+  "repos": [
+    {
+      "name": "api",
+      "path": "/abs/path/to/services/api",
+      "contract_path": "/abs/path/to/services/api/ota.yaml",
+      "required": true,
+      "acquired": true,
+      "status": "RESOLVED",
+      "contract_identity": {
+        "version": 1,
+        "project": {
+          "name": "api"
+        },
+        "counts": {
+          "runtimes": 0,
+          "tools": 0,
+          "env": 0,
+          "services": 0,
+          "checks": 0,
+          "tasks": 1
+        }
+      },
+      "declared_execution": {
+        "preferred": "remote",
+        "supported": ["remote"],
+        "lifecycle": "ephemeral",
+        "backends": {
+          "remote": {
+            "provider": "ssh",
+            "target": "user@host",
+            "cwd": "/srv/api"
+          }
+        }
+      },
+      "resolved": {
+        "backend": "remote",
+        "backend_source": "contract preferred",
+        "lifecycle": "ephemeral",
+        "lifecycle_source": "contract lifecycle",
+        "provider": "ssh",
+        "target": "user@host",
+        "cwd": "/srv/api",
+        "target_strategy": "remote target"
+      }
+    },
+    {
+      "name": "db",
+      "path": "/abs/path/to/services/db",
+      "contract_path": "/abs/path/to/services/db/ota.yaml",
+      "required": true,
+      "acquired": true,
+      "status": "UNRESOLVED",
+      "error": "`ota execution plan` requires `execution.backends.container.image` for container execution",
+      "next": "repair `/abs/path/to/services/db/ota.yaml` so the selected execution mode is runnable, then rerun `ota workspace execution plan`"
+    }
+  ]
 }
 ```
 
@@ -1859,6 +1943,11 @@ local git drift together, includes per-repo `ready`, `readiness_status`, `drift_
 `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty` fields, and adds
 `"mode": "status"`.
 
+`ota workspace execution plan --json` uses a read-only execution roll-up. It reports one
+resolved or unresolved execution decision per selected repo, includes per-repo
+`contract_identity`, `declared_execution`, `resolved`, `error`, and `next` fields when present,
+and adds `"mode": "execution-plan"`.
+
 `ota workspace receipt --json` uses the same scan as `status`, but packages the result as a
 receipt artifact. It records the same readiness and drift detail, adds `"mode": "receipt"`, and
 keeps the receipt object available for CI or archive consumers. When `--archive` is set,
@@ -1888,7 +1977,7 @@ Optional per-repo fields:
 - `ahead`
 - `behind`
 - `dirty`
-- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`, `status` for `ota workspace status --json`, `receipt` for `ota workspace receipt --json`)
+- `mode` (`preview` for `ota workspace refresh --dry-run`, `diff` for `ota workspace diff --json`, `status` for `ota workspace status --json`, `receipt` for `ota workspace receipt --json`, `execution-plan` for `ota workspace execution plan --json`)
 
 Example acquisition/setup failure:
 

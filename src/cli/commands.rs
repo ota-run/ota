@@ -70,13 +70,14 @@ use crate::output::{
     ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
     TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
     UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExplainSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExplainReport,
-    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
-    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
-    WorkspaceStatusSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -120,8 +121,8 @@ use self::workspace_diagnostics::{
     render_workspace_doctor_text, render_workspace_explain_text,
 };
 use self::workspace_output::{
-    render_workspace_diff, render_workspace_receipt, render_workspace_refresh,
-    render_workspace_run, render_workspace_status, render_workspace_up,
+    render_workspace_diff, render_workspace_execution_plan, render_workspace_receipt,
+    render_workspace_refresh, render_workspace_run, render_workspace_status, render_workspace_up,
 };
 
 const DEFAULT_CONTRACT_FILE: &str = "ota.yaml";
@@ -7173,6 +7174,135 @@ pub fn workspace_list(
                         repos: &repos,
                     })),
                 }
+            }
+            Err(error) => match format {
+                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
+        },
+        debug,
+        debug_lines,
+    )
+}
+
+pub fn workspace_execution_plan(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    repo_filter: Option<&str>,
+    overrides: ExecutionOverrides,
+    format: OutputFormat,
+    debug: bool,
+) -> CommandOutput {
+    let resolved_path = match resolve_workspace_path(path, file_override) {
+        Ok(path) => path,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure(error.to_string()),
+                debug,
+                vec![String::from("DEBUG command=workspace.execution.plan")],
+            );
+        }
+    };
+    let path_display = resolved_path.display().to_string();
+    let compact_path_display = compact_workspace_path(&resolved_path);
+    let debug_lines = vec![
+        String::from("DEBUG command=workspace.execution.plan"),
+        format!("DEBUG workspace_path={path_display}"),
+        format!("DEBUG filter_repo={}", repo_filter.unwrap_or("-")),
+        format!(
+            "DEBUG override_backend={}",
+            overrides.backend.map(format_backend).unwrap_or("default")
+        ),
+        format!(
+            "DEBUG override_lifecycle={}",
+            overrides
+                .lifecycle
+                .map(format_lifecycle)
+                .unwrap_or("default")
+        ),
+    ];
+
+    finalize_debug(
+        match load_workspace_contract(&resolved_path) {
+            Ok(workspace) => {
+                let repo_refs = match ordered_workspace_repo_refs(&resolved_path, &workspace) {
+                    Ok(repo_refs) => repo_refs,
+                    Err(errors) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect(),
+                                    error: None,
+                                }))
+                            }
+                        };
+                    }
+                };
+
+                if let Some(target_repo) = repo_filter {
+                    let known_repos = repo_refs
+                        .iter()
+                        .map(|repo| repo.name.as_str())
+                        .collect::<Vec<_>>();
+                    if !known_repos.contains(&target_repo) {
+                        let known_list = if known_repos.is_empty() {
+                            String::from("none")
+                        } else {
+                            known_repos.join(", ")
+                        };
+                        let error = format!(
+                            "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
+                            render_severity(FindingSeverity::Error),
+                            paint("Workspace execution filter failed", "1;37"),
+                            paint_key("Where:"),
+                            paint_code(&compact_path_display),
+                            error_key("Why:"),
+                            error_next_key("Next:")
+                        );
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&ValidateFailure {
+                                    summary: None,
+                                    ok: false,
+                                    path: &path_display,
+                                    errors: Vec::new(),
+                                    error: Some(error),
+                                }))
+                            }
+                        };
+                    }
+                }
+
+                let repos = repo_refs
+                    .into_iter()
+                    .filter(|repo| match repo_filter {
+                        Some(target) => repo.name == target,
+                        None => true,
+                    })
+                    .map(|repo| run_workspace_repo_execution_plan(repo, overrides))
+                    .collect::<Vec<_>>();
+
+                render_workspace_execution_plan(
+                    &compact_path_display,
+                    &WorkspaceExecutionPlanReport { repos },
+                    format,
+                    execution_plan_overrides(overrides),
+                )
             }
             Err(error) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
@@ -21871,6 +22001,10 @@ struct WorkspaceDiffReport {
     repos: Vec<WorkspaceRepoDiffReport>,
 }
 
+struct WorkspaceExecutionPlanReport {
+    repos: Vec<WorkspaceRepoExecutionPlanReport>,
+}
+
 struct WorkspaceStatusReport {
     repos: Vec<WorkspaceRepoStatusReport>,
 }
@@ -25319,6 +25453,155 @@ fn run_workspace_repo_status(repo: WorkspaceRepoRef) -> WorkspaceRepoStatusRepor
         behind: diff.behind,
         dirty: diff.dirty,
         findings,
+    }
+}
+
+fn run_workspace_repo_execution_plan(
+    repo: WorkspaceRepoRef,
+    overrides: ExecutionOverrides,
+) -> WorkspaceRepoExecutionPlanReport {
+    let path_display = repo.path.display().to_string();
+    let contract_path_display = repo.contract_path.display().to_string();
+    let repo_name = repo.name.clone();
+
+    if !repo.present {
+        return WorkspaceRepoExecutionPlanReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display,
+            required: repo.required,
+            acquired: false,
+            status: String::from("NOT ACQUIRED"),
+            contract_identity: None,
+            declared_execution: None,
+            resolved: None,
+            error: Some(format!(
+                "workspace repo `{}` has not been acquired into `{}` yet",
+                repo_name,
+                repo.path.display()
+            )),
+            next: Some(match repo.source_url.as_deref() {
+                Some(source_url) => format!(
+                    "run `ota workspace up` to acquire `{}` from `{}`",
+                    repo_name, source_url
+                ),
+                None => format!(
+                    "create `{}` and rerun `ota workspace execution plan`",
+                    repo.path.display()
+                ),
+            }),
+        };
+    }
+
+    if !repo.contract_path.is_file() {
+        return WorkspaceRepoExecutionPlanReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display.clone(),
+            required: repo.required,
+            acquired: true,
+            status: String::from("MISSING CONTRACT"),
+            contract_identity: None,
+            declared_execution: None,
+            resolved: None,
+            error: Some(format!(
+                "workspace repo `{}` does not contain a readable contract at `{}`",
+                repo_name, contract_path_display
+            )),
+            next: Some(format!(
+                "create `{}` and rerun `ota workspace execution plan`",
+                contract_path_display
+            )),
+        };
+    }
+
+    match load_contract(&repo.contract_path) {
+        Ok(contract) => {
+            let contract_identity = repo_contract_identity(&contract);
+            let declared_execution = WorkspaceExecutionSummary::from_contract_with_policy(
+                &contract,
+                Some(&repo.policy_env),
+            );
+
+            if let Err(errors) = validate_contract(&contract) {
+                let error = errors
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return WorkspaceRepoExecutionPlanReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display.clone(),
+                    required: repo.required,
+                    acquired: true,
+                    status: String::from("INVALID CONTRACT"),
+                    contract_identity: Some(contract_identity),
+                    declared_execution,
+                    resolved: None,
+                    error: Some(format!(
+                        "repo contract `{}` is invalid: {}",
+                        contract_path_display, error
+                    )),
+                    next: Some(format!(
+                        "fix `{}` and rerun `ota workspace execution plan`",
+                        contract_path_display
+                    )),
+                };
+            }
+
+            match resolve_execution_plan(&contract, &repo.contract_path, overrides) {
+                Ok(resolved) => WorkspaceRepoExecutionPlanReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display,
+                    required: repo.required,
+                    acquired: true,
+                    status: String::from("RESOLVED"),
+                    contract_identity: Some(contract_identity),
+                    declared_execution,
+                    resolved: Some(resolved),
+                    error: None,
+                    next: None,
+                },
+                Err(error) => WorkspaceRepoExecutionPlanReport {
+                    name: repo.name,
+                    path: path_display,
+                    contract_path: contract_path_display.clone(),
+                    required: repo.required,
+                    acquired: true,
+                    status: String::from("UNRESOLVED"),
+                    contract_identity: Some(contract_identity),
+                    declared_execution,
+                    resolved: None,
+                    error: Some(execution_plan_error(&error)),
+                    next: Some(format!(
+                        "repair `{}` so the selected execution mode is runnable, then rerun `ota workspace execution plan`",
+                        contract_path_display
+                    )),
+                },
+            }
+        }
+        Err(error) => WorkspaceRepoExecutionPlanReport {
+            name: repo.name,
+            path: path_display,
+            contract_path: contract_path_display.clone(),
+            required: repo.required,
+            acquired: true,
+            status: String::from("UNREADABLE CONTRACT"),
+            contract_identity: None,
+            declared_execution: None,
+            resolved: None,
+            error: Some(format!(
+                "workspace repo contract `{}` could not be loaded: {}",
+                contract_path_display, error
+            )),
+            next: Some(format!(
+                "repair `{}` and rerun `ota workspace execution plan`",
+                contract_path_display
+            )),
+        },
     }
 }
 
