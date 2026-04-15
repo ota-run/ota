@@ -19,11 +19,22 @@ ota completion zsh --setup
 Manual setup (~/.zshrc):
 # >>> ota completion >>>
 if command -v ota >/dev/null 2>&1; then
-  if ! whence compdef >/dev/null 2>&1; then
-    autoload -Uz compinit
-    compinit
+  _ota_completion_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ota/zsh"
+  if [[ -d "$_ota_completion_dir" ]]; then
+    if (( ${fpath[(Ie)$_ota_completion_dir]} == 0 )); then
+      fpath=("$_ota_completion_dir" $fpath)
+    fi
+    autoload -Uz _ota 2>/dev/null
+    if typeset -p _comps >/dev/null 2>&1; then
+      _comps[ota]=_ota
+    elif whence compdef >/dev/null 2>&1; then
+      compdef _ota ota
+    else
+      autoload -Uz compinit
+      compinit
+    fi
   fi
-  source <(COMPLETE=zsh ota)
+  unset _ota_completion_dir
 fi
 # <<< ota completion <<<
 Reload your shell after updating ota so completions stay in sync.

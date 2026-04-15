@@ -624,6 +624,8 @@ struct CompletionSetupPlan {
     shell: CompletionShell,
     target: PathBuf,
     block: String,
+    support_target: Option<PathBuf>,
+    support_contents: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2623,6 +2625,21 @@ fn completion_setup_target_path(
     })
 }
 
+fn completion_support_target_path(
+    shell: CompletionShell,
+    home_dir: Option<&Path>,
+    xdg_config_home: Option<&Path>,
+) -> Option<PathBuf> {
+    let home_dir = home_dir?;
+    let xdg_config_dir = xdg_config_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home_dir.join(".config"));
+    match shell {
+        CompletionShell::Zsh => Some(xdg_config_dir.join("ota").join("zsh").join("_ota")),
+        _ => None,
+    }
+}
+
 fn completion_setup_target_label(shell: CompletionShell) -> &'static str {
     match shell {
         CompletionShell::Bash => "~/.bashrc",
@@ -2633,13 +2650,53 @@ fn completion_setup_target_label(shell: CompletionShell) -> &'static str {
     }
 }
 
+fn render_zsh_completion_file() -> String {
+    String::from(
+        r#"#compdef ota
+_ota() {
+    local _CLAP_COMPLETE_INDEX=$(expr $CURRENT - 1)
+    local _CLAP_IFS=$'\n'
+
+    local completions=("${(@f)$( \
+        _CLAP_IFS="$_CLAP_IFS" \
+        _CLAP_COMPLETE_INDEX="$_CLAP_COMPLETE_INDEX" \
+        COMPLETE="zsh" \
+        ota -- "${words[@]}" 2>/dev/null \
+    )}")
+
+    if [[ -n $completions ]]; then
+        local -a dirs=()
+        local -a other=()
+        local completion
+        for completion in $completions; do
+            local value="${completion%%:*}"
+            if [[ "$value" == */ ]]; then
+                local dir_no_slash="${value%/}"
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${completion#*:}"
+                    dirs+=("$dir_no_slash:$desc")
+                else
+                    dirs+=("$dir_no_slash")
+                fi
+            else
+                other+=("$completion")
+            fi
+        done
+        [[ -n $dirs ]] && _describe 'values' dirs -S '/' -r '/'
+        [[ -n $other ]] && _describe 'values' other
+    fi
+}
+"#,
+    )
+}
+
 fn completion_setup_snippet(shell: CompletionShell) -> &'static str {
     match shell {
         CompletionShell::Bash => {
             "if command -v ota >/dev/null 2>&1; then\n  source <(COMPLETE=bash ota)\nfi"
         }
         CompletionShell::Zsh => {
-            "if command -v ota >/dev/null 2>&1; then\n  if ! whence compdef >/dev/null 2>&1; then\n    autoload -Uz compinit\n    compinit\n  fi\n  source <(COMPLETE=zsh ota)\nfi"
+            "if command -v ota >/dev/null 2>&1; then\n  _ota_completion_dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/ota/zsh\"\n  if [[ -d \"$_ota_completion_dir\" ]]; then\n    if (( ${fpath[(Ie)$_ota_completion_dir]} == 0 )); then\n      fpath=(\"$_ota_completion_dir\" $fpath)\n    fi\n    autoload -Uz _ota 2>/dev/null\n    if typeset -p _comps >/dev/null 2>&1; then\n      _comps[ota]=_ota\n    elif whence compdef >/dev/null 2>&1; then\n      compdef _ota ota\n    else\n      autoload -Uz compinit\n      compinit\n    fi\n  fi\n  unset _ota_completion_dir\nfi"
         }
         CompletionShell::Fish => "if type -q ota\n    COMPLETE=fish ota | source\nend",
         CompletionShell::Powershell => {
@@ -2723,10 +2780,18 @@ fn completion_setup_plan(shell: CompletionShell) -> Result<CompletionSetupPlan, 
     let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
     let target =
         completion_setup_target_path(shell, home_dir.as_deref(), xdg_config_home.as_deref())?;
+    let support_target =
+        completion_support_target_path(shell, home_dir.as_deref(), xdg_config_home.as_deref());
+    let support_contents = match shell {
+        CompletionShell::Zsh => Some(render_zsh_completion_file()),
+        _ => None,
+    };
     Ok(CompletionSetupPlan {
         shell,
         target,
         block: completion_setup_block(shell),
+        support_target,
+        support_contents,
     })
 }
 
@@ -2753,6 +2818,15 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
             ));
         }
     }
+    if let Some(support_target) = &plan.support_target
+        && let Some(parent) = support_target.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        return CommandOutput::failure(format!(
+            "failed to prepare shell completion support target `{}`: {error}",
+            support_target.display()
+        ));
+    }
 
     let existing = match fs::read_to_string(&plan.target) {
         Ok(existing) => existing,
@@ -2774,6 +2848,19 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
             plan.target.display()
         ));
     }
+    if let (Some(support_target), Some(support_contents)) =
+        (&plan.support_target, &plan.support_contents)
+    {
+        let support_needs_write = fs::read_to_string(support_target)
+            .map(|existing| existing != *support_contents)
+            .unwrap_or(true);
+        if support_needs_write && let Err(error) = fs::write(support_target, support_contents) {
+            return CommandOutput::failure(format!(
+                "failed to write shell completion support target `{}`: {error}",
+                support_target.display()
+            ));
+        }
+    }
 
     let status_label = match status {
         CompletionSetupStatus::Installed => "installed",
@@ -2786,6 +2873,10 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         Some(status_label),
         None,
         None,
+        plan.support_target
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .as_deref(),
         "reopen your shell so completions are active",
     ))
 }
@@ -2812,7 +2903,24 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         }
     };
     let existing = fs::read_to_string(&plan.target).ok();
-    let hook = completion_hook_status(existing.as_deref(), &plan.block);
+    let mut hook = completion_hook_status(existing.as_deref(), &plan.block);
+    if let (Some(support_target), Some(support_contents)) =
+        (&plan.support_target, &plan.support_contents)
+    {
+        let support = completion_hook_status(
+            fs::read_to_string(support_target).ok().as_deref(),
+            support_contents,
+        );
+        hook = match (hook, support) {
+            (CompletionHookStatus::Present, CompletionHookStatus::Present) => {
+                CompletionHookStatus::Present
+            }
+            (CompletionHookStatus::Stale, _) | (_, CompletionHookStatus::Stale) => {
+                CompletionHookStatus::Stale
+            }
+            _ => CompletionHookStatus::Missing,
+        };
+    }
     let hook_label = match hook {
         CompletionHookStatus::Present => "present",
         CompletionHookStatus::Stale => "needs update",
@@ -2827,10 +2935,14 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         }
     };
     let output = format!(
-        "Shell: {}\nBinary: {}\nFile: {}\nHook: {hook_label}\nNext: {next}",
+        "Shell: {}\nBinary: {}\nFile: {}{}\nHook: {hook_label}\nNext: {next}",
         completion_shell_name(shell),
         binary.display(),
         plan.target.display(),
+        plan.support_target
+            .as_ref()
+            .map(|path| format!("\nCompletion file: {}", path.display()))
+            .unwrap_or_default(),
     );
     match hook {
         CompletionHookStatus::Present => {
@@ -2840,6 +2952,10 @@ fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
                 None,
                 Some(hook_label),
                 Some(&binary.display().to_string()),
+                plan.support_target
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .as_deref(),
                 next,
             ))
         }
@@ -16340,7 +16456,8 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("ota completion zsh --setup"));
-        assert!(output.stdout.contains("source <(COMPLETE=zsh ota)"));
+        assert!(output.stdout.contains("_ota_completion_dir"));
+        assert!(output.stdout.contains("_comps[ota]=_ota"));
         assert!(
             output
                 .stdout
@@ -16391,6 +16508,11 @@ edition = "2024"
         let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let xdg_config_home = dir.path().join(".config");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            xdg_config_home.as_os_str().to_os_string(),
+        );
         let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
 
         let output = run_with(["ota", "completion", "--setup"]);
@@ -16401,8 +16523,18 @@ edition = "2024"
         let profile = dir.path().join(".zshrc");
         let written = fs::read_to_string(&profile).expect("completion profile should exist");
         assert!(written.contains(COMPLETION_SETUP_MARKER_START));
-        assert!(written.contains("autoload -Uz compinit"));
-        assert!(written.contains("source <(COMPLETE=zsh ota)"));
+        assert!(written.contains("_ota_completion_dir"));
+        assert!(written.contains("_comps[ota]=_ota"));
+        let completion_file = dir
+            .path()
+            .join(".config")
+            .join("ota")
+            .join("zsh")
+            .join("_ota");
+        let completion_written =
+            fs::read_to_string(&completion_file).expect("zsh completion file should exist");
+        assert!(completion_written.contains("#compdef ota"));
+        assert!(completion_written.contains("_ota()"));
     }
 
     #[test]
@@ -16459,6 +16591,11 @@ edition = "2024"
         let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let xdg_config_home = dir.path().join(".config");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            xdg_config_home.as_os_str().to_os_string(),
+        );
         let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
 
         let output = run_with(["ota", "completion", "check"]);
@@ -16475,7 +16612,12 @@ edition = "2024"
         let _guard = env_mutex_lock();
         let dir = TempDir::new().unwrap();
         let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
-        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/bash"));
+        let xdg_config_home = dir.path().join(".config");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            xdg_config_home.as_os_str().to_os_string(),
+        );
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
 
         let setup = run_with(["ota", "completion", "--setup"]);
         assert_eq!(setup.exit_code, 0);
@@ -16484,7 +16626,8 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("COMPLETION"));
-        assert!(output.stdout.contains("Shell: bash"));
+        assert!(output.stdout.contains("Shell: zsh"));
+        assert!(output.stdout.contains("Completion file:"));
         assert!(output.stdout.contains("Hook: present"));
     }
 

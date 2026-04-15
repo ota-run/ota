@@ -21581,6 +21581,7 @@ pub(crate) fn render_completion_success_text(
     status: Option<&str>,
     hook: Option<&str>,
     binary: Option<&str>,
+    completion_file: Option<&str>,
     next: &str,
 ) -> String {
     let title = if plain_mode() {
@@ -21595,6 +21596,13 @@ pub(crate) fn render_completion_success_text(
         lines.push(format!("{} {}", paint_key("Binary:"), paint_code(binary)));
     }
     lines.push(format!("{} {}", paint_key("File:"), paint_code(file)));
+    if let Some(completion_file) = completion_file {
+        lines.push(format!(
+            "{} {}",
+            paint_key("Completion file:"),
+            paint_code(completion_file)
+        ));
+    }
     if let Some(status) = status {
         lines.push(format!(
             "{} {}",

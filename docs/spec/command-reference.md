@@ -1115,10 +1115,10 @@ Current behavior:
 
 - `ota completion --setup` detects the current shell when possible and installs ota's managed hook into the shell profile or completion file idempotently
 - `ota completion <shell> --setup` installs the managed hook for one explicit shell without relying on auto-detection
-- `ota completion check` verifies the detected shell, the current ota binary path, the target profile or completion file, and whether the managed hook is present or needs refresh
+- `ota completion check` verifies the detected shell, the current ota binary path, the target profile or completion file, any managed zsh completion file, and whether the managed hook is present or needs refresh
 - `ota completion <shell>` prints the managed shell hook ota expects for that shell
 - `ota completion <shell> --script` prints the exact raw registration script clap generates for that shell so users can inspect the shell-side function directly
-- the setup line uses ota's dynamic completion runtime (`COMPLETE=<shell> ota`) rather than a stale generated file
+- zsh setup writes a managed `_ota` completion file and loads it through the shell completion path instead of relying on late runtime `compdef` registration alone
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
 - once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set, and shells that support candidate help can also show each task description when the contract declares one
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the selected repo/member target set
@@ -1168,11 +1168,22 @@ fi
 ota completion zsh
 # >>> ota completion >>>
 if command -v ota >/dev/null 2>&1; then
-  if ! whence compdef >/dev/null 2>&1; then
-    autoload -Uz compinit
-    compinit
+  _ota_completion_dir="${XDG_CONFIG_HOME:-$HOME/.config}/ota/zsh"
+  if [[ -d "$_ota_completion_dir" ]]; then
+    if (( ${fpath[(Ie)$_ota_completion_dir]} == 0 )); then
+      fpath=("$_ota_completion_dir" $fpath)
+    fi
+    autoload -Uz _ota 2>/dev/null
+    if typeset -p _comps >/dev/null 2>&1; then
+      _comps[ota]=_ota
+    elif whence compdef >/dev/null 2>&1; then
+      compdef _ota ota
+    else
+      autoload -Uz compinit
+      compinit
+    fi
   fi
-  source <(COMPLETE=zsh ota)
+  unset _ota_completion_dir
 fi
 # <<< ota completion <<<
 ```
@@ -1214,7 +1225,7 @@ if (has-external-command ota) {
 
 Troubleshooting:
 
-- `zsh`: if completions still do not appear after setup, reopen the shell or run `autoload -Uz compinit && compinit` once in the current session before retrying
+- `zsh`: if completions still do not appear after setup, reopen the shell or confirm `ota completion check` shows both `Hook: present` and a `Completion file:` line for the managed `_ota` file
 - `bash`: if completions still do not appear after setup, reopen the shell or source the profile again with `. ~/.bashrc`
 - `ota completion check` should report `Hook: present`; if it reports `missing` or `needs update`, rerun `ota completion --setup`
 - `ota completion <shell> --script` lets you inspect the exact raw registration script when the shell-side behavior itself looks wrong
