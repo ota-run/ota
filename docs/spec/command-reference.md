@@ -1115,6 +1115,8 @@ Current behavior:
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
 - once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the selected repo/member target set
+- once the shell has sourced that setup, `ota env --task <TAB>` completes task names from the active repo or selected monorepo member
+- once the shell has sourced that setup, `ota extensions --run <TAB>` and `ota extensions --publish <TAB>` complete declared extension names for the active repo or selected member target
 - once the shell has sourced that setup, `--member <TAB>` completes monorepo member names from the active repo contract
 - once the shell has sourced that setup, `ota workspace run <TAB>` completes task names only when one shared invocation can satisfy the currently available workspace repos
 - once the shell has sourced that setup, `ota workspace run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the currently available workspace repos
@@ -1123,6 +1125,45 @@ Current behavior:
 - users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync
 
 Use this when you want contract-aware shell suggestions instead of memorizing task names and task input flags.
+
+Shell setup examples:
+
+`bash`
+
+```bash
+ota completion bash
+source <(COMPLETE=bash ota)
+```
+
+`zsh`
+
+```zsh
+ota completion zsh
+source <(COMPLETE=zsh ota)
+```
+
+`fish`
+
+```fish
+ota completion fish
+COMPLETE=fish ota | source
+```
+
+`PowerShell`
+
+```powershell
+ota completion powershell
+$env:COMPLETE = "powershell"
+ota | Out-String | Invoke-Expression
+Remove-Item Env:\COMPLETE
+```
+
+`elvish`
+
+```elvish
+ota completion elvish
+eval (E:COMPLETE=elvish ota | slurp)
+```
 
 ## `ota uninstall`
 

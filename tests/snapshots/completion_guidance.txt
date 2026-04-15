@@ -1,0 +1,37 @@
+$ ota completion bash
+Add this to ~/.bashrc:
+source <(COMPLETE=bash ota)
+
+Reload your shell after updating ota so completions stay in sync.
+
+---
+
+$ ota completion zsh
+Add this to ~/.zshrc:
+source <(COMPLETE=zsh ota)
+
+Reload your shell after updating ota so completions stay in sync.
+
+---
+
+$ ota completion fish
+Add this to ~/.config/fish/completions/ota.fish:
+COMPLETE=fish ota | source
+
+Reload your shell after updating ota so completions stay in sync.
+
+---
+
+$ ota completion powershell
+Add this to $PROFILE:
+$env:COMPLETE = "powershell"; ota | Out-String | Invoke-Expression; Remove-Item Env:\COMPLETE
+
+PowerShell must allow profile scripts to run (RemoteSigned or stricter policy support). Reopen the shell after updating ota so completions stay in sync.
+
+---
+
+$ ota completion elvish
+Add this to ~/.elvish/rc.elv:
+eval (E:COMPLETE=elvish ota | slurp)
+
+Reload your shell after updating ota so completions stay in sync.
