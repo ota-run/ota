@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added `ota init --pack node|python` as an explicit conventional starter path so repos can seed a reviewable `ota.yaml` pack without depending on detector confidence, including pack-aware text output, stable JSON `pack` metadata, per-field provenance, starter checks, and deterministic starter tasks.
 - added `ota execution plan` as a read-only execution inspector so users and automation can see the resolved backend, lifecycle, image, engine selection, target strategy, compact contract identity, and effective overrides without running `ota up` or `ota run`.
 - added `ota workspace execution plan` as the workspace-level execution inspector so users and automation can see per-repo resolved backend, lifecycle, image/provider/target selection, compact repo contract identity, and honest unrunnable execution failures without running `ota workspace up` or `ota workspace run`.
 - tightened execution and dry-run detail rows so `Execution`, `Contract`, `Plan`, and `Dry run only` sections now render `→ Label: value` without the extra padded spacing around the arrow.

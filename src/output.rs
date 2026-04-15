@@ -997,6 +997,8 @@ pub struct InitSuccess<'a> {
     pub path: &'a str,
     pub written: bool,
     pub mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack: Option<&'a str>,
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
     #[serde(skip_serializing_if = "Vec::is_empty")]

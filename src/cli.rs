@@ -31,8 +31,8 @@ use std::time::{Duration, Instant};
 use clap::{
     Arg, ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, error::ErrorKind,
 };
-use clap_complete::env::CompleteEnv;
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
+use clap_complete::env::CompleteEnv;
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
@@ -167,7 +167,7 @@ enum Commands {
         #[arg(index = 2, value_hint = ValueHint::AnyPath)]
         path: Option<PathBuf>,
         /// Task inputs such as `--base-url http://...`, placed after the path.
-        #[arg(index = 3)]
+        #[arg(index = 3, add = ArgValueCompleter::new(complete_repo_run_input_candidates))]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
     },
@@ -223,6 +223,9 @@ enum Commands {
         /// Bootstrap a fuller starter contract when the detector has enough confidence.
         #[arg(long, action = ArgAction::SetTrue)]
         bootstrap: bool,
+        /// Seed a conventional starter contract pack instead of detector-led init.
+        #[arg(long, value_enum, conflicts_with = "bootstrap")]
+        pack: Option<InitPack>,
         /// Preview inferred contract output without writing ota.yaml.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
         dry_run: bool,
@@ -533,6 +536,12 @@ enum PolicyInitPreset {
     RequiredSections,
     Provisioning,
     Agent,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum InitPack {
+    Node,
+    Python,
 }
 
 impl PolicyInitPreset {
@@ -1079,7 +1088,9 @@ fn resolve_completion_contract_path(
 }
 
 fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionContext {
-    let Some(run_index) = words.iter().position(|value| value.to_string_lossy().as_ref() == "run")
+    let Some(run_index) = words
+        .iter()
+        .position(|value| value.to_string_lossy().as_ref() == "run")
     else {
         return RepoRunCompletionContext::default();
     };
@@ -1163,7 +1174,8 @@ fn load_repo_run_task_names(contract_path: &Path, members: &[String]) -> Vec<Str
         }
     } else {
         for member in members {
-            if let Ok((contract, _)) = crate::parser::load_contract_for_member(contract_path, member)
+            if let Ok((contract, _)) =
+                crate::parser::load_contract_for_member(contract_path, member)
             {
                 names.extend(contract.tasks.keys().cloned());
             }
@@ -1207,7 +1219,8 @@ fn load_repo_run_task_inputs(
         }
     } else {
         for member in members {
-            if let Ok((contract, _)) = crate::parser::load_contract_for_member(contract_path, member)
+            if let Ok((contract, _)) =
+                crate::parser::load_contract_for_member(contract_path, member)
             {
                 merge_task_inputs(&contract);
             }
@@ -1215,6 +1228,101 @@ fn load_repo_run_task_inputs(
     }
 
     inputs
+}
+
+fn task_input_name_from_flag(flag: &str) -> Option<String> {
+    let flag = flag.strip_prefix("--")?;
+    let name = flag.split_once('=').map_or(flag, |(name, _)| name).trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.replace('-', "_"))
+}
+
+fn current_task_input_value_target(task_inputs: &[String], current: &str) -> Option<String> {
+    let current_is_last = task_inputs.last().map(String::as_str) == Some(current);
+
+    if current.starts_with("--")
+        && let Some((flag, _value)) = current.split_once('=')
+    {
+        return task_input_name_from_flag(flag);
+    }
+
+    if current_is_last {
+        let previous = task_inputs
+            .iter()
+            .rev()
+            .nth(1)
+            .map(String::as_str)
+            .or_else(|| task_inputs.iter().rev().nth(0).map(String::as_str));
+        if let Some(previous) = previous
+            && previous.starts_with("--")
+        {
+            return task_input_name_from_flag(previous);
+        }
+    }
+
+    None
+}
+
+fn parse_repo_run_task_input_tokens(
+    task_inputs: &[String],
+    current: &str,
+) -> (std::collections::BTreeSet<String>, Option<String>) {
+    let mut provided = std::collections::BTreeSet::new();
+
+    for (index, token) in task_inputs.iter().enumerate() {
+        let is_current = token == current && Some(index) == task_inputs.len().checked_sub(1);
+        if is_current && !token.contains('=') {
+            continue;
+        }
+        if let Some(name) = task_input_name_from_flag(token) {
+            provided.insert(name);
+        }
+    }
+
+    (
+        provided,
+        current_task_input_value_target(task_inputs, current),
+    )
+}
+
+fn repo_run_input_completion_candidates(
+    current: &str,
+    words: &[OsString],
+) -> Vec<CompletionCandidate> {
+    let context = parse_repo_run_completion_context(words);
+    let Some(task) = context.task.as_deref() else {
+        return Vec::new();
+    };
+    let Some(contract_path) = resolve_completion_contract_path(context.path.as_deref(), words)
+    else {
+        return Vec::new();
+    };
+
+    let inputs = load_repo_run_task_inputs(&contract_path, &context.members, task);
+    let (provided, value_target) = parse_repo_run_task_input_tokens(&context.task_inputs, current);
+
+    if let Some(target) = value_target
+        && let Some(choices) = inputs.get(&target)
+        && !choices.freeform
+    {
+        return choices
+            .allowed
+            .iter()
+            .filter(|value| current.is_empty() || value.starts_with(current))
+            .cloned()
+            .map(CompletionCandidate::new)
+            .collect();
+    }
+
+    inputs
+        .keys()
+        .filter(|name| !provided.contains(*name))
+        .map(|name| format!("--{}", name.replace('_', "-")))
+        .filter(|flag| current.is_empty() || flag.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
 }
 
 fn complete_repo_run_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
@@ -1233,6 +1341,14 @@ fn complete_repo_run_task_candidates(current: &std::ffi::OsStr) -> Vec<Completio
         .filter(|name| name.starts_with(current))
         .map(CompletionCandidate::new)
         .collect()
+}
+
+fn complete_repo_run_input_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    repo_run_input_completion_candidates(current, &words)
 }
 
 pub fn run() -> i32 {
@@ -1404,30 +1520,16 @@ fn run_command_value_span(flag: &str) -> Option<usize> {
     if let Some((name, _)) = flag.split_once('=') {
         return match name {
             "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(1),
-            "--receipt"
-            | "--json"
-            | "--stream"
-            | "--ephemeral"
-            | "--persistent"
-            | "--plain"
-            | "--concise"
-            | "--verbose"
-            | "--debug" => Some(1),
+            "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" | "--plain"
+            | "--concise" | "--verbose" | "--debug" => Some(1),
             _ => None,
         };
     }
 
     match flag {
         "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(2),
-        "--receipt"
-        | "--json"
-        | "--stream"
-        | "--ephemeral"
-        | "--persistent"
-        | "--plain"
-        | "--concise"
-        | "--verbose"
-        | "--debug" => Some(1),
+        "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" | "--plain"
+        | "--concise" | "--verbose" | "--debug" => Some(1),
         _ => None,
     }
 }
@@ -1524,7 +1626,9 @@ fn should_show_update_notice(cli: &Cli) -> bool {
         && !command_requests_json(&cli.command)
         && !matches!(
             &cli.command,
-            Commands::SelfUpdate { .. } | Commands::Annotations { .. } | Commands::Completion { .. }
+            Commands::SelfUpdate { .. }
+                | Commands::Annotations { .. }
+                | Commands::Completion { .. }
         )
 }
 
@@ -1986,6 +2090,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Init {
             write: _write,
             bootstrap,
+            pack,
             dry_run,
             json,
             path,
@@ -2002,6 +2107,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 path.as_deref(),
                 !dry_run,
                 bootstrap,
+                pack.map(|value| match value {
+                    InitPack::Node => commands::StarterPack::Node,
+                    InitPack::Python => commands::StarterPack::Python,
+                }),
                 format_from_json(json),
                 debug,
             )
@@ -2686,7 +2795,7 @@ mod tests {
     use std::time::Instant;
 
     use clap::Parser;
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
 
@@ -2694,9 +2803,9 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        Cli, Commands, CompletionRequest, CompletionRequestGuard, PolicyCommands,
-        PolicyInitPreset, append_try_footer, collapse_blank_lines, commands, completion_command,
-        complete_repo_run_task_candidates, maybe_append_update_notice, run_with,
+        Cli, Commands, CompletionRequest, CompletionRequestGuard, PolicyCommands, PolicyInitPreset,
+        append_try_footer, collapse_blank_lines, commands, complete_repo_run_task_candidates,
+        completion_command, maybe_append_update_notice, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -11533,6 +11642,100 @@ agent:
     }
 
     #[test]
+    fn init_pack_node_dry_run_renders_explicit_pack_contract() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", "--pack", "node", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Mode: pack (dry-run)"));
+        assert!(stdout.contains("Pack: node"));
+        assert!(
+            stdout
+                .contains("Pack policy: explicit pack mode seeds a conventional starter contract")
+        );
+        assert!(stdout.contains("node: '22'"));
+        assert!(stdout.contains("pnpm: '10'"));
+        assert!(stdout.contains("name: node-installed"));
+        assert!(stdout.contains("run: pnpm dev"));
+        assert!(stdout.contains("run: pytest") == false);
+    }
+
+    #[test]
+    fn init_pack_node_write_writes_conventional_starter_with_checks() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Mode: pack"));
+        assert!(stdout.contains("Pack: node"));
+        assert!(
+            stdout.contains(
+                "Pack policy: explicit pack mode seeds a conventional starter contract"
+            )
+        );
+        assert!(!stdout.contains("Write policy: detected mode writes high- and medium-confidence fields"));
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("project:"));
+        assert!(written.contains("runtimes:"));
+        assert!(written.contains("node: '22'"));
+        assert!(written.contains("tools:"));
+        assert!(written.contains("pnpm: '10'"));
+        assert!(written.contains("checks:"));
+        assert!(written.contains("name: node-installed"));
+        assert!(written.contains("kind: precondition"));
+        assert!(written.contains("severity: error"));
+        assert!(written.contains("run: node --version"));
+        assert!(written.contains("setup:"));
+        assert!(written.contains("run: pnpm install"));
+        assert!(written.contains("dev:"));
+        assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("test:"));
+        assert!(written.contains("run: pnpm test"));
+    }
+
+    #[test]
+    fn init_json_pack_python_reports_mode_pack_and_provenance() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["written"], false);
+        assert_eq!(json["mode"], "pack");
+        assert_eq!(json["pack"], "python");
+        assert_eq!(json["inferred"], json!([]));
+        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+        assert_eq!(json["config"]["checks"][0]["name"], "python-installed");
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let project_name = provenance
+            .iter()
+            .find(|entry| entry["field"] == "project.name")
+            .expect("project.name provenance");
+        assert_eq!(project_name["provenance"], "template-derived");
+        assert_eq!(project_name["source"], "ota.init#directory_name");
+        let check_run = provenance
+            .iter()
+            .find(|entry| entry["field"] == "checks.0.run")
+            .expect("check provenance");
+        assert_eq!(check_run["provenance"], "template-derived");
+        assert_eq!(check_run["source"], "ota.init#starter_pack.python");
+    }
+
+    #[test]
     fn init_json_dry_run_includes_derived_agent_defaults() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -14975,7 +15178,11 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("source <(COMPLETE=zsh ota)"));
-        assert!(output.stdout.contains("Reload your shell after updating ota"));
+        assert!(
+            output
+                .stdout
+                .contains("Reload your shell after updating ota")
+        );
     }
 
     #[test]
@@ -14998,7 +15205,8 @@ tasks:
             words: vec!["ota".into(), "run".into(), "d".into()],
         });
 
-        let values = completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("d")));
+        let values =
+            completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("d")));
 
         assert_eq!(values, vec![String::from("dev"), String::from("doctor")]);
     }
@@ -15032,11 +15240,8 @@ tasks:
             ],
         });
 
-        let values = shell_completion_values(
-            &["ota", "run", "doctor-annotations", "--r"],
-            3,
-        )
-        .expect("shell completion should succeed");
+        let values = shell_completion_values(&["ota", "run", "doctor-annotations", "--r"], 3)
+            .expect("shell completion should succeed");
 
         assert!(values.contains(&String::from("--render-format")));
     }
@@ -15072,13 +15277,7 @@ tasks:
         });
 
         let values = shell_completion_values(
-            &[
-                "ota",
-                "run",
-                "doctor-annotations",
-                "--render-format",
-                "g",
-            ],
+            &["ota", "run", "doctor-annotations", "--render-format", "g"],
             4,
         )
         .expect("shell completion should succeed");
@@ -15116,11 +15315,8 @@ tasks:
             ],
         });
 
-        let values = shell_completion_values(
-            &["ota", "run", "doctor-annotations", "pa"],
-            3,
-        )
-        .expect("shell completion should succeed");
+        let values = shell_completion_values(&["ota", "run", "doctor-annotations", "pa"], 3)
+            .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("path-target/")]);
     }

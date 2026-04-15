@@ -115,7 +115,10 @@ use self::explain_output::{
     explain_action_count, explain_steps, explain_summary, render_explain_steps_text,
     workspace_explain_repos, workspace_explain_summary,
 };
-use self::init_starter::{apply_starter_contract_defaults, bootstrap_init_contract};
+pub(crate) use self::init_starter::StarterPack;
+use self::init_starter::{
+    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_contract,
+};
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
     render_workspace_doctor_text, render_workspace_explain_text,
@@ -4647,6 +4650,7 @@ pub fn init(
     path: Option<&Path>,
     write: bool,
     bootstrap: bool,
+    pack: Option<StarterPack>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -4660,6 +4664,10 @@ pub fn init(
         format!("DEBUG contract_path={path_display}"),
         format!("DEBUG write={write}"),
         format!("DEBUG bootstrap={bootstrap}"),
+        format!(
+            "DEBUG pack={}",
+            pack.map(StarterPack::as_str).unwrap_or("none")
+        ),
     ];
 
     if contract_path.exists() {
@@ -4699,8 +4707,16 @@ pub fn init(
     }
 
     finalize_debug(
-        match detect_repo(&root) {
-            Ok(report) => render_init(report, &contract_path, write, bootstrap, format),
+        match if let Some(pack) = pack {
+            Ok(DetectReport {
+                root: root.clone(),
+                contract: starter_pack_contract(pack, &root),
+                inferences: Vec::new(),
+            })
+        } else {
+            detect_repo(&root)
+        } {
+            Ok(report) => render_init(report, &contract_path, write, bootstrap, pack, format),
             Err(error) => {
                 let error = error.to_string();
                 match format {
@@ -9921,14 +9937,19 @@ fn render_init(
     contract_path: &Path,
     write: bool,
     bootstrap: bool,
+    pack: Option<StarterPack>,
     format: OutputFormat,
 ) -> CommandOutput {
-    let mode = init_mode(&report);
+    let mode = pack.map_or_else(|| init_mode(&report), |_| "pack");
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
     let compact_root_display = compact_repo_path(&report.root);
-    let bootstrap_contract = bootstrap_init_contract(&report);
-    let preview_detected_contract = if mode == "detected" {
+    let bootstrap_contract = if let Some(pack) = pack {
+        starter_pack_contract(pack, &report.root)
+    } else {
+        bootstrap_init_contract(&report)
+    };
+    let preview_detected_contract = if mode == "detected" || mode == "pack" {
         report.contract.clone()
     } else {
         DetectContract {
@@ -9981,6 +10002,8 @@ fn render_init(
             } else {
                 report.contract_with_min_confidence(Confidence::Medium)
             }
+        } else if mode == "pack" {
+            report.contract.clone()
         } else {
             DetectContract {
                 version: 1,
@@ -9993,10 +10016,16 @@ fn render_init(
             bootstrap_contract
         };
         apply_starter_contract_defaults(&mut write_contract, &report.root);
+        let starter_project_source = String::from("ota.init#directory_name");
+        let starter_contract_source = pack
+            .map(StarterPack::provenance_source)
+            .unwrap_or_else(|| String::from("ota.init#starter_contract"));
         let provenance = init_contract_provenance(
             &write_contract,
             &selected_detected_contract,
             &report.inferences,
+            &starter_project_source,
+            &starter_contract_source,
         );
         let write_yaml = serde_yaml::to_string(&write_contract)
             .expect("serializing init write contract should not fail");
@@ -10091,20 +10120,27 @@ fn render_init(
                     let highlighted_doctor =
                         paint_code(&command_for_contract("ota doctor", &contract_path));
                     let mut stdout = format!(
-                        "{}\n\n{}\n\n{}{}",
+                        "{}\n\n{}\n\n{}",
                         format_command_header("INIT WRITE", &compact_root_display),
                         format_result_line(&format!("wrote {highlighted_written}")),
                         format_mode_line(mode),
-                        format_next_timeline(&[
-                            format!("run `{highlighted_validate}`"),
-                            format!("run `{highlighted_doctor}`"),
-                        ])
                     );
+                    if let Some(pack) = pack {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            mode_icon(),
+                            paint_key("Pack:"),
+                            paint_mode_value(pack.as_str())
+                        ));
+                        stdout.push_str(
+                            "\nPack policy: explicit pack mode seeds a conventional starter contract; review and edit it before relying on it",
+                        );
+                    }
                     if mode == "blank" {
                         stdout.push_str(
                             "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
                         );
-                    } else {
+                    } else if pack.is_none() {
                         if bootstrap {
                             stdout.push_str(
                                 "\nBootstrap policy: detected mode writes the full detected starter contract, including lower-confidence fields",
@@ -10129,6 +10165,10 @@ fn render_init(
                             );
                         }
                     }
+                    stdout.push_str(&format_next_timeline(&[
+                        format!("run `{highlighted_validate}`"),
+                        format!("run `{highlighted_doctor}`"),
+                    ]));
                     render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
                     CommandOutput::success(stdout)
                 }
@@ -10137,6 +10177,7 @@ fn render_init(
                     path: &path_display,
                     written: true,
                     mode,
+                    pack: pack.map(StarterPack::as_str),
                     config: &write_contract,
                     inferred: &report.inferences,
                     provenance,
@@ -10160,14 +10201,32 @@ fn render_init(
 
     match format {
         OutputFormat::Text => {
-            let highlighted_init = paint_code(&format!("ota init {}", compact_root_display));
+            let highlighted_init = paint_code(&if let Some(pack) = pack {
+                format!("ota init --pack {} {}", pack.as_str(), compact_root_display)
+            } else {
+                format!("ota init {}", compact_root_display)
+            });
             let mut stdout = format!(
-                "{}\n{}\n{} review this starter contract, edit it if needed, then run `{}`",
+                "{}\n{}",
                 format_command_header("INIT PREVIEW", &compact_root_display),
                 format_mode_line(&format!("{mode} (dry-run)")),
+            );
+            if let Some(pack) = pack {
+                stdout.push_str(&format!(
+                    "\n{} {} {}",
+                    mode_icon(),
+                    paint_key("Pack:"),
+                    paint_mode_value(pack.as_str())
+                ));
+                stdout.push_str(
+                    "\nPack policy: explicit pack mode seeds a conventional starter contract; review and edit it before relying on it",
+                );
+            }
+            stdout.push_str(&format!(
+                "\n{} review this starter contract, edit it if needed, then run `{}`",
                 paint_next_header(),
                 highlighted_init,
-            );
+            ));
             stdout.push_str(&format!("\n\n{}:\n", paint_section_title("Contract")));
             stdout.push_str(&stylize_yaml_preview(review_yaml.trim_end()));
             if mode == "blank" {
@@ -10183,12 +10242,17 @@ fn render_init(
             path: &path_display,
             written: false,
             mode,
+            pack: pack.map(StarterPack::as_str),
             config: &bootstrap_contract,
             inferred: &report.inferences,
             provenance: init_contract_provenance(
                 &bootstrap_contract,
                 &preview_detected_contract,
                 &report.inferences,
+                "ota.init#directory_name",
+                &pack
+                    .map(StarterPack::provenance_source)
+                    .unwrap_or_else(|| String::from("ota.init#starter_contract")),
             ),
         })),
     }
@@ -11971,6 +12035,12 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
             fields.push(format!("services.{name}.healthcheck"));
         }
     }
+    for (index, _check) in contract.checks.iter().enumerate() {
+        fields.push(format!("checks.{index}.name"));
+        fields.push(format!("checks.{index}.kind"));
+        fields.push(format!("checks.{index}.severity"));
+        fields.push(format!("checks.{index}.run"));
+    }
     for (name, task) in &contract.tasks {
         fields.push(format!("tasks.{name}.run"));
         if task.safe_for_agent {
@@ -12044,6 +12114,8 @@ fn init_contract_provenance(
     contract: &DetectContract,
     selected_detected_contract: &DetectContract,
     inferences: &[Inference],
+    starter_project_source: &str,
+    starter_contract_source: &str,
 ) -> Vec<ContractFieldProvenance> {
     let inference_map = inferences
         .iter()
@@ -12065,7 +12137,7 @@ fn init_contract_provenance(
             &inference_map,
             &detected_fields,
             "project.name",
-            "ota.init#directory_name",
+            starter_project_source,
         );
     }
 
@@ -12075,7 +12147,7 @@ fn init_contract_provenance(
             &inference_map,
             &detected_fields,
             format!("runtimes.{name}"),
-            "ota.init#starter_contract",
+            starter_contract_source,
         );
     }
     for name in contract.tools.keys() {
@@ -12084,7 +12156,7 @@ fn init_contract_provenance(
             &inference_map,
             &detected_fields,
             format!("tools.{name}"),
-            "ota.init#starter_contract",
+            starter_contract_source,
         );
     }
     for (name, service) in &contract.services {
@@ -12094,7 +12166,7 @@ fn init_contract_provenance(
                 &inference_map,
                 &detected_fields,
                 format!("services.{name}.provider"),
-                "ota.init#starter_contract",
+                starter_contract_source,
             );
         }
         if service.start.is_some() {
@@ -12103,7 +12175,7 @@ fn init_contract_provenance(
                 &inference_map,
                 &detected_fields,
                 format!("services.{name}.start"),
-                "ota.init#starter_contract",
+                starter_contract_source,
             );
         }
         if service.stop.is_some() {
@@ -12112,7 +12184,7 @@ fn init_contract_provenance(
                 &inference_map,
                 &detected_fields,
                 format!("services.{name}.stop"),
-                "ota.init#starter_contract",
+                starter_contract_source,
             );
         }
         if service.healthcheck.is_some() {
@@ -12121,9 +12193,27 @@ fn init_contract_provenance(
                 &inference_map,
                 &detected_fields,
                 format!("services.{name}.healthcheck"),
-                "ota.init#starter_contract",
+                starter_contract_source,
             );
         }
+    }
+    for (index, _check) in contract.checks.iter().enumerate() {
+        provenance.push(template_field_provenance(
+            format!("checks.{index}.name"),
+            starter_contract_source,
+        ));
+        provenance.push(template_field_provenance(
+            format!("checks.{index}.kind"),
+            starter_contract_source,
+        ));
+        provenance.push(template_field_provenance(
+            format!("checks.{index}.severity"),
+            starter_contract_source,
+        ));
+        provenance.push(template_field_provenance(
+            format!("checks.{index}.run"),
+            starter_contract_source,
+        ));
     }
     for (name, task) in &contract.tasks {
         push_init_field_provenance(
@@ -12131,7 +12221,7 @@ fn init_contract_provenance(
             &inference_map,
             &detected_fields,
             format!("tasks.{name}.run"),
-            "ota.init#starter_contract",
+            starter_contract_source,
         );
         if task.notes.is_some() {
             provenance.push(template_field_provenance(
