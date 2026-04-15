@@ -965,9 +965,21 @@ struct RepoRunCompletionContext {
 }
 
 #[derive(Debug, Default)]
+struct WorkspaceRunCompletionContext {
+    task: Option<String>,
+    path: Option<PathBuf>,
+    task_inputs: Vec<String>,
+}
+
+#[derive(Debug, Default)]
 struct CompletionTaskInputChoices {
     allowed: Vec<String>,
     freeform: bool,
+}
+
+#[derive(Debug, Default)]
+struct CompletionTaskInputAggregate {
+    allowed: Option<std::collections::BTreeSet<String>>,
 }
 
 fn maybe_handle_shell_completion(args: &[OsString]) -> Option<CommandOutput> {
@@ -992,6 +1004,7 @@ fn maybe_handle_shell_completion(args: &[OsString]) -> Option<CommandOutput> {
 fn completion_command() -> clap::Command {
     let mut command = Cli::command();
     augment_repo_run_completion_args(&mut command);
+    augment_workspace_run_completion_args(&mut command);
     command
 }
 
@@ -1028,6 +1041,59 @@ fn augment_repo_run_completion_args(command: &mut clap::Command) {
         }
 
         let arg_id: &'static str = Box::leak(format!("task-input-{name}").into_boxed_str());
+        let long_name: &'static str = Box::leak(long.into_boxed_str());
+
+        let mut arg = Arg::new(arg_id).long(long_name).action(ArgAction::Set);
+        if !spec.allowed.is_empty() {
+            let allowed = spec
+                .allowed
+                .into_iter()
+                .map(|value| Box::leak(value.into_boxed_str()) as &'static str)
+                .collect::<Vec<_>>();
+            arg = arg.value_parser(allowed);
+        }
+        let updated = run.clone().arg(arg);
+        *run = updated;
+    }
+}
+
+fn augment_workspace_run_completion_args(command: &mut clap::Command) {
+    let words = current_completion_words();
+    let context = parse_workspace_run_completion_context(&words);
+    let Some(task) = context.task.as_deref() else {
+        return;
+    };
+    let Some(workspace_path) = resolve_completion_workspace_path(context.path.as_deref(), &words)
+    else {
+        return;
+    };
+
+    let inputs = load_workspace_run_task_inputs(&workspace_path, task);
+    if inputs.is_empty() {
+        return;
+    }
+
+    let Some(workspace) = command.find_subcommand_mut("workspace") else {
+        return;
+    };
+    let Some(run) = workspace.find_subcommand_mut("run") else {
+        return;
+    };
+
+    let existing_longs = run
+        .get_arguments()
+        .filter_map(|arg| arg.get_long())
+        .map(str::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for (name, spec) in inputs {
+        let long = name.replace('_', "-");
+        if existing_longs.contains(&long) {
+            continue;
+        }
+
+        let arg_id: &'static str =
+            Box::leak(format!("workspace-task-input-{name}").into_boxed_str());
         let long_name: &'static str = Box::leak(long.into_boxed_str());
 
         let mut arg = Arg::new(arg_id).long(long_name).action(ArgAction::Set);
@@ -1222,8 +1288,10 @@ fn parse_workspace_command_completion_path(words: &[OsString]) -> Option<PathBuf
         return None;
     }
     let subcommand = words.get(2)?.to_string_lossy();
-    let positional_to_skip = usize::from(subcommand.as_ref() == "run");
-    parse_completion_path(words, 3, positional_to_skip, workspace_command_value_span)
+    if subcommand.as_ref() == "run" {
+        return parse_workspace_run_completion_context(words).path;
+    }
+    parse_completion_path(words, 3, 0, workspace_command_value_span)
 }
 
 fn selected_option_values(
@@ -1293,7 +1361,196 @@ fn load_workspace_repo_names(workspace_path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
+fn shared_task_names_from_contracts(
+    contracts: impl IntoIterator<Item = crate::schema::Contract>,
+) -> Vec<String> {
+    let contracts = contracts.into_iter().collect::<Vec<_>>();
+    let mut shared: Option<std::collections::BTreeSet<String>> = None;
+
+    for contract in &contracts {
+        let task_names = contract
+            .tasks
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        shared = Some(match shared {
+            Some(existing) => existing.intersection(&task_names).cloned().collect(),
+            None => task_names,
+        });
+    }
+
+    shared
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|task| task_is_satisfiable_across_contracts(&contracts, task))
+        .collect()
+}
+
+fn task_input_can_be_omitted(spec: Option<&crate::schema::TaskInputSpec>) -> bool {
+    match spec {
+        None => true,
+        Some(spec) => !spec.required || spec.default.is_some(),
+    }
+}
+
+fn shared_task_input_value_exists(specs: &[&crate::schema::TaskInputSpec]) -> bool {
+    let mut shared: Option<std::collections::BTreeSet<String>> = None;
+
+    for spec in specs {
+        if spec.allowed.is_empty() {
+            continue;
+        }
+
+        let allowed = spec
+            .allowed
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        shared = Some(match shared {
+            Some(existing) => existing.intersection(&allowed).cloned().collect(),
+            None => allowed,
+        });
+
+        if shared
+            .as_ref()
+            .is_some_and(std::collections::BTreeSet::is_empty)
+        {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn task_input_is_satisfiable_across_targets(
+    specs: &[Option<&crate::schema::TaskInputSpec>],
+) -> bool {
+    if specs.iter().copied().all(task_input_can_be_omitted) {
+        return true;
+    }
+
+    let Some(shared_specs) = specs
+        .iter()
+        .copied()
+        .collect::<Option<Vec<&crate::schema::TaskInputSpec>>>()
+    else {
+        return false;
+    };
+
+    shared_task_input_value_exists(&shared_specs)
+}
+
+fn task_is_satisfiable_across_contracts(contracts: &[crate::schema::Contract], task: &str) -> bool {
+    let task_specs = contracts
+        .iter()
+        .map(|contract| contract.tasks.get(task))
+        .collect::<Option<Vec<&crate::schema::TaskSpec>>>()
+        .unwrap_or_default();
+    if task_specs.len() != contracts.len() {
+        return false;
+    }
+
+    let input_names = task_specs
+        .iter()
+        .flat_map(|task_spec| task_spec.inputs.keys().cloned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    input_names.into_iter().all(|name| {
+        let specs = task_specs
+            .iter()
+            .map(|task_spec| task_spec.inputs.get(&name))
+            .collect::<Vec<_>>();
+        task_input_is_satisfiable_across_targets(&specs)
+    })
+}
+
+fn current_task_input_aggregate(
+    task_spec: &crate::schema::TaskSpec,
+) -> std::collections::BTreeMap<String, CompletionTaskInputAggregate> {
+    task_spec
+        .inputs
+        .iter()
+        .map(|(name, spec)| {
+            (
+                name.clone(),
+                CompletionTaskInputAggregate {
+                    allowed: (!spec.allowed.is_empty())
+                        .then(|| spec.allowed.iter().cloned().collect()),
+                },
+            )
+        })
+        .collect()
+}
+
+fn intersect_task_input_aggregates(
+    existing: std::collections::BTreeMap<String, CompletionTaskInputAggregate>,
+    task_spec: &crate::schema::TaskSpec,
+) -> std::collections::BTreeMap<String, CompletionTaskInputAggregate> {
+    let mut shared = std::collections::BTreeMap::new();
+
+    for (name, aggregate) in existing {
+        let Some(spec) = task_spec.inputs.get(&name) else {
+            continue;
+        };
+        let allowed = if spec.allowed.is_empty() {
+            aggregate.allowed
+        } else {
+            let current = spec
+                .allowed
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            Some(match aggregate.allowed {
+                Some(existing) => existing.intersection(&current).cloned().collect(),
+                None => current,
+            })
+        };
+        shared.insert(name, CompletionTaskInputAggregate { allowed });
+    }
+
+    shared
+}
+
+fn shared_task_inputs_from_contracts(
+    contracts: impl IntoIterator<Item = crate::schema::Contract>,
+    task: &str,
+) -> std::collections::BTreeMap<String, CompletionTaskInputChoices> {
+    let mut shared: Option<std::collections::BTreeMap<String, CompletionTaskInputAggregate>> = None;
+
+    for contract in contracts {
+        let Some(task_spec) = contract.tasks.get(task) else {
+            return std::collections::BTreeMap::new();
+        };
+        shared = Some(match shared {
+            Some(existing) => intersect_task_input_aggregates(existing, task_spec),
+            None => current_task_input_aggregate(task_spec),
+        });
+    }
+
+    shared
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(name, aggregate)| match aggregate.allowed {
+            Some(allowed) if allowed.is_empty() => None,
+            Some(allowed) => Some((
+                name,
+                CompletionTaskInputChoices {
+                    allowed: allowed.into_iter().collect(),
+                    freeform: false,
+                },
+            )),
+            None => Some((
+                name,
+                CompletionTaskInputChoices {
+                    allowed: Vec::new(),
+                    freeform: true,
+                },
+            )),
+        })
+        .collect()
+}
+
+fn load_workspace_contracts(workspace_path: &Path) -> Vec<crate::schema::Contract> {
     let Ok(workspace) = crate::workspace::load_workspace_contract(workspace_path) else {
         return Vec::new();
     };
@@ -1302,7 +1559,7 @@ fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
         return Vec::new();
     };
 
-    let mut shared: Option<std::collections::BTreeSet<String>> = None;
+    let mut contracts = Vec::new();
     for repo in repo_refs {
         if !repo.present {
             continue;
@@ -1310,14 +1567,21 @@ fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
         let Ok(contract) = crate::parser::load_contract(&repo.contract_path) else {
             return Vec::new();
         };
-        let repo_tasks = contract.tasks.keys().cloned().collect::<std::collections::BTreeSet<_>>();
-        shared = Some(match shared {
-            Some(existing) => existing.intersection(&repo_tasks).cloned().collect(),
-            None => repo_tasks,
-        });
+        contracts.push(contract);
     }
 
-    shared.unwrap_or_default().into_iter().collect()
+    contracts
+}
+
+fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
+    shared_task_names_from_contracts(load_workspace_contracts(workspace_path))
+}
+
+fn load_workspace_run_task_inputs(
+    workspace_path: &Path,
+    task: &str,
+) -> std::collections::BTreeMap<String, CompletionTaskInputChoices> {
+    shared_task_inputs_from_contracts(load_workspace_contracts(workspace_path), task)
 }
 
 fn complete_workspace_repo_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
@@ -1354,6 +1618,73 @@ fn complete_workspace_run_task_candidates(current: &std::ffi::OsStr) -> Vec<Comp
         .filter(|name| current.is_empty() || name.starts_with(current))
         .map(CompletionCandidate::new)
         .collect()
+}
+
+fn parse_workspace_run_completion_context(words: &[OsString]) -> WorkspaceRunCompletionContext {
+    let Some(workspace_index) = words
+        .iter()
+        .position(|value| value.to_string_lossy().as_ref() == "workspace")
+    else {
+        return WorkspaceRunCompletionContext::default();
+    };
+    if words
+        .get(workspace_index + 1)
+        .map(|value| value.to_string_lossy().as_ref() == "run")
+        != Some(true)
+    {
+        return WorkspaceRunCompletionContext::default();
+    }
+
+    let mut context = WorkspaceRunCompletionContext::default();
+    let mut index = workspace_index + 2;
+    let mut collecting_task_inputs = false;
+
+    while index < words.len() {
+        let token = words[index].to_string_lossy().to_string();
+        if collecting_task_inputs {
+            context.task_inputs.push(token);
+            index += 1;
+            continue;
+        }
+
+        if context.task.is_none() {
+            if let Some(span) = workspace_command_value_span(&token) {
+                index += span;
+                continue;
+            }
+            if token.starts_with('-') || token.is_empty() {
+                index += 1;
+                continue;
+            }
+            context.task = Some(token);
+            index += 1;
+            continue;
+        }
+
+        if let Some(span) = workspace_command_value_span(&token) {
+            index += span;
+            continue;
+        }
+
+        if token.starts_with('-') {
+            collecting_task_inputs = true;
+            context.task_inputs.push(token);
+            index += 1;
+            continue;
+        }
+
+        if context.path.is_none() && !token.is_empty() {
+            context.path = Some(PathBuf::from(token));
+            index += 1;
+            continue;
+        }
+
+        collecting_task_inputs = true;
+        context.task_inputs.push(token);
+        index += 1;
+    }
+
+    context
 }
 
 fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionContext {
@@ -1435,23 +1766,25 @@ fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionCon
 }
 
 fn load_repo_run_task_names(contract_path: &Path, members: &[String]) -> Vec<String> {
-    let mut names = std::collections::BTreeSet::new();
-
     if members.is_empty() {
         if let Ok(contract) = crate::parser::load_contract(contract_path) {
-            names.extend(contract.tasks.keys().cloned());
+            return shared_task_names_from_contracts([contract]);
         }
     } else {
+        let mut contracts = Vec::new();
         for member in members {
             if let Ok((contract, _)) =
                 crate::parser::load_contract_for_member(contract_path, member)
             {
-                names.extend(contract.tasks.keys().cloned());
+                contracts.push(contract);
+            } else {
+                return Vec::new();
             }
         }
+        return shared_task_names_from_contracts(contracts);
     }
 
-    names.into_iter().collect()
+    Vec::new()
 }
 
 fn load_repo_run_task_inputs(
@@ -1459,44 +1792,25 @@ fn load_repo_run_task_inputs(
     members: &[String],
     task: &str,
 ) -> std::collections::BTreeMap<String, CompletionTaskInputChoices> {
-    let mut inputs = std::collections::BTreeMap::new();
-
-    let mut merge_task_inputs = |contract: &crate::schema::Contract| {
-        let Some(task_spec) = contract.tasks.get(task) else {
-            return;
-        };
-
-        for (name, spec) in &task_spec.inputs {
-            let entry = inputs
-                .entry(name.clone())
-                .or_insert_with(CompletionTaskInputChoices::default);
-            if spec.allowed.is_empty() {
-                entry.freeform = true;
-            } else {
-                for allowed in &spec.allowed {
-                    if !entry.allowed.iter().any(|value| value == allowed) {
-                        entry.allowed.push(allowed.clone());
-                    }
-                }
-            }
-        }
-    };
-
     if members.is_empty() {
         if let Ok(contract) = crate::parser::load_contract(contract_path) {
-            merge_task_inputs(&contract);
+            return shared_task_inputs_from_contracts([contract], task);
         }
     } else {
+        let mut contracts = Vec::new();
         for member in members {
             if let Ok((contract, _)) =
                 crate::parser::load_contract_for_member(contract_path, member)
             {
-                merge_task_inputs(&contract);
+                contracts.push(contract);
+            } else {
+                return std::collections::BTreeMap::new();
             }
         }
+        return shared_task_inputs_from_contracts(contracts, task);
     }
 
-    inputs
+    std::collections::BTreeMap::new()
 }
 
 fn task_input_name_from_flag(flag: &str) -> Option<String> {
@@ -15575,7 +15889,8 @@ tasks:
           - github
 "#,
         );
-        fixture.write("path-target/.keep", "");
+        fs::create_dir_all(fixture.dir.path().join("path-target")).unwrap();
+        fs::write(fixture.dir.path().join("path-target").join(".keep"), "").unwrap();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let _completion = CompletionRequestGuard::set(CompletionRequest {
             words: vec![
@@ -15590,6 +15905,241 @@ tasks:
             .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("path-target/")]);
+    }
+
+    #[test]
+    fn repo_run_shell_completion_only_suggests_member_shared_tasks() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  check:
+    run: cargo test
+  ci:
+    run: cargo clippy
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  check:
+    run: npm test
+  dev:
+    run: npm run dev
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "--member".into(),
+                "api".into(),
+                "--member".into(),
+                "web".into(),
+                "c".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &["ota", "run", "--member", "api", "--member", "web", "c"],
+            6,
+        )
+        .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("check")]);
+    }
+
+    #[test]
+    fn repo_run_shell_completion_omits_tasks_without_shared_satisfiable_inputs() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  deploy:
+    run: ./deploy-api.sh
+    inputs:
+      region:
+        required: true
+        allowed:
+          - eu
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  deploy:
+    run: ./deploy-web.sh
+    inputs:
+      region:
+        required: true
+        allowed:
+          - us
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "--member".into(),
+                "api".into(),
+                "--member".into(),
+                "web".into(),
+                "d".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &["ota", "run", "--member", "api", "--member", "web", "d"],
+            6,
+        )
+        .expect("shell completion should succeed");
+
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn repo_run_shell_completion_only_suggests_member_shared_task_inputs_and_values() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  deploy:
+    run: ./deploy-api.sh
+    inputs:
+      region:
+        allowed:
+          - eu
+          - us
+      token: {}
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  deploy:
+    run: ./deploy-web.sh
+    inputs:
+      region:
+        allowed:
+          - uk
+          - us
+      channel: {}
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "--member".into(),
+                "api".into(),
+                "--member".into(),
+                "web".into(),
+                "deploy".into(),
+                "--r".into(),
+            ],
+        });
+
+        let flags = shell_completion_values(
+            &[
+                "ota", "run", "--member", "api", "--member", "web", "deploy", "--r",
+            ],
+            7,
+        )
+        .expect("shell completion should succeed");
+        assert!(flags.contains(&String::from("--region")));
+        assert!(!flags.contains(&String::from("--token")));
+        assert!(!flags.contains(&String::from("--channel")));
+
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "--member".into(),
+                "api".into(),
+                "--member".into(),
+                "web".into(),
+                "deploy".into(),
+                "--region".into(),
+                "u".into(),
+            ],
+        });
+        let values = shell_completion_values(
+            &[
+                "ota", "run", "--member", "api", "--member", "web", "deploy", "--region", "u",
+            ],
+            8,
+        )
+        .expect("shell completion should succeed");
+        assert_eq!(values, vec![String::from("us")]);
     }
 
     #[test]
@@ -15665,11 +16215,115 @@ tasks:
     }
 
     #[test]
+    fn workspace_run_shell_completion_suggests_shared_task_input_flags_and_values() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  deploy:
+    run: ./deploy-api.sh
+    inputs:
+      region:
+        allowed:
+          - eu
+          - us
+      token: {}
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  deploy:
+    run: ./deploy-db.sh
+    inputs:
+      region:
+        allowed:
+          - uk
+          - us
+      profile: {}
+"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(fixture.dir.path().join("path-target")).unwrap();
+        fs::write(fixture.dir.path().join("path-target").join(".keep"), "").unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "workspace".into(),
+                "run".into(),
+                "deploy".into(),
+                "--r".into(),
+            ],
+        });
+
+        let flags = shell_completion_values(&["ota", "workspace", "run", "deploy", "--r"], 4)
+            .expect("shell completion should succeed");
+        assert!(flags.contains(&String::from("--region")));
+        assert!(!flags.contains(&String::from("--token")));
+        assert!(!flags.contains(&String::from("--profile")));
+
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "workspace".into(),
+                "run".into(),
+                "deploy".into(),
+                "--region".into(),
+                "u".into(),
+            ],
+        });
+        let values =
+            shell_completion_values(&["ota", "workspace", "run", "deploy", "--region", "u"], 5)
+                .expect("shell completion should succeed");
+        assert_eq!(values, vec![String::from("us")]);
+
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "workspace".into(),
+                "run".into(),
+                "deploy".into(),
+                "pa".into(),
+            ],
+        });
+        let path_values = shell_completion_values(&["ota", "workspace", "run", "deploy", "pa"], 4)
+            .expect("shell completion should succeed");
+        assert_eq!(path_values, vec![String::from("path-target/")]);
+    }
+
+    #[test]
     fn workspace_run_shell_completion_only_suggests_workspace_wide_tasks() {
         let _guard = env_mutex_lock();
         let fixture = WorkspaceFixture::new_multi_repo();
         fs::write(
-            fixture.dir.path().join("services").join("api").join("ota.yaml"),
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("ota.yaml"),
             r#"
 version: 1
 project:
@@ -15683,7 +16337,12 @@ tasks:
         )
         .unwrap();
         fs::write(
-            fixture.dir.path().join("services").join("db").join("ota.yaml"),
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
             r#"
 version: 1
 project:
@@ -15706,6 +16365,65 @@ tasks:
             .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("check")]);
+    }
+
+    #[test]
+    fn workspace_run_shell_completion_omits_tasks_without_shared_satisfiable_inputs() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  deploy:
+    run: ./deploy-api.sh
+    inputs:
+      region:
+        required: true
+        allowed:
+          - eu
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  deploy:
+    run: ./deploy-db.sh
+    inputs:
+      region:
+        required: true
+        allowed:
+          - us
+"#,
+        )
+        .unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "workspace".into(), "run".into(), "d".into()],
+        });
+
+        let values = shell_completion_values(&["ota", "workspace", "run", "d"], 3)
+            .expect("shell completion should succeed");
+
+        assert!(values.is_empty());
     }
 
     #[test]
