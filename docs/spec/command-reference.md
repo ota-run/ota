@@ -1507,8 +1507,8 @@ Current behavior:
 - reports one execution plan per selected workspace repo
 - supports `--repo` filtering for focused inspection
 - supports `--mode`, `--lifecycle`, and `--ephemeral` overrides across the selected repos
-- fails the command when any required repo cannot produce a runnable execution plan
-- keeps optional unresolved repos in the report without promoting them to required failures
+- fails the command when any selected repo cannot produce a runnable execution plan
+- still preserves each repo’s required/optional declaration in the report instead of flattening workspace metadata
 - never mutates repo state
 
 Text output:
