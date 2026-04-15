@@ -27,6 +27,7 @@ Commands:
   self-update  Update the installed Ota binary
   workspace    Work with Ota workspace contracts
   policy       Show the active policy pack and where ota loaded it from
+  completion   Show how to enable shell completion for ota
   uninstall    Remove ota from this laptop
   help         Print this message or the help of the given subcommand(s)
 
@@ -53,6 +54,7 @@ Choose a flow:
   generate agent guidance      ota agents
   list runnable tasks          ota tasks --use
   run a declared task          ota run ci
+  enable shell completion      ota completion zsh
 
 Workspace:
   inspect readiness            ota workspace doctor .

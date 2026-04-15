@@ -20,14 +20,19 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::{ArgAction, Parser, Subcommand, ValueEnum, error::ErrorKind};
+use clap::{
+    Arg, ArgAction, CommandFactory, Parser, Subcommand, ValueEnum, ValueHint, error::ErrorKind,
+};
+use clap_complete::env::CompleteEnv;
+use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
@@ -39,7 +44,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion zsh\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -138,7 +143,7 @@ enum Commands {
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
-        #[arg(index = 1)]
+        #[arg(index = 1, add = ArgValueCompleter::new(complete_repo_run_task_candidates))]
         task: String,
         /// Override the execution mode for this invocation.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
@@ -159,7 +164,7 @@ enum Commands {
         #[arg(long)]
         member: Vec<String>,
         /// Optional repo path. Put it after the task name and before task inputs.
-        #[arg(index = 2)]
+        #[arg(index = 2, value_hint = ValueHint::AnyPath)]
         path: Option<PathBuf>,
         /// Task inputs such as `--base-url http://...`, placed after the path.
         #[arg(index = 3)]
@@ -376,6 +381,13 @@ enum Commands {
         path: Option<PathBuf>,
     },
     #[command(display_order = 19)]
+    /// Show how to enable shell completion for ota.
+    Completion {
+        /// Shell to configure for completion.
+        #[arg(value_enum)]
+        shell: CompletionShell,
+    },
+    #[command(display_order = 20)]
     /// Remove ota from this laptop.
     Uninstall,
     #[command(display_order = 16)]
@@ -560,6 +572,15 @@ enum RunLifecycle {
 enum UpdateChannel {
     Stable,
     Latest,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
+    Elvish,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -898,6 +919,322 @@ enum WorkspaceCommands {
     },
 }
 
+#[derive(Clone, Debug, Default)]
+struct CompletionRequest {
+    words: Vec<OsString>,
+}
+
+thread_local! {
+    static COMPLETION_REQUEST: RefCell<Option<CompletionRequest>> = const { RefCell::new(None) };
+}
+
+struct CompletionRequestGuard;
+
+impl CompletionRequestGuard {
+    fn set(request: CompletionRequest) -> Self {
+        COMPLETION_REQUEST.with(|slot| {
+            *slot.borrow_mut() = Some(request);
+        });
+        Self
+    }
+}
+
+impl Drop for CompletionRequestGuard {
+    fn drop(&mut self) {
+        COMPLETION_REQUEST.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+}
+
+#[derive(Debug, Default)]
+struct RepoRunCompletionContext {
+    members: Vec<String>,
+    task: Option<String>,
+    path: Option<PathBuf>,
+    task_inputs: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct CompletionTaskInputChoices {
+    allowed: Vec<String>,
+    freeform: bool,
+}
+
+fn maybe_handle_shell_completion(args: &[OsString]) -> Option<CommandOutput> {
+    let current_dir = std::env::current_dir().ok();
+    let _guard = CompletionRequestGuard::set(CompletionRequest {
+        words: completion_request_words_from_process_args(args),
+    });
+
+    match CompleteEnv::with_factory(completion_command)
+        .try_complete(args.iter().cloned(), current_dir.as_deref())
+    {
+        Ok(true) => Some(CommandOutput::success(String::new())),
+        Ok(false) => None,
+        Err(error) => Some(CommandOutput {
+            stdout: String::new(),
+            stderr: Some(error.render().to_string().trim_end().to_string()),
+            exit_code: 2,
+        }),
+    }
+}
+
+fn completion_command() -> clap::Command {
+    let mut command = Cli::command();
+    augment_repo_run_completion_args(&mut command);
+    command
+}
+
+fn augment_repo_run_completion_args(command: &mut clap::Command) {
+    let words = current_completion_words();
+    let context = parse_repo_run_completion_context(&words);
+    let Some(task) = context.task.as_deref() else {
+        return;
+    };
+    let Some(contract_path) = resolve_completion_contract_path(context.path.as_deref(), &words)
+    else {
+        return;
+    };
+
+    let inputs = load_repo_run_task_inputs(&contract_path, &context.members, task);
+    if inputs.is_empty() {
+        return;
+    }
+
+    let Some(run) = command.find_subcommand_mut("run") else {
+        return;
+    };
+
+    let existing_longs = run
+        .get_arguments()
+        .filter_map(|arg| arg.get_long())
+        .map(str::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    for (name, spec) in inputs {
+        let long = name.replace('_', "-");
+        if existing_longs.contains(&long) {
+            continue;
+        }
+
+        let arg_id: &'static str = Box::leak(format!("task-input-{name}").into_boxed_str());
+        let long_name: &'static str = Box::leak(long.into_boxed_str());
+
+        let mut arg = Arg::new(arg_id).long(long_name).action(ArgAction::Set);
+        if !spec.allowed.is_empty() {
+            let allowed = spec
+                .allowed
+                .into_iter()
+                .map(|value| Box::leak(value.into_boxed_str()) as &'static str)
+                .collect::<Vec<_>>();
+            arg = arg.value_parser(allowed);
+        }
+        let updated = run.clone().arg(arg);
+        *run = updated;
+    }
+}
+
+fn completion_request_words_from_process_args(args: &[OsString]) -> Vec<OsString> {
+    let mut words = args.iter().skip(1).cloned().collect::<Vec<_>>();
+    let escape_index = words
+        .iter()
+        .position(|value| value.to_string_lossy().as_ref() == "--")
+        .map(|index| index + 1)
+        .unwrap_or(words.len());
+    words.drain(0..escape_index);
+    words
+}
+
+fn current_completion_words() -> Vec<OsString> {
+    COMPLETION_REQUEST.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|request| request.words.clone())
+            .unwrap_or_default()
+    })
+}
+
+fn completion_file_override(words: &[OsString]) -> Option<PathBuf> {
+    let mut index = 0;
+    while index < words.len() {
+        let token = words[index].to_string_lossy();
+        if let Some(value) = token.strip_prefix("--file=") {
+            return Some(PathBuf::from(value));
+        }
+        if token.as_ref() == "--file" {
+            return words.get(index + 1).map(PathBuf::from);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn resolve_completion_contract_path(
+    explicit_path: Option<&Path>,
+    words: &[OsString],
+) -> Option<PathBuf> {
+    let file_override = completion_file_override(words);
+    commands::resolve_contract_path_for_completion(explicit_path, file_override.as_deref())
+}
+
+fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionContext {
+    let Some(run_index) = words.iter().position(|value| value.to_string_lossy().as_ref() == "run")
+    else {
+        return RepoRunCompletionContext::default();
+    };
+
+    if run_index > 0 && words[run_index - 1].to_string_lossy().as_ref() == "workspace" {
+        return RepoRunCompletionContext::default();
+    }
+
+    let mut context = RepoRunCompletionContext::default();
+    let mut index = run_index + 1;
+    let mut collecting_task_inputs = false;
+
+    while index < words.len() {
+        let token = words[index].to_string_lossy().to_string();
+        if collecting_task_inputs {
+            context.task_inputs.push(token);
+            index += 1;
+            continue;
+        }
+
+        if context.task.is_none() {
+            if let Some(span) = run_command_value_span(&token) {
+                if token == "--member" {
+                    if let Some(value) = words.get(index + 1) {
+                        context.members.push(value.to_string_lossy().to_string());
+                    }
+                } else if let Some(value) = token.strip_prefix("--member=") {
+                    context.members.push(value.to_string());
+                }
+                index += span;
+                continue;
+            }
+            if token.starts_with('-') || token.is_empty() {
+                index += 1;
+                continue;
+            }
+            context.task = Some(token);
+            index += 1;
+            continue;
+        }
+
+        if let Some(span) = run_command_value_span(&token) {
+            if token == "--member" {
+                if let Some(value) = words.get(index + 1) {
+                    context.members.push(value.to_string_lossy().to_string());
+                }
+            } else if let Some(value) = token.strip_prefix("--member=") {
+                context.members.push(value.to_string());
+            }
+            index += span;
+            continue;
+        }
+
+        if token.starts_with('-') {
+            collecting_task_inputs = true;
+            context.task_inputs.push(token);
+            index += 1;
+            continue;
+        }
+
+        if context.path.is_none() && !token.is_empty() {
+            context.path = Some(PathBuf::from(token));
+            index += 1;
+            continue;
+        }
+
+        collecting_task_inputs = true;
+        context.task_inputs.push(token);
+        index += 1;
+    }
+
+    context
+}
+
+fn load_repo_run_task_names(contract_path: &Path, members: &[String]) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+
+    if members.is_empty() {
+        if let Ok(contract) = crate::parser::load_contract(contract_path) {
+            names.extend(contract.tasks.keys().cloned());
+        }
+    } else {
+        for member in members {
+            if let Ok((contract, _)) = crate::parser::load_contract_for_member(contract_path, member)
+            {
+                names.extend(contract.tasks.keys().cloned());
+            }
+        }
+    }
+
+    names.into_iter().collect()
+}
+
+fn load_repo_run_task_inputs(
+    contract_path: &Path,
+    members: &[String],
+    task: &str,
+) -> std::collections::BTreeMap<String, CompletionTaskInputChoices> {
+    let mut inputs = std::collections::BTreeMap::new();
+
+    let mut merge_task_inputs = |contract: &crate::schema::Contract| {
+        let Some(task_spec) = contract.tasks.get(task) else {
+            return;
+        };
+
+        for (name, spec) in &task_spec.inputs {
+            let entry = inputs
+                .entry(name.clone())
+                .or_insert_with(CompletionTaskInputChoices::default);
+            if spec.allowed.is_empty() {
+                entry.freeform = true;
+            } else {
+                for allowed in &spec.allowed {
+                    if !entry.allowed.iter().any(|value| value == allowed) {
+                        entry.allowed.push(allowed.clone());
+                    }
+                }
+            }
+        }
+    };
+
+    if members.is_empty() {
+        if let Ok(contract) = crate::parser::load_contract(contract_path) {
+            merge_task_inputs(&contract);
+        }
+    } else {
+        for member in members {
+            if let Ok((contract, _)) = crate::parser::load_contract_for_member(contract_path, member)
+            {
+                merge_task_inputs(&contract);
+            }
+        }
+    }
+
+    inputs
+}
+
+fn complete_repo_run_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let context = parse_repo_run_completion_context(&words);
+    let Some(contract_path) = resolve_completion_contract_path(context.path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+
+    load_repo_run_task_names(&contract_path, &context.members)
+        .into_iter()
+        .filter(|name| name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
 pub fn run() -> i32 {
     let output = run_with(std::env::args_os());
 
@@ -957,6 +1294,9 @@ where
     commands::take_failure_locus();
 
     let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+    if let Some(output) = maybe_handle_shell_completion(&args) {
+        return output;
+    }
     let version_update_notice_rx = io::stderr().is_terminal().then(spawn_update_notice);
     if is_version_request(&args) {
         return maybe_append_update_notice(
@@ -1063,15 +1403,31 @@ fn locate_task_command(args: &[OsString]) -> Option<(usize, usize)> {
 fn run_command_value_span(flag: &str) -> Option<usize> {
     if let Some((name, _)) = flag.split_once('=') {
         return match name {
-            "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(1),
-            "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" => Some(1),
+            "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(1),
+            "--receipt"
+            | "--json"
+            | "--stream"
+            | "--ephemeral"
+            | "--persistent"
+            | "--plain"
+            | "--concise"
+            | "--verbose"
+            | "--debug" => Some(1),
             _ => None,
         };
     }
 
     match flag {
-        "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" => Some(2),
-        "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" => Some(1),
+        "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(2),
+        "--receipt"
+        | "--json"
+        | "--stream"
+        | "--ephemeral"
+        | "--persistent"
+        | "--plain"
+        | "--concise"
+        | "--verbose"
+        | "--debug" => Some(1),
         _ => None,
     }
 }
@@ -1168,7 +1524,7 @@ fn should_show_update_notice(cli: &Cli) -> bool {
         && !command_requests_json(&cli.command)
         && !matches!(
             &cli.command,
-            Commands::SelfUpdate { .. } | Commands::Annotations { .. }
+            Commands::SelfUpdate { .. } | Commands::Annotations { .. } | Commands::Completion { .. }
         )
 }
 
@@ -1295,6 +1651,26 @@ fn render_version_output(args: &[OsString]) -> String {
     }
 
     format!("🦦 \x1b[1;38;5;136m{version}\x1b[0m")
+}
+
+fn render_completion_instructions(shell: CompletionShell) -> String {
+    match shell {
+        CompletionShell::Bash => String::from(
+            "Add this to ~/.bashrc:\nsource <(COMPLETE=bash ota)\n\nReload your shell after updating ota so completions stay in sync.",
+        ),
+        CompletionShell::Zsh => String::from(
+            "Add this to ~/.zshrc:\nsource <(COMPLETE=zsh ota)\n\nReload your shell after updating ota so completions stay in sync.",
+        ),
+        CompletionShell::Fish => String::from(
+            "Add this to ~/.config/fish/completions/ota.fish:\nCOMPLETE=fish ota | source\n\nReload your shell after updating ota so completions stay in sync.",
+        ),
+        CompletionShell::Powershell => String::from(
+            "Add this to $PROFILE:\n$env:COMPLETE = \"powershell\"; ota | Out-String | Invoke-Expression; Remove-Item Env:\\COMPLETE\n\nPowerShell must allow profile scripts to run (RemoteSigned or stricter policy support). Reopen the shell after updating ota so completions stay in sync.",
+        ),
+        CompletionShell::Elvish => String::from(
+            "Add this to ~/.elvish/rc.elv:\neval (E:COMPLETE=elvish ota | slurp)\n\nReload your shell after updating ota so completions stay in sync.",
+        ),
+    }
 }
 
 fn dispatch(cli: Cli) -> CommandOutput {
@@ -1598,6 +1974,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Completion { shell } => {
+            CommandOutput::success(render_completion_instructions(shell))
+        }
         Commands::Uninstall => commands::uninstall(debug),
         Commands::SelfUpdate { version, channel } => commands::self_update(
             version.as_deref(),
@@ -2041,6 +2420,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         }
         Commands::Clean { .. } => "ota clean --help",
         Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
+        Commands::Completion { .. } => "run `ota completion zsh` to inspect shell setup",
         Commands::Uninstall => "run `ota uninstall --help` to inspect uninstall options",
         Commands::SelfUpdate { .. } => "run `ota self-update --help` to inspect update options",
         Commands::Detect { .. } => {
@@ -2231,6 +2611,7 @@ fn command_requests_json(command: &Commands) -> bool {
         },
         Commands::Run { .. }
         | Commands::Clean { .. }
+        | Commands::Completion { .. }
         | Commands::Uninstall
         | Commands::SelfUpdate { .. }
         | Commands::Annotations { .. } => false,
@@ -2256,6 +2637,7 @@ fn command_where_label(command: &Commands) -> &'static str {
         Commands::Diff { .. } => "ota diff",
         Commands::Up { .. } => "ota up",
         Commands::Clean { .. } => "ota clean",
+        Commands::Completion { .. } => "ota completion",
         Commands::Policy { command: None, .. } => "ota policy",
         Commands::Policy {
             command: Some(PolicyCommands::Init { .. }),
@@ -2312,8 +2694,9 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        Cli, Commands, PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines,
-        commands, maybe_append_update_notice, run_with,
+        Cli, Commands, CompletionRequest, CompletionRequestGuard, PolicyCommands,
+        PolicyInitPreset, append_try_footer, collapse_blank_lines, commands, completion_command,
+        complete_repo_run_task_candidates, maybe_append_update_notice, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -2363,6 +2746,15 @@ mod tests {
         }
     }
 
+    fn completion_values(
+        candidates: Vec<clap_complete::engine::CompletionCandidate>,
+    ) -> Vec<String> {
+        candidates
+            .into_iter()
+            .map(|candidate| candidate.get_value().to_string_lossy().to_string())
+            .collect()
+    }
+
     #[cfg(unix)]
     fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
         let path = bin_dir.join(name);
@@ -2381,6 +2773,20 @@ mod tests {
         let path = bin_dir.join(name);
         fs::write(&path, body).expect("write fake command");
         path
+    }
+
+    fn shell_completion_values(
+        words: &[&str],
+        arg_index: usize,
+    ) -> Result<Vec<String>, std::io::Error> {
+        let mut command = completion_command();
+        let current_dir = std::env::current_dir().ok();
+        let args = words
+            .iter()
+            .map(|word| OsString::from(*word))
+            .collect::<Vec<_>>();
+        clap_complete::engine::complete(&mut command, args, arg_index, current_dir.as_deref())
+            .map(completion_values)
     }
 
     #[cfg(unix)]
@@ -14561,6 +14967,162 @@ edition = "2024"
                 .as_deref()
                 .expect("help text should be present"),
         );
+    }
+
+    #[test]
+    fn completion_command_prints_shell_setup_instructions() {
+        let output = run_with(["ota", "completion", "zsh"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("source <(COMPLETE=zsh ota)"));
+        assert!(output.stdout.contains("Reload your shell after updating ota"));
+    }
+
+    #[test]
+    fn repo_run_task_completion_reads_task_names_from_contract() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  dev:
+    run: npm run dev
+  doctor:
+    run: ota doctor
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "run".into(), "d".into()],
+        });
+
+        let values = completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("d")));
+
+        assert_eq!(values, vec![String::from("dev"), String::from("doctor")]);
+    }
+
+    #[test]
+    fn repo_run_shell_completion_suggests_task_input_flags_after_task_selection() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  doctor-annotations:
+    run: cargo test
+    inputs:
+      render_format:
+        default: plain
+        allowed:
+          - plain
+          - github
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "doctor-annotations".into(),
+                "--r".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &["ota", "run", "doctor-annotations", "--r"],
+            3,
+        )
+        .expect("shell completion should succeed");
+
+        assert!(values.contains(&String::from("--render-format")));
+    }
+
+    #[test]
+    fn repo_run_shell_completion_suggests_allowed_values_for_task_input() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  doctor-annotations:
+    run: cargo test
+    inputs:
+      render_format:
+        default: plain
+        allowed:
+          - plain
+          - github
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "doctor-annotations".into(),
+                "--render-format".into(),
+                "g".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &[
+                "ota",
+                "run",
+                "doctor-annotations",
+                "--render-format",
+                "g",
+            ],
+            4,
+        )
+        .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("github")]);
+    }
+
+    #[test]
+    fn repo_run_shell_completion_preserves_path_completion_before_task_inputs() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  doctor-annotations:
+    run: cargo test
+    inputs:
+      render_format:
+        default: plain
+        allowed:
+          - plain
+          - github
+"#,
+        );
+        fixture.write("path-target/.keep", "");
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "run".into(),
+                "doctor-annotations".into(),
+                "pa".into(),
+            ],
+        });
+
+        let values = shell_completion_values(
+            &["ota", "run", "doctor-annotations", "pa"],
+            3,
+        )
+        .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("path-target/")]);
     }
 
     #[test]

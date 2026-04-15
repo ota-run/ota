@@ -21807,6 +21807,13 @@ fn resolve_contract_path(
     }
 }
 
+pub(crate) fn resolve_contract_path_for_completion(
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+) -> Option<PathBuf> {
+    resolve_contract_path(path, file_override).ok()
+}
+
 fn resolve_workspace_path(
     path: Option<&Path>,
     file_override: Option<&Path>,
