@@ -99,6 +99,7 @@ ota currently ships these commands:
 - `ota workspace validate`
 - `ota workspace tasks`
 - `ota workspace list`
+- `ota workspace execution plan`
 - `ota workspace run <task>`
 - `ota workspace check`
 - `ota workspace doctor`
@@ -1486,6 +1487,55 @@ JSON output:
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `contract_present`, `required`, `acquired`, `status`, `depends_on`
+
+## `ota workspace execution plan`
+
+Inspect the resolved execution context for each workspace repo without running anything.
+
+```bash
+ota workspace execution plan [PATH]
+ota workspace execution plan --json [PATH]
+ota workspace execution plan --repo api [PATH]
+ota workspace execution plan --mode container --ephemeral [PATH]
+```
+
+Current behavior:
+
+- resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or upward discovery
+- validates workspace structure and keeps repo ordering deterministic
+- reuses the same per-repo backend validation boundary as `ota execution plan`
+- reports one execution plan per selected workspace repo
+- supports `--repo` filtering for focused inspection
+- supports `--mode`, `--lifecycle`, and `--ephemeral` overrides across the selected repos
+- fails the command when any required repo cannot produce a runnable execution plan
+- keeps optional unresolved repos in the report without promoting them to required failures
+- never mutates repo state
+
+Text output:
+
+- header: `WORKSPACE EXECUTION PLAN <path>`
+- status line: `READY` or `NOT READY`
+- optional `Overrides` section when backend or lifecycle is forced
+- each repo includes required/optional status, path, contract path, acquired state, and either resolved execution details or an honest `Why` / `Next`
+- when a repo contract loads, the report also includes the compact `Contract` block and declared `Execution` block for that repo
+- a final `Summary` block reports resolved and unresolved repo counts
+
+JSON output:
+
+- `ok`
+- `path`
+- `mode: "execution-plan"`
+- `summary` with `repo_count`, `resolved_count`, `unresolved_count`, `required_unresolved_count`, `not_acquired_count`, and `missing_contract_count`
+- `repos`
+- each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `status`, optional `contract_identity`, optional `declared_execution`, optional `resolved`, optional `error`, and optional `next`
+- `overrides` appears only when execution overrides are supplied
+
+Current non-goals:
+
+- running setup or task commands
+- provisioning missing repos automatically
+- hiding unrunnable execution choices behind a synthetic success state
+- inventing one workspace-wide execution backend when repo contracts disagree
 
 ## `ota workspace run`
 

@@ -621,6 +621,47 @@ pub struct WorkspaceListSummary {
 }
 
 #[derive(Debug, Serialize)]
+pub struct WorkspaceRepoExecutionPlanReport {
+    pub name: String,
+    pub path: String,
+    pub contract_path: String,
+    pub required: bool,
+    pub acquired: bool,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<ContractIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_execution: Option<WorkspaceExecutionSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ExecutionPlanResolved>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+#[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceExecutionPlanSummary {
+    pub repo_count: usize,
+    pub resolved_count: usize,
+    pub unresolved_count: usize,
+    pub required_unresolved_count: usize,
+    pub not_acquired_count: usize,
+    pub missing_contract_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct WorkspaceExecutionPlanSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: WorkspaceExecutionPlanSummary,
+    pub repos: &'a [WorkspaceRepoExecutionPlanReport],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<ExecutionPlanOverrides>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct WorkspaceRepoUpReport {
     pub name: String,
     pub path: String,

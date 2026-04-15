@@ -39,7 +39,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -491,6 +491,30 @@ enum ExecutionCommands {
     },
 }
 
+#[derive(Debug, Clone, Subcommand)]
+enum WorkspaceExecutionCommands {
+    /// Show the execution backend, lifecycle, image, and target ota would select for each workspace repo.
+    Plan {
+        /// Print machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        json: bool,
+        /// Override the execution mode for this inspection.
+        #[arg(long = "mode", visible_alias = "backend", value_enum)]
+        backend: Option<RunBackend>,
+        /// Override the execution lifecycle for this inspection.
+        #[arg(long, value_enum)]
+        lifecycle: Option<RunLifecycle>,
+        /// Shorthand for `--lifecycle ephemeral`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "lifecycle")]
+        ephemeral: bool,
+        /// Filter output to one workspace repo by name.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Path to an ota.workspace.yaml file or a directory containing one.
+        path: Option<PathBuf>,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum PolicyInitPreset {
     #[value(name = "required-sections")]
@@ -696,6 +720,11 @@ enum WorkspaceCommands {
         repo: Option<String>,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
+    },
+    /// Inspect the resolved execution context for each workspace repo without running anything.
+    Execution {
+        #[command(subcommand)]
+        command: WorkspaceExecutionCommands,
     },
     /// Diagnose workspace repo readiness from an ota.workspace.yaml contract.
     /// Use `ota services` for repo-level service listing.
@@ -1296,6 +1325,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 command: Some(PolicyCommands::Review { json: true, .. }),
                 ..
             }
+            | Commands::Workspace {
+                command:
+                    WorkspaceCommands::Execution {
+                        command: WorkspaceExecutionCommands::Plan { json: true, .. },
+                    },
+            }
     ));
     let debug = cli.debug;
     let file = cli.file;
@@ -1754,6 +1789,31 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 format_from_json(json),
                 debug,
             ),
+            WorkspaceCommands::Execution {
+                command:
+                    WorkspaceExecutionCommands::Plan {
+                        json,
+                        backend,
+                        lifecycle,
+                        ephemeral,
+                        repo,
+                        path,
+                    },
+            } => commands::workspace_execution_plan(
+                path.as_deref(),
+                file.as_deref(),
+                repo.as_deref(),
+                ExecutionOverrides {
+                    backend: backend.map(Into::into),
+                    lifecycle: if ephemeral {
+                        Some(crate::schema::Lifecycle::Ephemeral)
+                    } else {
+                        lifecycle.map(Into::into)
+                    },
+                },
+                format_from_json(json),
+                debug,
+            ),
             WorkspaceCommands::Doctor {
                 json,
                 stream,
@@ -2016,6 +2076,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
                 }
             }
             WorkspaceCommands::List { .. } => WORKSPACE_SETUP_SUGGESTION,
+            WorkspaceCommands::Execution { .. } => {
+                "run `ota workspace execution plan --help` to inspect workspace execution inspection options"
+            }
             WorkspaceCommands::Doctor { .. } => WORKSPACE_SETUP_SUGGESTION,
             WorkspaceCommands::Explain { .. } => {
                 "run `ota workspace doctor` to inspect readiness findings before `ota workspace explain`"
@@ -2154,6 +2217,9 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Validate { json, .. }
             | WorkspaceCommands::Tasks { json, .. }
             | WorkspaceCommands::List { json, .. }
+            | WorkspaceCommands::Execution {
+                command: WorkspaceExecutionCommands::Plan { json, .. },
+            }
             | WorkspaceCommands::Doctor { json, .. }
             | WorkspaceCommands::Explain { json, .. }
             | WorkspaceCommands::Check { json, .. }
@@ -2209,6 +2275,7 @@ fn command_where_label(command: &Commands) -> &'static str {
             WorkspaceCommands::Validate { .. } => "ota workspace validate",
             WorkspaceCommands::Tasks { .. } => "ota workspace tasks",
             WorkspaceCommands::List { .. } => "ota workspace list",
+            WorkspaceCommands::Execution { .. } => "ota workspace execution plan",
             WorkspaceCommands::Doctor { .. } => "ota workspace doctor",
             WorkspaceCommands::Explain { .. } => "ota workspace explain",
             WorkspaceCommands::Check { .. } => "ota workspace check",
@@ -5689,6 +5756,95 @@ project:
         assert!(normalized.contains(
             "`ota execution plan` requires `execution.backends.remote.provider` for remote execution"
         ));
+    }
+
+    #[test]
+    fn workspace_execution_plan_json_reports_resolved_repo_execution_details() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "execution",
+            "plan",
+            "--json",
+            "--repo",
+            "api",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "execution-plan");
+        assert_eq!(json["summary"]["repo_count"], 1);
+        assert_eq!(json["summary"]["resolved_count"], 1);
+        assert_eq!(json["repos"][0]["name"], "api");
+        assert_eq!(json["repos"][0]["status"], "RESOLVED");
+        assert_eq!(
+            json["repos"][0]["contract_identity"]["project"]["name"],
+            "api"
+        );
+        assert_eq!(
+            json["repos"][0]["declared_execution"]["preferred"],
+            "remote"
+        );
+        assert_eq!(json["repos"][0]["resolved"]["backend"], "remote");
+        assert_eq!(json["repos"][0]["resolved"]["provider"], "ssh");
+        assert_eq!(json["repos"][0]["resolved"]["target"], "user@host");
+        assert_eq!(
+            json["repos"][0]["resolved"]["target_strategy"],
+            "remote target"
+        );
+    }
+
+    #[test]
+    fn workspace_execution_plan_text_fails_when_required_repo_is_not_runnable() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "execution",
+            "plan",
+            "--mode",
+            "container",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("WORKSPACE EXECUTION PLAN"));
+        assert!(stdout.contains("web [required] (UNRESOLVED)"));
+        assert!(stdout.contains(
+            "`ota execution plan` requires `execution.backends.container.image` for container execution"
+        ));
+        assert!(stdout.contains("repair `"));
+        assert!(stdout.contains("rerun `ota workspace execution plan`"));
     }
 
     #[test]

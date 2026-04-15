@@ -757,6 +757,199 @@ pub(crate) fn render_workspace_receipt(
     }
 }
 
+pub(crate) fn render_workspace_execution_plan(
+    path: &str,
+    report: &WorkspaceExecutionPlanReport,
+    format: OutputFormat,
+    overrides: Option<ExecutionPlanOverrides>,
+) -> CommandOutput {
+    let summary = workspace_execution_plan_summary(&report.repos);
+    let ok = summary.unresolved_count == 0;
+
+    match format {
+        OutputFormat::Text => {
+            let workspace_root = Path::new(path).parent();
+            let mut stdout = format!(
+                "{}\n\n{}",
+                format_command_header("WORKSPACE EXECUTION PLAN", path),
+                render_readiness_status(ok)
+            );
+
+            if let Some(overrides) = overrides.as_ref() {
+                stdout.push_str(&format!("\n\n{}\n", paint_section_title("Overrides")));
+                let mut first = true;
+                if let Some(backend) = overrides.backend.as_deref() {
+                    stdout.push_str(&format!(
+                        "{} {} {}",
+                        if first { "" } else { "\n" },
+                        paint_key("Backend:"),
+                        paint_backticked_code(backend)
+                    ));
+                    first = false;
+                }
+                if let Some(lifecycle) = overrides.lifecycle.as_deref() {
+                    stdout.push_str(&format!(
+                        "{} {} {}",
+                        if first { "" } else { "\n" },
+                        paint_key("Lifecycle:"),
+                        paint_backticked_code(lifecycle)
+                    ));
+                }
+            }
+
+            for repo in &report.repos {
+                stdout.push_str(&format!(
+                    "\n\n{} {} [{}] ({})",
+                    list_bullet(),
+                    paint(&repo.name, "1"),
+                    if repo.required {
+                        "required"
+                    } else {
+                        "optional"
+                    },
+                    workspace_execution_plan_status_word(&repo.status)
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Path:"),
+                    compact_repo_path(Path::new(&repo.path))
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Contract:"),
+                    compact_contract_file_path_relative_to(
+                        Path::new(&repo.contract_path),
+                        DEFAULT_CONTRACT_FILE,
+                        workspace_root,
+                    )
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Acquired:"),
+                    if repo.acquired { "yes" } else { "no" }
+                ));
+
+                if let Some(resolved) = repo.resolved.as_ref() {
+                    stdout.push_str(&format!(
+                        "\n{} {} {} ({})",
+                        summary_bullet(),
+                        paint_key("Backend:"),
+                        paint_backticked_code(&resolved.backend),
+                        resolved.backend_source
+                    ));
+                    if let Some(lifecycle) = resolved.lifecycle.as_deref() {
+                        let source = resolved.lifecycle_source.as_deref().unwrap_or("implicit");
+                        stdout.push_str(&format!(
+                            "\n{} {} {} ({})",
+                            summary_bullet(),
+                            paint_key("Lifecycle:"),
+                            paint_backticked_code(lifecycle),
+                            source
+                        ));
+                    }
+                    if let Some(image) = resolved.image.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Image:"),
+                            paint_backticked_code(image)
+                        ));
+                    }
+                    if let Some(engine) = resolved.engine.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Engine:"),
+                            paint_backticked_code(engine)
+                        ));
+                    }
+                    if !resolved.engine_candidates.is_empty() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Engine candidates:"),
+                            render_inline_code_list(&resolved.engine_candidates)
+                        ));
+                    }
+                    if let Some(provider) = resolved.provider.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Provider:"),
+                            paint_backticked_code(provider)
+                        ));
+                    }
+                    if let Some(target) = resolved.target.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Target:"),
+                            paint_backticked_code(target)
+                        ));
+                    }
+                    stdout.push_str(&format!(
+                        "\n{} {} {}",
+                        summary_bullet(),
+                        paint_key("Target strategy:"),
+                        resolved.target_strategy
+                    ));
+                    if let Some(cwd) = resolved.cwd.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Cwd:"),
+                            paint_backticked_code(cwd)
+                        ));
+                    }
+                } else if let Some(error) = repo.error.as_deref() {
+                    stdout.push_str(&format!(
+                        "\n{} {}",
+                        error_key("Why:"),
+                        compact_backticked_paths(error)
+                    ));
+                    if let Some(next) = repo.next.as_deref() {
+                        stdout.push_str(&format!(
+                            "\n{} {}",
+                            error_next_key("Next:"),
+                            compact_backticked_paths(next)
+                        ));
+                    }
+                }
+
+                if let Some(contract_identity) = repo.contract_identity.as_ref() {
+                    stdout.push_str(&format!(
+                        "\n\n{}",
+                        render_contract_identity_text(contract_identity)
+                    ));
+                }
+                if let Some(declared_execution) = repo.declared_execution.as_ref() {
+                    stdout.push_str(&render_workspace_execution_text(declared_execution));
+                }
+            }
+
+            stdout.push_str(&render_workspace_execution_plan_summary(&summary));
+
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: if ok { 0 } else { 1 },
+            }
+        }
+        OutputFormat::Json => CommandOutput {
+            stdout: to_json(&WorkspaceExecutionPlanSuccess {
+                ok,
+                path,
+                mode: "execution-plan",
+                summary,
+                repos: &report.repos,
+                overrides,
+            }),
+            stderr: None,
+            exit_code: if ok { 0 } else { 1 },
+        },
+    }
+}
+
 pub(crate) fn render_workspace_run(
     task: &str,
     path: &str,
@@ -934,6 +1127,23 @@ fn workspace_diff_status_word(status: &str) -> String {
     }
 }
 
+fn workspace_execution_plan_status_word(status: &str) -> String {
+    let trimmed = status.trim();
+    if plain_mode() {
+        return trimmed.to_string();
+    }
+
+    match trimmed {
+        "RESOLVED" => paint("RESOLVED", "1;38;2;102;217;255"),
+        "NOT ACQUIRED" => paint("NOT ACQUIRED", "1;38;2;0;180;255"),
+        "MISSING CONTRACT" => paint("MISSING CONTRACT", "1;38;2;255;80;80"),
+        "INVALID CONTRACT" => paint("INVALID CONTRACT", "1;38;2;255;80;80"),
+        "UNREADABLE CONTRACT" => paint("UNREADABLE CONTRACT", "1;38;2;255;80;80"),
+        "UNRESOLVED" => paint("UNRESOLVED", "1;38;2;183;134;255"),
+        other => paint(other, "1;37"),
+    }
+}
+
 fn render_workspace_diff_summary(repos: &[WorkspaceRepoDiffReport]) -> String {
     let summary = workspace_diff_summary(repos);
     let mut stdout = String::from("\n\n");
@@ -1087,6 +1297,69 @@ fn render_workspace_status_summary(summary: &WorkspaceStatusSummary) -> String {
     stdout
 }
 
+fn render_workspace_execution_plan_summary(summary: &WorkspaceExecutionPlanSummary) -> String {
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&paint_section_title("Summary"));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Repos:", "1;38;2;102;217;255"),
+            &paint(&summary.repo_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Resolved:", "1;38;2;102;217;255"),
+            &paint(&summary.resolved_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Unresolved:", "1;38;2;183;134;255"),
+            &paint(&summary.unresolved_count.to_string(), "1;38;2;255;255;255"),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Required unresolved:", "1;38;2;255;80;80"),
+            &paint(
+                &summary.required_unresolved_count.to_string(),
+                "1;38;2;255;255;255",
+            ),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Not acquired:", "1;38;2;0;180;255"),
+            &paint(
+                &summary.not_acquired_count.to_string(),
+                "1;38;2;255;255;255"
+            ),
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Missing contract:", "1;38;2;255;80;80"),
+            &paint(
+                &summary.missing_contract_count.to_string(),
+                "1;38;2;255;255;255",
+            ),
+        )
+    ));
+    stdout
+}
+
 fn workspace_status_summary(repos: &[WorkspaceRepoStatusReport]) -> WorkspaceStatusSummary {
     let mut summary = WorkspaceStatusSummary {
         repo_count: repos.len(),
@@ -1113,6 +1386,43 @@ fn workspace_status_summary(repos: &[WorkspaceRepoStatusReport]) -> WorkspaceSta
                 FindingSeverity::Error => summary.error_count += 1,
                 FindingSeverity::Warn => summary.warn_count += 1,
                 FindingSeverity::Info => summary.info_count += 1,
+            }
+        }
+    }
+
+    summary
+}
+
+fn workspace_execution_plan_summary(
+    repos: &[WorkspaceRepoExecutionPlanReport],
+) -> WorkspaceExecutionPlanSummary {
+    let mut summary = WorkspaceExecutionPlanSummary {
+        repo_count: repos.len(),
+        ..WorkspaceExecutionPlanSummary::default()
+    };
+
+    for repo in repos {
+        match repo.status.as_str() {
+            "RESOLVED" => summary.resolved_count += 1,
+            "NOT ACQUIRED" => {
+                summary.unresolved_count += 1;
+                summary.not_acquired_count += 1;
+                if repo.required {
+                    summary.required_unresolved_count += 1;
+                }
+            }
+            "MISSING CONTRACT" => {
+                summary.unresolved_count += 1;
+                summary.missing_contract_count += 1;
+                if repo.required {
+                    summary.required_unresolved_count += 1;
+                }
+            }
+            _ => {
+                summary.unresolved_count += 1;
+                if repo.required {
+                    summary.required_unresolved_count += 1;
+                }
             }
         }
     }

@@ -104,6 +104,32 @@ fn execution_schema_includes_resolved_and_declared_execution_fields() {
 }
 
 #[test]
+fn workspace_execution_schema_reports_per_repo_resolved_and_declared_fields() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-execution.json");
+    let properties = &schema["properties"];
+    let summary = &properties["summary"]["properties"];
+    let repo = &properties["repos"]["items"]["properties"];
+
+    assert_eq!(
+        properties["mode"],
+        serde_json::json!({ "const": "execution-plan" })
+    );
+    assert!(summary.get("repo_count").is_some());
+    assert!(summary.get("resolved_count").is_some());
+    assert!(summary.get("required_unresolved_count").is_some());
+    assert!(repo.get("contract_identity").is_some());
+    assert_eq!(
+        repo["declared_execution"]["$ref"],
+        serde_json::json!("./workspace-doctor.json#/properties/repos/items/properties/execution")
+    );
+    assert_eq!(
+        repo["resolved"]["$ref"],
+        serde_json::json!("./execution.json#/oneOf/0/properties/resolved")
+    );
+    assert!(properties.get("overrides").is_some());
+}
+
+#[test]
 fn up_schema_preview_execution_includes_optional_image() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_execution = &schema["oneOf"][0]["properties"]["execution"]["properties"];

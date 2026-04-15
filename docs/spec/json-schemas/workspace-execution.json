@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-execution.json",
+  "title": "ota workspace execution plan --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "path", "mode", "summary", "repos"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "path": { "type": "string" },
+    "mode": { "const": "execution-plan" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo_count",
+        "resolved_count",
+        "unresolved_count",
+        "required_unresolved_count",
+        "not_acquired_count",
+        "missing_contract_count"
+      ],
+      "properties": {
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "resolved_count": { "type": "integer", "minimum": 0 },
+        "unresolved_count": { "type": "integer", "minimum": 0 },
+        "required_unresolved_count": { "type": "integer", "minimum": 0 },
+        "not_acquired_count": { "type": "integer", "minimum": 0 },
+        "missing_contract_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "path",
+          "contract_path",
+          "required",
+          "acquired",
+          "status"
+        ],
+        "properties": {
+          "name": { "type": "string" },
+          "path": { "type": "string" },
+          "contract_path": { "type": "string" },
+          "required": { "type": "boolean" },
+          "acquired": { "type": "boolean" },
+          "status": { "type": "string" },
+          "contract_identity": {
+            "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
+          },
+          "declared_execution": {
+            "$ref": "./workspace-doctor.json#/properties/repos/items/properties/execution"
+          },
+          "resolved": {
+            "$ref": "./execution.json#/oneOf/0/properties/resolved"
+          },
+          "error": { "type": "string" },
+          "next": { "type": "string" }
+        }
+      }
+    },
+    "overrides": {
+      "$ref": "./execution.json#/oneOf/0/properties/overrides"
+    }
+  }
+}
