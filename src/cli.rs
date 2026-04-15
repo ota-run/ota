@@ -86,7 +86,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one monorepo member declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -101,7 +101,7 @@ enum Commands {
         #[arg(long = "use", action = ArgAction::SetTrue)]
         use_cmd: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -113,7 +113,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -125,7 +125,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Inspect one merged monorepo member contract declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Inspect one task's environment requirements in addition to contract env.
         #[arg(long)]
@@ -161,7 +161,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Optional repo path. Put it after the task name and before task inputs.
         #[arg(index = 2, value_hint = ValueHint::AnyPath)]
@@ -181,7 +181,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
         mode: DoctorModeArg,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -209,7 +209,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -257,7 +257,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -301,7 +301,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = DoctorModeArg::Native)]
         mode: DoctorModeArg,
         /// Run the command against one monorepo member declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -319,7 +319,7 @@ enum Commands {
         #[arg(long, conflicts_with = "run")]
         publish: Option<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -349,7 +349,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -367,7 +367,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue, requires = "stale")]
         json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
-        #[arg(long, conflicts_with = "stale")]
+        #[arg(long, conflicts_with = "stale", add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -746,7 +746,7 @@ enum WorkspaceCommands {
         #[arg(long, value_enum)]
         status: Option<WorkspaceDoctorStatusArg>,
         /// Filter output to one workspace repo by name.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_workspace_repo_candidates))]
         repo: Option<String>,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -775,7 +775,7 @@ enum WorkspaceCommands {
         #[arg(long, value_enum, default_value_t = WorkspaceDoctorSeverityArg::All)]
         severity: WorkspaceDoctorSeverityArg,
         /// Filter output to one workspace repo by name.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_workspace_repo_candidates))]
         repo: Option<String>,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -795,7 +795,7 @@ enum WorkspaceCommands {
         #[arg(long, value_enum, default_value_t = WorkspaceDoctorSeverityArg::All)]
         severity: WorkspaceDoctorSeverityArg,
         /// Filter output to one workspace repo by name.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_workspace_repo_candidates))]
         repo: Option<String>,
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -904,7 +904,7 @@ enum WorkspaceCommands {
     /// Run a task across workspace repos.
     Run {
         /// Task name to execute.
-        #[arg(index = 1)]
+        #[arg(index = 1, add = ArgValueCompleter::new(complete_workspace_run_task_candidates))]
         task: String,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -1085,6 +1085,275 @@ fn resolve_completion_contract_path(
 ) -> Option<PathBuf> {
     let file_override = completion_file_override(words);
     commands::resolve_contract_path_for_completion(explicit_path, file_override.as_deref())
+}
+
+fn resolve_completion_workspace_path(
+    explicit_path: Option<&Path>,
+    words: &[OsString],
+) -> Option<PathBuf> {
+    let file_override = completion_file_override(words);
+    commands::resolve_workspace_path_for_completion(explicit_path, file_override.as_deref())
+}
+
+fn completion_value_span_with(flag: &str, valued: &[&str], switches: &[&str]) -> Option<usize> {
+    if let Some((name, _)) = flag.split_once('=') {
+        if valued.contains(&name) || switches.contains(&name) {
+            return Some(1);
+        }
+        return None;
+    }
+
+    if valued.contains(&flag) {
+        Some(2)
+    } else if switches.contains(&flag) {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn repo_command_value_span(flag: &str) -> Option<usize> {
+    const VALUED: &[&str] = &[
+        "--file",
+        "--member",
+        "--task",
+        "--mode",
+        "--backend",
+        "--lifecycle",
+        "--baseline",
+        "--run",
+        "--publish",
+        "--output",
+    ];
+    const SWITCHES: &[&str] = &[
+        "--json",
+        "--use",
+        "--write",
+        "--stream",
+        "--dry-run",
+        "--receipt",
+        "--archive",
+        "--history",
+        "--fail-on-new-blockers",
+        "--promote-baseline",
+        "--ephemeral",
+        "--stale",
+        "--plain",
+        "--concise",
+        "--verbose",
+        "--debug",
+    ];
+
+    completion_value_span_with(flag, VALUED, SWITCHES)
+}
+
+fn workspace_command_value_span(flag: &str) -> Option<usize> {
+    const VALUED: &[&str] = &[
+        "--file",
+        "--repo",
+        "--status",
+        "--severity",
+        "--jobs",
+        "--ref",
+    ];
+    const SWITCHES: &[&str] = &[
+        "--json",
+        "--stream",
+        "--quiet",
+        "--receipt",
+        "--dry-run",
+        "--force",
+        "--prune",
+        "--plain",
+        "--concise",
+        "--verbose",
+        "--debug",
+    ];
+
+    completion_value_span_with(flag, VALUED, SWITCHES)
+}
+
+fn parse_completion_path(
+    words: &[OsString],
+    start_index: usize,
+    positional_to_skip: usize,
+    span_fn: fn(&str) -> Option<usize>,
+) -> Option<PathBuf> {
+    let mut index = start_index;
+    let mut skipped = 0;
+
+    while index < words.len() {
+        let token = words[index].to_string_lossy().to_string();
+        if token == "--" {
+            break;
+        }
+        if let Some(span) = span_fn(&token) {
+            index += span;
+            continue;
+        }
+        if token.starts_with('-') || token.is_empty() {
+            index += 1;
+            continue;
+        }
+        if skipped < positional_to_skip {
+            skipped += 1;
+            index += 1;
+            continue;
+        }
+        return Some(PathBuf::from(token));
+    }
+
+    None
+}
+
+fn parse_repo_command_completion_path(words: &[OsString]) -> Option<PathBuf> {
+    let command = words.get(1)?.to_string_lossy();
+    if command.as_ref() == "run" {
+        return parse_repo_run_completion_context(words).path;
+    }
+    if command.as_ref() == "workspace" {
+        return None;
+    }
+    parse_completion_path(words, 2, 0, repo_command_value_span)
+}
+
+fn parse_workspace_command_completion_path(words: &[OsString]) -> Option<PathBuf> {
+    if words.get(1).map(|value| value.to_string_lossy())?.as_ref() != "workspace" {
+        return None;
+    }
+    let subcommand = words.get(2)?.to_string_lossy();
+    let positional_to_skip = usize::from(subcommand.as_ref() == "run");
+    parse_completion_path(words, 3, positional_to_skip, workspace_command_value_span)
+}
+
+fn selected_option_values(
+    words: &[OsString],
+    flag_name: &str,
+    current: &str,
+) -> std::collections::BTreeSet<String> {
+    let inline_prefix = format!("{flag_name}=");
+    let last_index = words.len().saturating_sub(1);
+    let mut values = std::collections::BTreeSet::new();
+    let mut index = 0;
+
+    while index < words.len() {
+        let token = words[index].to_string_lossy();
+        if token.as_ref() == flag_name {
+            if let Some(value) = words.get(index + 1) {
+                let value = value.to_string_lossy();
+                if !value.is_empty() && !(index + 1 == last_index && value.as_ref() == current) {
+                    values.insert(value.to_string());
+                }
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(value) = token.strip_prefix(&inline_prefix)
+            && !value.is_empty()
+            && !(index == last_index && value == current)
+        {
+            values.insert(value.to_string());
+        }
+        index += 1;
+    }
+
+    values
+}
+
+fn load_repo_member_names(contract_path: &Path) -> Vec<String> {
+    crate::parser::load_contract(contract_path)
+        .ok()
+        .and_then(|contract| contract.workspace.map(|workspace| workspace.members))
+        .unwrap_or_default()
+}
+
+fn complete_repo_member_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let Some(contract_path) = resolve_completion_contract_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+    let selected = selected_option_values(&words, "--member", current);
+
+    load_repo_member_names(&contract_path)
+        .into_iter()
+        .filter(|name| !selected.contains(name))
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn load_workspace_repo_names(workspace_path: &Path) -> Vec<String> {
+    crate::workspace::load_workspace_contract(workspace_path)
+        .map(|workspace| workspace.repos.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn load_workspace_task_names(workspace_path: &Path) -> Vec<String> {
+    let Ok(workspace) = crate::workspace::load_workspace_contract(workspace_path) else {
+        return Vec::new();
+    };
+    let Ok(repo_refs) = crate::workspace::ordered_workspace_repo_refs(workspace_path, &workspace)
+    else {
+        return Vec::new();
+    };
+
+    let mut shared: Option<std::collections::BTreeSet<String>> = None;
+    for repo in repo_refs {
+        if !repo.present {
+            continue;
+        }
+        let Ok(contract) = crate::parser::load_contract(&repo.contract_path) else {
+            return Vec::new();
+        };
+        let repo_tasks = contract.tasks.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+        shared = Some(match shared {
+            Some(existing) => existing.intersection(&repo_tasks).cloned().collect(),
+            None => repo_tasks,
+        });
+    }
+
+    shared.unwrap_or_default().into_iter().collect()
+}
+
+fn complete_workspace_repo_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_workspace_command_completion_path(&words);
+    let Some(workspace_path) = resolve_completion_workspace_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+
+    load_workspace_repo_names(&workspace_path)
+        .into_iter()
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn complete_workspace_run_task_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_workspace_command_completion_path(&words);
+    let Some(workspace_path) = resolve_completion_workspace_path(explicit_path.as_deref(), &words)
+    else {
+        return Vec::new();
+    };
+
+    load_workspace_task_names(&workspace_path)
+        .into_iter()
+        .filter(|name| current.is_empty() || name.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
 }
 
 fn parse_repo_run_completion_context(words: &[OsString]) -> RepoRunCompletionContext {
@@ -11673,11 +11942,13 @@ agent:
         assert!(stdout.contains("Mode: pack"));
         assert!(stdout.contains("Pack: node"));
         assert!(
-            stdout.contains(
-                "Pack policy: explicit pack mode seeds a conventional starter contract"
-            )
+            stdout
+                .contains("Pack policy: explicit pack mode seeds a conventional starter contract")
         );
-        assert!(!stdout.contains("Write policy: detected mode writes high- and medium-confidence fields"));
+        assert!(
+            !stdout
+                .contains("Write policy: detected mode writes high- and medium-confidence fields")
+        );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("project:"));
         assert!(written.contains("runtimes:"));
@@ -15319,6 +15590,143 @@ tasks:
             .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("path-target/")]);
+    }
+
+    #[test]
+    fn repo_member_shell_completion_suggests_declared_monorepo_members() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "doctor".into(), "--member".into(), "a".into()],
+        });
+
+        let values = shell_completion_values(&["ota", "doctor", "--member", "a"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("api")]);
+    }
+
+    #[test]
+    fn workspace_run_shell_completion_suggests_repo_task_names() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    run: npm run dev
+  lint:
+    run: npm run lint
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "workspace".into(), "run".into(), "d".into()],
+        });
+
+        let values = shell_completion_values(&["ota", "workspace", "run", "d"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("dev")]);
+    }
+
+    #[test]
+    fn workspace_run_shell_completion_only_suggests_workspace_wide_tasks() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture.dir.path().join("services").join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  check:
+    run: cargo test
+  ci:
+    run: cargo clippy
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("services").join("db").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  check:
+    run: cargo test
+  clean:
+    run: cargo clean
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "workspace".into(), "run".into(), "c".into()],
+        });
+
+        let values = shell_completion_values(&["ota", "workspace", "run", "c"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("check")]);
+    }
+
+    #[test]
+    fn workspace_repo_shell_completion_suggests_declared_repo_names() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new_multi_repo();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "workspace".into(),
+                "doctor".into(),
+                "--repo".into(),
+                "a".into(),
+            ],
+        });
+
+        let values = shell_completion_values(&["ota", "workspace", "doctor", "--repo", "a"], 4)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("api")]);
     }
 
     #[test]

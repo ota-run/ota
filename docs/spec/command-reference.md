@@ -1115,6 +1115,9 @@ Current behavior:
 - once the shell has sourced that setup, `ota <TAB>` completes commands and flags
 - once the shell has sourced that setup, `ota run <TAB>` completes task names from the active repo contract
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes declared task input flags and allowed values when the task input spec constrains them
+- once the shell has sourced that setup, `--member <TAB>` completes monorepo member names from the active repo contract
+- once the shell has sourced that setup, `ota workspace run <TAB>` completes task names that are runnable across the currently available workspace repos
+- once the shell has sourced that setup, `ota workspace doctor --repo <TAB>` and related `--repo` filters complete declared workspace repo names
 - when no repo contract is available, shell completion falls back to static command and flag suggestions
 - users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync
 
