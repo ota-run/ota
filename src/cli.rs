@@ -5694,8 +5694,7 @@ execution:
     container:
       image: rust:1.94-bookworm
       engines:
-        - docker
-        - podman
+        - cargo
 tasks:
   setup:
     run: echo ready
@@ -5713,7 +5712,13 @@ tasks:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code,
+            0,
+            "stdout:\n{}\nstderr:\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(
@@ -5730,7 +5735,7 @@ tasks:
             json["resolved"]["target_strategy"],
             "ephemeral per-run container"
         );
-        assert_eq!(json["resolved"]["engine_candidates"][0], "docker");
+        assert_eq!(json["resolved"]["engine_candidates"][0], "cargo");
         assert_eq!(json["overrides"]["backend"], "container");
         assert_eq!(json["overrides"]["lifecycle"], "ephemeral");
         assert!(json["resolved"]["target"].as_str().is_some());
@@ -5763,6 +5768,8 @@ execution:
   backends:
     container:
       image: rust:1.94-bookworm
+      engines:
+        - cargo
 "#,
         );
 
@@ -5775,7 +5782,13 @@ execution:
             fixture.path(),
         ]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            output.exit_code,
+            0,
+            "stdout:\n{}\nstderr:\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("EXECUTION PLAN"));
         assert!(stdout.contains("[member api]"));
