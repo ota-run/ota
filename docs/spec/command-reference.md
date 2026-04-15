@@ -1091,6 +1091,30 @@ JSON output:
 
 Use this when you need to understand what policy ota enforced, why a repo-contract request is outside the approved policy boundary, or whether the org policy pack itself needs to change.
 
+## `ota completion`
+
+Show how to enable shell completion for ota.
+
+```bash
+ota completion bash
+ota completion zsh
+ota completion fish
+ota completion powershell
+ota completion elvish
+```
+
+Current behavior:
+
+- prints the shell setup line ota expects for the selected shell
+- the setup line uses ota's dynamic completion runtime (`COMPLETE=<shell> ota`) rather than a stale generated file
+- once the shell has sourced that setup, `ota <TAB>` completes commands and flags
+- once the shell has sourced that setup, `ota run <TAB>` completes task names from the active repo contract
+- once the shell has sourced that setup, `ota run <task> <TAB>` completes declared task input flags and allowed values when the task input spec constrains them
+- when no repo contract is available, shell completion falls back to static command and flag suggestions
+- users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync
+
+Use this when you want contract-aware shell suggestions instead of memorizing task names and task input flags.
+
 ## `ota uninstall`
 
 Remove ota from this laptop.
