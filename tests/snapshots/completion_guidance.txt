@@ -1,37 +1,73 @@
 $ ota completion bash
-Add this to ~/.bashrc:
-source <(COMPLETE=bash ota)
+Auto setup:
+ota completion bash --setup
 
+Manual setup (~/.bashrc):
+# >>> ota completion >>>
+if command -v ota >/dev/null 2>&1; then
+  source <(COMPLETE=bash ota)
+fi
+# <<< ota completion <<<
 Reload your shell after updating ota so completions stay in sync.
 
 ---
 
 $ ota completion zsh
-Add this to ~/.zshrc:
-source <(COMPLETE=zsh ota)
+Auto setup:
+ota completion zsh --setup
 
+Manual setup (~/.zshrc):
+# >>> ota completion >>>
+if command -v ota >/dev/null 2>&1; then
+  if ! whence compdef >/dev/null 2>&1; then
+    autoload -Uz compinit
+    compinit
+  fi
+  source <(COMPLETE=zsh ota)
+fi
+# <<< ota completion <<<
 Reload your shell after updating ota so completions stay in sync.
 
 ---
 
 $ ota completion fish
-Add this to ~/.config/fish/completions/ota.fish:
-COMPLETE=fish ota | source
+Auto setup:
+ota completion fish --setup
 
+Manual setup (~/.config/fish/completions/ota.fish):
+# >>> ota completion >>>
+if type -q ota
+    COMPLETE=fish ota | source
+end
+# <<< ota completion <<<
 Reload your shell after updating ota so completions stay in sync.
 
 ---
 
 $ ota completion powershell
-Add this to $PROFILE:
-$env:COMPLETE = "powershell"; ota | Out-String | Invoke-Expression; Remove-Item Env:\COMPLETE
+Auto setup:
+ota completion powershell --setup
 
-PowerShell must allow profile scripts to run (RemoteSigned or stricter policy support). Reopen the shell after updating ota so completions stay in sync.
+Manual setup ($PROFILE):
+# >>> ota completion >>>
+if (Get-Command ota -ErrorAction SilentlyContinue) {
+  $env:COMPLETE = "powershell"
+  ota | Out-String | Invoke-Expression
+  Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue
+}
+# <<< ota completion <<<
+Reload your shell after updating ota so completions stay in sync.
 
 ---
 
 $ ota completion elvish
-Add this to ~/.elvish/rc.elv:
-eval (E:COMPLETE=elvish ota | slurp)
+Auto setup:
+ota completion elvish --setup
 
+Manual setup (~/.elvish/rc.elv):
+# >>> ota completion >>>
+if (has-external-command ota) {
+  eval (E:COMPLETE=elvish ota | slurp)
+}
+# <<< ota completion <<<
 Reload your shell after updating ota so completions stay in sync.

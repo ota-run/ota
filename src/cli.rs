@@ -22,6 +22,7 @@
 
 use std::cell::RefCell;
 use std::ffi::OsString;
+use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -33,6 +34,7 @@ use clap::{
 };
 use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::CompleteEnv;
+use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Zsh};
 
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
@@ -44,7 +46,7 @@ mod commands;
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
     version = env!("CARGO_PKG_VERSION"),
-    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion zsh\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
+    after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
 pub struct Cli {
@@ -384,11 +386,17 @@ enum Commands {
         path: Option<PathBuf>,
     },
     #[command(display_order = 19)]
-    /// Show how to enable shell completion for ota.
+    /// Show, install, or verify shell completion for ota.
     Completion {
-        /// Shell to configure for completion.
-        #[arg(value_enum)]
-        shell: CompletionShell,
+        /// Shell to configure or inspect (`bash`, `zsh`, `fish`, `powershell`, `elvish`) or `check`.
+        #[arg(value_parser = ["bash", "zsh", "fish", "powershell", "pwsh", "elvish", "check"])]
+        shell: Option<String>,
+        /// Install the shell hook into the current shell profile or completion file.
+        #[arg(long, action = ArgAction::SetTrue)]
+        setup: bool,
+        /// Print the exact generated shell registration script for one shell.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "setup")]
+        script: bool,
     },
     #[command(display_order = 20)]
     /// Remove ota from this laptop.
@@ -590,6 +598,26 @@ enum CompletionShell {
     Fish,
     Powershell,
     Elvish,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompletionSetupStatus {
+    Installed,
+    Updated,
+    AlreadyConfigured,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompletionHookStatus {
+    Present,
+    Stale,
+    Missing,
+}
+
+struct CompletionSetupPlan {
+    shell: CompletionShell,
+    target: PathBuf,
+    block: String,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2409,23 +2437,375 @@ fn render_version_output(args: &[OsString]) -> String {
     format!("🦦 \x1b[1;38;5;136m{version}\x1b[0m")
 }
 
-fn render_completion_instructions(shell: CompletionShell) -> String {
+const COMPLETION_SETUP_MARKER_START: &str = "# >>> ota completion >>>";
+const COMPLETION_SETUP_MARKER_END: &str = "# <<< ota completion <<<";
+
+fn completion_shell_name(shell: CompletionShell) -> &'static str {
     match shell {
-        CompletionShell::Bash => String::from(
-            "Add this to ~/.bashrc:\nsource <(COMPLETE=bash ota)\n\nReload your shell after updating ota so completions stay in sync.",
-        ),
-        CompletionShell::Zsh => String::from(
-            "Add this to ~/.zshrc:\nsource <(COMPLETE=zsh ota)\n\nReload your shell after updating ota so completions stay in sync.",
-        ),
-        CompletionShell::Fish => String::from(
-            "Add this to ~/.config/fish/completions/ota.fish:\nCOMPLETE=fish ota | source\n\nReload your shell after updating ota so completions stay in sync.",
-        ),
-        CompletionShell::Powershell => String::from(
-            "Add this to $PROFILE:\n$env:COMPLETE = \"powershell\"; ota | Out-String | Invoke-Expression; Remove-Item Env:\\COMPLETE\n\nPowerShell must allow profile scripts to run (RemoteSigned or stricter policy support). Reopen the shell after updating ota so completions stay in sync.",
-        ),
-        CompletionShell::Elvish => String::from(
-            "Add this to ~/.elvish/rc.elv:\neval (E:COMPLETE=elvish ota | slurp)\n\nReload your shell after updating ota so completions stay in sync.",
-        ),
+        CompletionShell::Bash => "bash",
+        CompletionShell::Zsh => "zsh",
+        CompletionShell::Fish => "fish",
+        CompletionShell::Powershell => "powershell",
+        CompletionShell::Elvish => "elvish",
+    }
+}
+
+fn completion_env_completer(shell: CompletionShell) -> &'static dyn EnvCompleter {
+    match shell {
+        CompletionShell::Bash => &Bash,
+        CompletionShell::Zsh => &Zsh,
+        CompletionShell::Fish => &Fish,
+        CompletionShell::Powershell => &Powershell,
+        CompletionShell::Elvish => &Elvish,
+    }
+}
+
+fn parse_completion_shell_arg(shell: &str) -> Result<CompletionShell, String> {
+    completion_shell_from_value(shell).ok_or_else(|| {
+        format!(
+            "unknown shell `{shell}`\nNext: use one of `bash`, `zsh`, `fish`, `powershell`, `elvish`, or `check`"
+        )
+    })
+}
+
+fn completion_shell_from_value(value: &str) -> Option<CompletionShell> {
+    let normalized = value
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(value)
+        .trim_end_matches(".exe")
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "bash" => Some(CompletionShell::Bash),
+        "zsh" => Some(CompletionShell::Zsh),
+        "fish" => Some(CompletionShell::Fish),
+        "elvish" => Some(CompletionShell::Elvish),
+        "pwsh" | "powershell" => Some(CompletionShell::Powershell),
+        _ => None,
+    }
+}
+
+fn detect_completion_shell_from_env(
+    shell_env: Option<&OsString>,
+    ps_module_path: Option<&OsString>,
+) -> Option<CompletionShell> {
+    shell_env
+        .and_then(|value| completion_shell_from_value(&value.to_string_lossy()))
+        .or_else(|| ps_module_path.map(|_| CompletionShell::Powershell))
+}
+
+fn detect_completion_shell() -> Option<CompletionShell> {
+    detect_completion_shell_from_env(
+        std::env::var_os("SHELL").as_ref(),
+        std::env::var_os("PSModulePath").as_ref(),
+    )
+}
+
+fn completion_setup_target_path(
+    shell: CompletionShell,
+    home_dir: Option<&Path>,
+    xdg_config_home: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let home_dir = home_dir.ok_or_else(|| {
+        String::from("could not determine the home directory for shell completion setup")
+    })?;
+    let xdg_config_dir = xdg_config_home
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| home_dir.join(".config"));
+    Ok(match shell {
+        CompletionShell::Bash => home_dir.join(".bashrc"),
+        CompletionShell::Zsh => home_dir.join(".zshrc"),
+        CompletionShell::Fish => xdg_config_dir
+            .join("fish")
+            .join("completions")
+            .join("ota.fish"),
+        CompletionShell::Powershell => {
+            if cfg!(windows) {
+                home_dir
+                    .join("Documents")
+                    .join("PowerShell")
+                    .join("Microsoft.PowerShell_profile.ps1")
+            } else {
+                xdg_config_dir
+                    .join("powershell")
+                    .join("Microsoft.PowerShell_profile.ps1")
+            }
+        }
+        CompletionShell::Elvish => home_dir.join(".elvish").join("rc.elv"),
+    })
+}
+
+fn completion_setup_target_label(shell: CompletionShell) -> &'static str {
+    match shell {
+        CompletionShell::Bash => "~/.bashrc",
+        CompletionShell::Zsh => "~/.zshrc",
+        CompletionShell::Fish => "~/.config/fish/completions/ota.fish",
+        CompletionShell::Powershell => "$PROFILE",
+        CompletionShell::Elvish => "~/.elvish/rc.elv",
+    }
+}
+
+fn completion_setup_snippet(shell: CompletionShell) -> &'static str {
+    match shell {
+        CompletionShell::Bash => {
+            "if command -v ota >/dev/null 2>&1; then\n  source <(COMPLETE=bash ota)\nfi"
+        }
+        CompletionShell::Zsh => {
+            "if command -v ota >/dev/null 2>&1; then\n  if ! whence compdef >/dev/null 2>&1; then\n    autoload -Uz compinit\n    compinit\n  fi\n  source <(COMPLETE=zsh ota)\nfi"
+        }
+        CompletionShell::Fish => "if type -q ota\n    COMPLETE=fish ota | source\nend",
+        CompletionShell::Powershell => {
+            "if (Get-Command ota -ErrorAction SilentlyContinue) {\n  $env:COMPLETE = \"powershell\"\n  ota | Out-String | Invoke-Expression\n  Remove-Item Env:\\COMPLETE -ErrorAction SilentlyContinue\n}"
+        }
+        CompletionShell::Elvish => {
+            "if (has-external-command ota) {\n  eval (E:COMPLETE=elvish ota | slurp)\n}"
+        }
+    }
+}
+
+fn completion_setup_block(shell: CompletionShell) -> String {
+    format!(
+        "{COMPLETION_SETUP_MARKER_START}\n{}\n{COMPLETION_SETUP_MARKER_END}\n",
+        completion_setup_snippet(shell)
+    )
+}
+
+fn render_completion_registration_script(shell: CompletionShell) -> Result<String, String> {
+    let mut command = completion_command();
+    command.build();
+    let name = command.get_name();
+    let bin = command.get_bin_name().unwrap_or(command.get_name());
+    let mut buf = Vec::new();
+    completion_env_completer(shell)
+        .write_registration("COMPLETE", name, bin, bin, &mut buf)
+        .map_err(|error| error.to_string())?;
+    String::from_utf8(buf).map_err(|error| error.to_string())
+}
+
+fn completion_hook_status(existing: Option<&str>, expected_block: &str) -> CompletionHookStatus {
+    match existing {
+        Some(contents) if contents.contains(expected_block) => CompletionHookStatus::Present,
+        Some(contents)
+            if contents.contains(COMPLETION_SETUP_MARKER_START)
+                && contents.contains(COMPLETION_SETUP_MARKER_END) =>
+        {
+            CompletionHookStatus::Stale
+        }
+        _ => CompletionHookStatus::Missing,
+    }
+}
+
+fn upsert_completion_setup(existing: &str, block: &str) -> (String, CompletionSetupStatus) {
+    if let Some(start) = existing.find(COMPLETION_SETUP_MARKER_START) {
+        if let Some(end_rel) = existing[start..].find(COMPLETION_SETUP_MARKER_END) {
+            let end = start + end_rel + COMPLETION_SETUP_MARKER_END.len();
+            let after_end = if existing[end..].starts_with('\n') {
+                end + 1
+            } else {
+                end
+            };
+            let current = &existing[start..after_end];
+            if current == block {
+                return (
+                    existing.to_string(),
+                    CompletionSetupStatus::AlreadyConfigured,
+                );
+            }
+
+            let mut updated = String::with_capacity(existing.len() + block.len());
+            updated.push_str(&existing[..start]);
+            updated.push_str(block);
+            updated.push_str(&existing[after_end..]);
+            return (updated, CompletionSetupStatus::Updated);
+        }
+    }
+
+    let updated = if existing.trim().is_empty() {
+        block.to_string()
+    } else {
+        format!("{}\n\n{block}", existing.trim_end())
+    };
+    (updated, CompletionSetupStatus::Installed)
+}
+
+fn completion_setup_plan(shell: CompletionShell) -> Result<CompletionSetupPlan, String> {
+    let home_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let target =
+        completion_setup_target_path(shell, home_dir.as_deref(), xdg_config_home.as_deref())?;
+    Ok(CompletionSetupPlan {
+        shell,
+        target,
+        block: completion_setup_block(shell),
+    })
+}
+
+fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
+    let shell = match shell.or_else(detect_completion_shell) {
+        Some(shell) => shell,
+        None => {
+            return CommandOutput::failure(
+                "could not detect the current shell automatically\nNext: run `ota completion zsh --setup` (or bash, fish, powershell, elvish)".to_string(),
+            );
+        }
+    };
+
+    let plan = match completion_setup_plan(shell) {
+        Ok(plan) => plan,
+        Err(error) => return CommandOutput::failure(error),
+    };
+
+    if let Some(parent) = plan.target.parent() {
+        if let Err(error) = fs::create_dir_all(parent) {
+            return CommandOutput::failure(format!(
+                "failed to prepare shell completion target `{}`: {error}",
+                plan.target.display()
+            ));
+        }
+    }
+
+    let existing = match fs::read_to_string(&plan.target) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "failed to read shell completion target `{}`: {error}",
+                plan.target.display()
+            ));
+        }
+    };
+
+    let (updated, status) = upsert_completion_setup(&existing, &plan.block);
+    if status != CompletionSetupStatus::AlreadyConfigured
+        && let Err(error) = fs::write(&plan.target, updated)
+    {
+        return CommandOutput::failure(format!(
+            "failed to write shell completion target `{}`: {error}",
+            plan.target.display()
+        ));
+    }
+
+    let status_label = match status {
+        CompletionSetupStatus::Installed => "installed",
+        CompletionSetupStatus::Updated => "updated",
+        CompletionSetupStatus::AlreadyConfigured => "already configured",
+    };
+    CommandOutput::success(format!(
+        "Shell: {}\nFile: {}\nStatus: {status_label}\nNext: reopen your shell so completions are active",
+        completion_shell_name(plan.shell),
+        plan.target.display(),
+    ))
+}
+
+fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
+    let shell = match shell.or_else(detect_completion_shell) {
+        Some(shell) => shell,
+        None => {
+            return CommandOutput::failure(
+                "could not detect the current shell automatically\nNext: run `ota completion check` from the shell you want to verify, or specify a shell for setup/script output".to_string(),
+            );
+        }
+    };
+    let plan = match completion_setup_plan(shell) {
+        Ok(plan) => plan,
+        Err(error) => return CommandOutput::failure(error),
+    };
+    let binary = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "could not determine the current ota binary path: {error}"
+            ));
+        }
+    };
+    let existing = fs::read_to_string(&plan.target).ok();
+    let hook = completion_hook_status(existing.as_deref(), &plan.block);
+    let hook_label = match hook {
+        CompletionHookStatus::Present => "present",
+        CompletionHookStatus::Stale => "needs update",
+        CompletionHookStatus::Missing => "missing",
+    };
+    let next = match hook {
+        CompletionHookStatus::Present => {
+            "reopen your shell if completions are still inactive in the current session"
+        }
+        CompletionHookStatus::Stale | CompletionHookStatus::Missing => {
+            "run `ota completion --setup` to install or refresh the managed hook"
+        }
+    };
+    let output = format!(
+        "Shell: {}\nBinary: {}\nFile: {}\nHook: {hook_label}\nNext: {next}",
+        completion_shell_name(shell),
+        binary.display(),
+        plan.target.display(),
+    );
+    match hook {
+        CompletionHookStatus::Present => CommandOutput::success(output),
+        CompletionHookStatus::Stale | CompletionHookStatus::Missing => {
+            CommandOutput::failure(output)
+        }
+    }
+}
+
+fn render_completion_instructions(shell: CompletionShell) -> String {
+    format!(
+        "Auto setup:\nota completion {} --setup\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+        completion_shell_name(shell),
+        completion_setup_target_label(shell),
+        completion_setup_block(shell).trim_end()
+    )
+}
+
+fn handle_completion_command(shell: Option<&str>, setup: bool, script: bool) -> CommandOutput {
+    if let Some("check") = shell {
+        if setup || script {
+            return CommandOutput::failure_with_code(
+                String::from("`ota completion check` does not take `--setup` or `--script`"),
+                2,
+            );
+        }
+        return check_completion_setup(None);
+    }
+
+    let parsed_shell = match shell {
+        Some(shell) => match parse_completion_shell_arg(shell) {
+            Ok(shell) => Some(shell),
+            Err(error) => return CommandOutput::failure_with_code(error, 2),
+        },
+        None => None,
+    };
+
+    if script {
+        let shell = match parsed_shell {
+            Some(shell) => shell,
+            None => {
+                return CommandOutput::failure_with_code(
+                    String::from("`--script` requires an explicit shell"),
+                    2,
+                );
+            }
+        };
+        return match render_completion_registration_script(shell) {
+            Ok(script) => CommandOutput::success(script),
+            Err(error) => CommandOutput::failure(error),
+        };
+    }
+
+    if setup {
+        return install_completion_setup(parsed_shell);
+    }
+
+    if let Some(shell) = parsed_shell {
+        CommandOutput::success(render_completion_instructions(shell))
+    } else {
+        CommandOutput::failure_with_code(
+            String::from(
+                "specify a shell, run `ota completion --setup`, or run `ota completion check`",
+            ),
+            2,
+        )
     }
 }
 
@@ -2730,9 +3110,11 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
-        Commands::Completion { shell } => {
-            CommandOutput::success(render_completion_instructions(shell))
-        }
+        Commands::Completion {
+            shell,
+            setup,
+            script,
+        } => handle_completion_command(shell.as_deref(), setup, script),
         Commands::Uninstall => commands::uninstall(debug),
         Commands::SelfUpdate { version, channel } => commands::self_update(
             version.as_deref(),
@@ -3181,7 +3563,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         }
         Commands::Clean { .. } => "ota clean --help",
         Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
-        Commands::Completion { .. } => "run `ota completion zsh` to inspect shell setup",
+        Commands::Completion { .. } => {
+            "run `ota completion --setup` to install shell completion, `ota completion check` to verify the managed hook, or `ota completion zsh --script` to inspect the raw registration script"
+        }
         Commands::Uninstall => "run `ota uninstall --help` to inspect uninstall options",
         Commands::SelfUpdate { .. } => "run `ota self-update --help` to inspect update options",
         Commands::Detect { .. } => {
@@ -3455,9 +3839,10 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        Cli, Commands, CompletionRequest, CompletionRequestGuard, PolicyCommands, PolicyInitPreset,
-        append_try_footer, collapse_blank_lines, commands, complete_repo_run_task_candidates,
-        completion_command, maybe_append_update_notice, run_with,
+        COMPLETION_SETUP_MARKER_START, Cli, Commands, CompletionRequest, CompletionRequestGuard,
+        PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines, commands,
+        complete_repo_run_task_candidates, completion_command, maybe_append_update_notice,
+        maybe_handle_shell_completion, run_with,
     };
     use crate::output::CommandOutput;
 
@@ -15831,11 +16216,23 @@ edition = "2024"
         let output = run_with(["ota", "completion", "zsh"]);
 
         assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("ota completion zsh --setup"));
         assert!(output.stdout.contains("source <(COMPLETE=zsh ota)"));
         assert!(
             output
                 .stdout
                 .contains("Reload your shell after updating ota")
+        );
+    }
+
+    #[test]
+    fn completion_command_requires_shell_without_setup() {
+        let output = run_with(["ota", "completion"]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap_or_default()),
+            "specify a shell, run `ota completion --setup`, or run `ota completion check`"
         );
     }
 
@@ -15854,6 +16251,165 @@ edition = "2024"
         }
 
         assert_text_snapshot("completion_guidance.txt", &sections.join("\n\n---\n\n"));
+    }
+
+    #[test]
+    fn completion_script_prints_generated_registration_script() {
+        let output = run_with(["ota", "completion", "bash", "--script"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("_clap_complete_ota()"));
+        assert!(output.stdout.contains("COMPLETE=\"bash\""));
+        assert!(output.stdout.contains("complete -o nospace"));
+    }
+
+    #[test]
+    fn completion_setup_detects_shell_and_installs_managed_block() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
+
+        let output = run_with(["ota", "completion", "--setup"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Shell: zsh"));
+        let profile = dir.path().join(".zshrc");
+        let written = fs::read_to_string(&profile).expect("completion profile should exist");
+        assert!(written.contains(COMPLETION_SETUP_MARKER_START));
+        assert!(written.contains("autoload -Uz compinit"));
+        assert!(written.contains("source <(COMPLETE=zsh ota)"));
+    }
+
+    #[test]
+    fn completion_setup_is_idempotent_for_existing_profile_block() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/bash"));
+
+        let first = run_with(["ota", "completion", "--setup"]);
+        assert_eq!(first.exit_code, 0);
+
+        let profile = dir.path().join(".bashrc");
+        let original = fs::read_to_string(&profile).expect("bash profile should exist");
+
+        let second = run_with(["ota", "completion", "--setup"]);
+
+        assert_eq!(second.exit_code, 0);
+        assert!(second.stdout.contains("Status: already configured"));
+        let rewritten = fs::read_to_string(&profile).expect("bash profile should still exist");
+        assert_eq!(rewritten, original);
+    }
+
+    #[test]
+    fn completion_setup_fails_when_shell_cannot_be_detected() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/unsupported-shell"));
+        let previous_ps_module_path = std::env::var_os("PSModulePath");
+        unsafe {
+            std::env::remove_var("PSModulePath");
+        }
+
+        let output = run_with(["ota", "completion", "--setup"]);
+
+        match previous_ps_module_path {
+            Some(value) => unsafe {
+                std::env::set_var("PSModulePath", value);
+            },
+            None => unsafe {
+                std::env::remove_var("PSModulePath");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("could not detect the current shell automatically"));
+        assert!(stderr.contains("ota completion zsh --setup"));
+    }
+
+    #[test]
+    fn completion_check_reports_missing_hook() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
+
+        let output = run_with(["ota", "completion", "check"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Shell: zsh"));
+        assert!(stderr.contains("Hook: missing"));
+        assert!(stderr.contains("ota completion --setup"));
+    }
+
+    #[test]
+    fn completion_check_reports_present_hook() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/bash"));
+
+        let setup = run_with(["ota", "completion", "--setup"]);
+        assert_eq!(setup.exit_code, 0);
+
+        let output = run_with(["ota", "completion", "check"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Shell: bash"));
+        assert!(output.stdout.contains("Hook: present"));
+    }
+
+    #[test]
+    fn maybe_handle_shell_completion_intercepts_bash_completion_request() {
+        let _guard = env_mutex_lock();
+        let _complete = EnvVarGuard::set("COMPLETE", OsString::from("bash"));
+        let _ifs = EnvVarGuard::set("_CLAP_IFS", OsString::from("\n"));
+        let _index = EnvVarGuard::set("_CLAP_COMPLETE_INDEX", OsString::from("1"));
+        let _comp_type = EnvVarGuard::set("_CLAP_COMPLETE_COMP_TYPE", OsString::from("9"));
+        let _space = EnvVarGuard::set("_CLAP_COMPLETE_SPACE", OsString::from("true"));
+
+        let output = maybe_handle_shell_completion(&[
+            OsString::from("ota"),
+            OsString::from("--"),
+            OsString::from("ota"),
+            OsString::from("ru"),
+        ])
+        .expect("completion request should be intercepted");
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_none());
+        assert!(std::env::var_os("COMPLETE").is_none());
+    }
+
+    #[test]
+    fn completion_command_shell_argument_exposes_supported_shell_values() {
+        let command = completion_command();
+        let completion = command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "completion")
+            .expect("completion subcommand should exist");
+        let shell = completion
+            .get_arguments()
+            .find(|arg| arg.get_id().as_str() == "shell")
+            .expect("completion shell argument should exist");
+        let values = shell
+            .get_possible_values()
+            .into_iter()
+            .map(|value| value.get_name().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(values.contains(&String::from("bash")));
+        assert!(values.contains(&String::from("zsh")));
+        assert!(values.contains(&String::from("fish")));
+        assert!(values.contains(&String::from("powershell")));
+        assert!(values.contains(&String::from("pwsh")));
+        assert!(values.contains(&String::from("elvish")));
+        assert!(values.contains(&String::from("check")));
     }
 
     #[test]
