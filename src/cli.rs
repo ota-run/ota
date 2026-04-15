@@ -89,7 +89,7 @@ enum Commands {
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one monorepo member declared by the root contract.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
@@ -12883,6 +12883,18 @@ agent:
             .expect("check provenance");
         assert_eq!(check_run["provenance"], "template-derived");
         assert_eq!(check_run["source"], "ota.init#starter_pack.python");
+        let setup_description = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.description")
+            .expect("setup description provenance");
+        assert_eq!(setup_description["provenance"], "template-derived");
+        assert_eq!(setup_description["source"], "ota.init#starter_pack.python");
+        let test_description = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.test.description")
+            .expect("test description provenance");
+        assert_eq!(test_description["provenance"], "template-derived");
+        assert_eq!(test_description["source"], "ota.init#starter_pack.python");
     }
 
     #[test]
@@ -17177,6 +17189,53 @@ project:
         });
 
         let values = shell_completion_values(&["ota", "doctor", "--member", "a"], 3)
+            .expect("shell completion should succeed");
+
+        assert_eq!(values, vec![String::from("api")]);
+    }
+
+    #[test]
+    fn validate_member_shell_completion_suggests_declared_monorepo_members() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: monorepo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+    - web
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+"#,
+        );
+        fixture.write(
+            "web/ota.yaml",
+            r#"
+project:
+  name: web
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "validate".into(),
+                "--member".into(),
+                "a".into(),
+            ],
+        });
+
+        let values = shell_completion_values(&["ota", "validate", "--member", "a"], 3)
             .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("api")]);
