@@ -7265,6 +7265,9 @@ pub fn workspace_execution_plan(
                             known_repos.join(", ")
                         };
                         let error = format!(
+                            "unknown workspace repo `{target_repo}`; known repos: {known_list}"
+                        );
+                        let text_error = format!(
                             "{}  {}\n{} {}\n{} unknown workspace repo `{target_repo}`\nKnown repos: {known_list}\n{} ensure repo name is correct and matches one of `Known repos`",
                             render_severity(FindingSeverity::Error),
                             paint("Workspace execution filter failed", "1;37"),
@@ -7274,7 +7277,7 @@ pub fn workspace_execution_plan(
                             error_next_key("Next:")
                         );
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => CommandOutput::failure(text_error),
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
                                     summary: None,

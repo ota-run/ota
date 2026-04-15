@@ -1326,10 +1326,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 ..
             }
             | Commands::Workspace {
-                command:
-                    WorkspaceCommands::Execution {
-                        command: WorkspaceExecutionCommands::Plan { json: true, .. },
-                    },
+                command: WorkspaceCommands::Execution {
+                    command: WorkspaceExecutionCommands::Plan { json: true, .. },
+                },
             }
     ));
     let debug = cli.debug;
@@ -5845,6 +5844,77 @@ repos:
         ));
         assert!(stdout.contains("repair `"));
         assert!(stdout.contains("rerun `ota workspace execution plan`"));
+    }
+
+    #[test]
+    fn workspace_execution_plan_text_fails_for_unresolved_selected_optional_repo() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: false
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "execution",
+            "plan",
+            "--repo",
+            "web",
+            "--mode",
+            "container",
+            dir.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("WORKSPACE EXECUTION PLAN"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("web [optional] (UNRESOLVED)"));
+    }
+
+    #[test]
+    fn workspace_execution_plan_json_unknown_repo_error_is_plain() {
+        let fixture = WorkspaceFixture::new();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "execution",
+            "plan",
+            "--json",
+            "--repo",
+            "missing",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(
+            json["error"],
+            "unknown workspace repo `missing`; known repos: web"
+        );
     }
 
     #[test]
