@@ -12772,7 +12772,8 @@ tools:
             "Why: cargo is declared in the contract but is not available inside the configured"
         ));
         assert!(!stdout.contains("container image"));
-        assert!(stdout.contains("rerun `ota up --dry-run --mode container`"));
+        let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains("rerun `ota up --dry-run --mode container`"));
         assert!(!stdout.contains("rerun `ota doctor --mode container`"));
     }
 
@@ -16481,6 +16482,7 @@ project:
 
     #[test]
     fn workspace_explain_text_snapshot_is_stable() {
+        let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -16506,6 +16508,7 @@ project:
 "#,
         )
         .unwrap();
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("120"));
 
         let _cwd = CurrentDirGuard::enter(fixture.path());
         let output = run_with(["ota", "workspace", "explain", "."]);
