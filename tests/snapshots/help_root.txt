@@ -17,6 +17,7 @@ Commands:
   services     List declared services from an Ota contract
   diff         Compare two Ota contracts semantically
   env          Inspect resolved environment requirements from an Ota contract
+  execution    Inspect the resolved execution context without running anything
   check        Run configured checks from an Ota contract
   receipt      Capture a read-only repo receipt for audit and automation
   annotations  Render Ota JSON findings as CI annotations or log lines
@@ -44,6 +45,7 @@ Choose a flow:
   turn findings into a plan    ota explain
   repo without ota.yaml        ota detect --dry-run .
   review a starter contract    ota init --dry-run
+  inspect execution choice     ota execution plan
   prepare the repo             ota up
   inspect env requirements     ota env
   scaffold org policy          ota policy init --dry-run
@@ -54,5 +56,6 @@ Choose a flow:
 
 Workspace:
   inspect readiness            ota workspace doctor .
+  inspect execution choice     ota workspace execution plan .
   explain blockers             ota workspace explain .
   prepare the workspace        ota workspace up

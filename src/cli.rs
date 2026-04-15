@@ -3268,7 +3268,7 @@ tasks:
         assert!(output.stderr.is_none());
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DIFF"));
-        assert!(stdout.contains("SUMMARY"));
+        assert!(stdout.contains("Summary"));
         assert!(stdout.contains("Readiness impact:"));
         assert!(stdout.contains("»"));
         assert!(stdout.contains("DIFFERENT"));
@@ -14881,7 +14881,7 @@ policies:
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
-        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("140"));
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("160"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "--mode", "container", "."]);
@@ -15584,7 +15584,7 @@ agent:
         write_fake_command(&bin_dir, "docker", docker_body);
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
-        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("80"));
+        let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("160"));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "--mode", "container", "."]);

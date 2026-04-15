@@ -58,6 +58,7 @@ jobs:
           - windows-latest
     env:
       RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/STACK:8388608' || '' }}
+      COLUMNS: "120"
 
     steps:
       - name: Checkout
