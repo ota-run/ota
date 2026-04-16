@@ -4760,7 +4760,7 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
             ));
             stdout.push_str(&format!("\n\n{}:", paint_section_title("Available packs")));
             for entry in packs {
-                let command = format!("ota init --pack {}", entry.pack.as_str());
+                let command = entry.pack.command();
                 stdout.push_str(&format!(
                     "\n\n{} {} {}",
                     info_bullet(),
@@ -4852,7 +4852,7 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                 append_aligned_labeled_text(
                     &mut stdout,
                     "Next:",
-                    &format!("`ota init --pack {} --dry-run .`", entry.pack.as_str()),
+                    &format!("`{}`", entry.pack.preview_command()),
                     "  ",
                     96,
                     |_| paint_next_label(),
@@ -4870,6 +4870,8 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                     name: entry.pack.as_str().to_string(),
                     summary: entry.summary.to_string(),
                     when: entry.when.to_string(),
+                    command: entry.pack.command(),
+                    next: entry.pack.preview_command(),
                     seeds: InitPackSeeds {
                         runtimes: entry
                             .runtimes
@@ -10295,9 +10297,12 @@ fn render_init(
                             paint_key("Pack:"),
                             paint_mode_value(pack.as_str())
                         ));
-                        stdout.push_str(
-                            "\nPack policy: explicit pack mode seeds a conventional starter contract; review and edit it before relying on it",
-                        );
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            mode_icon(),
+                            paint_key("Policy:"),
+                            "explicit pack mode seeds a conventional starter contract; review and edit it before relying on it"
+                        ));
                     }
                     if mode == "blank" {
                         stdout.push_str(
@@ -10381,9 +10386,12 @@ fn render_init(
                     paint_key("Pack:"),
                     paint_mode_value(pack.as_str())
                 ));
-                stdout.push_str(
-                    "\nPack policy: explicit pack mode seeds a conventional starter contract; review and edit it before relying on it",
-                );
+                stdout.push_str(&format!(
+                    "\n{} {} {}",
+                    mode_icon(),
+                    paint_key("Policy:"),
+                    "explicit pack mode seeds a conventional starter contract; review and edit it before relying on it"
+                ));
             }
             stdout.push_str(&format!(
                 "\n{} review this starter contract, edit it if needed, then run `{}`",

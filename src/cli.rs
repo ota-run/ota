@@ -563,6 +563,8 @@ enum PolicyInitPreset {
 enum InitPack {
     Node,
     Python,
+    Go,
+    Rust,
     #[value(name = "java-maven")]
     JavaMaven,
     #[value(name = "java-gradle")]
@@ -3546,6 +3548,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 pack.map(|value| match value {
                     InitPack::Node => commands::StarterPack::Node,
                     InitPack::Python => commands::StarterPack::Python,
+                    InitPack::Go => commands::StarterPack::Go,
+                    InitPack::Rust => commands::StarterPack::Rust,
                     InitPack::JavaMaven => commands::StarterPack::JavaMaven,
                     InitPack::JavaGradle => commands::StarterPack::JavaGradle,
                 }),
@@ -13091,6 +13095,8 @@ agent:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("INIT PACKS starter packs"));
+        assert!(stdout.contains("go `ota init --pack go`"));
+        assert!(stdout.contains("rust `ota init --pack rust`"));
         assert!(stdout.contains("python `ota init --pack python`"));
         assert!(stdout.contains("java-maven `ota init --pack java-maven`"));
         assert!(stdout.contains("Description:"));
@@ -13173,15 +13179,34 @@ agent:
         let packs = json["packs"].as_array().expect("packs array");
         assert!(packs.iter().any(|entry| entry["name"] == "node"));
         assert!(packs.iter().any(|entry| entry["name"] == "python"));
+        let go = packs
+            .iter()
+            .find(|entry| entry["name"] == "go")
+            .expect("go pack");
+        assert_eq!(go["command"], "ota init --pack go");
+        assert_eq!(go["next"], "ota init --pack go --dry-run .");
+        assert_eq!(go["seeds"]["tasks"][1], "build");
+        let rust = packs
+            .iter()
+            .find(|entry| entry["name"] == "rust")
+            .expect("rust pack");
+        assert_eq!(rust["seeds"]["tools"][0], "cargo");
         let java_maven = packs
             .iter()
             .find(|entry| entry["name"] == "java-maven")
             .expect("java-maven pack");
-        assert_eq!(java_maven["seeds"]["tools"][0], "maven");
+        assert_eq!(java_maven["command"], "ota init --pack java-maven");
+        assert_eq!(java_maven["seeds"]["tools"], json!([]));
+        assert_eq!(java_maven["seeds"]["checks"][0], "java-installed");
         let java_gradle = packs
             .iter()
             .find(|entry| entry["name"] == "java-gradle")
             .expect("java-gradle pack");
+        assert_eq!(
+            java_gradle["next"],
+            "ota init --pack java-gradle --dry-run ."
+        );
+        assert_eq!(java_gradle["seeds"]["tools"], json!([]));
         assert_eq!(java_gradle["seeds"]["tasks"][0], "setup");
     }
 
@@ -13196,8 +13221,7 @@ agent:
         assert!(stdout.contains("Mode: pack (dry-run)"));
         assert!(stdout.contains("Pack: node"));
         assert!(
-            stdout
-                .contains("Pack policy: explicit pack mode seeds a conventional starter contract")
+            stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
         assert!(stdout.contains("node: '22'"));
         assert!(stdout.contains("pnpm: '10'"));
@@ -13217,8 +13241,7 @@ agent:
         assert!(stdout.contains("Mode: pack"));
         assert!(stdout.contains("Pack: node"));
         assert!(
-            stdout
-                .contains("Pack policy: explicit pack mode seeds a conventional starter contract")
+            stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
         assert!(
             !stdout
@@ -13352,6 +13375,57 @@ agent:
         assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
         assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
         assert!(json["config"]["tools"]["maven"].is_null());
+    }
+
+    #[test]
+    fn init_pack_go_dry_run_renders_explicit_pack_contract() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", "--pack", "go", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Pack: go"));
+        assert!(stdout.contains("go: '1.24'"));
+        assert!(stdout.contains("name: go-installed"));
+        assert!(stdout.contains("run: go mod download"));
+        assert!(stdout.contains("run: go build ./..."));
+        assert!(stdout.contains("run: go test ./..."));
+    }
+
+    #[test]
+    fn init_json_pack_rust_reports_mode_pack_and_tasks() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "rust",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "pack");
+        assert_eq!(json["pack"], "rust");
+        assert_eq!(json["config"]["runtimes"]["rust"], "1.85");
+        assert_eq!(json["config"]["tools"]["cargo"], "*");
+        assert_eq!(json["config"]["checks"][0]["name"], "rust-installed");
+        assert_eq!(
+            json["config"]["tasks"]["build"]["description"],
+            "Build the default Cargo outputs."
+        );
+        let build_description = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.build.description")
+            .expect("build description provenance");
+        assert_eq!(build_description["source"], "ota.init#starter_pack.rust");
     }
 
     #[test]
