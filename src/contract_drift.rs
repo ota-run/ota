@@ -220,35 +220,33 @@ pub(crate) fn collect_detect_changes(
     }
 
     for (name, value) in &detected.runtimes {
-        let Some(requirement) = existing.runtimes.get(name) else {
-            continue;
+        let existing_version = match existing.runtimes.get(name) {
+            Some(requirement) if !requirement.required_for_os(current_os()) => continue,
+            Some(requirement) => Some(requirement.version_for_os(current_os())),
+            None => None,
         };
-        if !requirement.required_for_os(current_os()) {
-            continue;
-        }
         push_detect_change(
             &mut changes,
             existing,
             &inference_index,
             &format!("runtimes.{name}"),
-            Some(requirement.version_for_os(current_os())),
+            existing_version,
             Some(value.as_str()),
         );
     }
 
     for (name, value) in &detected.tools {
-        let Some(requirement) = existing.tools.get(name) else {
-            continue;
+        let existing_version = match existing.tools.get(name) {
+            Some(requirement) if !requirement.required_for_os(current_os()) => continue,
+            Some(requirement) => Some(requirement.version_for_os(current_os())),
+            None => None,
         };
-        if !requirement.required_for_os(current_os()) {
-            continue;
-        }
         push_detect_change(
             &mut changes,
             existing,
             &inference_index,
             &format!("tools.{name}"),
-            Some(requirement.version_for_os(current_os())),
+            existing_version,
             Some(value.as_str()),
         );
     }

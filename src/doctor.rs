@@ -46,7 +46,7 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
-    ServiceSpec,
+    ServiceSpec, ToolRequirement,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1711,7 +1711,11 @@ fn diagnose_runtimes(
     let mut container_probe_started = false;
     for (name, requirement) in &contract.runtimes {
         let required = requirement.required_for_os(target_os);
-        if !required {
+        let has_platform_override = match requirement {
+            RuntimeRequirement::Detailed(detail) => !detail.platforms.is_empty(),
+            RuntimeRequirement::Simple(_) => false,
+        };
+        if !required && has_platform_override {
             continue;
         }
 
@@ -1748,7 +1752,11 @@ fn diagnose_tools(
     let mut container_probe_started = false;
     for (name, requirement) in &contract.tools {
         let required = requirement.required_for_os(target_os);
-        if !required {
+        let has_platform_override = match requirement {
+            ToolRequirement::Detailed(detail) => !detail.platforms.is_empty(),
+            ToolRequirement::Simple(_) => false,
+        };
+        if !required && has_platform_override {
             continue;
         }
 
