@@ -1707,15 +1707,21 @@ fn diagnose_runtimes(
         return false;
     }
 
+    let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
     for (name, requirement) in &contract.runtimes {
+        let required = requirement.required_for_os(target_os);
+        if !required {
+            continue;
+        }
+
         container_probe_started |= diagnose_command_version(
             "runtime",
             name,
             name,
-            requirement.version(),
-            true,
-            runtime_provider_hint(requirement),
+            requirement.version_for_os(target_os),
+            required,
+            runtime_provider_hint(requirement, target_os),
             mode,
             container_probe,
             contract_path,
@@ -1738,18 +1744,19 @@ fn diagnose_tools(
         return false;
     }
 
+    let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
     for (name, requirement) in &contract.tools {
-        let required = match requirement {
-            crate::schema::ToolRequirement::Simple(_) => true,
-            crate::schema::ToolRequirement::Detailed(detail) => detail.required,
-        };
+        let required = requirement.required_for_os(target_os);
+        if !required {
+            continue;
+        }
 
         container_probe_started |= diagnose_command_version(
             "tool",
             name,
             tool_executable_name(name),
-            requirement.version(),
+            requirement.version_for_os(target_os),
             required,
             None,
             mode,
@@ -1762,11 +1769,8 @@ fn diagnose_tools(
     container_probe_started
 }
 
-fn runtime_provider_hint(requirement: &RuntimeRequirement) -> Option<&str> {
-    match requirement {
-        RuntimeRequirement::Simple(_) => None,
-        RuntimeRequirement::Detailed(detail) => detail.provider.as_deref(),
-    }
+fn runtime_provider_hint<'a>(requirement: &'a RuntimeRequirement, os: &str) -> Option<&'a str> {
+    requirement.provider_for_os(os)
 }
 
 fn diagnose_org_policy(
@@ -1786,7 +1790,57 @@ fn diagnose_org_policy(
 
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
-    if missing_sections.is_empty() && missing_files.is_empty() {
+    let version_violations = policy_pack.version_policy_violations_for_os(policy_os, contract);
+    if missing_sections.is_empty() && missing_files.is_empty() && version_violations.is_empty() {
+        if !policy_pack.policies.version_policy.runtimes.is_empty()
+            || !policy_pack.policies.version_policy.tools.is_empty()
+        {
+            let mut rules = Vec::new();
+            for (name, rule) in &policy_pack.policies.version_policy.runtimes {
+                let effective_versions = policy_pack
+                    .effective_version_policy_versions_for_os(
+                        policy_os,
+                        crate::policy_pack::ProvisioningTargetKind::Runtime,
+                        name,
+                    )
+                    .unwrap_or_else(|| rule.approved_versions.clone());
+                let approved_versions = if effective_versions.is_empty() {
+                    String::from("any version")
+                } else {
+                    format!("versions {}", effective_versions.join(", "))
+                };
+                rules.push(format!("runtime {name} ({approved_versions})"));
+            }
+            for (name, rule) in &policy_pack.policies.version_policy.tools {
+                let effective_versions = policy_pack
+                    .effective_version_policy_versions_for_os(
+                        policy_os,
+                        crate::policy_pack::ProvisioningTargetKind::Tool,
+                        name,
+                    )
+                    .unwrap_or_else(|| rule.approved_versions.clone());
+                let approved_versions = if effective_versions.is_empty() {
+                    String::from("any version")
+                } else {
+                    format!("versions {}", effective_versions.join(", "))
+                };
+                rules.push(format!("tool {name} ({approved_versions})"));
+            }
+
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed version rules are declared"),
+                why: format!(
+                    "`{}` declares approved repo version rules: {}",
+                    compact_display_path(&policy_path),
+                    rules.join(", ")
+                ),
+                next: String::from(
+                    "use this policy surface when repos need approved runtime or tool versions",
+                ),
+            });
+        }
+
         let provisioning_plan = policy_pack.provisioning_plan_for_os(policy_os, contract);
         let provisioning_request =
             policy_pack.provisioning_backend_request_for_os(policy_os, contract);
@@ -1891,6 +1945,12 @@ fn diagnose_org_policy(
     if !missing_files.is_empty() {
         why_parts.push(format!("missing files: {}", missing_files.join(", ")));
     }
+    if !version_violations.is_empty() {
+        why_parts.push(format!(
+            "version policy violations: {}",
+            version_violations.join("; ")
+        ));
+    }
 
     findings.push(Finding {
         severity: FindingSeverity::Error,
@@ -1900,10 +1960,22 @@ fn diagnose_org_policy(
             compact_display_path(&policy_path),
             why_parts.join(" and ")
         ),
-        next: format!(
-            "add the missing items or update `{}`",
-            compact_display_path(&policy_path)
-        ),
+        next: if version_violations.is_empty() {
+            format!(
+                "add the missing items or update `{}`",
+                compact_display_path(&policy_path)
+            )
+        } else if missing_sections.is_empty() && missing_files.is_empty() {
+            format!(
+                "update the repo contract versions or widen `{}`",
+                compact_display_path(&policy_path)
+            )
+        } else {
+            format!(
+                "add the missing items, update the repo contract versions, or update `{}`",
+                compact_display_path(&policy_path)
+            )
+        },
     });
 
     None
@@ -4862,6 +4934,153 @@ policies:
             "Repo does not satisfy org policy pack"
         );
         assert!(report.findings[0].why.contains("tasks"));
+    }
+
+    #[test]
+    fn skips_platform_scoped_tool_when_not_required_on_current_os() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+tools:
+  definitely-not-installed:
+    version: "1.0.0"
+    required: false
+    platforms:
+      {}:
+        required: true
+tasks:
+  test:
+    run: cargo test
+"#,
+                match super::current_os() {
+                    "windows" => "linux",
+                    _ => "windows",
+                }
+            ),
+        )
+        .unwrap();
+        assert!(
+            !contract
+                .tools
+                .get("definitely-not-installed")
+                .expect("tool requirement should exist")
+                .required_for_os(super::current_os())
+        );
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing tool: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn skips_platform_scoped_runtime_when_not_required_on_current_os() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  definitely-not-installed:
+    version: "1.0.0"
+    required: false
+    platforms:
+      {}:
+        required: true
+tasks:
+  test:
+    run: cargo test
+"#,
+                match super::current_os() {
+                    "windows" => "linux",
+                    _ => "windows",
+                }
+            ),
+        )
+        .unwrap();
+        assert!(
+            !contract
+                .runtimes
+                .get("definitely-not-installed")
+                .expect("runtime requirement should exist")
+                .required_for_os(super::current_os())
+        );
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn reports_policy_version_violations_without_provisioning() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "24"
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Repo does not satisfy org policy pack")
+            .expect("policy violation should be present");
+        assert!(
+            finding
+                .why
+                .contains("runtime `node` version `24` is not approved by policy")
+        );
+        assert!(
+            finding
+                .next
+                .starts_with("update the repo contract versions or widen `")
+        );
+        assert!(finding.next.ends_with("org-policy.yaml`"));
     }
 
     #[test]

@@ -289,6 +289,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.release-tag.outputs.tag }}
+
       - name: Download release assets
         uses: actions/download-artifact@v4
         with:
@@ -306,16 +312,52 @@ jobs:
             fi
           done > dist/ota-checksums.txt
 
+      - name: Prepare changelog release notes
+        run: |
+          set -euo pipefail
+          version="${{ needs.release-tag.outputs.version }}"
+          python3 - "$version" <<'PY'
+          import sys
+          from pathlib import Path
+
+          release_version = sys.argv[1]
+          changelog_path = Path("CHANGELOG.md")
+          if not changelog_path.exists():
+              body = "- changelog entry for this version is missing.\n"
+          else:
+              release_lines = changelog_path.read_text(encoding="utf-8").splitlines()
+              in_section = False
+              collected = []
+              for raw_line in release_lines:
+                  if raw_line.startswith("## "):
+                      current_heading = raw_line[3:].strip()
+                      if in_section:
+                          break
+                      if current_heading == release_version:
+                          in_section = True
+                          continue
+                  if in_section:
+                      collected.append(raw_line)
+
+              section = "\n".join(collected).strip()
+              if section:
+                  body = f"{section}\n"
+              else:
+                  body = "- changelog entry for this version is missing.\n"
+
+          Path("release-notes.md").write_text(body, encoding="utf-8")
+          PY
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.release-tag.outputs.tag }}
           name: ${{ needs.release-tag.outputs.tag }}
+          body_path: release-notes.md
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
             dist/ota-checksums.txt
-          generate_release_notes: true
 
   publish-discord:
     name: Publish Discord Release Message
@@ -335,81 +377,266 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          output_file="discord-release-message.txt"
-          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
-          release_json="$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${release_api}")"
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import urllib.request
+          from pathlib import Path
 
-          release_name="$(printf '%s' "${release_json}" | jq -r '.name // .tag_name // env.RELEASE_TAG')"
-          release_url="$(printf '%s' "${release_json}" | jq -r '.html_url // ("https://github.com/" + env.GITHUB_REPOSITORY + "/releases/tag/" + env.RELEASE_TAG)')"
-          release_body="$(printf '%s' "${release_json}" | jq -r '.body // ""')"
-          previous_tag="$(printf '%s' "${release_json}" | jq -r '.previous_tag_name // ""')"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          release_tag = os.environ["RELEASE_TAG"]
+          github_token = os.environ.get("GITHUB_TOKEN", "")
+          api_base = f"https://api.github.com/repos/{repo}"
 
-          mapfile -t release_bullets < <(
-            printf '%s\n' "${release_body}" \
-              | awk '/^##[[:space:]]*What/ { in_section=1; next }
-                     /^##[[:space:]]/ { if (in_section) exit }
-                     in_section && /^[[:space:]]*[-*][[:space:]]+/ {
-                       gsub(/^[[:space:]]*[-*][[:space:]]+/, "", $0)
-                       if ($0 !~ /^Full Changelog/ && length($0) > 0) {
-                         print $0
-                       }
-                     }' \
-              | head -n 3
+
+          def api_json(url: str):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "ota-release-discord",
+              }
+              if github_token:
+                  headers["Authorization"] = f"Bearer {github_token}"
+              request = urllib.request.Request(url, headers=headers)
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  return json.load(response)
+
+
+          def clean_text(value: str) -> str:
+              return re.sub(r"\s+", " ", value.strip())
+
+
+          def normalize_heading(line: str) -> str | None:
+              stripped = line.strip()
+              if stripped.startswith("## "):
+                  return clean_text(stripped[3:]).lower()
+              if stripped.startswith("**") and stripped.endswith("**") and len(stripped) > 4:
+                  return clean_text(stripped[2:-2]).lower()
+              return None
+
+
+          def is_heading(line: str) -> bool:
+              return normalize_heading(line) is not None
+
+
+          def bullet_value(line: str) -> str | None:
+              match = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
+              if not match:
+                  return None
+              value = clean_text(match.group(1))
+              if not value or value.lower().startswith("full changelog"):
+                  return None
+              return value
+
+
+          def extract_section_bullets(text: str, section_patterns: list[re.Pattern[str]]) -> list[str]:
+              in_section = False
+              bullets: list[str] = []
+              for raw_line in text.splitlines():
+                  heading = normalize_heading(raw_line)
+                  if heading is not None:
+                      if any(pattern.search(heading) for pattern in section_patterns):
+                          in_section = True
+                          continue
+                      if in_section:
+                          break
+                  if in_section:
+                      bullet = bullet_value(raw_line)
+                      if bullet:
+                          bullets.append(bullet)
+              return bullets
+
+
+          def extract_section_text(text: str, section_patterns: list[re.Pattern[str]]) -> str:
+              in_section = False
+              lines: list[str] = []
+              for raw_line in text.splitlines():
+                  heading = normalize_heading(raw_line)
+                  if heading is not None:
+                      if any(pattern.search(heading) for pattern in section_patterns):
+                          in_section = True
+                          continue
+                      if in_section:
+                          break
+                  if not in_section:
+                      continue
+                  bullet = bullet_value(raw_line)
+                  if bullet:
+                      continue
+                  candidate = clean_text(raw_line)
+                  if candidate:
+                      lines.append(candidate)
+              return clean_text(" ".join(lines[:2]))
+
+
+          def extract_first_bullets(text: str) -> list[str]:
+              bullets: list[str] = []
+              for raw_line in text.splitlines():
+                  bullet = bullet_value(raw_line)
+                  if bullet:
+                      bullets.append(bullet)
+              return bullets
+
+
+          def extract_changelog_bullets(changelog_text: str, version: str) -> list[str]:
+              section_header = f"## {version}"
+              in_section = False
+              bullets: list[str] = []
+              for raw_line in changelog_text.splitlines():
+                  line = raw_line.rstrip()
+                  if line == section_header:
+                      in_section = True
+                      continue
+                  if in_section and line.startswith("## "):
+                      break
+                  if in_section:
+                      bullet = bullet_value(line)
+                      if bullet:
+                          bullets.append(bullet)
+              return bullets
+
+
+          def filter_high_signal(bullets: list[str]) -> list[str]:
+              if not bullets:
+                  return bullets
+              low_signal = re.compile(
+                  r"(post-release github actions job|discord `#releases`|release note files|^release published\.?$)",
+                  re.IGNORECASE,
+              )
+              filtered = [bullet for bullet in bullets if not low_signal.search(bullet)]
+              return filtered or bullets
+
+
+          def compact_bullet(bullet: str) -> str:
+              if len(bullet) <= 140:
+                  return bullet
+              split_indexes = sorted(
+                  index
+                  for separator in ("; ", ", ", ", and ")
+                  if (index := bullet.find(separator)) >= 60
+              )
+              if split_indexes:
+                  return bullet[: split_indexes[0]].rstrip(" ,;.") + "."
+              return bullet[:177].rstrip() + "..."
+
+
+          def summarize_commit_subjects(subjects: list[str]) -> list[str]:
+              cleaned: list[str] = []
+              for subject in subjects:
+                  candidate = clean_text(subject.splitlines()[0])
+                  if not candidate:
+                      continue
+                  if candidate.startswith("Merge pull request #"):
+                      continue
+                  if re.match(r"^release:\s", candidate, re.IGNORECASE):
+                      continue
+                  cleaned.append(candidate)
+              return cleaned
+
+
+          release = api_json(f"{api_base}/releases/tags/{release_tag}")
+          release_name = release.get("name") or release.get("tag_name") or release_tag
+          release_url = release.get("html_url") or f"https://github.com/{repo}/releases/tag/{release_tag}"
+          release_body = release.get("body") or ""
+          release_version = release_tag[1:] if release_tag.startswith("v") else release_tag
+
+          discord_patterns = [re.compile(r"^discord$")]
+          whats_new_patterns = [
+              re.compile(r"^what.*new$"),
+              re.compile(r"^what.*changed$"),
+          ]
+          why_patterns = [re.compile(r"^why it matters$")]
+
+          bullets = extract_section_bullets(release_body, discord_patterns)
+          why_statement = extract_section_text(release_body, why_patterns)
+          source = "release-body-discord"
+
+          if not bullets:
+              bullets = extract_section_bullets(release_body, whats_new_patterns)
+              if bullets:
+                  source = "release-body-highlights"
+
+          changelog_bullets: list[str] = []
+          if not bullets:
+              try:
+                  changelog = api_json(f"{api_base}/contents/CHANGELOG.md?ref={release_tag}")
+                  encoded = changelog.get("content", "")
+                  changelog_text = base64.b64decode(encoded).decode("utf-8")
+                  changelog_bullets = extract_changelog_bullets(changelog_text, release_version)
+              except Exception:
+                  changelog_bullets = []
+              if changelog_bullets:
+                  bullets = changelog_bullets
+                  source = "changelog"
+
+          if not bullets:
+              bullets = extract_first_bullets(release_body)
+              if bullets:
+                  source = "release-body-bullets"
+
+          previous_tag = release.get("previous_tag_name") or ""
+          if not previous_tag:
+              try:
+                  releases = api_json(f"{api_base}/releases?per_page=10")
+                  tags = [entry.get("tag_name", "") for entry in releases]
+                  if release_tag in tags:
+                      index = tags.index(release_tag)
+                      if index + 1 < len(tags):
+                          previous_tag = tags[index + 1]
+              except Exception:
+                  previous_tag = ""
+
+          if not bullets and previous_tag:
+              compare = api_json(f"{api_base}/compare/{previous_tag}...{release_tag}")
+              commit_subjects = summarize_commit_subjects(
+                  [commit.get("commit", {}).get("message", "") for commit in reversed(compare.get("commits", []))]
+              )
+              if commit_subjects:
+                  bullets = commit_subjects
+                  source = "compare"
+
+          if not bullets:
+              commits = api_json(f"{api_base}/commits?sha={release_tag}&per_page=10")
+              commit_subjects = summarize_commit_subjects(
+                  [entry.get("commit", {}).get("message", "") for entry in commits]
+              )
+              if commit_subjects:
+                  bullets = commit_subjects
+                  source = "commits"
+
+          bullets = filter_high_signal(bullets)
+          if source not in {"release-body-discord", "release-body-highlights"}:
+              bullets = [compact_bullet(bullet) for bullet in bullets]
+          bullets = bullets[:3]
+
+          if not bullets:
+              bullets = ["Release published."]
+              why_statement = "This release is now live with the latest validated changes."
+          elif not why_statement:
+              if source == "changelog":
+                  why_statement = "This release pulls the highest-signal shipped changes from the tagged changelog."
+              elif source in {"compare", "commits"}:
+                  why_statement = "This message was generated from recent commit history because the release notes did not include curated highlights."
+              else:
+                  why_statement = "This release surfaces the highest-signal changes from the published notes."
+
+          message = "\n".join(
+              [
+                  f"🚀 **{release_name}**",
+                  "",
+                  "**What's new**",
+                  *[f"- {bullet}" for bullet in bullets],
+                  "",
+                  "**Why it matters**",
+                  why_statement,
+                  "",
+                  f"🔗 {release_url}",
+                  "",
+              ]
           )
-
-          if (( ${#release_bullets[@]} == 0 )) && [[ -n "${previous_tag}" ]]; then
-            compare_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/compare/${previous_tag}...${RELEASE_TAG}"
-            compare_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "${compare_api}")"
-
-            mapfile -t release_bullets < <(
-              printf '%s\n' "${compare_json}" \
-                | jq -r '.commits | reverse | .[].commit.message | split("\n")[0]' \
-                | sed '/^Merge pull request #/d' \
-                | sed -E '/^release: /d' \
-                | sed '/^$/d' \
-                | head -n 3
-            )
-          fi
-
-          if (( ${#release_bullets[@]} == 0 )); then
-            commits_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits?sha=${RELEASE_TAG}&per_page=3"
-            commits_json="$(curl -fsSL \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "${commits_api}")"
-
-            mapfile -t release_bullets < <(
-              printf '%s\n' "${commits_json}" \
-                | jq -r '.[] | .commit.message | split("\n")[0]' \
-                | sed -E '/^release: /d' \
-                | sed '/^$/d' \
-                | head -n 3
-            )
-          fi
-
-          if (( ${#release_bullets[@]} == 0 )); then
-            release_bullets=("Release published.")
-            why_statement="This release is now live with the latest validated changes."
-          else
-            why_statement="These are the top items pulled from this release and recent commit activity."
-          fi
-
-          {
-            printf '🚀 **%s**\n\n' "${release_name}"
-            printf "**What's new**\n"
-            for bullet in "${release_bullets[@]}"; do
-              printf -- '- %s\n' "${bullet}"
-            done
-            printf "\n**Why it matters**\n"
-            printf '%s\n\n' "${why_statement}"
-            printf '🔗 %s\n' "${release_url}"
-          } > "${output_file}"
+          Path("discord-release-message.txt").write_text(message, encoding="utf-8")
+          PY
 
       - name: Publish Discord message
         shell: bash

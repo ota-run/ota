@@ -115,6 +115,17 @@ policies:
   required_files:
     - AGENTS.md
   strict_versions: true
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+    tools:
+      pwsh:
+        platforms:
+          windows:
+            approved_versions:
+              - "7.6.0"
   agent:
     require_safe_tasks: true
     require_writable_paths: true
@@ -175,7 +186,11 @@ That makes the value visible immediately:
 
 - `required_sections` defines contract sections that every governed repo must provide.
 - `required_files` defines files that every governed repo must keep at the repo root or under the governed repo directory.
-- `strict_versions` requires the repo contract to stay on the declared contract version family.
+- `strict_versions` is a coarse legacy version-discipline flag.
+- `version_policy` defines explicit approved runtime and tool versions without requiring provisioning.
+- `version_policy.runtimes.<name>.approved_versions` constrains the repo contract version for that runtime.
+- `version_policy.tools.<name>.approved_versions` constrains the repo contract version for that tool.
+- `version_policy.*.platforms.<os>` overrides approved versions for `linux`, `macos`, or `windows`.
 - `agent.require_safe_tasks` requires agent-visible execution surfaces to be explicitly marked safe.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
 - `exports.require_agents_md` requires repo-side agent guidance to be present when the policy pack says so.
@@ -201,6 +216,7 @@ from the nearest ancestor when it exists, validates the file shape, and reports 
 - the policy pack cannot be read or parsed
 - required sections declared by the policy pack are missing from the repo contract
 - required files declared by the policy pack are missing from the repo root
+- declared runtime/tool versions violate `policies.version_policy`
 - `policies.adapter_bootstrap` is malformed
 
 The current implementation is read-only. It does not mutate repo contracts or apply policy remediation automatically.
