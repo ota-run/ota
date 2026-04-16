@@ -5008,7 +5008,13 @@ tasks:
 
         let output = run_with(["ota", "validate", "--json", fixture.path()]);
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout=\n{}\nstderr=\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        );
         assert!(output.stdout.is_empty());
 
         let stderr = output.stderr.unwrap();
@@ -11747,8 +11753,7 @@ runtimes:
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let path = prepend_path(&bin_dir);
-        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with([
@@ -20281,6 +20286,81 @@ policies:
         assert!(text.contains("Task output: E: Version '8.13.0' for 'curl' was not found"));
         assert!(text.contains("ota up --mode container"));
         assert!(!text.contains("Missing tool: curl"));
+    }
+
+    #[test]
+    fn up_container_mode_missing_engine_does_not_fall_back_to_host_provisioning() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  curl: "8.13.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: apt
+      package: curl
+      approved_versions:
+        - "8.13.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let apt_log = fixture.dir.path().join("apt-get.log");
+        let apt_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho apt-get invoked>>\"{}\"\r\nexit /b 1\r\n",
+                apt_log.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' 'apt-get invoked' >> '{}'\nexit 1\n",
+                apt_log.display()
+            )
+        };
+        write_fake_command(&bin_dir, "apt-get", &apt_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--mode", "container", "."]);
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout=\n{}\nstderr=\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        );
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("NOT READY"));
+        assert!(text.contains("Missing container execution backend CLI: docker, podman"));
+        assert!(text.contains("Mode:"));
+        assert!(text.contains("container"));
+        assert!(!text.contains("PROVISION FAILED"));
+        assert!(
+            !apt_log.exists(),
+            "host provisioning should not be attempted"
+        );
     }
 
     #[test]

@@ -23551,6 +23551,62 @@ fn provisioning_execution_target(
     }
 }
 
+fn resolve_provisioning_execution_target(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+) -> Result<ProvisioningExecutionTarget, Finding> {
+    let (backend, _) = effective_execution(contract, overrides);
+    if !matches!(backend, Backend::Container) {
+        return Ok(ProvisioningExecutionTarget::Native);
+    }
+
+    match resolve_execution_backend(contract, "setup", overrides) {
+        Ok(ResolvedExecutionBackend::Container {
+            image,
+            engine,
+            lifecycle,
+        }) => Ok(ProvisioningExecutionTarget::Container {
+            image,
+            engine,
+            lifecycle,
+        }),
+        Ok(
+            ResolvedExecutionBackend::Native
+            | ResolvedExecutionBackend::Remote { .. }
+            | ResolvedExecutionBackend::BackendProvider { .. },
+        ) => Ok(provisioning_execution_target(contract, overrides)),
+        Err(RunError::MissingContainerImage { .. }) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution is not configured"),
+            why: String::from(
+                "container preparation requires `execution.backends.container.image` so ota can provision and run setup inside the execution image instead of on the host",
+            ),
+            next: String::from(
+                "add `execution.backends.container.image`, then rerun `ota up --mode container`",
+            ),
+        }),
+        Err(RunError::MissingContainerLifecycle { .. }) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution lifecycle is not configured"),
+            why: String::from(
+                "container preparation requires an explicit `execution.lifecycle` so ota can keep provisioning and setup in the same execution boundary",
+            ),
+            next: String::from("add `execution.lifecycle`, then rerun `ota up --mode container`"),
+        }),
+        Err(RunError::MissingContainerBackendCli { engines, .. }) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Missing container execution backend CLI: {engines}"),
+            why: format!(
+                "container execution requires one of these CLIs to be available on PATH: {engines}"
+            ),
+            next: String::from(
+                "install one of the supported container engines, then rerun `ota up --mode container`",
+            ),
+        }),
+        Err(_) => Ok(provisioning_execution_target(contract, overrides)),
+    }
+}
+
 fn up_doctor_mode(contract: &Contract, overrides: ExecutionOverrides) -> DoctorMode {
     match effective_execution(contract, overrides).0 {
         Backend::Container => DoctorMode::Container,
@@ -23757,7 +23813,6 @@ fn execute_repo_up(
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut provisioned_setup = false;
-    let provisioning_target = provisioning_execution_target(contract, overrides);
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
         RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
@@ -23792,6 +23847,49 @@ fn execute_repo_up(
             stderr,
         });
     }
+
+    let provisioning_target = match resolve_provisioning_execution_target(contract, overrides) {
+        Ok(target) => target,
+        Err(finding) => {
+            prepend_finding_if_missing(&mut preflight.findings, finding);
+            preflight.ok = false;
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "NOT READY",
+                phase: "preconditions",
+                preview: None,
+                receipt: repo_execution_receipt(
+                    resolved_path,
+                    contract,
+                    doctor_report_execution_context(
+                        contract,
+                        resolved_path,
+                        doctor_mode,
+                        &preflight,
+                    ),
+                    "NOT READY",
+                    "preconditions",
+                    None,
+                    None,
+                    &preflight.findings,
+                    None,
+                    preflight
+                        .findings
+                        .first()
+                        .map(|finding| finding.next.clone()),
+                ),
+                report: preflight,
+                service: None,
+                service_command: None,
+                task: None,
+                task_command: None,
+                exit_code: None,
+                stdout,
+                stderr,
+            });
+        }
+    };
+
     if !preflight.ok {
         if let Some(provisioning) = preflight.provisioning.as_ref() {
             match apply_provisioning_request_with_target(

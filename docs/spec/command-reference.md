@@ -941,6 +941,7 @@ Current behavior:
 - runs blocking precondition checks
 - when blocking preconditions fail and the repo declares `setup`, runs `setup` early and then re-checks readiness
 - when the effective execution mode is container, policy-backed provisioning adapters run inside that container instead of on the host
+- explicit or effective container-backed `ota up` stays container-authoritative; if no supported container engine is available, ota stops in preconditions instead of falling back to host provisioning
 - when provisioning fails, `ota up` now surfaces a higher-level backend diagnosis for every shipped adapter while still preserving the raw backend stdout/stderr in the failure output
 - when the initial provisioning stderr is too generic to classify safely, `ota up` reuses the read-only installability probe for that adapter to refine the diagnosis without hiding the original backend output
 - when container/Linux provisioning uses `apt`, ota also classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures

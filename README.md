@@ -385,7 +385,7 @@ ota supports three execution backends for task-oriented commands:
 
 - `ota run` and `ota up` can execute through the configured backend path.
 - `ota up` can run the `setup` task through the same backend selection as `ota run`.
-- policy-backed provisioning adapters follow the same backend selection, so container-backed `ota up` provisions inside the container instead of on the host.
+- policy-backed provisioning adapters follow the same backend selection, so container-backed `ota up` provisions inside the container instead of on the host and stops before host provisioning when the selected container engine is unavailable.
 - `ota doctor` checks the prerequisites for the preferred backend and reports missing tools or suspicious remote target shape early.
 - `ota clean` can remove persistent container state for container-backed repos.
 - `ota clean --stale` can remove exited ota-managed containers across repos without requiring an `ota.yaml`, and it surfaces container-engine query failures instead of silently treating them as empty.
