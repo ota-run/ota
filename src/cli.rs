@@ -13136,6 +13136,33 @@ agent:
     }
 
     #[test]
+    fn init_packs_text_does_not_pre_wrap_when_columns_is_unknown() {
+        let _guard = env_mutex_lock();
+        let original_columns = std::env::var_os("COLUMNS");
+        unsafe {
+            std::env::remove_var("COLUMNS");
+        }
+
+        let output = run_with(["ota", "init", "--packs"]);
+
+        unsafe {
+            match original_columns {
+                Some(value) => std::env::set_var("COLUMNS", value),
+                None => std::env::remove_var("COLUMNS"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains(
+            "Description: Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it."
+        ));
+        assert!(stdout.contains(
+            "Notes: Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install."
+        ));
+    }
+
+    #[test]
     fn init_packs_json_reports_catalog_metadata() {
         let output = run_with(["ota", "init", "--packs", "--json"]);
 
