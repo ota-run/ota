@@ -220,29 +220,35 @@ pub(crate) fn collect_detect_changes(
     }
 
     for (name, value) in &detected.runtimes {
+        let Some(requirement) = existing.runtimes.get(name) else {
+            continue;
+        };
+        if !requirement.required_for_os(current_os()) {
+            continue;
+        }
         push_detect_change(
             &mut changes,
             existing,
             &inference_index,
             &format!("runtimes.{name}"),
-            existing
-                .runtimes
-                .get(name)
-                .map(|requirement| requirement.version()),
+            Some(requirement.version_for_os(current_os())),
             Some(value.as_str()),
         );
     }
 
     for (name, value) in &detected.tools {
+        let Some(requirement) = existing.tools.get(name) else {
+            continue;
+        };
+        if !requirement.required_for_os(current_os()) {
+            continue;
+        }
         push_detect_change(
             &mut changes,
             existing,
             &inference_index,
             &format!("tools.{name}"),
-            existing
-                .tools
-                .get(name)
-                .map(|requirement| requirement.version()),
+            Some(requirement.version_for_os(current_os())),
             Some(value.as_str()),
         );
     }
@@ -343,23 +349,29 @@ pub(crate) fn collect_detect_removals(
     }
 
     for (name, requirement) in &existing.runtimes {
+        if !requirement.required_for_os(current_os()) {
+            continue;
+        }
         if !detected.runtimes.contains_key(name) {
             push_detect_removal(
                 &mut removals,
                 existing,
                 format!("runtimes.{name}"),
-                requirement.version().to_string(),
+                requirement.version_for_os(current_os()).to_string(),
             );
         }
     }
 
     for (name, requirement) in &existing.tools {
+        if !requirement.required_for_os(current_os()) {
+            continue;
+        }
         if !detected.tools.contains_key(name) {
             push_detect_removal(
                 &mut removals,
                 existing,
                 format!("tools.{name}"),
-                requirement.version().to_string(),
+                requirement.version_for_os(current_os()).to_string(),
             );
         }
     }
@@ -445,6 +457,21 @@ pub(crate) fn collect_detect_removals(
     }
 
     removals
+}
+
+#[cfg(target_os = "windows")]
+fn current_os() -> &'static str {
+    "windows"
+}
+
+#[cfg(target_os = "macos")]
+fn current_os() -> &'static str {
+    "macos"
+}
+
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+fn current_os() -> &'static str {
+    "linux"
 }
 
 fn push_detect_change(
@@ -619,5 +646,118 @@ metadata:
         assert_eq!(drift.len(), 2);
         assert_eq!(drift[0].field, "tools.cargo");
         assert_eq!(drift[1].field, "tasks.setup.run");
+    }
+
+    #[test]
+    fn collect_detect_removals_skips_platform_scoped_tool_outside_current_os() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+tools:
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      {}:
+        required: true
+"#,
+                match super::current_os() {
+                    "windows" => "linux",
+                    _ => "windows",
+                }
+            ),
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            ..DetectContract::default()
+        };
+
+        let removals = collect_detect_removals(&existing, &detected);
+        assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn collect_detect_changes_skips_platform_scoped_tool_outside_current_os() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+tools:
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      {}:
+        required: true
+"#,
+                match super::current_os() {
+                    "windows" => "linux",
+                    _ => "windows",
+                }
+            ),
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            tools: BTreeMap::from([(String::from("pwsh"), String::from("*"))]),
+            ..DetectContract::default()
+        };
+
+        let changes = collect_detect_changes(&existing, &detected, &[]);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn collect_detect_changes_skips_platform_scoped_runtime_outside_current_os() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  powershell:
+    version: "7.6.0"
+    required: false
+    platforms:
+      {}:
+        required: true
+"#,
+                match super::current_os() {
+                    "windows" => "linux",
+                    _ => "windows",
+                }
+            ),
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            runtimes: BTreeMap::from([(String::from("powershell"), String::from("*"))]),
+            ..DetectContract::default()
+        };
+
+        let changes = collect_detect_changes(&existing, &detected, &[]);
+        assert!(changes.is_empty());
     }
 }

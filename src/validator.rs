@@ -83,6 +83,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_named_versions("tool", &contract.tools, &mut errors, |value| {
         value.version()
     });
+    validate_tool_details(&contract.tools, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_services(&contract.services, &mut errors);
     validate_tasks(&contract.tasks, &mut errors);
@@ -379,6 +380,80 @@ fn validate_runtime_details(
         {
             errors.push(ValidationError::new(format!(
                 "runtime `{name}` must not declare an empty `distribution`"
+            )));
+        }
+
+        validate_platform_keys("runtime", name, detail.platforms.keys(), errors);
+
+        for (platform, platform_detail) in &detail.platforms {
+            if platform_detail
+                .version
+                .as_deref()
+                .is_some_and(|version| version.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "runtime `{name}` platform `{platform}` must not declare an empty `version`"
+                )));
+            }
+
+            if platform_detail
+                .provider
+                .as_deref()
+                .is_some_and(|provider| provider.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "runtime `{name}` platform `{platform}` must not declare an empty `provider`"
+                )));
+            }
+
+            if platform_detail
+                .distribution
+                .as_deref()
+                .is_some_and(|distribution| distribution.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "runtime `{name}` platform `{platform}` must not declare an empty `distribution`"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_tool_details(
+    tools: &BTreeMap<String, crate::schema::ToolRequirement>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (name, tool) in tools {
+        let crate::schema::ToolRequirement::Detailed(detail) = tool else {
+            continue;
+        };
+
+        validate_platform_keys("tool", name, detail.platforms.keys(), errors);
+
+        for (platform, platform_detail) in &detail.platforms {
+            if platform_detail
+                .version
+                .as_deref()
+                .is_some_and(|version| version.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}` platform `{platform}` must not declare an empty `version`"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_platform_keys<'a>(
+    label: &str,
+    name: &str,
+    platforms: impl Iterator<Item = &'a String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for platform in platforms {
+        if !matches!(platform.as_str(), "linux" | "macos" | "windows") {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` has unsupported platform `{platform}`; expected one of: linux, macos, windows"
             )));
         }
     }
@@ -1581,6 +1656,33 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "`execution.preferred: container` requires an explicit `execution.lifecycle`"
+        );
+    }
+
+    #[test]
+    fn rejects_runtime_platform_with_unsupported_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      bsd:
+        required: true
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "runtime `pwsh` has unsupported platform `bsd`; expected one of: linux, macos, windows"
         );
     }
 }

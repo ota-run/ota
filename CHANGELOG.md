@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+## 1.4.18
+
+- added platform-aware runtime and tool resolution so required versions, providers, and required flags can now vary by OS through `platforms` entries, with resolver/diagnostics using the effective per-OS values.
+- added org policy version controls for runtimes/tools at both global and per-platform levels, plus per-platform policy violations surfaced during policy evaluation.
+- strengthened contract validation for new platform-specific details by rejecting unsupported platform keys and empty platform-level runtime/tool metadata before execution/provisioning.
+
 ## 1.4.17
 
 - fixed `ota up` so effective container mode now stays container-authoritative during provisioning; missing `docker` / `podman` stops in preconditions instead of silently falling back to host provisioning or host `setup`.

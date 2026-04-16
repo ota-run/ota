@@ -79,6 +79,8 @@ pub struct PolicyRules {
     #[serde(default)]
     pub strict_versions: bool,
     #[serde(default)]
+    pub version_policy: PolicyVersionRules,
+    #[serde(default)]
     pub agent: Option<PolicyAgentRules>,
     #[serde(default)]
     pub exports: Option<PolicyExportsRules>,
@@ -134,6 +136,31 @@ pub struct PolicyPlatformProvisioningRule {
 #[serde(deny_unknown_fields)]
 pub struct PolicyAdapterBootstrapRule {
     pub source: String,
+    #[serde(default)]
+    pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyVersionRules {
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, PolicyVersionRule>,
+    #[serde(default)]
+    pub tools: BTreeMap<String, PolicyVersionRule>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyVersionRule {
+    #[serde(default)]
+    pub approved_versions: Vec<String>,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, PolicyPlatformVersionRule>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyPlatformVersionRule {
     #[serde(default)]
     pub approved_versions: Vec<String>,
 }
@@ -362,8 +389,79 @@ impl OrgPolicyPack {
             &self.policies.adapter_bootstrap,
             "policy-backed adapter bootstrap source",
         )?;
+        validate_version_policy_rules(
+            &self.policies.version_policy.runtimes,
+            "runtime version policy",
+        )?;
+        validate_version_policy_rules(&self.policies.version_policy.tools, "tool version policy")?;
 
         Ok(())
+    }
+
+    pub fn version_policy_violations_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+    ) -> Vec<String> {
+        let mut violations = Vec::new();
+
+        for (name, requirement) in &contract.runtimes {
+            if !requirement.required_for_os(os) {
+                continue;
+            }
+
+            let Some(rule) = self.policies.version_policy.runtimes.get(name) else {
+                continue;
+            };
+
+            if let Err(message) = evaluate_version_policy_match(
+                ProvisioningTargetKind::Runtime,
+                name,
+                requirement.version_for_os(os),
+                effective_version_policy_rule(rule, os).approved_versions(),
+            ) {
+                violations.push(message);
+            }
+        }
+
+        for (name, requirement) in &contract.tools {
+            if !requirement.required_for_os(os) {
+                continue;
+            }
+
+            let Some(rule) = self.policies.version_policy.tools.get(name) else {
+                continue;
+            };
+
+            if let Err(message) = evaluate_version_policy_match(
+                ProvisioningTargetKind::Tool,
+                name,
+                requirement.version_for_os(os),
+                effective_version_policy_rule(rule, os).approved_versions(),
+            ) {
+                violations.push(message);
+            }
+        }
+
+        violations
+    }
+
+    pub fn effective_version_policy_versions_for_os(
+        &self,
+        os: &str,
+        kind: ProvisioningTargetKind,
+        name: &str,
+    ) -> Option<Vec<String>> {
+        let rule = match kind {
+            ProvisioningTargetKind::Runtime => self.policies.version_policy.runtimes.get(name)?,
+            ProvisioningTargetKind::Tool => self.policies.version_policy.tools.get(name)?,
+        };
+
+        Some(
+            effective_version_policy_rule(rule, os)
+                .approved_versions()
+                .to_vec(),
+        )
     }
 
     pub fn resolve_provisioning(
@@ -516,31 +614,37 @@ impl OrgPolicyPack {
         let mut plan = ProvisioningPlan::default();
 
         for (name, requirement) in &contract.runtimes {
+            if !requirement.required_for_os(os) {
+                continue;
+            }
             Self::push_plan_entry(
                 &mut plan,
                 ProvisioningTargetKind::Runtime,
                 name,
-                requirement.version(),
+                requirement.version_for_os(os),
                 self.resolve_provisioning_for_os(
                     os,
                     ProvisioningTargetKind::Runtime,
                     name,
-                    requirement.version(),
+                    requirement.version_for_os(os),
                 ),
             );
         }
 
         for (name, requirement) in &contract.tools {
+            if !requirement.required_for_os(os) {
+                continue;
+            }
             Self::push_plan_entry(
                 &mut plan,
                 ProvisioningTargetKind::Tool,
                 name,
-                requirement.version(),
+                requirement.version_for_os(os),
                 self.resolve_provisioning_for_os(
                     os,
                     ProvisioningTargetKind::Tool,
                     name,
-                    requirement.version(),
+                    requirement.version_for_os(os),
                 ),
             );
         }
@@ -846,6 +950,51 @@ fn evaluate_provisioning_version_match(
     ))
 }
 
+fn evaluate_version_policy_match(
+    kind: ProvisioningTargetKind,
+    name: &str,
+    requested_version: &str,
+    approved_versions: &[String],
+) -> Result<(), String> {
+    if approved_versions.is_empty() {
+        return Ok(());
+    }
+
+    if approved_versions
+        .iter()
+        .any(|approved| approved.as_str() == requested_version)
+    {
+        return Ok(());
+    }
+
+    let Some(parsed_request) = parse_requested_provisioning_requirement(requested_version) else {
+        return Err(format!(
+            "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+            kind.as_str(),
+            approved_versions.join(", ")
+        ));
+    };
+
+    if parsed_request.installable_without_resolution {
+        if approved_versions.iter().any(|approved| {
+            parse_policy_version_rule(approved)
+                .is_some_and(|rule| rule.req.matches(&parsed_request.sample))
+        }) {
+            return Ok(());
+        }
+    } else if approved_versions.iter().any(|approved| {
+        parse_policy_version_rule(approved).is_some_and(|rule| rule.req == parsed_request.req)
+    }) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "{} `{name}` version `{requested_version}` is not approved by policy; expected one of: {}",
+        kind.as_str(),
+        approved_versions.join(", ")
+    ))
+}
+
 fn parse_requested_provisioning_requirement(value: &str) -> Option<ParsedProvisioningRequirement> {
     if let Some(selector) = parse_explicit_semver_selector(value) {
         return Some(ParsedProvisioningRequirement {
@@ -1062,6 +1211,42 @@ fn validate_platform_rules(
     Ok(())
 }
 
+fn validate_version_policy_rules(
+    rules: &BTreeMap<String, PolicyVersionRule>,
+    label: &str,
+) -> Result<(), String> {
+    for (name, rule) in rules {
+        for (platform, platform_rule) in &rule.platforms {
+            if !matches!(platform.as_str(), "linux" | "macos" | "windows") {
+                return Err(format!(
+                    "{label} `{name}` has unsupported platform `{platform}`; expected one of: linux, macos, windows"
+                ));
+            }
+            if platform_rule
+                .approved_versions
+                .iter()
+                .any(|version| version.trim().is_empty())
+            {
+                return Err(format!(
+                    "{label} `{name}` platform `{platform}` must not contain empty approved versions"
+                ));
+            }
+        }
+
+        if rule
+            .approved_versions
+            .iter()
+            .any(|version| version.trim().is_empty())
+        {
+            return Err(format!(
+                "{label} `{name}` must not contain empty approved versions"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn effective_provisioning_rule<'a>(
     rule: &'a PolicyProvisioningRule,
     os: &str,
@@ -1069,6 +1254,16 @@ fn effective_provisioning_rule<'a>(
     rule.platforms
         .get(os)
         .map(|platform| platform as &dyn ProvisioningSourceRule)
+        .unwrap_or(rule)
+}
+
+fn effective_version_policy_rule<'a>(
+    rule: &'a PolicyVersionRule,
+    os: &str,
+) -> &'a dyn VersionPolicyRule {
+    rule.platforms
+        .get(os)
+        .map(|platform| platform as &dyn VersionPolicyRule)
         .unwrap_or(rule)
 }
 
@@ -1089,6 +1284,10 @@ fn current_os() -> &'static str {
 
 trait SourceRule {
     fn source(&self) -> &str;
+    fn approved_versions(&self) -> &[String];
+}
+
+trait VersionPolicyRule {
     fn approved_versions(&self) -> &[String];
 }
 
@@ -1142,6 +1341,18 @@ impl SourceRule for PolicyAdapterBootstrapRule {
         &self.source
     }
 
+    fn approved_versions(&self) -> &[String] {
+        &self.approved_versions
+    }
+}
+
+impl VersionPolicyRule for PolicyVersionRule {
+    fn approved_versions(&self) -> &[String] {
+        &self.approved_versions
+    }
+}
+
+impl VersionPolicyRule for PolicyPlatformVersionRule {
     fn approved_versions(&self) -> &[String] {
         &self.approved_versions
     }
@@ -2409,5 +2620,91 @@ runtimes:
         );
         assert_eq!(request.actions[0].name, "java");
         assert_eq!(request.actions[0].source, "org-mirror");
+    }
+
+    #[test]
+    fn skips_platform_scoped_tool_outside_target_os() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    pwsh:
+      source: choco
+      package: powershell
+      approved_versions:
+        - "7.6.0"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      windows:
+        required: true
+"#,
+        )
+        .unwrap();
+
+        let linux_plan = policy.provisioning_plan_for_os("linux", &contract);
+        assert!(linux_plan.allowed.is_empty());
+        assert!(linux_plan.blocked.is_empty());
+
+        let windows_plan = policy.provisioning_plan_for_os("windows", &contract);
+        assert_eq!(windows_plan.allowed.len(), 1);
+        assert_eq!(windows_plan.allowed[0].name, "pwsh");
+        assert_eq!(windows_plan.allowed[0].source.as_deref(), Some("choco"));
+    }
+
+    #[test]
+    fn evaluates_version_policy_separately_from_provisioning() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+    tools:
+      pwsh:
+        platforms:
+          windows:
+            approved_versions:
+              - "7.6.0"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "24"
+tools:
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      windows:
+        required: true
+"#,
+        )
+        .unwrap();
+
+        let linux_violations = policy.version_policy_violations_for_os("linux", &contract);
+        assert_eq!(linux_violations.len(), 1);
+        assert!(linux_violations[0].contains("runtime `node` version `24`"));
+
+        let windows_violations = policy.version_policy_violations_for_os("windows", &contract);
+        assert_eq!(windows_violations.len(), 1);
+        assert!(windows_violations[0].contains("runtime `node` version `24`"));
     }
 }

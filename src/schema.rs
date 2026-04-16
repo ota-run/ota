@@ -186,12 +186,73 @@ impl RuntimeRequirement {
             Self::Detailed(detail) => &detail.version,
         }
     }
+
+    pub fn version_for_os(&self, os: &str) -> &str {
+        match self {
+            Self::Simple(version) => version,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.version.as_deref())
+                .unwrap_or(&detail.version),
+        }
+    }
+
+    pub fn required_for_os(&self, os: &str) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.required)
+                .unwrap_or(detail.required),
+        }
+    }
+
+    pub fn provider_for_os(&self, os: &str) -> Option<&str> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.provider.as_deref())
+                .or(detail.provider.as_deref()),
+        }
+    }
+
+    pub fn distribution_for_os(&self, os: &str) -> Option<&str> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.distribution.as_deref())
+                .or(detail.distribution.as_deref()),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeDetail {
     pub version: String,
+    #[serde(default = "default_required")]
+    pub required: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub distribution: Option<String>,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, RuntimePlatformDetail>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimePlatformDetail {
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub required: Option<bool>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -212,6 +273,28 @@ impl ToolRequirement {
             Self::Detailed(detail) => &detail.version,
         }
     }
+
+    pub fn version_for_os(&self, os: &str) -> &str {
+        match self {
+            Self::Simple(version) => version,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.version.as_deref())
+                .unwrap_or(&detail.version),
+        }
+    }
+
+    pub fn required_for_os(&self, os: &str) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.required)
+                .unwrap_or(detail.required),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -220,6 +303,17 @@ pub struct ToolDetail {
     pub version: String,
     #[serde(default = "default_required")]
     pub required: bool,
+    #[serde(default)]
+    pub platforms: BTreeMap<String, ToolPlatformDetail>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ToolPlatformDetail {
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub required: Option<bool>,
 }
 
 fn default_required() -> bool {

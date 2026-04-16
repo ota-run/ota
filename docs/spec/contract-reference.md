@@ -376,18 +376,28 @@ Detailed form:
 runtimes:
   java:
     version: "21"
+    required: true
     distribution: temurin
   node:
     version: "22"
     provider: volta
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      windows:
+        required: true
 ```
 
 Rules:
 
 - runtime names must not be empty
 - versions must not be empty
+- `required` defaults to `true`
 - `provider`, when set, must not be empty
 - `distribution`, when set, must not be empty
+- `platforms` may override `version`, `required`, `provider`, and `distribution` per OS using
+  `linux`, `macos`, or `windows`
 - workspace overlays may specialize member runtime requirements, but the winning value must be explainable
 
 Version syntax examples:
@@ -401,9 +411,14 @@ Version syntax examples:
 
 Runtime detail fields:
 
+- `required`: optional boolean; defaults to `true`
 - `provider`: optional runtime manager or provisioning source hint such as `volta`
 - `distribution`: optional runtime flavor where version alone is not sufficient, especially Java
   distributions such as `temurin`, `corretto`, `graalvm`, `oracle`, or `zulu`
+- `platforms`: optional per-OS overrides keyed by `linux`, `macos`, or `windows`
+
+Use `platforms` when a runtime is only required on some operating systems.
+Root fields act as the default, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `tools`
 
@@ -424,6 +439,12 @@ tools:
   pnpm:
     version: "10"
     required: true
+  pwsh:
+    version: "7.6.0"
+    required: false
+    platforms:
+      windows:
+        required: true
 ```
 
 Rules:
@@ -431,8 +452,12 @@ Rules:
 - tool names must not be empty
 - versions must not be empty
 - `required` defaults to `true`
+- `platforms` may override `version` and `required` per OS using `linux`, `macos`, or `windows`
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
+
+Use `platforms` when a tool is only required on some operating systems.
+Root fields act as the default, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `env`
 
