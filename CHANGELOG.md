@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- fixed `ota up` so effective container mode now stays container-authoritative during provisioning; missing `docker` / `podman` stops in preconditions instead of silently falling back to host provisioning or host `setup`.
 - added a post-release GitHub Actions job that auto-generates Discord `#releases` messages from published GitHub release metadata and posts them via `DISCORD_RELEASE_WEBHOOK_URL`, removing the need to maintain per-tag Discord note files.
 - made `ota self-update` always force published release installation instead of switching to a local source build when run inside the ota repo, changed update notices to use cached release results so they stay fast without dropping slow network checks, taught stale no-update caches to refresh synchronously so the first command after a new release can still surface the notice, hardened the Windows deferred self-update helper to keep retrying replacement after process exit, and switched Unix release installs to staged renames instead of direct live-binary overwrites.
 - kept the background update-notice foreground wait budget small and consistent across platforms so successful commands stay responsive, and shortened the transient update-check failure cooldown to one hour everywhere instead of leaving Unix-like systems silent for a full day.
