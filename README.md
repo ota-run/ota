@@ -170,6 +170,10 @@ ota init --pack node
 # or:
 ota init --pack python --dry-run
 # or:
+ota init --pack go --dry-run
+# or:
+ota init --pack rust --dry-run
+# or:
 ota init --pack java-maven --dry-run
 # or:
 ota init --pack java-gradle --dry-run
@@ -177,6 +181,8 @@ ota init --pack java-gradle --dry-run
 
 The Java packs prefer `./mvnw` or `./gradlew` when the repo already ships those wrappers. When no
 wrapper is present, they seed the global Maven or Gradle prerequisite explicitly.
+If you choose the wrong explicit pack, ota can surface an advisory note and JSON `pack_advisory`
+field, but it keeps the selected pack authoritative and does not auto-switch starters.
 
 ### Existing repo with `ota.yaml`, but contract drift is suspected
 
@@ -310,7 +316,7 @@ Current behavior:
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, and supports `ota doctor --mode container` for container-targeted readiness
-- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, and both detector-led starters plus starter packs can seed short task `description` fields so users can see and refine that authoring pattern immediately
+- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, both detector-led starters plus starter packs can seed short task `description` fields so users can see and refine that authoring pattern immediately, and explicit `--pack` mode can emit an advisory note when strong repo signals disagree without auto-switching packs
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness

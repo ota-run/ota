@@ -43,7 +43,7 @@ const ANSI_BRIGHT_GREEN: &str = "\x1b[92m";
 const ANSI_GOLD_ACCENT: &str = "\x1b[1;38;2;214;161;95m";
 const ANSI_BOLD_WHITE: &str = "\x1b[1;37m";
 const ANSI_FG_RESET: &str = "\x1b[39m";
-const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 24 * 60 * 60;
+const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 60 * 60;
 const UPDATE_CHECK_HTTP_TIMEOUT_SECS: &str = "2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,8 +195,9 @@ fn clear_update_check_failure_notice(state_path: &Path) {
 }
 
 fn maybe_emit_failed_update_check_notice(now_secs: u64, state_path: &Path) -> Option<String> {
+    let cooldown_secs = update_check_failure_notice_cooldown_secs();
     if let Some(last_notice) = last_update_check_failure_notice_at(state_path)
-        && now_secs.saturating_sub(last_notice) < UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS
+        && now_secs.saturating_sub(last_notice) < cooldown_secs
     {
         return None;
     }
@@ -212,6 +213,14 @@ fn maybe_emit_failed_update_check_notice(now_secs: u64, state_path: &Path) -> Op
     }
 
     Some(render_update_check_failed_notice())
+}
+
+fn update_check_failure_notice_cooldown_secs() -> u64 {
+    update_check_failure_notice_cooldown_secs_for_platform(cfg!(windows))
+}
+
+fn update_check_failure_notice_cooldown_secs_for_platform(_is_windows: bool) -> u64 {
+    UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS
 }
 
 fn maybe_update_notice_with_state(
@@ -703,6 +712,18 @@ mod tests {
         assert_eq!(
             failed_again,
             Some(super::render_update_check_failed_notice())
+        );
+    }
+
+    #[test]
+    fn failure_notice_cooldown_is_shorter_on_all_platforms() {
+        assert_eq!(
+            super::update_check_failure_notice_cooldown_secs_for_platform(true),
+            60 * 60
+        );
+        assert_eq!(
+            super::update_check_failure_notice_cooldown_secs_for_platform(false),
+            60 * 60
         );
     }
 

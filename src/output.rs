@@ -1001,10 +1001,22 @@ pub struct InitSuccess<'a> {
     pub mode: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pack: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack_advisory: Option<InitPackAdvisory>,
     pub config: &'a DetectContract,
     pub inferred: &'a [Inference],
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub provenance: Vec<ContractFieldProvenance>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitPackAdvisory {
+    pub selected_pack: String,
+    pub suggested_pack: String,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signals: Vec<String>,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1020,6 +1032,8 @@ pub struct InitPackInfo {
     pub name: String,
     pub summary: String,
     pub when: String,
+    pub command: String,
+    pub next: String,
     pub seeds: InitPackSeeds,
 }
 

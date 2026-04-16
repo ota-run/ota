@@ -20,18 +20,21 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::detector::{
     DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
-    DetectTask,
+    DetectTask, Inference,
 };
 use crate::schema::{AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum StarterPack {
     Node,
     Python,
+    Go,
+    Rust,
     JavaMaven,
     JavaGradle,
 }
@@ -47,11 +50,19 @@ pub(crate) struct StarterPackCatalogEntry {
     pub(crate) tasks: &'static [&'static str],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StarterPackAdvisory {
+    pub(crate) suggested_pack: StarterPack,
+    pub(crate) signals: Vec<String>,
+}
+
 impl StarterPack {
     pub(crate) fn all() -> &'static [StarterPack] {
         &[
             StarterPack::Node,
             StarterPack::Python,
+            StarterPack::Go,
+            StarterPack::Rust,
             StarterPack::JavaMaven,
             StarterPack::JavaGradle,
         ]
@@ -61,9 +72,19 @@ impl StarterPack {
         match self {
             Self::Node => "node",
             Self::Python => "python",
+            Self::Go => "go",
+            Self::Rust => "rust",
             Self::JavaMaven => "java-maven",
             Self::JavaGradle => "java-gradle",
         }
+    }
+
+    pub(crate) fn command(self) -> String {
+        format!("ota init --pack {}", self.as_str())
+    }
+
+    pub(crate) fn preview_command(self) -> String {
+        format!("ota init --pack {} --dry-run .", self.as_str())
     }
 
     pub(crate) fn provenance_source(self) -> String {
@@ -90,13 +111,31 @@ impl StarterPack {
                 checks: &["python-installed"],
                 tasks: &["setup", "test"],
             },
+            Self::Go => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Go starter with module download, build, and test tasks.",
+                when: "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
+                runtimes: &["go"],
+                tools: &[],
+                checks: &["go-installed"],
+                tasks: &["setup", "build", "test"],
+            },
+            Self::Rust => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Rust starter with Cargo fetch, build, and test tasks.",
+                when: "Use this for Cargo-managed Rust repos that should start from the standard fetch/build/test flow without relying on detector-led init.",
+                runtimes: &["rust"],
+                tools: &["cargo"],
+                checks: &["rust-installed"],
+                tasks: &["setup", "build", "test"],
+            },
             Self::JavaMaven => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
                 when: "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
                 runtimes: &["java"],
-                tools: &["maven"],
-                checks: &["java-installed", "maven-installed"],
+                tools: &[],
+                checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
             },
             Self::JavaGradle => StarterPackCatalogEntry {
@@ -104,8 +143,8 @@ impl StarterPack {
                 summary: "Conventional Java starter for Gradle-driven repos with build and test lifecycles, preferring `gradlew` when the repo already ships it.",
                 when: "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection. If `gradlew` already exists, ota uses the wrapper instead of requiring a global Gradle install.",
                 runtimes: &["java"],
-                tools: &["gradle"],
-                checks: &["java-installed", "gradle-installed"],
+                tools: &[],
+                checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
             },
         }
@@ -118,6 +157,56 @@ pub(crate) fn starter_pack_catalog() -> Vec<StarterPackCatalogEntry> {
         .copied()
         .map(StarterPack::catalog_entry)
         .collect()
+}
+
+pub(crate) fn starter_pack_advisory(
+    selected_pack: StarterPack,
+    detected: &DetectReport,
+) -> Option<StarterPackAdvisory> {
+    let mut scores = BTreeMap::<StarterPack, usize>::new();
+    let mut signals = BTreeMap::<StarterPack, BTreeSet<String>>::new();
+
+    for inference in &detected.inferences {
+        let Some((pack, weight, signal)) = pack_signal_for_inference(inference) else {
+            continue;
+        };
+        *scores.entry(pack).or_default() += weight;
+        signals.entry(pack).or_default().insert(signal);
+    }
+
+    let selected_score = scores.get(&selected_pack).copied().unwrap_or_default();
+    if selected_score > 0 {
+        return None;
+    }
+
+    let mut ranked = scores
+        .into_iter()
+        .filter(|(pack, score)| *pack != selected_pack && *score >= 3)
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .cmp(&left.1)
+            .then_with(|| left.0.as_str().cmp(right.0.as_str()))
+    });
+
+    let (suggested_pack, best_score) = ranked.first().copied()?;
+    if ranked
+        .get(1)
+        .is_some_and(|(_, next_score)| *next_score == best_score)
+    {
+        return None;
+    }
+
+    Some(StarterPackAdvisory {
+        suggested_pack,
+        signals: signals
+            .remove(&suggested_pack)
+            .unwrap_or_default()
+            .into_iter()
+            .take(3)
+            .collect(),
+    })
 }
 
 pub(super) fn bootstrap_init_contract(report: &DetectReport) -> DetectContract {
@@ -243,6 +332,80 @@ fn directory_name_for_root(root: &Path) -> Option<String> {
         .filter(|name| !name.is_empty())
 }
 
+fn pack_signal_for_inference(inference: &Inference) -> Option<(StarterPack, usize, String)> {
+    let source = inference.source.as_str();
+
+    if source.starts_with("package.json")
+        || matches!(
+            source,
+            ".nvmrc"
+                | ".node-version"
+                | "pnpm-workspace.yaml"
+                | "pnpm-lock.yaml"
+                | "yarn.lock"
+                | "bun.lock"
+                | "bun.lockb"
+                | "package-lock.json"
+                | "npm-shrinkwrap.json"
+        )
+    {
+        return Some((StarterPack::Node, 3, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("pyproject.toml")
+        || source.starts_with("Pipfile")
+        || source.starts_with("setup.cfg")
+        || matches!(source, "requirements.txt" | "uv.lock")
+    {
+        return Some((StarterPack::Python, 3, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("go.mod") {
+        return Some((StarterPack::Go, 4, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("Cargo.toml") {
+        return Some((StarterPack::Rust, 4, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("pom.xml") || source.starts_with(".mvn/wrapper/maven-wrapper.properties")
+    {
+        return Some((StarterPack::JavaMaven, 4, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("build.gradle")
+        || source.starts_with("settings.gradle")
+        || source.starts_with("gradle/wrapper/gradle-wrapper.properties")
+    {
+        return Some((StarterPack::JavaGradle, 4, normalize_pack_signal(source)));
+    }
+
+    None
+}
+
+fn normalize_pack_signal(source: &str) -> String {
+    match source {
+        value if value.starts_with("package.json") => String::from("package.json"),
+        value if value.starts_with("pyproject.toml") => String::from("pyproject.toml"),
+        value if value.starts_with("Pipfile") => String::from("Pipfile"),
+        value if value.starts_with("setup.cfg") => String::from("setup.cfg"),
+        value if value.starts_with("go.mod") => String::from("go.mod"),
+        value if value.starts_with("Cargo.toml") => String::from("Cargo.toml"),
+        value if value.starts_with("pom.xml") => String::from("pom.xml"),
+        value if value.starts_with("build.gradle.kts") => String::from("build.gradle.kts"),
+        value if value.starts_with("build.gradle") => String::from("build.gradle"),
+        value if value.starts_with("settings.gradle.kts") => String::from("settings.gradle.kts"),
+        value if value.starts_with("settings.gradle") => String::from("settings.gradle"),
+        value if value.starts_with("gradle/wrapper/gradle-wrapper.properties") => {
+            String::from("gradle wrapper")
+        }
+        value if value.starts_with(".mvn/wrapper/maven-wrapper.properties") => {
+            String::from("maven wrapper")
+        }
+        value => value.to_string(),
+    }
+}
+
 pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectContract {
     let project = directory_name_for_root(root).map(|name| DetectProject { name });
     let mut contract = DetectContract {
@@ -316,6 +479,79 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                     "test",
                     "pytest",
                     Some(String::from("Run the default Python test command.")),
+                ),
+            );
+        }
+        StarterPack::Go => {
+            contract
+                .runtimes
+                .insert(String::from("go"), String::from("1.24"));
+            contract.checks.push(DetectCheck {
+                name: String::from("go-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("go version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "go mod download",
+                    Some(String::from("Download Go module dependencies.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("build"),
+                pack_task(
+                    "build",
+                    "go build ./...",
+                    Some(String::from("Build the Go packages in this module.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "go test ./...",
+                    Some(String::from("Run the default Go test suite.")),
+                ),
+            );
+        }
+        StarterPack::Rust => {
+            contract
+                .runtimes
+                .insert(String::from("rust"), String::from("1.85"));
+            contract
+                .tools
+                .insert(String::from("cargo"), String::from("*"));
+            contract.checks.push(DetectCheck {
+                name: String::from("rust-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("rustc --version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "cargo fetch",
+                    Some(String::from("Fetch Cargo dependencies for the repo.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("build"),
+                pack_task(
+                    "build",
+                    "cargo build",
+                    Some(String::from("Build the default Cargo outputs.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "cargo test",
+                    Some(String::from("Run the default Cargo test suite.")),
                 ),
             );
         }
