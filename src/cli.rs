@@ -4103,7 +4103,8 @@ mod tests {
         COMPLETION_SETUP_MARKER_START, Cli, Commands, CompletionRequest, CompletionRequestGuard,
         PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines, commands,
         complete_repo_run_task_candidates, completion_command, load_repo_run_task_candidates,
-        maybe_append_update_notice, maybe_handle_shell_completion, run_with,
+        load_workspace_task_candidates, maybe_append_update_notice, maybe_handle_shell_completion,
+        run_with,
     };
     use crate::output::CommandOutput;
 
@@ -13108,6 +13109,14 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["description"],
+            "Prepare the repo for local work."
+        );
+        assert_eq!(
+            json["config"]["tasks"]["test"]["description"],
+            "Run the default automated test command."
+        );
         let provenance = json["provenance"].as_array().expect("provenance array");
 
         let project_name = provenance
@@ -15895,10 +15904,12 @@ tasks:
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
         assert!(written.contains("project.name: merged"));
         assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("tasks.dev.description: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
         assert!(!written.contains("node:"));
     }
@@ -15927,6 +15938,14 @@ tasks:
         );
         assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["dev"]["description"],
+            "Start the local development loop."
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.description"],
             "merged"
         );
         assert_eq!(
@@ -17505,6 +17524,58 @@ tasks:
             .expect("shell completion should succeed");
 
         assert_eq!(values, vec![String::from("dev")]);
+    }
+
+    #[test]
+    fn workspace_run_task_completion_candidates_include_shared_task_descriptions() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("api")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+tasks:
+  setup:
+    description: Prepare the shared workspace repo
+    run: echo api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    description: Prepare the shared workspace repo
+    run: echo db
+"#,
+        )
+        .unwrap();
+
+        let candidates = load_workspace_task_candidates(fixture.workspace_file());
+        let setup = candidates
+            .iter()
+            .find(|candidate| candidate.name == "setup")
+            .expect("setup completion candidate");
+
+        assert_eq!(
+            setup.description.as_deref(),
+            Some("Prepare the shared workspace repo")
+        );
     }
 
     #[test]
@@ -20319,6 +20390,9 @@ edition = "2024"
         assert!(repo_dir.join("ota.yaml").is_file());
         assert!(body.contains("Auto-provisioned repo contracts"));
         assert!(body.contains("web (apps/web)"));
+        let written = fs::read_to_string(repo_dir.join("ota.yaml")).unwrap();
+        assert!(written.contains("description: Build the project artifacts."));
+        assert!(written.contains("description: Run the default automated test command."));
     }
 
     #[test]
@@ -21221,6 +21295,42 @@ tasks:
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
         assert_eq!(json["repos"][1]["name"], "api");
         assert_eq!(json["repos"][1]["depends_on"][0], "db");
+    }
+
+    #[test]
+    fn workspace_tasks_surfaces_task_descriptions_in_json_and_text() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    description: Prepare the database repo
+    run: echo db
+"#,
+        )
+        .unwrap();
+
+        let json_output = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 0);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(
+            json["repos"][0]["tasks"][0]["description"],
+            "Prepare the database repo"
+        );
+
+        let text_output = run_with(["ota", "workspace", "tasks", fixture.path()]);
+        assert_eq!(text_output.exit_code, 0);
+        let body = strip_ansi(&text_output.stdout);
+        assert!(body.contains("Description: Prepare the database repo"));
     }
 
     #[test]
