@@ -316,3 +316,69 @@ jobs:
             dist/**/*.zip
             dist/ota-checksums.txt
           generate_release_notes: true
+
+  publish-discord:
+    name: Publish Discord Release Message
+    needs:
+      - release-tag
+      - publish-release
+    if: needs.release-tag.outputs.created == 'true' && needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.release-tag.outputs.tag }}
+    steps:
+      - name: Build Discord message
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          output_file="discord-release-message.txt"
+          release_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          release_json="$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${release_api}")"
+
+          release_name="$(printf '%s' "${release_json}" | jq -r '.name // .tag_name // env.RELEASE_TAG')"
+          release_url="$(printf '%s' "${release_json}" | jq -r '.html_url // ("https://github.com/" + env.GITHUB_REPOSITORY + "/releases/tag/" + env.RELEASE_TAG)')"
+          release_body="$(printf '%s' "${release_json}" | jq -r '.body // ""')"
+
+          mapfile -t release_bullets < <(
+            printf '%s\n' "${release_body}" \
+              | sed -n 's/^[[:space:]]*-[[:space:]]\{0,1\}//p' \
+              | awk 'length > 0' \
+              | head -n 3
+          )
+
+          if (( ${#release_bullets[@]} == 0 )); then
+            release_bullets=("Release published.")
+          fi
+
+          {
+            printf '🚀 **%s**\n\n' "${release_name}"
+            printf "**What's new**\n"
+            for bullet in "${release_bullets[@]}"; do
+              printf -- '- %s\n' "${bullet}"
+            done
+            printf "\n**Why it matters**\n"
+            printf 'This release is now live with the latest validated changes.\n\n'
+            printf '🔗 %s\n' "${release_url}"
+          } > "${output_file}"
+
+      - name: Publish Discord message
+        shell: bash
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          webhook_url="${DISCORD_RELEASE_WEBHOOK_URL:-}"
+          if [[ -z "${webhook_url}" ]]; then
+            echo "Discord webhook secret is not configured; skipping Discord release announcement."
+            exit 0
+          fi
+
+          jq -Rs '{content: .}' discord-release-message.txt \
+            | curl -fsSL -H "Content-Type: application/json" -d @- "${webhook_url}"

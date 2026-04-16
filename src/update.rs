@@ -30,7 +30,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value as JsonValue;
 
@@ -102,6 +102,10 @@ fn ota_cache_dir() -> PathBuf {
 
 fn update_check_failure_state_path() -> PathBuf {
     ota_cache_dir().join("update-check-failure-notice-at.txt")
+}
+
+fn update_check_failure_record_path() -> PathBuf {
+    ota_cache_dir().join("update-check-failure-at.txt")
 }
 
 fn latest_release_cache_path() -> PathBuf {
@@ -191,6 +195,20 @@ fn current_unix_timestamp_secs() -> u64 {
         .unwrap_or_default()
 }
 
+fn read_timestamp(path: &Path) -> Option<u64> {
+    fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
+fn write_timestamp(path: &Path, now_secs: u64) -> bool {
+    if let Some(parent) = path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return false;
+    }
+
+    fs::write(path, now_secs.to_string()).is_ok()
+}
+
 fn maybe_notice_for_latest(current_version: &str, latest: &str) -> Option<String> {
     let current = normalize_version(current_version);
     let latest = normalize_version(latest);
@@ -202,28 +220,39 @@ fn maybe_notice_for_latest(current_version: &str, latest: &str) -> Option<String
 }
 
 fn last_update_check_failure_notice_at(state_path: &Path) -> Option<u64> {
-    fs::read_to_string(state_path).ok()?.trim().parse().ok()
+    read_timestamp(state_path)
+}
+
+fn last_update_check_failure_at(state_path: &Path) -> Option<u64> {
+    read_timestamp(state_path)
 }
 
 fn clear_update_check_failure_notice(state_path: &Path) {
     let _ = fs::remove_file(state_path);
 }
 
-fn maybe_emit_failed_update_check_notice(now_secs: u64, state_path: &Path) -> Option<String> {
-    let cooldown_secs = update_check_failure_notice_cooldown_secs();
-    if let Some(last_notice) = last_update_check_failure_notice_at(state_path)
-        && now_secs.saturating_sub(last_notice) < cooldown_secs
-    {
+fn clear_update_check_failure_record(state_path: &Path) {
+    let _ = fs::remove_file(state_path);
+}
+
+fn update_notice_cache_path_for_state_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("latest-release-tag.txt")
+}
+
+fn update_notice_failure_record_path_for_state_path(state_path: &Path) -> PathBuf {
+    state_path.with_file_name("update-check-failure-at.txt")
+}
+
+fn maybe_emit_failed_update_check_notice(
+    now_secs: u64,
+    notice_state_path: &Path,
+    failure_state_path: &Path,
+) -> Option<String> {
+    if !should_emit_failed_update_check_notice(now_secs, notice_state_path, failure_state_path) {
         return None;
     }
 
-    if let Some(parent) = state_path.parent()
-        && fs::create_dir_all(parent).is_err()
-    {
-        return None;
-    }
-
-    if fs::write(state_path, now_secs.to_string()).is_err() {
+    if !write_timestamp(notice_state_path, now_secs) {
         return None;
     }
 
@@ -264,35 +293,142 @@ fn latest_release_cache_is_fresh(cache_path: &Path, now_secs: u64) -> bool {
     }
 }
 
+fn should_emit_failed_update_check_notice(
+    now_secs: u64,
+    notice_state_path: &Path,
+    failure_state_path: &Path,
+) -> bool {
+    let Some(last_failure) = last_update_check_failure_at(failure_state_path) else {
+        return false;
+    };
+
+    let cooldown_secs = update_check_failure_notice_cooldown_secs();
+    if let Some(last_notice) = last_update_check_failure_notice_at(notice_state_path) {
+        if last_notice >= last_failure {
+            return false;
+        }
+        if now_secs.saturating_sub(last_notice) < cooldown_secs {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn has_immediate_cached_update_state(has_cached_latest: bool, cache_is_fresh: bool) -> bool {
+    has_cached_latest && cache_is_fresh
+}
+
+fn should_run_update_check_synchronously(
+    has_cached_latest: bool,
+    cache_is_fresh: bool,
+    has_local_notice: bool,
+) -> bool {
+    !has_local_notice && (!has_cached_latest || !cache_is_fresh)
+}
+
+fn has_immediate_update_notice_state(
+    now_secs: u64,
+    notice_state_path: &Path,
+    cache_path: &Path,
+) -> bool {
+    let has_cached_latest = read_latest_release_cache(cache_path).is_some();
+    if has_immediate_cached_update_state(
+        has_cached_latest,
+        latest_release_cache_is_fresh(cache_path, now_secs),
+    ) {
+        return true;
+    }
+
+    should_emit_failed_update_check_notice(
+        now_secs,
+        notice_state_path,
+        &update_notice_failure_record_path_for_state_path(notice_state_path),
+    )
+}
+
+pub(crate) fn preferred_update_notice_wait_timeout() -> Duration {
+    let now_secs = current_unix_timestamp_secs();
+    let notice_state_path = update_check_failure_state_path();
+    let cache_path = latest_release_cache_path();
+    if has_immediate_update_notice_state(now_secs, &notice_state_path, &cache_path) {
+        Duration::from_millis(50)
+    } else {
+        Duration::from_millis(3000)
+    }
+}
+
+fn record_update_check_result(
+    latest_result: Result<String, ()>,
+    now_secs: u64,
+    notice_state_path: &Path,
+    failure_state_path: &Path,
+    cache_path: &Path,
+) {
+    match latest_result {
+        Ok(latest) => {
+            write_latest_release_cache(cache_path, &latest);
+            clear_update_check_failure_notice(notice_state_path);
+            clear_update_check_failure_record(failure_state_path);
+        }
+        Err(()) => {
+            let _ = write_timestamp(failure_state_path, now_secs);
+        }
+    }
+}
+
+fn maybe_local_update_notice(
+    current_version: &str,
+    now_secs: u64,
+    notice_state_path: &Path,
+    failure_state_path: &Path,
+    cache_path: &Path,
+) -> Option<String> {
+    if let Some(cached_latest) = read_latest_release_cache(cache_path)
+        && let Some(notice) = maybe_notice_for_latest(current_version, &cached_latest)
+    {
+        return Some(notice);
+    }
+
+    maybe_emit_failed_update_check_notice(now_secs, notice_state_path, failure_state_path)
+}
+
 fn maybe_update_notice_with_cache_state(
     current_version: &str,
     latest_result: Result<String, ()>,
     now_secs: u64,
-    state_path: &Path,
+    notice_state_path: &Path,
     cache_path: &Path,
 ) -> Option<String> {
-    match latest_result {
-        Ok(latest) => {
-            write_latest_release_cache(cache_path, &latest);
-            clear_update_check_failure_notice(state_path);
-            maybe_notice_for_latest(current_version, &latest)
-        }
-        Err(()) => maybe_emit_failed_update_check_notice(now_secs, state_path),
-    }
+    let failure_state_path = update_notice_failure_record_path_for_state_path(notice_state_path);
+    record_update_check_result(
+        latest_result,
+        now_secs,
+        notice_state_path,
+        &failure_state_path,
+        cache_path,
+    );
+    maybe_local_update_notice(
+        current_version,
+        now_secs,
+        notice_state_path,
+        &failure_state_path,
+        cache_path,
+    )
 }
 
 fn maybe_update_notice_with_state(
     current_version: &str,
     latest_result: Result<String, ()>,
     now_secs: u64,
-    state_path: &Path,
+    notice_state_path: &Path,
 ) -> Option<String> {
-    let cache_path = state_path.with_extension("latest-release-tag.txt");
+    let cache_path = update_notice_cache_path_for_state_path(notice_state_path);
     maybe_update_notice_with_cache_state(
         current_version,
         latest_result,
         now_secs,
-        state_path,
+        notice_state_path,
         &cache_path,
     )
 }
@@ -570,27 +706,73 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
 
 pub fn maybe_update_notice(current_version: &str) -> Option<String> {
     let now_secs = current_unix_timestamp_secs();
-    let state_path = update_check_failure_state_path();
+    let notice_state_path = update_check_failure_state_path();
+    let failure_state_path = update_check_failure_record_path();
     let cache_path = latest_release_cache_path();
 
-    if let Some(cached_latest) = read_latest_release_cache(&cache_path) {
-        let notice = maybe_notice_for_latest(current_version, &cached_latest);
-        if !latest_release_cache_is_fresh(&cache_path, now_secs) {
-            let current_version = current_version.to_string();
-            let refresh_state_path = state_path.clone();
+    let local_notice = maybe_local_update_notice(
+        current_version,
+        now_secs,
+        &notice_state_path,
+        &failure_state_path,
+        &cache_path,
+    );
+    let has_cached_latest = read_latest_release_cache(&cache_path).is_some();
+    let cache_is_fresh = has_cached_latest && latest_release_cache_is_fresh(&cache_path, now_secs);
+
+    if has_cached_latest {
+        if !cache_is_fresh {
+            if should_run_update_check_synchronously(
+                has_cached_latest,
+                cache_is_fresh,
+                local_notice.is_some(),
+            ) {
+                let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
+                return maybe_update_notice_with_cache_state(
+                    current_version,
+                    latest_result,
+                    now_secs,
+                    &notice_state_path,
+                    &cache_path,
+                );
+            }
+
+            let refresh_notice_state_path = notice_state_path.clone();
+            let refresh_failure_state_path = failure_state_path.clone();
             let refresh_cache_path = cache_path.clone();
             thread::spawn(move || {
                 let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
-                let _ = maybe_update_notice_with_cache_state(
-                    &current_version,
+                record_update_check_result(
                     latest_result,
                     current_unix_timestamp_secs(),
-                    &refresh_state_path,
+                    &refresh_notice_state_path,
+                    &refresh_failure_state_path,
                     &refresh_cache_path,
                 );
             });
         }
-        return notice;
+        return local_notice;
+    }
+
+    if !should_run_update_check_synchronously(
+        has_cached_latest,
+        cache_is_fresh,
+        local_notice.is_some(),
+    ) {
+        let refresh_notice_state_path = notice_state_path.clone();
+        let refresh_failure_state_path = failure_state_path.clone();
+        let refresh_cache_path = cache_path.clone();
+        thread::spawn(move || {
+            let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
+            record_update_check_result(
+                latest_result,
+                current_unix_timestamp_secs(),
+                &refresh_notice_state_path,
+                &refresh_failure_state_path,
+                &refresh_cache_path,
+            );
+        });
+        return local_notice;
     }
 
     let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
@@ -598,7 +780,7 @@ pub fn maybe_update_notice(current_version: &str) -> Option<String> {
         current_version,
         latest_result,
         now_secs,
-        &state_path,
+        &notice_state_path,
         &cache_path,
     )
 }
@@ -702,6 +884,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::thread;
+    use std::time::Duration;
 
     use crate::test_support::env_mutex_lock;
     use tempfile::tempdir;
@@ -857,6 +1040,126 @@ mod tests {
         }
 
         assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
+    }
+
+    #[test]
+    fn preferred_wait_timeout_is_long_without_local_state() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+
+        let original_xdg_cache_home = env::var_os("XDG_CACHE_HOME");
+        let original_localappdata = env::var_os("LOCALAPPDATA");
+        let original_appdata = env::var_os("APPDATA");
+
+        unsafe {
+            env::set_var("XDG_CACHE_HOME", temp.path());
+            env::set_var("LOCALAPPDATA", temp.path());
+            env::set_var("APPDATA", temp.path());
+        }
+
+        let timeout = super::preferred_update_notice_wait_timeout();
+
+        match original_xdg_cache_home {
+            Some(value) => unsafe { env::set_var("XDG_CACHE_HOME", value) },
+            None => unsafe { env::remove_var("XDG_CACHE_HOME") },
+        }
+        match original_localappdata {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_appdata {
+            Some(value) => unsafe { env::set_var("APPDATA", value) },
+            None => unsafe { env::remove_var("APPDATA") },
+        }
+
+        assert_eq!(timeout, Duration::from_millis(3000));
+    }
+
+    #[test]
+    fn preferred_wait_timeout_is_short_with_cached_release() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let cache_dir = temp.path().join("ota");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join("latest-release-tag.txt"), "v9.9.9").unwrap();
+
+        let original_xdg_cache_home = env::var_os("XDG_CACHE_HOME");
+        let original_localappdata = env::var_os("LOCALAPPDATA");
+        let original_appdata = env::var_os("APPDATA");
+
+        unsafe {
+            env::set_var("XDG_CACHE_HOME", temp.path());
+            env::set_var("LOCALAPPDATA", temp.path());
+            env::set_var("APPDATA", temp.path());
+        }
+
+        let timeout = super::preferred_update_notice_wait_timeout();
+
+        match original_xdg_cache_home {
+            Some(value) => unsafe { env::set_var("XDG_CACHE_HOME", value) },
+            None => unsafe { env::remove_var("XDG_CACHE_HOME") },
+        }
+        match original_localappdata {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_appdata {
+            Some(value) => unsafe { env::set_var("APPDATA", value) },
+            None => unsafe { env::remove_var("APPDATA") },
+        }
+
+        assert_eq!(timeout, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn cached_refresh_failure_surfaces_on_next_notice_check() {
+        let temp = tempdir().unwrap();
+        let notice_state_path = temp.path().join("update-check-failure-notice-at.txt");
+        let failure_state_path =
+            super::update_notice_failure_record_path_for_state_path(&notice_state_path);
+        let cache_path = super::update_notice_cache_path_for_state_path(&notice_state_path);
+
+        super::write_latest_release_cache(&cache_path, "1.0.0");
+        super::record_update_check_result(
+            Err(()),
+            100,
+            &notice_state_path,
+            &failure_state_path,
+            &cache_path,
+        );
+
+        let notice = super::maybe_local_update_notice(
+            "1.0.0",
+            100,
+            &notice_state_path,
+            &failure_state_path,
+            &cache_path,
+        );
+
+        assert_eq!(notice, Some(super::render_update_check_failed_notice()));
+    }
+
+    #[test]
+    fn stale_cache_is_not_treated_as_immediate_notice_state() {
+        assert!(super::has_immediate_cached_update_state(true, true));
+        assert!(!super::has_immediate_cached_update_state(true, false));
+        assert!(!super::has_immediate_cached_update_state(false, false));
+    }
+
+    #[test]
+    fn stale_cache_without_local_notice_requires_synchronous_refresh() {
+        assert!(super::should_run_update_check_synchronously(
+            true, false, false
+        ));
+        assert!(super::should_run_update_check_synchronously(
+            false, false, false
+        ));
+        assert!(!super::should_run_update_check_synchronously(
+            true, true, false
+        ));
+        assert!(!super::should_run_update_check_synchronously(
+            true, false, true
+        ));
     }
 
     #[cfg(unix)]
