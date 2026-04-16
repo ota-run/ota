@@ -175,6 +175,9 @@ ota init --pack java-maven --dry-run
 ota init --pack java-gradle --dry-run
 ```
 
+The Java packs prefer `./mvnw` or `./gradlew` when the repo already ships those wrappers. When no
+wrapper is present, they seed the global Maven or Gradle prerequisite explicitly.
+
 ### Existing repo with `ota.yaml`, but contract drift is suspected
 
 Review the delta before writing:

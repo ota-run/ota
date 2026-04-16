@@ -13091,10 +13091,16 @@ agent:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("INIT PACKS starter packs"));
-        assert!(stdout.contains("Pack: node"));
-        assert!(stdout.contains("Pack: python"));
-        assert!(stdout.contains("Pack: java-maven"));
-        assert!(stdout.contains("Pack: java-gradle"));
+        assert!(stdout.contains("python `ota init --pack python`"));
+        assert!(stdout.contains("java-maven `ota init --pack java-maven`"));
+        assert!(stdout.contains("Description:"));
+        assert!(stdout.contains("Notes:"));
+        assert!(stdout.contains("Runtimes:"));
+        assert!(stdout.contains("Checks:"));
+        assert!(stdout.contains("Tasks:"));
+        assert!(stdout.contains("Next:"));
+        assert!(!stdout.contains("Try:"));
+        assert!(!stdout.contains("→"));
         assert!(stdout.contains("ota init --pack java-maven --dry-run ."));
     }
 
@@ -13263,6 +13269,34 @@ agent:
     }
 
     #[test]
+    fn init_pack_java_maven_prefers_repo_wrapper_when_present() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("mvnw", "#!/bin/sh\n");
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "java-maven",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["run"],
+            "./mvnw -q dependency:resolve"
+        );
+        assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
+        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
+        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert!(json["config"]["tools"]["maven"].is_null());
+    }
+
+    #[test]
     fn init_json_pack_java_gradle_reports_mode_pack_and_tasks() {
         let fixture = ContractFixture::new_dir();
 
@@ -13297,6 +13331,34 @@ agent:
             build_description["source"],
             "ota.init#starter_pack.java-gradle"
         );
+    }
+
+    #[test]
+    fn init_pack_java_gradle_prefers_repo_wrapper_when_present() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("gradlew", "#!/bin/sh\n");
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "java-gradle",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["run"],
+            "./gradlew dependencies"
+        );
+        assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "./gradlew test");
+        assert_eq!(json["config"]["checks"][0]["name"], "java-installed");
+        assert_eq!(json["config"]["checks"].as_array().unwrap().len(), 1);
+        assert!(json["config"]["tools"]["gradle"].is_null());
     }
 
     #[test]

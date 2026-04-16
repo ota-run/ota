@@ -28,6 +28,9 @@
 
 - added `ota init --packs` as a read-only starter-pack catalog so users and automation can discover the built-in conventional starter packs, inspect what each one seeds, and jump straight to the matching `ota init --pack ... --dry-run .` preview path.
 - expanded explicit starter packs from `node|python` to `node|python|java-maven|java-gradle`, including stable `catalog` JSON output for `ota init --packs --json` and pack-specific Maven/Gradle starter tasks, checks, tools, and provenance.
+- made the new Java starter packs prefer repo-local `mvnw` and `gradlew` wrappers when those files already exist, falling back to explicit global Maven or Gradle prerequisites only when the repo does not ship a wrapper.
+- upgraded `ota init --packs` text rendering so each starter pack now reads like a first-class command detail block with structured `Description`, `Notes`, seeded runtimes/tools/checks/tasks, and a `Next:` preview command instead of the earlier dense summary line.
+- simplified the `ota init --packs` detail rows by removing the extra arrow markers, keeping the pack command lead line while rendering the structured metadata as cleaner indented labeled fields.
 
 ## 1.4.15
 
