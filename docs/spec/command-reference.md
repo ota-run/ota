@@ -1198,7 +1198,7 @@ _ota() {
                 option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
                     local desc="${completion#*:}"
-                    option_display+=("$value -- $desc")
+                    option_display+=("$value: $desc")
                 else
                     option_display+=("$value")
                 fi
@@ -1206,14 +1206,14 @@ _ota() {
                 primary_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
                     local desc="${completion#*:}"
-                    primary_display+=("$value -- $desc")
+                    primary_display+=("$value: $desc")
                 else
                     primary_display+=("$value")
                 fi
             fi
         done
-        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
-        [[ -n $option_values ]] && compadd -Q -V ota_options -d option_display -o nosort -- "${option_values[@]}"
+        [[ -n $primary_values ]] && compadd -Q -X 'Suggestions' -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $option_values ]] && compadd -Q -X 'Options' -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }
 
