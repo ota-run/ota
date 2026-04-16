@@ -2421,7 +2421,7 @@ fn should_show_update_notice(cli: &Cli) -> bool {
 }
 
 fn update_notice_wait_timeout() -> Duration {
-    update_notice_wait_timeout_for_platform(cfg!(windows))
+    crate::update::preferred_update_notice_wait_timeout()
 }
 
 fn update_notice_wait_timeout_for_platform(_is_windows: bool) -> Duration {
@@ -9960,12 +9960,19 @@ tasks:
     }
 
     #[test]
-    fn waits_long_enough_for_background_update_notice() {
+    fn appends_background_update_notice_with_explicit_long_timeout() {
         let (tx, rx) = mpsc::channel();
-        tx.send(Some(String::from("notice"))).unwrap();
+        let delay = Duration::from_millis(1250);
+        thread::spawn(move || {
+            thread::sleep(delay);
+            let _ = tx.send(Some(String::from("notice")));
+        });
 
-        let output =
-            maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
+        let output = maybe_append_update_notice_with_timeout(
+            CommandOutput::success(String::from("ok")),
+            Some(rx),
+            Duration::from_millis(3000),
+        );
 
         assert_eq!(output.stdout, "ok");
         assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
