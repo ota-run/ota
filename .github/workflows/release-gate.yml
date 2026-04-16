@@ -345,16 +345,59 @@ jobs:
           release_name="$(printf '%s' "${release_json}" | jq -r '.name // .tag_name // env.RELEASE_TAG')"
           release_url="$(printf '%s' "${release_json}" | jq -r '.html_url // ("https://github.com/" + env.GITHUB_REPOSITORY + "/releases/tag/" + env.RELEASE_TAG)')"
           release_body="$(printf '%s' "${release_json}" | jq -r '.body // ""')"
+          previous_tag="$(printf '%s' "${release_json}" | jq -r '.previous_tag_name // ""')"
 
           mapfile -t release_bullets < <(
             printf '%s\n' "${release_body}" \
-              | sed -n 's/^[[:space:]]*-[[:space:]]\{0,1\}//p' \
-              | awk 'length > 0' \
+              | awk '/^##[[:space:]]*What/ { in_section=1; next }
+                     /^##[[:space:]]/ { if (in_section) exit }
+                     in_section && /^[[:space:]]*[-*][[:space:]]+/ {
+                       gsub(/^[[:space:]]*[-*][[:space:]]+/, "", $0)
+                       if ($0 !~ /^Full Changelog/ && length($0) > 0) {
+                         print $0
+                       }
+                     }' \
               | head -n 3
           )
 
+          if (( ${#release_bullets[@]} == 0 )) && [[ -n "${previous_tag}" ]]; then
+            compare_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/compare/${previous_tag}...${RELEASE_TAG}"
+            compare_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${compare_api}")"
+
+            mapfile -t release_bullets < <(
+              printf '%s\n' "${compare_json}" \
+                | jq -r '.commits | reverse | .[].commit.message | split("\n")[0]' \
+                | sed '/^Merge pull request #/d' \
+                | sed -E '/^release: /d' \
+                | sed '/^$/d' \
+                | head -n 3
+            )
+          fi
+
+          if (( ${#release_bullets[@]} == 0 )); then
+            commits_api="https://api.github.com/repos/${GITHUB_REPOSITORY}/commits?sha=${RELEASE_TAG}&per_page=3"
+            commits_json="$(curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${commits_api}")"
+
+            mapfile -t release_bullets < <(
+              printf '%s\n' "${commits_json}" \
+                | jq -r '.[] | .commit.message | split("\n")[0]' \
+                | sed -E '/^release: /d' \
+                | sed '/^$/d' \
+                | head -n 3
+            )
+          fi
+
           if (( ${#release_bullets[@]} == 0 )); then
             release_bullets=("Release published.")
+            why_statement="This release is now live with the latest validated changes."
+          else
+            why_statement="These are the top items pulled from this release and recent commit activity."
           fi
 
           {
@@ -364,7 +407,7 @@ jobs:
               printf -- '- %s\n' "${bullet}"
             done
             printf "\n**Why it matters**\n"
-            printf 'This release is now live with the latest validated changes.\n\n'
+            printf '%s\n\n' "${why_statement}"
             printf '🔗 %s\n' "${release_url}"
           } > "${output_file}"
 
