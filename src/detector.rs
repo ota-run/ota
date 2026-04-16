@@ -129,6 +129,22 @@ fn task_notes(task_name: &str) -> Option<String> {
     Some(format!("Run `ota run {task_name}` to execute this task.\n"))
 }
 
+fn task_description(task_name: &str) -> Option<String> {
+    match task_name.trim().to_ascii_lowercase().as_str() {
+        "setup" => Some(String::from("Prepare the repo for local work.")),
+        "dev" => Some(String::from("Start the local development loop.")),
+        "start" => Some(String::from("Start the default application entrypoint.")),
+        "build" => Some(String::from("Build the project artifacts.")),
+        "test" => Some(String::from("Run the default automated test command.")),
+        "lint" => Some(String::from("Run the default lint checks.")),
+        "check" => Some(String::from("Run the default verification checks.")),
+        "typecheck" | "type-check" => Some(String::from("Run the default type-checking command.")),
+        "fmt" | "format" => Some(String::from("Format the codebase.")),
+        "release" => Some(String::from("Build the project for release.")),
+        _ => None,
+    }
+}
+
 impl DetectReport {
     pub fn high_confidence_contract(&self) -> DetectContract {
         self.contract_with_min_confidence(Confidence::High)
@@ -189,10 +205,11 @@ impl DetectReport {
                 match field_name {
                     "run" => {
                         let notes = task_notes(task_name);
+                        let description = task_description(task_name);
                         contract.tasks.insert(
                             task_name.to_string(),
                             DetectTask {
-                                description: None,
+                                description,
                                 run: inference.value.clone(),
                                 notes,
                                 safe_for_agent: false,
@@ -3689,10 +3706,11 @@ impl DetectBuilder {
         let field = format!("tasks.{name}.run");
         if self.should_replace(&field, &source, confidence) {
             let notes = task_notes(&name);
+            let description = task_description(&name);
             self.contract.tasks.insert(
                 name.clone(),
                 DetectTask {
-                    description: None,
+                    description,
                     run: run.clone(),
                     notes,
                     safe_for_agent: false,
