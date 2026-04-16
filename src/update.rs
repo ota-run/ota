@@ -385,7 +385,9 @@ fn execute_installer(
     release_base: Option<&str>,
 ) -> CommandOutput {
     if cfg!(windows) {
+        let updater_pid = std::process::id();
         let mut pwsh = Command::new("pwsh");
+        pwsh.env("OTA_SELF_UPDATE_PARENT_PID", updater_pid.to_string());
         if let Some(version) = version {
             pwsh.env("OTA_VERSION", version);
         }
@@ -410,6 +412,7 @@ fn execute_installer(
             },
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let mut powershell = Command::new("powershell");
+                powershell.env("OTA_SELF_UPDATE_PARENT_PID", updater_pid.to_string());
                 if let Some(version) = version {
                     powershell.env("OTA_VERSION", version);
                 }

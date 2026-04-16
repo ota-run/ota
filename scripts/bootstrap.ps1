@@ -163,6 +163,141 @@ function Ensure-OtaOnPath {
     }
 }
 
+function Test-OtaFileInUseError
+{
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $exception = $ErrorRecord.Exception
+    while ($exception)
+    {
+        if ($exception -is [System.IO.IOException])
+        {
+            $hresult = $exception.HResult -band 0xFFFF
+            if ($hresult -eq 32 -or $hresult -eq 33)
+            {
+                return $true
+            }
+
+            if ([string]$exception.Message -match "being used by another process|cannot access the file")
+            {
+                return $true
+            }
+        }
+
+        $exception = $exception.InnerException
+    }
+
+    return $false
+}
+
+function Invoke-DetachedShell
+{
+    param([string]$Command)
+
+    $arguments = @(
+        "-NoLogo"
+        "-NoProfile"
+        "-ExecutionPolicy"
+        "Bypass"
+        "-Command"
+        $Command
+    )
+
+    try
+    {
+        Start-Process -FilePath "pwsh" -ArgumentList $arguments -WindowStyle Hidden -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch
+    {
+        if ($_.Exception -is [System.ComponentModel.Win32Exception])
+        {
+            return $false
+        }
+    }
+
+    try
+    {
+        Start-Process -FilePath "powershell" -ArgumentList $arguments -WindowStyle Hidden -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch
+    {
+        return $false
+    }
+}
+
+function Get-OtaSelfUpdateParentPid
+{
+    $envParent = [Environment]::GetEnvironmentVariable("OTA_SELF_UPDATE_PARENT_PID")
+    if ($envParent -and $envParent -match "^\d+$")
+    {
+        return [int]$envParent
+    }
+
+    try
+    {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        if ($process -and $process.ParentProcessId)
+        {
+            return [int]$process.ParentProcessId
+        }
+    }
+    catch
+    {
+    }
+
+    return 0
+}
+
+function Schedule-OtaReplacementAfterExit
+{
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [int]$ParentPid
+    )
+
+    $helper = Join-Path $env:TEMP ("ota-self-update-" + [Guid]::NewGuid().ToString("N") + ".ps1")
+
+    $sourceEsc = $Source -replace "'", "''"
+    $destinationEsc = $Destination -replace "'", "''"
+    $helperScript = @"
+`$parentPid = $ParentPid
+`$source = '$sourceEsc'
+`$destination = '$destinationEsc'
+
+`$waited = 0
+while (`$waited -lt 600 -and (Get-Process -Id `$parentPid -ErrorAction SilentlyContinue)) {
+    Start-Sleep -Milliseconds 200
+    `$waited++
+}
+
+`$attempt = 0
+while (`$attempt -lt 40) {
+    try {
+        Copy-Item -Path `$source -Destination `$destination -Force
+        Remove-Item -LiteralPath `$source -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+        exit 0
+    } catch {
+        Start-Sleep -Milliseconds 300
+        `$attempt++
+    }
+}
+
+Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+exit 1
+"@
+
+    Set-Content -Path $helper -Value $helperScript -Encoding UTF8 -Force
+    if (Test-Path $helper)
+    {
+        return Invoke-DetachedShell -Command "& '$helper'"
+    }
+    return $false
+}
+
 function Install-FromSource {
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
         Write-OtaError "cargo is required for source install"
@@ -275,18 +410,50 @@ function Install-ReleaseBinary {
 
         $binDir = Get-OtaBinDir
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-        try {
-            Copy-Item -Path $binary.FullName -Destination (Join-Path $binDir $binaryName) -Force
+        $destination = Join-Path $binDir $binaryName
+        $staged = "$destination.new"
+        try
+        {
+            Copy-Item -Path $binary.FullName -Destination $staged -Force
+            try
+            {
+                Move-Item -Path $staged -Destination $destination -Force
+            }
+            catch [System.IO.IOException]
+            {
+                if (-not $IsWindows -or -not (Test-OtaFileInUseError $_))
+                {
+                    throw
+                }
+
+                if (-not (Schedule-OtaReplacementAfterExit -Source $staged -Destination $destination -ParentPid (Get-OtaSelfUpdateParentPid)))
+                {
+                    Write-OtaError "error: ota is running but the staged replacement could not be scheduled"
+                    if (Test-Path $staged)
+                    {
+                        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+                    }
+                    return "failed"
+                }
+
+                Write-OtaError "error: ota is still running; staged update at $staged but replacement is not yet verified"
+                Write-OtaWarn "close running ota processes, then rerun `ota --version` to confirm the new version"
+                return "pending"
+            }
+
+            Ensure-OtaOnPath $binDir
+            Write-OtaInfo "installed ota to $destination"
+            return "installed"
         } catch [System.IO.IOException] {
             if ($IsWindows) {
-                Write-OtaError "error: ota is still running from $binDir; close every ota process and rerun the installer"
-                return $false
+                Write-OtaError "error: could not replace $destination: $($_.Exception.Message)"
+                if (Test-Path $staged) {
+                Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+                }
+                return "failed"
             }
             throw
         }
-        Ensure-OtaOnPath $binDir
-        Write-OtaInfo "installed ota to $(Join-Path $binDir $binaryName)"
-        return $true
     } finally {
         if (Test-Path $tmpdir) {
             Remove-Item -Recurse -Force $tmpdir
@@ -303,9 +470,19 @@ if ((Test-Path ".\Cargo.toml") -and (Select-String -Path ".\Cargo.toml" -Pattern
 
 if ($installFromSource) {
     Install-FromSource
-} elseif (-not (Install-ReleaseBinary)) {
+}
+else
+{
+    $releaseInstallStatus = Install-ReleaseBinary
+    if ($releaseInstallStatus -eq "pending")
+    {
+        exit 1
+    }
+    if ($releaseInstallStatus -ne "installed")
+    {
     Write-OtaWarn "warning: falling back to git install via cargo"
     Install-FromGit
+    }
 }
 
 $binaryName = if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) { "ota.exe" } else { "ota" }
