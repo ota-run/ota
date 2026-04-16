@@ -1,6 +1,8 @@
 $ ota completion bash
 Auto setup:
 ota completion bash --setup
+Remove managed setup:
+ota completion bash --remove
 
 Manual setup (~/.bashrc):
 # >>> ota completion >>>
@@ -15,6 +17,8 @@ Reload your shell after updating ota so completions stay in sync.
 $ ota completion zsh
 Auto setup:
 ota completion zsh --setup
+Remove managed setup:
+ota completion zsh --remove
 
 Manual completion file (~/.config/ota/zsh/_ota):
 #compdef ota
@@ -30,25 +34,33 @@ _ota() {
     )}")
 
     if [[ -n $completions ]]; then
-        local -a dirs=()
-        local -a other=()
+        local -a primary_values=()
+        local -a primary_display=()
+        local -a option_values=()
+        local -a option_display=()
         local completion
         for completion in $completions; do
             local value="${completion%%:*}"
-            if [[ "$value" == */ ]]; then
-                local dir_no_slash="${value%/}"
+            if [[ "$value" == -* ]]; then
+                option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
                     local desc="${completion#*:}"
-                    dirs+=("$dir_no_slash:$desc")
+                    option_display+=("$value -- $desc")
                 else
-                    dirs+=("$dir_no_slash")
+                    option_display+=("$value")
                 fi
             else
-                other+=("$completion")
+                primary_values+=("$value")
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${completion#*:}"
+                    primary_display+=("$value -- $desc")
+                else
+                    primary_display+=("$value")
+                fi
             fi
         done
-        [[ -n $dirs ]] && _describe 'values' dirs -S '/' -r '/'
-        [[ -n $other ]] && _describe 'values' other
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $option_values ]] && compadd -Q -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }
 
@@ -82,6 +94,8 @@ Reload your shell after updating ota so completions stay in sync.
 $ ota completion fish
 Auto setup:
 ota completion fish --setup
+Remove managed setup:
+ota completion fish --remove
 
 Manual setup (~/.config/fish/completions/ota.fish):
 # >>> ota completion >>>
@@ -96,6 +110,8 @@ Reload your shell after updating ota so completions stay in sync.
 $ ota completion powershell
 Auto setup:
 ota completion powershell --setup
+Remove managed setup:
+ota completion powershell --remove
 
 Manual setup ($PROFILE):
 # >>> ota completion >>>
@@ -112,6 +128,8 @@ Reload your shell after updating ota so completions stay in sync.
 $ ota completion elvish
 Auto setup:
 ota completion elvish --setup
+Remove managed setup:
+ota completion elvish --remove
 
 Manual setup (~/.elvish/rc.elv):
 # >>> ota completion >>>

@@ -21580,10 +21580,10 @@ fn render_completion_status_word(status: &str) -> String {
         return trimmed.to_string();
     }
     match trimmed {
-        "installed" | "updated" | "already configured" | "present" => {
+        "installed" | "updated" | "already configured" | "present" | "removed" => {
             paint(trimmed, "1;38;2;0;255;120")
         }
-        "needs update" | "missing" => paint(trimmed, "1;38;2;255;235;59"),
+        "needs update" | "missing" | "not configured" => paint(trimmed, "1;38;2;255;235;59"),
         other => paint(other, "1;37"),
     }
 }
