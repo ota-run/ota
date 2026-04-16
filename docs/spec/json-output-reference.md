@@ -1242,12 +1242,24 @@ counts from checks-only output.
 }
 ```
 
+`mode` is:
+
+- `blank` for the minimal starter path
+- `detected` for detector-led starter output
+- `pack` for an explicit starter-pack preview or write
+- `catalog` for `ota init --packs --json`
+
 When task inference is confident enough to write, `config.tasks.<name>.notes` may also be
 present and point at the matching `ota run <task>` command.
 
 In dry-run preview mode, `config` matches the starter contract ota would review or write,
 including derived starter defaults such as a minimal `agent` block when ota can infer one
 safely.
+
+When `mode` is `pack`, the payload also includes `pack` with the selected built-in starter pack
+name. Pack-generated tasks can carry short `description` fields, and `provenance` records those
+fields as `template-derived` with an `ota.init#starter_pack.<name>` source while keeping
+directory-derived values such as `project.name` traced to `ota.init#directory_name`.
 
 `provenance` is the per-field source map for the starter contract:
 
@@ -1265,6 +1277,40 @@ Failure example:
   "written": false,
   "error": "`./ota.yaml` already exists; ota init is only for repos without an ota contract\n\nNext:\n▸  review the existing contract with `ota validate`\n▸  review the existing contract with `ota doctor`\n▸  compare detected repo signals with `ota detect --merge --dry-run`\n▸  apply detected add-only high-confidence fields now with `ota detect --merge`",
   "next": "ota detect --merge --dry-run"
+}
+```
+
+`ota init --packs --json` lists the available built-in starter packs without previewing one
+contract:
+
+```json
+{
+  "ok": true,
+  "mode": "catalog",
+  "packs": [
+    {
+      "name": "node",
+      "summary": "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
+      "when": "Use this for repo-level Node apps or services that follow pnpm conventions and need an explicit starter instead of detector-led init.",
+      "seeds": {
+        "runtimes": ["node"],
+        "tools": ["pnpm"],
+        "checks": ["node-installed"],
+        "tasks": ["setup", "dev", "test"]
+      }
+    },
+    {
+      "name": "java-maven",
+      "summary": "Conventional Java starter for Maven-driven repos with build and test lifecycles.",
+      "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection.",
+      "seeds": {
+        "runtimes": ["java"],
+        "tools": ["maven"],
+        "checks": ["java-installed", "maven-installed"],
+        "tasks": ["setup", "build", "test"]
+      }
+    }
+  ]
 }
 ```
 

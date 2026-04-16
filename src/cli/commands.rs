@@ -63,14 +63,14 @@ use crate::output::{
     ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
     ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
-    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
-    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    InitPackCatalogSuccess, InitPackInfo, InitPackSeeds, InitSuccess, MemberServicesSuccess,
+    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
+    ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess,
+    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
+    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
+    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
     WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
@@ -117,7 +117,8 @@ use self::explain_output::{
 };
 pub(crate) use self::init_starter::StarterPack;
 use self::init_starter::{
-    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_contract,
+    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_catalog,
+    starter_pack_contract,
 };
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
@@ -4651,9 +4652,21 @@ pub fn init(
     write: bool,
     bootstrap: bool,
     pack: Option<StarterPack>,
+    packs: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if packs {
+        return finalize_debug(
+            init_packs(format),
+            debug,
+            vec![
+                String::from("DEBUG command=init"),
+                String::from("DEBUG mode=packs"),
+            ],
+        );
+    }
+
     let root = resolve_repo_path(path);
     let contract_path = root.join(DEFAULT_CONTRACT_FILE);
     let path_display = contract_path.display().to_string();
@@ -4734,6 +4747,88 @@ pub fn init(
         debug,
         debug_lines,
     )
+}
+
+fn init_packs(format: OutputFormat) -> CommandOutput {
+    let packs = starter_pack_catalog();
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header("INIT PACKS", "starter packs");
+            stdout.push_str(&format!(
+                "\n\n{} review the available starter packs, then preview one explicitly before writing it",
+                paint_next_header(),
+            ));
+            stdout.push_str(&format!("\n\n{}:", paint_section_title("Available packs")));
+            for entry in packs {
+                let seeds = format!(
+                    "runtimes {}; tools {}; checks {}; tasks {}",
+                    if entry.runtimes.is_empty() {
+                        String::from("none")
+                    } else {
+                        entry.runtimes.join(", ")
+                    },
+                    if entry.tools.is_empty() {
+                        String::from("none")
+                    } else {
+                        entry.tools.join(", ")
+                    },
+                    entry.checks.join(", "),
+                    entry.tasks.join(", ")
+                );
+                stdout.push_str(&format!(
+                    "\n\n{} {}",
+                    paint_key("Pack:"),
+                    paint_mode_value(entry.pack.as_str())
+                ));
+                stdout.push_str(&format!("\n{} {}", paint_key("Summary:"), entry.summary));
+                stdout.push_str(&format!("\n{} {}", paint_key("Use when:"), entry.when));
+                stdout.push_str(&format!("\n{} {}", paint_key("Seeds:"), seeds));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Try:"),
+                    paint_code(&format!(
+                        "ota init --pack {} --dry-run .",
+                        entry.pack.as_str()
+                    ))
+                ));
+            }
+            CommandOutput::success(stdout)
+        }
+        OutputFormat::Json => CommandOutput::success(to_json(&InitPackCatalogSuccess {
+            ok: true,
+            mode: "catalog",
+            packs: packs
+                .into_iter()
+                .map(|entry| InitPackInfo {
+                    name: entry.pack.as_str().to_string(),
+                    summary: entry.summary.to_string(),
+                    when: entry.when.to_string(),
+                    seeds: InitPackSeeds {
+                        runtimes: entry
+                            .runtimes
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
+                        tools: entry
+                            .tools
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
+                        checks: entry
+                            .checks
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
+                        tasks: entry
+                            .tasks
+                            .iter()
+                            .map(|value| (*value).to_string())
+                            .collect(),
+                    },
+                })
+                .collect(),
+        })),
+    }
 }
 
 pub fn agents(

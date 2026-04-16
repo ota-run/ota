@@ -164,9 +164,15 @@ ota detect --write .
 If you want an explicit conventional starter instead of detector-led init, use a pack:
 
 ```bash
+ota init --packs
+# or:
 ota init --pack node
 # or:
 ota init --pack python --dry-run
+# or:
+ota init --pack java-maven --dry-run
+# or:
+ota init --pack java-gradle --dry-run
 ```
 
 ### Existing repo with `ota.yaml`, but contract drift is suspected

@@ -372,13 +372,23 @@ fn init_schema_includes_optional_next_on_failures() {
         .as_array()
         .expect("required array");
     let success = &schema["oneOf"][0]["properties"];
-    let failure = &schema["oneOf"][1]["properties"];
+    let catalog = &schema["oneOf"][1]["properties"];
+    let failure = &schema["oneOf"][2]["properties"];
     let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
     assert!(success_required.iter().any(|entry| entry == "provenance"));
+    assert!(
+        success["mode"]
+            .as_object()
+            .and_then(|mode| mode.get("enum"))
+            .and_then(|mode| mode.as_array())
+            .is_some_and(|values| values.iter().any(|value| value == "pack"))
+    );
+    assert!(success.get("pack").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("provenance").is_some());
+    assert!(catalog.get("packs").is_some());
     assert!(provenance.get("field").is_some());
     assert!(provenance.get("provenance").is_some());
     assert!(provenance.get("provenance_key").is_some());

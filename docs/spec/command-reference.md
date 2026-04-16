@@ -686,7 +686,8 @@ Create a starter ota contract for a repo that does not yet have one.
 ```bash
 ota init [PATH]
 ota init --bootstrap [PATH]
-ota init --pack <node|python> [PATH]
+ota init --pack <node|python|java-maven|java-gradle> [PATH]
+ota init --packs
 ota init --dry-run [PATH]
 ota init --json [PATH]
 ```
@@ -696,7 +697,8 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
-- `--pack <node|python>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
+- `--pack <node|python|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
+- `--packs` lists the built-in starter packs, what they seed, and the exact preview command to try next
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
@@ -722,6 +724,7 @@ Text output:
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
 - `pack` mode also includes `Pack: <name>` plus an explicit pack-policy note
+- `--packs` renders `INIT PACKS starter packs`, one entry per pack, and a `Try:` line with the matching `ota init --pack ... --dry-run .` command
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
 - `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
@@ -736,6 +739,7 @@ JSON output:
 - optional `pack` when explicit pack mode is used
 - `config`
 - `inferred`
+- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract
 - failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota agents`

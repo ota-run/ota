@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added `ota init --packs` as a read-only starter-pack catalog so users and automation can discover the built-in conventional starter packs, inspect what each one seeds, and jump straight to the matching `ota init --pack ... --dry-run .` preview path.
+- expanded explicit starter packs from `node|python` to `node|python|java-maven|java-gradle`, including stable `catalog` JSON output for `ota init --packs --json` and pack-specific Maven/Gradle starter tasks, checks, tools, and provenance.
+
 ## 1.4.15
 
 - added `ota completion --remove` as the managed uninstall path for shell completion setup, and updated completion guidance so setup and removal commands are shown together.

@@ -32,19 +32,92 @@ use crate::schema::{AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfi
 pub(crate) enum StarterPack {
     Node,
     Python,
+    JavaMaven,
+    JavaGradle,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StarterPackCatalogEntry {
+    pub(crate) pack: StarterPack,
+    pub(crate) summary: &'static str,
+    pub(crate) when: &'static str,
+    pub(crate) runtimes: &'static [&'static str],
+    pub(crate) tools: &'static [&'static str],
+    pub(crate) checks: &'static [&'static str],
+    pub(crate) tasks: &'static [&'static str],
 }
 
 impl StarterPack {
+    pub(crate) fn all() -> &'static [StarterPack] {
+        &[
+            StarterPack::Node,
+            StarterPack::Python,
+            StarterPack::JavaMaven,
+            StarterPack::JavaGradle,
+        ]
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Node => "node",
             Self::Python => "python",
+            Self::JavaMaven => "java-maven",
+            Self::JavaGradle => "java-gradle",
         }
     }
 
     pub(crate) fn provenance_source(self) -> String {
         format!("ota.init#starter_pack.{}", self.as_str())
     }
+
+    pub(crate) fn catalog_entry(self) -> StarterPackCatalogEntry {
+        match self {
+            Self::Node => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
+                when: "Use this for repo-level Node apps or services that follow pnpm conventions and need an explicit starter instead of detector-led init.",
+                runtimes: &["node"],
+                tools: &["pnpm"],
+                checks: &["node-installed"],
+                tasks: &["setup", "dev", "test"],
+            },
+            Self::Python => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Python starter with requirements-based setup and pytest.",
+                when: "Use this for Python repos that install from requirements.txt and run tests through pytest.",
+                runtimes: &["python"],
+                tools: &[],
+                checks: &["python-installed"],
+                tasks: &["setup", "test"],
+            },
+            Self::JavaMaven => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Java starter for Maven-driven repos with build and test lifecycles.",
+                when: "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection.",
+                runtimes: &["java"],
+                tools: &["maven"],
+                checks: &["java-installed", "maven-installed"],
+                tasks: &["setup", "build", "test"],
+            },
+            Self::JavaGradle => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Java starter for Gradle-driven repos with build and test lifecycles.",
+                when: "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection.",
+                runtimes: &["java"],
+                tools: &["gradle"],
+                checks: &["java-installed", "gradle-installed"],
+                tasks: &["setup", "build", "test"],
+            },
+        }
+    }
+}
+
+pub(crate) fn starter_pack_catalog() -> Vec<StarterPackCatalogEntry> {
+    StarterPack::all()
+        .iter()
+        .copied()
+        .map(StarterPack::catalog_entry)
+        .collect()
 }
 
 pub(super) fn bootstrap_init_contract(report: &DetectReport) -> DetectContract {
@@ -243,6 +316,94 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                     "test",
                     "pytest",
                     Some(String::from("Run the default Python test command.")),
+                ),
+            );
+        }
+        StarterPack::JavaMaven => {
+            contract
+                .runtimes
+                .insert(String::from("java"), String::from("22"));
+            contract
+                .tools
+                .insert(String::from("maven"), String::from("3.9"));
+            contract.checks.push(DetectCheck {
+                name: String::from("java-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("java --version"),
+            });
+            contract.checks.push(DetectCheck {
+                name: String::from("maven-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("mvn --version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "mvn -q dependency:resolve",
+                    Some(String::from("Resolve Maven dependencies for the repo.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("build"),
+                pack_task(
+                    "build",
+                    "mvn package",
+                    Some(String::from("Build the default Maven package output.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "mvn test",
+                    Some(String::from("Run the default Maven test lifecycle.")),
+                ),
+            );
+        }
+        StarterPack::JavaGradle => {
+            contract
+                .runtimes
+                .insert(String::from("java"), String::from("22"));
+            contract
+                .tools
+                .insert(String::from("gradle"), String::from("8"));
+            contract.checks.push(DetectCheck {
+                name: String::from("java-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("java --version"),
+            });
+            contract.checks.push(DetectCheck {
+                name: String::from("gradle-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("gradle --version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "gradle dependencies",
+                    Some(String::from("Resolve Gradle dependencies for the repo.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("build"),
+                pack_task(
+                    "build",
+                    "gradle build",
+                    Some(String::from("Build the default Gradle outputs.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "gradle test",
+                    Some(String::from("Run the default Gradle test lifecycle.")),
                 ),
             );
         }
