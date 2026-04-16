@@ -11,7 +11,16 @@
         "ok": { "const": true },
         "path": { "type": "string" },
         "written": { "type": "boolean" },
-        "mode": { "enum": ["blank", "detected"] },
+        "mode": {
+          "enum": [
+            "blank",
+            "detected",
+            "pack"
+          ]
+        },
+        "pack": {
+          "type": "string"
+        },
         "config": { "type": "object" },
         "inferred": {
           "type": "array",
@@ -20,6 +29,83 @@
         "provenance": {
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/contractFieldProvenance" }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "mode",
+        "packs"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "mode": {
+          "const": "catalog"
+        },
+        "packs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "summary",
+              "when",
+              "seeds"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "when": {
+                "type": "string"
+              },
+              "seeds": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "runtimes",
+                  "tools",
+                  "checks",
+                  "tasks"
+                ],
+                "properties": {
+                  "runtimes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "tools": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "checks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "tasks": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

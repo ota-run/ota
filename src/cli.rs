@@ -221,16 +221,20 @@ enum Commands {
     /// Create a starter Ota contract for a repo that does not yet have one.
     Init {
         /// Compatibility flag; writing is now the default.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "packs")]
         write: bool,
         /// Bootstrap a fuller starter contract when the detector has enough confidence.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "packs")]
         bootstrap: bool,
         /// Seed a conventional starter contract pack instead of detector-led init.
-        #[arg(long, value_enum, conflicts_with = "bootstrap")]
+        #[arg(long, value_enum, conflicts_with_all = ["bootstrap", "packs"])]
         pack: Option<InitPack>,
+        /// List the built-in starter packs and what they seed.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "bootstrap", "pack", "dry_run", "path"]
+        )]
+        packs: bool,
         /// Preview inferred contract output without writing ota.yaml.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "write")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "packs"])]
         dry_run: bool,
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
@@ -559,6 +563,10 @@ enum PolicyInitPreset {
 enum InitPack {
     Node,
     Python,
+    #[value(name = "java-maven")]
+    JavaMaven,
+    #[value(name = "java-gradle")]
+    JavaGradle,
 }
 
 impl PolicyInitPreset {
@@ -3518,6 +3526,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             write: _write,
             bootstrap,
             pack,
+            packs,
             dry_run,
             json,
             path,
@@ -3537,7 +3546,10 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 pack.map(|value| match value {
                     InitPack::Node => commands::StarterPack::Node,
                     InitPack::Python => commands::StarterPack::Python,
+                    InitPack::JavaMaven => commands::StarterPack::JavaMaven,
+                    InitPack::JavaGradle => commands::StarterPack::JavaGradle,
                 }),
+                packs,
                 format_from_json(json),
                 debug,
             )
@@ -13073,6 +13085,43 @@ agent:
     }
 
     #[test]
+    fn init_packs_text_lists_available_starter_packs() {
+        let output = run_with(["ota", "init", "--packs"]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("INIT PACKS starter packs"));
+        assert!(stdout.contains("Pack: node"));
+        assert!(stdout.contains("Pack: python"));
+        assert!(stdout.contains("Pack: java-maven"));
+        assert!(stdout.contains("Pack: java-gradle"));
+        assert!(stdout.contains("ota init --pack java-maven --dry-run ."));
+    }
+
+    #[test]
+    fn init_packs_json_reports_catalog_metadata() {
+        let output = run_with(["ota", "init", "--packs", "--json"]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "catalog");
+        let packs = json["packs"].as_array().expect("packs array");
+        assert!(packs.iter().any(|entry| entry["name"] == "node"));
+        assert!(packs.iter().any(|entry| entry["name"] == "python"));
+        let java_maven = packs
+            .iter()
+            .find(|entry| entry["name"] == "java-maven")
+            .expect("java-maven pack");
+        assert_eq!(java_maven["seeds"]["tools"][0], "maven");
+        let java_gradle = packs
+            .iter()
+            .find(|entry| entry["name"] == "java-gradle")
+            .expect("java-gradle pack");
+        assert_eq!(java_gradle["seeds"]["tasks"][0], "setup");
+    }
+
+    #[test]
     fn init_pack_node_dry_run_renders_explicit_pack_contract() {
         let fixture = ContractFixture::new_dir();
 
@@ -13189,6 +13238,65 @@ agent:
             .expect("test description provenance");
         assert_eq!(test_description["provenance"], "template-derived");
         assert_eq!(test_description["source"], "ota.init#starter_pack.python");
+    }
+
+    #[test]
+    fn init_pack_java_maven_dry_run_renders_explicit_pack_contract() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "java-maven",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Pack: java-maven"));
+        assert!(stdout.contains("java: '22'"));
+        assert!(stdout.contains("maven: '3.9'"));
+        assert!(stdout.contains("name: maven-installed"));
+        assert!(stdout.contains("run: mvn package"));
+    }
+
+    #[test]
+    fn init_json_pack_java_gradle_reports_mode_pack_and_tasks() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "java-gradle",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "pack");
+        assert_eq!(json["pack"], "java-gradle");
+        assert_eq!(json["config"]["tools"]["gradle"], "8");
+        assert_eq!(json["config"]["checks"][1]["name"], "gradle-installed");
+        assert_eq!(
+            json["config"]["tasks"]["build"]["description"],
+            "Build the default Gradle outputs."
+        );
+        let build_description = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.build.description")
+            .expect("build description provenance");
+        assert_eq!(
+            build_description["source"],
+            "ota.init#starter_pack.java-gradle"
+        );
     }
 
     #[test]

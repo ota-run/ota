@@ -1008,6 +1008,29 @@ pub struct InitSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct InitPackSeeds {
+    pub runtimes: Vec<String>,
+    pub tools: Vec<String>,
+    pub checks: Vec<String>,
+    pub tasks: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitPackInfo {
+    pub name: String,
+    pub summary: String,
+    pub when: String,
+    pub seeds: InitPackSeeds,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InitPackCatalogSuccess {
+    pub ok: bool,
+    pub mode: &'static str,
+    pub packs: Vec<InitPackInfo>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct InitFailure<'a> {
     pub ok: bool,
     pub path: &'a str,
