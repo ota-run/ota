@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.4.14
+
 - added `ota init --pack node|python` as an explicit conventional starter path so repos can seed a reviewable `ota.yaml` pack without depending on detector confidence, including pack-aware text output, stable JSON `pack` metadata, per-field provenance, starter checks, and deterministic starter tasks.
 - pack-generated starter tasks now include short `description` fields, and task-name shell completion can surface those descriptions as candidate help so users see the authoring pattern immediately instead of only learning it from docs.
 - extended short task `description` seeding beyond explicit packs so canonical detector-led starter tasks and workspace-bootstrap repo starters can teach the same task-authoring pattern, and `ota workspace tasks` now surfaces declared descriptions in both text and JSON output.
