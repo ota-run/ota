@@ -26,7 +26,8 @@
 
 ## Unreleased
 
-- aligned the background update-notice wait budget across platforms so Linux and macOS no longer drop valid release notices before the release check finishes, and shortened the transient update-check failure cooldown to one hour everywhere instead of leaving Unix-like systems silent for a full day.
+- made `ota self-update` always force published release installation instead of switching to a local source build when run inside the ota repo, changed update notices to use cached release results so they stay fast without dropping slow network checks, hardened the Windows deferred self-update helper to keep retrying replacement after process exit, and switched Unix release installs to staged renames instead of direct live-binary overwrites.
+- kept the background update-notice foreground wait budget small and consistent across platforms so successful commands stay responsive, and shortened the transient update-check failure cooldown to one hour everywhere instead of leaving Unix-like systems silent for a full day.
 - made Windows `ota uninstall` report a pending, unverified removal state instead of implying the running binary was already deleted, and extended the detached delete helper to keep retrying after the current process exits.
 - expanded the explicit starter-pack catalog from `node|python|java-maven|java-gradle` to `node|python|go|rust|java-maven|java-gradle`, adding conventional Go and Rust starter contracts through `ota init --pack ...`.
 - upgraded `ota init --packs --json` so each catalog entry now carries the exact pack-selection `command` plus a safe dry-run `next` command, making the starter-pack catalog a more complete product surface for automation and docs generation.

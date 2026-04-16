@@ -44,6 +44,7 @@ const ANSI_GOLD_ACCENT: &str = "\x1b[1;38;2;214;161;95m";
 const ANSI_BOLD_WHITE: &str = "\x1b[1;37m";
 const ANSI_FG_RESET: &str = "\x1b[39m";
 const UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS: u64 = 60 * 60;
+const UPDATE_CHECK_CACHE_TTL_SECS: u64 = 60 * 60;
 const UPDATE_CHECK_HTTP_TIMEOUT_SECS: &str = "2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +102,10 @@ fn ota_cache_dir() -> PathBuf {
 
 fn update_check_failure_state_path() -> PathBuf {
     ota_cache_dir().join("update-check-failure-notice-at.txt")
+}
+
+fn latest_release_cache_path() -> PathBuf {
+    ota_cache_dir().join("latest-release-tag.txt")
 }
 
 fn installer_url() -> String {
@@ -186,6 +191,16 @@ fn current_unix_timestamp_secs() -> u64 {
         .unwrap_or_default()
 }
 
+fn maybe_notice_for_latest(current_version: &str, latest: &str) -> Option<String> {
+    let current = normalize_version(current_version);
+    let latest = normalize_version(latest);
+    if latest.is_empty() || latest == current {
+        return None;
+    }
+
+    Some(render_update_available_notice(&latest))
+}
+
 fn last_update_check_failure_notice_at(state_path: &Path) -> Option<u64> {
     fs::read_to_string(state_path).ok()?.trim().parse().ok()
 }
@@ -223,23 +238,63 @@ fn update_check_failure_notice_cooldown_secs_for_platform(_is_windows: bool) -> 
     UPDATE_CHECK_FAILURE_NOTICE_COOLDOWN_SECS
 }
 
+fn read_latest_release_cache(cache_path: &Path) -> Option<String> {
+    let latest = normalize_version(&fs::read_to_string(cache_path).ok()?);
+    (!latest.is_empty()).then_some(latest)
+}
+
+fn write_latest_release_cache(cache_path: &Path, latest: &str) {
+    if let Some(parent) = cache_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(cache_path, normalize_version(latest));
+}
+
+fn latest_release_cache_is_fresh(cache_path: &Path, now_secs: u64) -> bool {
+    let modified = cache_path
+        .metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+
+    match modified {
+        Some(modified_secs) => now_secs.saturating_sub(modified_secs) < UPDATE_CHECK_CACHE_TTL_SECS,
+        None => false,
+    }
+}
+
+fn maybe_update_notice_with_cache_state(
+    current_version: &str,
+    latest_result: Result<String, ()>,
+    now_secs: u64,
+    state_path: &Path,
+    cache_path: &Path,
+) -> Option<String> {
+    match latest_result {
+        Ok(latest) => {
+            write_latest_release_cache(cache_path, &latest);
+            clear_update_check_failure_notice(state_path);
+            maybe_notice_for_latest(current_version, &latest)
+        }
+        Err(()) => maybe_emit_failed_update_check_notice(now_secs, state_path),
+    }
+}
+
 fn maybe_update_notice_with_state(
     current_version: &str,
     latest_result: Result<String, ()>,
     now_secs: u64,
     state_path: &Path,
 ) -> Option<String> {
-    match latest_result {
-        Ok(latest) => {
-            clear_update_check_failure_notice(state_path);
-            let current = normalize_version(current_version);
-            if latest == current {
-                return None;
-            }
-            Some(render_update_available_notice(&latest))
-        }
-        Err(()) => maybe_emit_failed_update_check_notice(now_secs, state_path),
-    }
+    let cache_path = state_path.with_extension("latest-release-tag.txt");
+    maybe_update_notice_with_cache_state(
+        current_version,
+        latest_result,
+        now_secs,
+        state_path,
+        &cache_path,
+    )
 }
 
 fn temp_script_path() -> PathBuf {
@@ -396,6 +451,7 @@ fn execute_installer(
     if cfg!(windows) {
         let updater_pid = std::process::id();
         let mut pwsh = Command::new("pwsh");
+        pwsh.env("OTA_INSTALL_MODE", "release");
         pwsh.env("OTA_SELF_UPDATE_PARENT_PID", updater_pid.to_string());
         if let Some(version) = version {
             pwsh.env("OTA_VERSION", version);
@@ -411,6 +467,7 @@ fn execute_installer(
             "-File",
         ])
         .arg(path)
+        .arg("-FromRelease")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
         match pwsh.status() {
@@ -421,6 +478,7 @@ fn execute_installer(
             },
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let mut powershell = Command::new("powershell");
+                powershell.env("OTA_INSTALL_MODE", "release");
                 powershell.env("OTA_SELF_UPDATE_PARENT_PID", updater_pid.to_string());
                 if let Some(version) = version {
                     powershell.env("OTA_VERSION", version);
@@ -437,6 +495,7 @@ fn execute_installer(
                         "-File",
                     ])
                     .arg(path)
+                    .arg("-FromRelease")
                     .stdout(Stdio::inherit())
                     .stderr(Stdio::inherit());
                 run_command_streaming(powershell)
@@ -445,6 +504,7 @@ fn execute_installer(
         }
     } else {
         let mut sh = Command::new("sh");
+        sh.env("OTA_INSTALL_MODE", "release");
         if let Some(version) = version {
             sh.env("OTA_VERSION", version);
         }
@@ -452,6 +512,7 @@ fn execute_installer(
             sh.env("OTA_RELEASE_BASE", release_base);
         }
         sh.arg(path)
+            .arg("--from-release")
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         run_command_streaming(sh)
@@ -508,12 +569,37 @@ pub fn self_update(version: Option<&str>, channel: Option<&str>) -> CommandOutpu
 }
 
 pub fn maybe_update_notice(current_version: &str) -> Option<String> {
+    let now_secs = current_unix_timestamp_secs();
+    let state_path = update_check_failure_state_path();
+    let cache_path = latest_release_cache_path();
+
+    if let Some(cached_latest) = read_latest_release_cache(&cache_path) {
+        let notice = maybe_notice_for_latest(current_version, &cached_latest);
+        if !latest_release_cache_is_fresh(&cache_path, now_secs) {
+            let current_version = current_version.to_string();
+            let refresh_state_path = state_path.clone();
+            let refresh_cache_path = cache_path.clone();
+            thread::spawn(move || {
+                let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
+                let _ = maybe_update_notice_with_cache_state(
+                    &current_version,
+                    latest_result,
+                    current_unix_timestamp_secs(),
+                    &refresh_state_path,
+                    &refresh_cache_path,
+                );
+            });
+        }
+        return notice;
+    }
+
     let latest_result = fetch_release_tag(UpdateTrack::Stable).ok_or(());
-    maybe_update_notice_with_state(
+    maybe_update_notice_with_cache_state(
         current_version,
         latest_result,
-        current_unix_timestamp_secs(),
-        &update_check_failure_state_path(),
+        now_secs,
+        &state_path,
+        &cache_path,
     )
 }
 
@@ -610,14 +696,18 @@ fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::thread;
 
     use crate::test_support::env_mutex_lock;
     use tempfile::tempdir;
 
     use super::UpdateTrack;
+    use super::execute_installer;
     use super::fetch_release_tag;
     use super::maybe_update_notice;
     use super::maybe_update_notice_with_state;
@@ -727,6 +817,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn uses_cached_latest_release_notice_when_available() {
+        let _guard = env_mutex_lock();
+        let temp = tempdir().unwrap();
+        let cache_dir = temp.path().join("ota");
+        fs::create_dir_all(&cache_dir).unwrap();
+        fs::write(cache_dir.join("latest-release-tag.txt"), "v9.9.9").unwrap();
+
+        let original_xdg_cache_home = env::var_os("XDG_CACHE_HOME");
+        let original_localappdata = env::var_os("LOCALAPPDATA");
+        let original_appdata = env::var_os("APPDATA");
+        let original_update_url = env::var_os("OTA_UPDATE_CHECK_URL");
+
+        unsafe {
+            env::set_var("XDG_CACHE_HOME", temp.path());
+            env::set_var("LOCALAPPDATA", temp.path());
+            env::set_var("APPDATA", temp.path());
+            env::set_var("OTA_UPDATE_CHECK_URL", "http://127.0.0.1:9/latest");
+        }
+
+        let notice = maybe_update_notice("v1.0.0");
+
+        match original_xdg_cache_home {
+            Some(value) => unsafe { env::set_var("XDG_CACHE_HOME", value) },
+            None => unsafe { env::remove_var("XDG_CACHE_HOME") },
+        }
+        match original_localappdata {
+            Some(value) => unsafe { env::set_var("LOCALAPPDATA", value) },
+            None => unsafe { env::remove_var("LOCALAPPDATA") },
+        }
+        match original_appdata {
+            Some(value) => unsafe { env::set_var("APPDATA", value) },
+            None => unsafe { env::remove_var("APPDATA") },
+        }
+        match original_update_url {
+            Some(value) => unsafe { env::set_var("OTA_UPDATE_CHECK_URL", value) },
+            None => unsafe { env::remove_var("OTA_UPDATE_CHECK_URL") },
+        }
+
+        assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
+    }
+
     #[cfg(unix)]
     #[test]
     fn skips_install_when_current_version_matches_latest_release() {
@@ -774,6 +906,30 @@ mod tests {
             render_up_to_date_output(env!("CARGO_PKG_VERSION"))
         );
         assert!(output.stderr.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_installer_forces_release_mode() {
+        let temp = tempdir().unwrap();
+        let script_path = temp.path().join("installer.sh");
+        let output_path = temp.path().join("installer-output.txt");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$OTA_INSTALL_MODE\" > \"{}\"\nprintf '%s\\n' \"$1\" >> \"{}\"\n",
+            output_path.display(),
+            output_path.display()
+        );
+
+        fs::write(&script_path, script).unwrap();
+        let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).unwrap();
+
+        let output = execute_installer(&script_path, None, None);
+        let written = fs::read_to_string(&output_path).unwrap();
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(written, "release\n--from-release\n");
     }
 
     #[cfg(unix)]

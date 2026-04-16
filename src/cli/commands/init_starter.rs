@@ -165,13 +165,16 @@ pub(crate) fn starter_pack_advisory(
 ) -> Option<StarterPackAdvisory> {
     let mut scores = BTreeMap::<StarterPack, usize>::new();
     let mut signals = BTreeMap::<StarterPack, BTreeSet<String>>::new();
+    let mut seen_signals = BTreeSet::<(StarterPack, String)>::new();
 
     for inference in &detected.inferences {
         let Some((pack, weight, signal)) = pack_signal_for_inference(inference) else {
             continue;
         };
-        *scores.entry(pack).or_default() += weight;
-        signals.entry(pack).or_default().insert(signal);
+        if seen_signals.insert((pack, signal.clone())) {
+            *scores.entry(pack).or_default() += weight;
+            signals.entry(pack).or_default().insert(signal);
+        }
     }
 
     let selected_score = scores.get(&selected_pack).copied().unwrap_or_default();
