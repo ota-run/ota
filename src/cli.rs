@@ -13105,6 +13105,37 @@ agent:
     }
 
     #[test]
+    fn init_packs_text_aligns_wrapped_values_under_labels() {
+        let _guard = env_mutex_lock();
+        let original_columns = std::env::var_os("COLUMNS");
+        unsafe {
+            std::env::set_var("COLUMNS", "96");
+        }
+
+        let output = run_with(["ota", "init", "--packs"]);
+
+        unsafe {
+            match original_columns {
+                Some(value) => std::env::set_var("COLUMNS", value),
+                None => std::env::remove_var("COLUMNS"),
+            }
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let stripped = strip_ansi(&output.stdout);
+        let lines = stripped.lines().collect::<Vec<_>>();
+        let notes_index = lines
+            .iter()
+            .position(|line| {
+                line.contains("Notes: Use this when the repo is intentionally Maven-based")
+            })
+            .expect("wrapped Maven notes line");
+        let continuation = lines[notes_index + 1];
+        assert!(!continuation.trim_start().starts_with("Notes:"));
+        assert_eq!(continuation.chars().take_while(|ch| *ch == ' ').count(), 9);
+    }
+
+    #[test]
     fn init_packs_json_reports_catalog_metadata() {
         let output = run_with(["ota", "init", "--packs", "--json"]);
 
