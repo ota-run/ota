@@ -2425,7 +2425,7 @@ fn update_notice_wait_timeout() -> Duration {
 }
 
 fn update_notice_wait_timeout_for_platform(_is_windows: bool) -> Duration {
-    Duration::from_millis(3000)
+    Duration::from_millis(50)
 }
 
 fn maybe_append_update_notice(
@@ -9962,11 +9962,7 @@ tasks:
     #[test]
     fn waits_long_enough_for_background_update_notice() {
         let (tx, rx) = mpsc::channel();
-        let delay = Duration::from_millis(100);
-        thread::spawn(move || {
-            thread::sleep(delay);
-            let _ = tx.send(Some(String::from("notice")));
-        });
+        tx.send(Some(String::from("notice"))).unwrap();
 
         let output =
             maybe_append_update_notice(CommandOutput::success(String::from("ok")), Some(rx));
@@ -9976,13 +9972,13 @@ tasks:
     }
 
     #[test]
-    fn wait_budget_exceeds_release_check_timeout_on_all_platforms() {
-        assert!(update_notice_wait_timeout_for_platform(true) > Duration::from_secs(2));
-        assert!(update_notice_wait_timeout_for_platform(false) > Duration::from_secs(2));
+    fn wait_budget_stays_small_on_all_platforms() {
+        assert!(update_notice_wait_timeout_for_platform(true) <= Duration::from_millis(50));
+        assert!(update_notice_wait_timeout_for_platform(false) <= Duration::from_millis(50));
     }
 
     #[test]
-    fn waits_long_enough_for_windows_background_update_notice() {
+    fn does_not_wait_for_slow_windows_background_update_notice() {
         let (tx, rx) = mpsc::channel();
         let delay = Duration::from_millis(1250);
         thread::spawn(move || {
@@ -9997,11 +9993,11 @@ tasks:
         );
 
         assert_eq!(output.stdout, "ok");
-        assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
+        assert_eq!(output.stderr, None);
     }
 
     #[test]
-    fn waits_long_enough_for_non_windows_background_update_notice() {
+    fn does_not_wait_for_slow_non_windows_background_update_notice() {
         let (tx, rx) = mpsc::channel();
         let delay = Duration::from_millis(1250);
         thread::spawn(move || {
@@ -10016,7 +10012,7 @@ tasks:
         );
 
         assert_eq!(output.stdout, "ok");
-        assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
+        assert_eq!(output.stderr, None);
     }
 
     #[test]
@@ -13477,6 +13473,47 @@ agent:
         assert_eq!(json["pack"], "python");
         assert!(json["pack_advisory"].is_null());
         assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+    }
+
+    #[test]
+    fn init_pack_advisory_prefers_distinct_python_signals_over_noisy_package_scripts() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "service"
+requires-python = ">=3.12"
+"#,
+        );
+        fixture.write("requirements.txt", "pytest==8.3.0\n");
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "frontend",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm dev",
+    "test": "pnpm test",
+    "lint": "pnpm lint",
+    "build": "pnpm build"
+  }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "rust",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "rust");
+        assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
     }
 
     #[test]

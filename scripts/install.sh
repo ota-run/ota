@@ -207,14 +207,18 @@ install_release_binary() {
       ota_error "error: release artifact did not contain ota.exe"
       return 1
     fi
-    install -m 0755 "${tmpdir}/ota.exe" "${bin_dir}/ota.exe"
+    staged="${bin_dir}/ota.exe.new"
+    install -m 0755 "${tmpdir}/ota.exe" "${staged}"
+    mv -f "${staged}" "${bin_dir}/ota.exe"
     ota_info "installed ota to ${bin_dir}/ota.exe"
   else
     if [ ! -f "${tmpdir}/ota" ]; then
       ota_error "error: release artifact did not contain ota binary"
       return 1
     fi
-    install -m 0755 "${tmpdir}/ota" "${bin_dir}/ota"
+    staged="${bin_dir}/ota.new"
+    install -m 0755 "${tmpdir}/ota" "${staged}"
+    mv -f "${staged}" "${bin_dir}/ota"
     ota_info "installed ota to ${bin_dir}/ota"
   fi
   return 0
@@ -267,16 +271,23 @@ install_from_cargo() {
 
 install_from_source=false
 install_mode="${OTA_INSTALL_MODE:-release}"
+install_mode_forced=false
+if [ "${OTA_INSTALL_MODE+x}" = "x" ]; then
+  install_mode_forced=true
+fi
 if [ "${1-}" = "--from-source" ]; then
   install_from_source=true
   install_mode="source"
+  install_mode_forced=true
 elif [ "${1-}" = "--from-git" ]; then
   install_mode="git"
+  install_mode_forced=true
 elif [ "${1-}" = "--from-release" ]; then
   install_mode="release"
+  install_mode_forced=true
 fi
 
-if [ -f "./Cargo.toml" ] && grep -q '^name = "ota"$' "./Cargo.toml"; then
+if [ "${install_mode_forced}" != "true" ] && [ -f "./Cargo.toml" ] && grep -q '^name = "ota"$' "./Cargo.toml"; then
   if [ "${install_mode}" = "release" ]; then
     install_mode="source"
   fi

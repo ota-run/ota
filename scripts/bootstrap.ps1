@@ -23,7 +23,9 @@
 
 [CmdletBinding()]
 param(
-    [switch]$FromSource
+    [switch]$FromSource,
+    [switch]$FromGit,
+    [switch]$FromRelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -268,20 +270,19 @@ function Schedule-OtaReplacementAfterExit
 `$destination = '$destinationEsc'
 
 `$waited = 0
-while (`$waited -lt 600 -and (Get-Process -Id `$parentPid -ErrorAction SilentlyContinue)) {
+while (`$parentPid -gt 0 -and `$waited -lt 1800 -and (Get-Process -Id `$parentPid -ErrorAction SilentlyContinue)) {
     Start-Sleep -Milliseconds 200
     `$waited++
 }
 
 `$attempt = 0
-while (`$attempt -lt 40) {
+while (`$attempt -lt 1800 -and (Test-Path -LiteralPath `$source)) {
     try {
-        Copy-Item -Path `$source -Destination `$destination -Force
-        Remove-Item -LiteralPath `$source -Force -ErrorAction SilentlyContinue
+        Move-Item -Path `$source -Destination `$destination -Force
         Remove-Item -LiteralPath `$MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
         exit 0
     } catch {
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 200
         `$attempt++
     }
 }
@@ -463,13 +464,42 @@ function Install-ReleaseBinary {
 
 Write-OtaHeader
 
-$installFromSource = $FromSource.IsPresent
-if ((Test-Path ".\Cargo.toml") -and (Select-String -Path ".\Cargo.toml" -Pattern '^name = "ota"$' -Quiet)) {
-    $installFromSource = $true
+$installMode = if ($FromSource.IsPresent)
+{
+    "source"
+}
+elseif ($FromGit.IsPresent)
+{
+    "git"
+}
+elseif ($FromRelease.IsPresent)
+{
+    "release"
+}
+elseif (-not [string]::IsNullOrWhiteSpace($env:OTA_INSTALL_MODE))
+{
+    $env:OTA_INSTALL_MODE.Trim().ToLowerInvariant()
+}
+else
+{
+    "release"
 }
 
-if ($installFromSource) {
+$installModeForced = $FromSource.IsPresent -or $FromGit.IsPresent -or $FromRelease.IsPresent -or
+        (-not [string]::IsNullOrWhiteSpace($env:OTA_INSTALL_MODE))
+
+if (-not $installModeForced -and (Test-Path ".\Cargo.toml") -and (Select-String -Path ".\Cargo.toml" -Pattern '^name = "ota"$' -Quiet))
+{
+    $installMode = "source"
+}
+
+if ($installMode -eq "source")
+{
     Install-FromSource
+}
+elseif ($installMode -eq "git")
+{
+    Install-FromGit
 }
 else
 {

@@ -22,7 +22,25 @@
 #   If you need additional information or have any questions, please email: os@ota.run
 
 [CmdletBinding()]
-param()
+param(
+    [switch]$FromSource,
+    [switch]$FromGit,
+    [switch]$FromRelease
+)
 
 irm https://dist.ota.run/bootstrap.ps1 -OutFile bootstrap.ps1
-powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+$bootstrapArgs = @()
+if ($FromSource.IsPresent)
+{
+    $bootstrapArgs += "-FromSource"
+}
+elseif ($FromGit.IsPresent)
+{
+    $bootstrapArgs += "-FromGit"
+}
+elseif ($FromRelease.IsPresent)
+{
+    $bootstrapArgs += "-FromRelease"
+}
+
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 @bootstrapArgs
