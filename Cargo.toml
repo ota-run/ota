@@ -1,6 +1,6 @@
 [package]
 name = "ota"
-version = "1.4.14"
+version = "1.4.15"
 edition = "2024"
 
 [dependencies]
