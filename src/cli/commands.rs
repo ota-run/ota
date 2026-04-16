@@ -4767,48 +4767,97 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                     paint_mode_value(entry.pack.as_str()),
                     paint_backticked_code(&command)
                 ));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_key("Description:"),
-                    entry.summary
-                ));
-                stdout.push_str(&format!("\n  {} {}", paint_key("Notes:"), entry.when));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_key("Runtimes:"),
-                    if entry.runtimes.is_empty() {
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Description:",
+                    entry.summary,
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| value.to_string(),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Notes:",
+                    entry.when,
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| value.to_string(),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Runtimes:",
+                    &if entry.runtimes.is_empty() {
                         String::from("none")
                     } else {
-                        render_inline_code_list(entry.runtimes)
-                    }
-                ));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_key("Tools:"),
-                    if entry.tools.is_empty() {
+                        entry
+                            .runtimes
+                            .iter()
+                            .map(|value| format!("`{value}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    },
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| render_backticked_text(value, None),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Tools:",
+                    &if entry.tools.is_empty() {
                         String::from("none")
                     } else {
-                        render_inline_code_list(entry.tools)
-                    }
-                ));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_key("Checks:"),
-                    render_inline_code_list(entry.checks)
-                ));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_key("Tasks:"),
-                    render_inline_code_list(entry.tasks)
-                ));
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    paint_next_label(),
-                    paint_backticked_code(&format!(
-                        "ota init --pack {} --dry-run .",
-                        entry.pack.as_str()
-                    ))
-                ));
+                        entry
+                            .tools
+                            .iter()
+                            .map(|value| format!("`{value}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    },
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| render_backticked_text(value, None),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Checks:",
+                    &entry
+                        .checks
+                        .iter()
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| render_backticked_text(value, None),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Tasks:",
+                    &entry
+                        .tasks
+                        .iter()
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| render_backticked_text(value, None),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
+                    "Next:",
+                    &format!("`ota init --pack {} --dry-run .`", entry.pack.as_str()),
+                    "  ",
+                    96,
+                    |_| paint_next_label(),
+                    |value| render_backticked_text(value, None),
+                );
             }
             CommandOutput::success(stdout)
         }
@@ -11536,6 +11585,39 @@ fn append_wrapped_labeled_text<F, K>(
     ));
     for line in wrapped.iter().skip(1) {
         output.push_str(&format!("\n{indent}  {}", render_value(line)));
+    }
+}
+
+fn append_aligned_labeled_text<F, K>(
+    output: &mut String,
+    label: &str,
+    value: &str,
+    indent: &str,
+    fallback_max_width: usize,
+    render_key: K,
+    render_value: F,
+) where
+    F: Fn(&str) -> String,
+    K: Fn(&str) -> String,
+{
+    let wrapped = wrap_display_tokens_for_terminal(
+        value,
+        fallback_max_width,
+        labeled_wrap_reserve(indent, label),
+    );
+    if wrapped.is_empty() {
+        output.push_str(&format!("\n{indent}{} -", render_key(label)));
+        return;
+    }
+
+    output.push_str(&format!(
+        "\n{indent}{} {}",
+        render_key(label),
+        render_value(&wrapped[0])
+    ));
+    let continuation_indent = labeled_value_continuation_indent(indent, label);
+    for line in wrapped.iter().skip(1) {
+        output.push_str(&format!("\n{continuation_indent}{}", render_value(line)));
     }
 }
 
