@@ -717,6 +717,7 @@ Modes:
 - `blank`: starter contract derived from minimal repo context
 - `detected`: starter contract derived from detected repo signals
 - `pack`: starter contract derived from an explicit built-in starter pack
+- `catalog`: starter-pack discovery output from `ota init --packs`
 
 Text output:
 

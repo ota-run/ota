@@ -92,8 +92,8 @@ impl StarterPack {
             },
             Self::JavaMaven => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Java starter for Maven-driven repos with build and test lifecycles.",
-                when: "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection.",
+                summary: "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
+                when: "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
                 runtimes: &["java"],
                 tools: &["maven"],
                 checks: &["java-installed", "maven-installed"],
@@ -101,8 +101,8 @@ impl StarterPack {
             },
             Self::JavaGradle => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Java starter for Gradle-driven repos with build and test lifecycles.",
-                when: "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection.",
+                summary: "Conventional Java starter for Gradle-driven repos with build and test lifecycles, preferring `gradlew` when the repo already ships it.",
+                when: "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection. If `gradlew` already exists, ota uses the wrapper instead of requiring a global Gradle install.",
                 runtimes: &["java"],
                 tools: &["gradle"],
                 checks: &["java-installed", "gradle-installed"],
@@ -320,29 +320,36 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
             );
         }
         StarterPack::JavaMaven => {
+            let uses_wrapper = root.join("mvnw").exists();
             contract
                 .runtimes
                 .insert(String::from("java"), String::from("22"));
-            contract
-                .tools
-                .insert(String::from("maven"), String::from("3.9"));
             contract.checks.push(DetectCheck {
                 name: String::from("java-installed"),
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("java --version"),
             });
-            contract.checks.push(DetectCheck {
-                name: String::from("maven-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("mvn --version"),
-            });
+            if !uses_wrapper {
+                contract
+                    .tools
+                    .insert(String::from("maven"), String::from("3.9"));
+                contract.checks.push(DetectCheck {
+                    name: String::from("maven-installed"),
+                    kind: DetectCheckKind::Precondition,
+                    severity: DetectCheckSeverity::Error,
+                    run: String::from("mvn --version"),
+                });
+            }
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
                     "setup",
-                    "mvn -q dependency:resolve",
+                    if uses_wrapper {
+                        "./mvnw -q dependency:resolve"
+                    } else {
+                        "mvn -q dependency:resolve"
+                    },
                     Some(String::from("Resolve Maven dependencies for the repo.")),
                 ),
             );
@@ -350,7 +357,11 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("build"),
                 pack_task(
                     "build",
-                    "mvn package",
+                    if uses_wrapper {
+                        "./mvnw package"
+                    } else {
+                        "mvn package"
+                    },
                     Some(String::from("Build the default Maven package output.")),
                 ),
             );
@@ -358,35 +369,46 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("test"),
                 pack_task(
                     "test",
-                    "mvn test",
+                    if uses_wrapper {
+                        "./mvnw test"
+                    } else {
+                        "mvn test"
+                    },
                     Some(String::from("Run the default Maven test lifecycle.")),
                 ),
             );
         }
         StarterPack::JavaGradle => {
+            let uses_wrapper = root.join("gradlew").exists();
             contract
                 .runtimes
                 .insert(String::from("java"), String::from("22"));
-            contract
-                .tools
-                .insert(String::from("gradle"), String::from("8"));
             contract.checks.push(DetectCheck {
                 name: String::from("java-installed"),
                 kind: DetectCheckKind::Precondition,
                 severity: DetectCheckSeverity::Error,
                 run: String::from("java --version"),
             });
-            contract.checks.push(DetectCheck {
-                name: String::from("gradle-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("gradle --version"),
-            });
+            if !uses_wrapper {
+                contract
+                    .tools
+                    .insert(String::from("gradle"), String::from("8"));
+                contract.checks.push(DetectCheck {
+                    name: String::from("gradle-installed"),
+                    kind: DetectCheckKind::Precondition,
+                    severity: DetectCheckSeverity::Error,
+                    run: String::from("gradle --version"),
+                });
+            }
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
                     "setup",
-                    "gradle dependencies",
+                    if uses_wrapper {
+                        "./gradlew dependencies"
+                    } else {
+                        "gradle dependencies"
+                    },
                     Some(String::from("Resolve Gradle dependencies for the repo.")),
                 ),
             );
@@ -394,7 +416,11 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("build"),
                 pack_task(
                     "build",
-                    "gradle build",
+                    if uses_wrapper {
+                        "./gradlew build"
+                    } else {
+                        "gradle build"
+                    },
                     Some(String::from("Build the default Gradle outputs.")),
                 ),
             );
@@ -402,7 +428,11 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("test"),
                 pack_task(
                     "test",
-                    "gradle test",
+                    if uses_wrapper {
+                        "./gradlew test"
+                    } else {
+                        "gradle test"
+                    },
                     Some(String::from("Run the default Gradle test lifecycle.")),
                 ),
             );

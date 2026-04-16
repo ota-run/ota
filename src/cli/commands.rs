@@ -4760,33 +4760,51 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
             ));
             stdout.push_str(&format!("\n\n{}:", paint_section_title("Available packs")));
             for entry in packs {
-                let seeds = format!(
-                    "runtimes {}; tools {}; checks {}; tasks {}",
+                let command = format!("ota init --pack {}", entry.pack.as_str());
+                stdout.push_str(&format!(
+                    "\n\n{} {} {}",
+                    info_bullet(),
+                    paint_mode_value(entry.pack.as_str()),
+                    paint_backticked_code(&command)
+                ));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Description:"),
+                    entry.summary
+                ));
+                stdout.push_str(&format!("\n  {} {}", paint_key("Notes:"), entry.when));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Runtimes:"),
                     if entry.runtimes.is_empty() {
                         String::from("none")
                     } else {
-                        entry.runtimes.join(", ")
-                    },
+                        render_inline_code_list(entry.runtimes)
+                    }
+                ));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Tools:"),
                     if entry.tools.is_empty() {
                         String::from("none")
                     } else {
-                        entry.tools.join(", ")
-                    },
-                    entry.checks.join(", "),
-                    entry.tasks.join(", ")
-                );
-                stdout.push_str(&format!(
-                    "\n\n{} {}",
-                    paint_key("Pack:"),
-                    paint_mode_value(entry.pack.as_str())
+                        render_inline_code_list(entry.tools)
+                    }
                 ));
-                stdout.push_str(&format!("\n{} {}", paint_key("Summary:"), entry.summary));
-                stdout.push_str(&format!("\n{} {}", paint_key("Use when:"), entry.when));
-                stdout.push_str(&format!("\n{} {}", paint_key("Seeds:"), seeds));
                 stdout.push_str(&format!(
-                    "\n{} {}",
-                    paint_key("Try:"),
-                    paint_code(&format!(
+                    "\n  {} {}",
+                    paint_key("Checks:"),
+                    render_inline_code_list(entry.checks)
+                ));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Tasks:"),
+                    render_inline_code_list(entry.tasks)
+                ));
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_next_label(),
+                    paint_backticked_code(&format!(
                         "ota init --pack {} --dry-run .",
                         entry.pack.as_str()
                     ))
