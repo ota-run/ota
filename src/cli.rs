@@ -398,11 +398,14 @@ enum Commands {
         #[arg(value_parser = ["bash", "zsh", "fish", "powershell", "pwsh", "elvish", "check"])]
         shell: Option<String>,
         /// Install the shell hook into the current shell profile or completion file.
-        #[arg(long, action = ArgAction::SetTrue)]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["script", "remove"])]
         setup: bool,
         /// Print the exact generated shell registration script for one shell.
-        #[arg(long, action = ArgAction::SetTrue, conflicts_with = "setup")]
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["setup", "remove"])]
         script: bool,
+        /// Remove the managed shell hook and support files installed by `ota completion --setup`.
+        #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["setup", "script"])]
+        remove: bool,
     },
     #[command(display_order = 20)]
     /// Remove ota from this laptop.
@@ -611,6 +614,11 @@ enum CompletionSetupStatus {
     Installed,
     Updated,
     AlreadyConfigured,
+}
+
+enum CompletionRemoveStatus {
+    Removed,
+    AlreadyAbsent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2682,25 +2690,33 @@ _ota() {
     )}")
 
     if [[ -n $completions ]]; then
-        local -a dirs=()
-        local -a other=()
+        local -a primary_values=()
+        local -a primary_display=()
+        local -a option_values=()
+        local -a option_display=()
         local completion
         for completion in $completions; do
             local value="${completion%%:*}"
-            if [[ "$value" == */ ]]; then
-                local dir_no_slash="${value%/}"
+            if [[ "$value" == -* ]]; then
+                option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
                     local desc="${completion#*:}"
-                    dirs+=("$dir_no_slash:$desc")
+                    option_display+=("$value -- $desc")
                 else
-                    dirs+=("$dir_no_slash")
+                    option_display+=("$value")
                 fi
             else
-                other+=("$completion")
+                primary_values+=("$value")
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${completion#*:}"
+                    primary_display+=("$value -- $desc")
+                else
+                    primary_display+=("$value")
+                fi
             fi
         done
-        [[ -n $dirs ]] && _describe 'values' dirs -S '/' -r '/'
-        [[ -n $other ]] && _describe 'values' other
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $option_values ]] && compadd -Q -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }
 "#,
@@ -2799,6 +2815,28 @@ fn upsert_completion_setup(existing: &str, block: &str) -> (String, CompletionSe
         format!("{}\n\n{block}", existing.trim_end())
     };
     (updated, CompletionSetupStatus::Installed)
+}
+
+fn strip_completion_setup(existing: &str) -> (String, CompletionRemoveStatus) {
+    if let Some(start) = existing.find(COMPLETION_SETUP_MARKER_START)
+        && let Some(end_rel) = existing[start..].find(COMPLETION_SETUP_MARKER_END)
+    {
+        let after_end = start + end_rel + COMPLETION_SETUP_MARKER_END.len();
+        let suffix = existing[after_end..]
+            .strip_prefix('\n')
+            .unwrap_or(&existing[after_end..]);
+        let prefix = existing[..start].trim_end_matches('\n');
+        let updated = if prefix.is_empty() {
+            suffix.trim_start_matches('\n').to_string()
+        } else if suffix.trim().is_empty() {
+            format!("{prefix}\n")
+        } else {
+            format!("{prefix}\n\n{}", suffix.trim_start_matches('\n'))
+        };
+        return (updated, CompletionRemoveStatus::Removed);
+    }
+
+    (existing.to_string(), CompletionRemoveStatus::AlreadyAbsent)
 }
 
 fn completion_setup_plan(shell: CompletionShell) -> Result<CompletionSetupPlan, String> {
@@ -2909,6 +2947,85 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
     ))
 }
 
+fn remove_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
+    let shell = match shell.or_else(detect_completion_shell) {
+        Some(shell) => shell,
+        None => {
+            return CommandOutput::failure(
+                "could not detect the current shell automatically\nNext: run `ota completion zsh --remove` (or bash, fish, powershell, elvish)".to_string(),
+            );
+        }
+    };
+
+    let plan = match completion_setup_plan(shell) {
+        Ok(plan) => plan,
+        Err(error) => return CommandOutput::failure(error),
+    };
+
+    let existing = match fs::read_to_string(&plan.target) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "failed to read shell completion target `{}`: {error}",
+                plan.target.display()
+            ));
+        }
+    };
+
+    let (updated, profile_status) = strip_completion_setup(&existing);
+    if matches!(profile_status, CompletionRemoveStatus::Removed) {
+        if updated.trim().is_empty() {
+            if let Err(error) = fs::remove_file(&plan.target)
+                && error.kind() != io::ErrorKind::NotFound
+            {
+                return CommandOutput::failure(format!(
+                    "failed to remove shell completion target `{}`: {error}",
+                    plan.target.display()
+                ));
+            }
+        } else if let Err(error) = fs::write(&plan.target, updated) {
+            return CommandOutput::failure(format!(
+                "failed to write shell completion target `{}`: {error}",
+                plan.target.display()
+            ));
+        }
+    }
+
+    let mut removed_support = false;
+    if let Some(support_target) = &plan.support_target
+        && support_target.exists()
+    {
+        removed_support = true;
+        if let Err(error) = fs::remove_file(support_target) {
+            return CommandOutput::failure(format!(
+                "failed to remove shell completion support target `{}`: {error}",
+                support_target.display()
+            ));
+        }
+    }
+
+    let status_label =
+        if matches!(profile_status, CompletionRemoveStatus::Removed) || removed_support {
+            "removed"
+        } else {
+            "not configured"
+        };
+
+    CommandOutput::success(commands::render_completion_success_text(
+        completion_shell_name(plan.shell),
+        &plan.target.display().to_string(),
+        Some(status_label),
+        None,
+        None,
+        plan.support_target
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .as_deref(),
+        "reopen your shell so completion removal is active",
+    ))
+}
+
 fn check_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
     let shell = match shell.or_else(detect_completion_shell) {
         Some(shell) => shell,
@@ -3002,7 +3119,8 @@ fn render_completion_instructions(shell: CompletionShell) -> String {
             render_zsh_completion_setup_snippet("$HOME/.config/ota/zsh/_ota"),
         );
         return format!(
-            "Auto setup:\nota completion {} --setup\n\nManual completion file ({}):\n{}\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+            "Auto setup:\nota completion {} --setup\nRemove managed setup:\nota completion {} --remove\n\nManual completion file ({}):\n{}\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+            completion_shell_name(shell),
             completion_shell_name(shell),
             support_label,
             render_zsh_completion_file().trim_end(),
@@ -3012,18 +3130,26 @@ fn render_completion_instructions(shell: CompletionShell) -> String {
     }
 
     format!(
-        "Auto setup:\nota completion {} --setup\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+        "Auto setup:\nota completion {} --setup\nRemove managed setup:\nota completion {} --remove\n\nManual setup ({}):\n{}\nReload your shell after updating ota so completions stay in sync.",
+        completion_shell_name(shell),
         completion_shell_name(shell),
         completion_setup_target_label(shell),
         completion_setup_block(shell, None).trim_end()
     )
 }
 
-fn handle_completion_command(shell: Option<&str>, setup: bool, script: bool) -> CommandOutput {
+fn handle_completion_command(
+    shell: Option<&str>,
+    setup: bool,
+    script: bool,
+    remove: bool,
+) -> CommandOutput {
     if let Some("check") = shell {
-        if setup || script {
+        if setup || script || remove {
             return CommandOutput::failure_with_code(
-                String::from("`ota completion check` does not take `--setup` or `--script`"),
+                String::from(
+                    "`ota completion check` does not take `--setup`, `--script`, or `--remove`",
+                ),
                 2,
             );
         }
@@ -3058,12 +3184,16 @@ fn handle_completion_command(shell: Option<&str>, setup: bool, script: bool) -> 
         return install_completion_setup(parsed_shell);
     }
 
+    if remove {
+        return remove_completion_setup(parsed_shell);
+    }
+
     if let Some(shell) = parsed_shell {
         CommandOutput::success(render_completion_instructions(shell))
     } else {
         CommandOutput::failure_with_code(
             String::from(
-                "specify a shell, run `ota completion --setup`, or run `ota completion check`",
+                "specify a shell, run `ota completion --setup`, run `ota completion --remove`, or run `ota completion check`",
             ),
             2,
         )
@@ -3375,7 +3505,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             shell,
             setup,
             script,
-        } => handle_completion_command(shell.as_deref(), setup, script),
+            remove,
+        } => handle_completion_command(shell.as_deref(), setup, script, remove),
         Commands::Uninstall => commands::uninstall(debug),
         Commands::SelfUpdate { version, channel } => commands::self_update(
             version.as_deref(),
@@ -16520,12 +16651,25 @@ edition = "2024"
 
         assert_eq!(output.exit_code, 0);
         assert!(output.stdout.contains("ota completion zsh --setup"));
+        assert!(output.stdout.contains("ota completion zsh --remove"));
         assert!(
             output
                 .stdout
                 .contains("Manual completion file (~/.config/ota/zsh/_ota):")
         );
         assert!(output.stdout.contains("#compdef ota"));
+        assert!(
+            output
+                .stdout
+                .contains("compadd -Q -V ota_primary -d primary_display -o nosort")
+        );
+        assert!(
+            output
+                .stdout
+                .contains("compadd -Q -V ota_options -d option_display -o nosort")
+        );
+        assert!(!output.stdout.contains("local rendered"));
+        assert!(!output.stdout.contains("_describe 'values'"));
         assert!(
             output
                 .stdout
@@ -16546,7 +16690,7 @@ edition = "2024"
         assert_eq!(output.exit_code, 2);
         assert_eq!(
             strip_ansi(output.stderr.as_deref().unwrap_or_default()),
-            "specify a shell, run `ota completion --setup`, or run `ota completion check`"
+            "specify a shell, run `ota completion --setup`, run `ota completion --remove`, or run `ota completion check`"
         );
     }
 
@@ -16668,6 +16812,47 @@ edition = "2024"
         assert!(second.stdout.contains("Status: already configured"));
         let rewritten = fs::read_to_string(&profile).expect("bash profile should still exist");
         assert_eq!(rewritten, original);
+    }
+
+    #[test]
+    fn completion_remove_removes_managed_block_and_zsh_support_file() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let xdg_config_home = dir.path().join(".config");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            xdg_config_home.as_os_str().to_os_string(),
+        );
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
+
+        let setup = run_with(["ota", "completion", "--setup"]);
+        assert_eq!(setup.exit_code, 0);
+
+        let output = run_with(["ota", "completion", "--remove"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Status: removed"));
+
+        let profile = dir.path().join(".zshrc");
+        let written = fs::read_to_string(&profile).unwrap_or_default();
+        assert!(!written.contains(COMPLETION_SETUP_MARKER_START));
+
+        let completion_file = dir.path().join(".config/ota/zsh/_ota");
+        assert!(!completion_file.exists());
+    }
+
+    #[test]
+    fn completion_remove_is_idempotent_when_not_configured() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/bash"));
+
+        let output = run_with(["ota", "completion", "--remove"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(output.stdout.contains("Status: not configured"));
     }
 
     #[test]

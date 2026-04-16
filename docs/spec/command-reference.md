@@ -1103,6 +1103,7 @@ Show how to enable shell completion for ota.
 
 ```bash
 ota completion --setup
+ota completion --remove
 ota completion check
 ota completion bash
 ota completion bash --script
@@ -1115,12 +1116,14 @@ ota completion elvish
 Current behavior:
 
 - `ota completion --setup` detects the current shell when possible and installs ota's managed hook into the shell profile or completion file idempotently
+- `ota completion --remove` detects the current shell when possible and removes ota's managed hook plus any managed zsh support file idempotently
 - `ota completion <shell> --setup` installs the managed hook for one explicit shell without relying on auto-detection
+- `ota completion <shell> --remove` removes the managed hook for one explicit shell without relying on auto-detection
 - `ota completion check` verifies the detected shell, the current ota binary path, the target profile or completion file, any managed zsh completion file, and whether the managed hook is present or needs refresh
 - `ota completion <shell>` prints the manual shell setup ota expects for that shell; for zsh it includes both the `_ota` completion file and the `.zshrc` loader
 - `ota completion <shell> --script` prints the exact raw registration script clap generates for that shell so users can inspect the shell-side function directly
 - zsh setup writes a managed `_ota` completion file under `~/.config/ota/zsh/_ota` and loads that exact file through the shell completion path instead of relying on late runtime `compdef` registration alone
-- once the shell has sourced that setup, `ota <TAB>` completes commands and flags
+- once the shell has sourced that setup, `ota <TAB>` completes commands first and keeps global flags after them in zsh
 - once the shell has sourced that setup, `ota run <TAB>` completes task names only when one shared invocation can satisfy the selected repo/member target set, and shells that support candidate help can also show each task description when the contract declares one
 - once the shell has sourced that setup, `ota run <task> <TAB>` completes shared task input flags and any constrained values that remain valid across the selected repo/member target set
 - once the shell has sourced that setup, `ota env --task <TAB>` completes task names from the active repo or selected monorepo member, using the same task-description metadata when available
@@ -1132,6 +1135,7 @@ Current behavior:
 - once the shell has sourced that setup, `ota workspace doctor --repo <TAB>`, `ota workspace explain --repo <TAB>`, and `ota workspace list --repo <TAB>` complete declared workspace repo names
 - when no repo contract is available, shell completion falls back to static command and flag suggestions
 - the auto-installed hook is managed between `# >>> ota completion >>>` and `# <<< ota completion <<<` markers so rerunning setup updates or reuses the same block instead of appending duplicates
+- `ota completion --remove` only strips ota's managed block and managed zsh support file; it does not try to edit unrelated shell completion setup
 - users should reload or re-source their shell after upgrading ota so the shell-side glue and the installed binary stay in sync
 
 Use this when you want contract-aware shell suggestions instead of memorizing task names and task input flags.
@@ -1140,7 +1144,9 @@ Automatic setup:
 
 ```bash
 ota completion --setup
+ota completion --remove
 ota completion zsh --setup
+ota completion zsh --remove
 ```
 
 Verification and inspection:
@@ -1181,25 +1187,33 @@ _ota() {
     )}")
 
     if [[ -n $completions ]]; then
-        local -a dirs=()
-        local -a other=()
+        local -a primary_values=()
+        local -a primary_display=()
+        local -a option_values=()
+        local -a option_display=()
         local completion
         for completion in $completions; do
             local value="${completion%%:*}"
-            if [[ "$value" == */ ]]; then
-                local dir_no_slash="${value%/}"
+            if [[ "$value" == -* ]]; then
+                option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
                     local desc="${completion#*:}"
-                    dirs+=("$dir_no_slash:$desc")
+                    option_display+=("$value -- $desc")
                 else
-                    dirs+=("$dir_no_slash")
+                    option_display+=("$value")
                 fi
             else
-                other+=("$completion")
+                primary_values+=("$value")
+                if [[ "$completion" == *:* ]]; then
+                    local desc="${completion#*:}"
+                    primary_display+=("$value -- $desc")
+                else
+                    primary_display+=("$value")
+                fi
             fi
         done
-        [[ -n $dirs ]] && _describe 'values' dirs -S '/' -r '/'
-        [[ -n $other ]] && _describe 'values' other
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $option_values ]] && compadd -Q -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }
 
@@ -1265,7 +1279,7 @@ if (has-external-command ota) {
 
 Troubleshooting:
 
-- `zsh`: if completions still do not appear after setup, reopen the shell or confirm `ota completion check` shows both `Hook: present` and a `Completion file:` line for the managed `_ota` file
+- `zsh`: if completions still do not appear after setup, reopen the shell or confirm `ota completion check` shows both `Hook: present` and a `Completion file:` line for the managed `_ota` file; `ota completion --remove` gives you a clean reinstall path
 - `bash`: if completions still do not appear after setup, reopen the shell or source the profile again with `. ~/.bashrc`
 - `ota completion check` should report `Hook: present`; if it reports `missing` or `needs update`, rerun `ota completion --setup`
 - `ota completion <shell> --script` lets you inspect the exact raw registration script when the shell-side behavior itself looks wrong
