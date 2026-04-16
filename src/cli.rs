@@ -2700,16 +2700,14 @@ _ota() {
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    local desc="${completion#*:}"
-                    option_display+=("$value: $desc")
+                    option_display+=("$value: ${completion#*:}")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    local desc="${completion#*:}"
-                    primary_display+=("$value: $desc")
+                    primary_display+=("$value: ${completion#*:}")
                 else
                     primary_display+=("$value")
                 fi
@@ -2905,7 +2903,7 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
         }
     };
 
-    let (updated, status) = upsert_completion_setup(&existing, &plan.block);
+    let (updated, mut status) = upsert_completion_setup(&existing, &plan.block);
     if status != CompletionSetupStatus::AlreadyConfigured
         && let Err(error) = fs::write(&plan.target, updated)
     {
@@ -2925,6 +2923,9 @@ fn install_completion_setup(shell: Option<CompletionShell>) -> CommandOutput {
                 "failed to write shell completion support target `{}`: {error}",
                 support_target.display()
             ));
+        }
+        if support_needs_write && status == CompletionSetupStatus::AlreadyConfigured {
+            status = CompletionSetupStatus::Updated;
         }
     }
 
@@ -16671,14 +16672,15 @@ edition = "2024"
         assert!(
             output
                 .stdout
-                .contains("primary_display+=(\"$value: $desc\")")
+                .contains("primary_display+=(\"$value: ${completion#*:}\")")
         );
         assert!(
             output
                 .stdout
-                .contains("option_display+=(\"$value: $desc\")")
+                .contains("option_display+=(\"$value: ${completion#*:}\")")
         );
         assert!(!output.stdout.contains("local rendered"));
+        assert!(!output.stdout.contains("local desc"));
         assert!(!output.stdout.contains("_describe 'values'"));
         assert!(
             output
@@ -16822,6 +16824,35 @@ edition = "2024"
         assert!(second.stdout.contains("Status: already configured"));
         let rewritten = fs::read_to_string(&profile).expect("bash profile should still exist");
         assert_eq!(rewritten, original);
+    }
+
+    #[test]
+    fn completion_setup_reports_updated_when_support_file_is_refreshed() {
+        let _guard = env_mutex_lock();
+        let dir = TempDir::new().unwrap();
+        let _home = EnvVarGuard::set("HOME", dir.path().as_os_str().to_os_string());
+        let xdg_config_home = dir.path().join(".config");
+        let _xdg = EnvVarGuard::set(
+            "XDG_CONFIG_HOME",
+            xdg_config_home.as_os_str().to_os_string(),
+        );
+        let _shell = EnvVarGuard::set("SHELL", OsString::from("/bin/zsh"));
+
+        let first = run_with(["ota", "completion", "--setup"]);
+        assert_eq!(first.exit_code, 0);
+
+        let completion_file = dir
+            .path()
+            .join(".config")
+            .join("ota")
+            .join("zsh")
+            .join("_ota");
+        fs::write(&completion_file, "# stale completion file\n").expect("stale support file");
+
+        let second = run_with(["ota", "completion", "--setup"]);
+
+        assert_eq!(second.exit_code, 0);
+        assert!(second.stdout.contains("Status: updated"));
     }
 
     #[test]
