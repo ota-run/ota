@@ -63,21 +63,21 @@ use crate::output::{
     ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
     ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitPackCatalogSuccess, InitPackInfo, InitPackSeeds, InitSuccess, MemberServicesSuccess,
-    OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess,
-    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
-    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
-    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    InitPackAdvisory, InitPackCatalogSuccess, InitPackInfo, InitPackSeeds, InitSuccess,
+    MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
+    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -117,8 +117,8 @@ use self::explain_output::{
 };
 pub(crate) use self::init_starter::StarterPack;
 use self::init_starter::{
-    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_catalog,
-    starter_pack_contract,
+    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_advisory,
+    starter_pack_catalog, starter_pack_contract,
 };
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
@@ -2725,13 +2725,23 @@ fn render_policy_text(
     output
 }
 
-fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
+fn windows_uninstall_script(path: &Path, process_id: u32) -> String {
     let target = path.display().to_string().replace('\'', "''");
-    let script = format!(
-        "$pid = {}; $target = '{}'; while (Get-Process -Id $pid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; if (Test-Path -LiteralPath $target) {{ Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue }}",
-        std::process::id(),
-        target
-    );
+    format!(
+        "$pid = {}; $target = '{}'; while (Get-Process -Id $pid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; $attempt = 0; while ((Test-Path -LiteralPath $target) -and $attempt -lt 300) {{ try {{ Remove-Item -LiteralPath $target -Force -ErrorAction Stop }} catch {{ Start-Sleep -Milliseconds 200; $attempt++ }} }}",
+        process_id, target
+    )
+}
+
+fn render_windows_uninstall_pending(path: &Path) -> String {
+    format!(
+        "pending ota removal from {} after the current process exits; removal is not yet verified",
+        path.display()
+    )
+}
+
+fn spawn_windows_uninstall(path: &Path) -> Result<(), String> {
+    let script = windows_uninstall_script(path, std::process::id());
 
     let launch = |program: &str| {
         let mut command = Command::new(program);
@@ -3081,9 +3091,7 @@ pub fn uninstall(debug: bool) -> CommandOutput {
 
     let output = if cfg!(windows) {
         match spawn_windows_uninstall(&binary) {
-            Ok(()) => {
-                CommandOutput::success(format!("scheduled ota removal from {}", binary.display()))
-            }
+            Ok(()) => CommandOutput::success(render_windows_uninstall_pending(&binary)),
             Err(error) => CommandOutput::failure(format!(
                 "failed to schedule ota removal from {}: {error}",
                 binary.display()
@@ -4719,6 +4727,12 @@ pub fn init(
         );
     }
 
+    let pack_advisory = pack.and_then(|selected_pack| {
+        detect_repo(&root)
+            .ok()
+            .and_then(|detected| build_pack_advisory(selected_pack, &detected, &root))
+    });
+
     finalize_debug(
         match if let Some(pack) = pack {
             Ok(DetectReport {
@@ -4729,7 +4743,15 @@ pub fn init(
         } else {
             detect_repo(&root)
         } {
-            Ok(report) => render_init(report, &contract_path, write, bootstrap, pack, format),
+            Ok(report) => render_init(
+                report,
+                &contract_path,
+                write,
+                bootstrap,
+                pack,
+                pack_advisory,
+                format,
+            ),
             Err(error) => {
                 let error = error.to_string();
                 match format {
@@ -10097,12 +10119,72 @@ fn render_repo_receipt_diff(
     }
 }
 
+fn build_pack_advisory(
+    selected_pack: StarterPack,
+    detected: &DetectReport,
+    root: &Path,
+) -> Option<InitPackAdvisory> {
+    let advisory = starter_pack_advisory(selected_pack, detected)?;
+    let next = command_for_repo(
+        &format!(
+            "ota init --pack {} --dry-run",
+            advisory.suggested_pack.as_str()
+        ),
+        root,
+    );
+
+    Some(InitPackAdvisory {
+        selected_pack: selected_pack.as_str().to_string(),
+        suggested_pack: advisory.suggested_pack.as_str().to_string(),
+        summary: format!(
+            "selected pack `{}` does not match the strongest detected repo signals; `{}` looks closer",
+            selected_pack.as_str(),
+            advisory.suggested_pack.as_str()
+        ),
+        signals: advisory.signals,
+        next,
+    })
+}
+
+fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPackAdvisory>) {
+    let Some(advisory) = advisory else {
+        return;
+    };
+
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
+        paint_key("Advisory:"),
+        advisory.summary
+    ));
+    if !advisory.signals.is_empty() {
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            mode_icon(),
+            paint_key("Signals:"),
+            advisory
+                .signals
+                .iter()
+                .map(|signal| paint_code(signal))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
+        paint_next_label(),
+        paint_code(&advisory.next)
+    ));
+}
+
 fn render_init(
     report: DetectReport,
     contract_path: &Path,
     write: bool,
     bootstrap: bool,
     pack: Option<StarterPack>,
+    pack_advisory: Option<InitPackAdvisory>,
     format: OutputFormat,
 ) -> CommandOutput {
     let mode = pack.map_or_else(|| init_mode(&report), |_| "pack");
@@ -10303,6 +10385,7 @@ fn render_init(
                             paint_key("Policy:"),
                             "explicit pack mode seeds a conventional starter contract; review and edit it before relying on it"
                         ));
+                        render_init_pack_advisory_text(&mut stdout, pack_advisory.as_ref());
                     }
                     if mode == "blank" {
                         stdout.push_str(
@@ -10346,6 +10429,7 @@ fn render_init(
                     written: true,
                     mode,
                     pack: pack.map(StarterPack::as_str),
+                    pack_advisory,
                     config: &write_contract,
                     inferred: &report.inferences,
                     provenance,
@@ -10392,6 +10476,7 @@ fn render_init(
                     paint_key("Policy:"),
                     "explicit pack mode seeds a conventional starter contract; review and edit it before relying on it"
                 ));
+                render_init_pack_advisory_text(&mut stdout, pack_advisory.as_ref());
             }
             stdout.push_str(&format!(
                 "\n{} review this starter contract, edit it if needed, then run `{}`",
@@ -10414,6 +10499,7 @@ fn render_init(
             written: false,
             mode,
             pack: pack.map(StarterPack::as_str),
+            pack_advisory,
             config: &bootstrap_contract,
             inferred: &report.inferences,
             provenance: init_contract_provenance(
@@ -15971,8 +16057,8 @@ mod tests {
         execution_receipt_step, render_detect_comparison_section,
         render_execution_receipt_summary_block, render_execution_receipt_text,
         render_report_section, render_up_result, render_up_section_from_parts,
-        run_execution_receipt, strip_ansi_codes, stylize_text_failure, up_doctor_mode,
-        workspace_refresh_command,
+        render_windows_uninstall_pending, run_execution_receipt, strip_ansi_codes,
+        stylize_text_failure, up_doctor_mode, windows_uninstall_script, workspace_refresh_command,
     };
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
@@ -16039,6 +16125,30 @@ mod tests {
             brew_path.display(),
         );
         write_executable_script(&dir.join("sh"), &bootstrap_script);
+    }
+
+    #[test]
+    fn windows_uninstall_pending_message_is_explicitly_unverified() {
+        let path = Path::new(r"C:\Users\someone\AppData\Local\ota\bin\ota.exe");
+        let message = render_windows_uninstall_pending(path);
+
+        assert!(message.contains("pending ota removal from"));
+        assert!(message.contains("after the current process exits"));
+        assert!(message.contains("not yet verified"));
+    }
+
+    #[test]
+    fn windows_uninstall_script_retries_after_current_process_exits() {
+        let script = windows_uninstall_script(
+            Path::new(r"C:\Users\someone\AppData\Local\ota\bin\ota.exe"),
+            4242,
+        );
+
+        assert!(script.contains("$pid = 4242"));
+        assert!(script.contains("Get-Process -Id $pid -ErrorAction SilentlyContinue"));
+        assert!(script.contains("$attempt = 0"));
+        assert!(script.contains("$attempt -lt 300"));
+        assert!(script.contains("Remove-Item -LiteralPath $target -Force -ErrorAction Stop"));
     }
 
     #[test]

@@ -26,8 +26,12 @@
 
 ## Unreleased
 
+- aligned the background update-notice wait budget across platforms so Linux and macOS no longer drop valid release notices before the release check finishes, and shortened the transient update-check failure cooldown to one hour everywhere instead of leaving Unix-like systems silent for a full day.
+- made Windows `ota uninstall` report a pending, unverified removal state instead of implying the running binary was already deleted, and extended the detached delete helper to keep retrying after the current process exits.
 - expanded the explicit starter-pack catalog from `node|python|java-maven|java-gradle` to `node|python|go|rust|java-maven|java-gradle`, adding conventional Go and Rust starter contracts through `ota init --pack ...`.
 - upgraded `ota init --packs --json` so each catalog entry now carries the exact pack-selection `command` plus a safe dry-run `next` command, making the starter-pack catalog a more complete product surface for automation and docs generation.
+- clarified the `ota init` command reference by separating detector-led and pack-led starter paths in the detailed docs without promoting `--pack` to a separate command surface.
+- added advisory-only pack mismatch detection for `ota init --pack ...`, so explicit starter mode can warn when strong repo signals disagree while still keeping the selected pack authoritative.
 
 ## 1.4.16
 

@@ -2421,16 +2421,24 @@ fn should_show_update_notice(cli: &Cli) -> bool {
 }
 
 fn update_notice_wait_timeout() -> Duration {
-    if cfg!(windows) {
-        Duration::from_millis(1200)
-    } else {
-        Duration::from_millis(500)
-    }
+    update_notice_wait_timeout_for_platform(cfg!(windows))
+}
+
+fn update_notice_wait_timeout_for_platform(_is_windows: bool) -> Duration {
+    Duration::from_millis(3000)
 }
 
 fn maybe_append_update_notice(
     output: CommandOutput,
     update_notice_rx: Option<mpsc::Receiver<Option<String>>>,
+) -> CommandOutput {
+    maybe_append_update_notice_with_timeout(output, update_notice_rx, update_notice_wait_timeout())
+}
+
+fn maybe_append_update_notice_with_timeout(
+    output: CommandOutput,
+    update_notice_rx: Option<mpsc::Receiver<Option<String>>>,
+    timeout: Duration,
 ) -> CommandOutput {
     if output.exit_code != 0 {
         return output;
@@ -2440,7 +2448,7 @@ fn maybe_append_update_notice(
         return output;
     };
 
-    match rx.recv_timeout(update_notice_wait_timeout()) {
+    match rx.recv_timeout(timeout) {
         Ok(Some(notice)) => output.with_stderr(Some(format!("\n\x1b[1m{notice}\x1b[0m"))),
         _ => output,
     }
@@ -4251,8 +4259,9 @@ mod tests {
         COMPLETION_SETUP_MARKER_START, Cli, Commands, CompletionRequest, CompletionRequestGuard,
         PolicyCommands, PolicyInitPreset, append_try_footer, collapse_blank_lines, commands,
         complete_repo_run_task_candidates, completion_command, load_repo_run_task_candidates,
-        load_workspace_task_candidates, maybe_append_update_notice, maybe_handle_shell_completion,
-        run_with,
+        load_workspace_task_candidates, maybe_append_update_notice,
+        maybe_append_update_notice_with_timeout, maybe_handle_shell_completion, run_with,
+        update_notice_wait_timeout_for_platform,
     };
     use crate::output::CommandOutput;
 
@@ -9967,6 +9976,50 @@ tasks:
     }
 
     #[test]
+    fn wait_budget_exceeds_release_check_timeout_on_all_platforms() {
+        assert!(update_notice_wait_timeout_for_platform(true) > Duration::from_secs(2));
+        assert!(update_notice_wait_timeout_for_platform(false) > Duration::from_secs(2));
+    }
+
+    #[test]
+    fn waits_long_enough_for_windows_background_update_notice() {
+        let (tx, rx) = mpsc::channel();
+        let delay = Duration::from_millis(1250);
+        thread::spawn(move || {
+            thread::sleep(delay);
+            let _ = tx.send(Some(String::from("notice")));
+        });
+
+        let output = maybe_append_update_notice_with_timeout(
+            CommandOutput::success(String::from("ok")),
+            Some(rx),
+            update_notice_wait_timeout_for_platform(true),
+        );
+
+        assert_eq!(output.stdout, "ok");
+        assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
+    }
+
+    #[test]
+    fn waits_long_enough_for_non_windows_background_update_notice() {
+        let (tx, rx) = mpsc::channel();
+        let delay = Duration::from_millis(1250);
+        thread::spawn(move || {
+            thread::sleep(delay);
+            let _ = tx.send(Some(String::from("notice")));
+        });
+
+        let output = maybe_append_update_notice_with_timeout(
+            CommandOutput::success(String::from("ok")),
+            Some(rx),
+            update_notice_wait_timeout_for_platform(false),
+        );
+
+        assert_eq!(output.stdout, "ok");
+        assert_eq!(output.stderr, Some(String::from("\n\x1b[1mnotice\x1b[0m")));
+    }
+
+    #[test]
     fn self_update_does_not_use_command_spinner() {
         assert!(!super::command_supports_spinner(
             &super::Commands::SelfUpdate {
@@ -13325,6 +13378,105 @@ agent:
             .expect("test description provenance");
         assert_eq!(test_description["provenance"], "template-derived");
         assert_eq!(test_description["source"], "ota.init#starter_pack.python");
+    }
+
+    #[test]
+    fn init_pack_mismatch_surfaces_advisory_without_changing_selected_pack() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "web",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "pnpm dev",
+    "test": "pnpm test"
+  }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "python");
+        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+        assert_eq!(
+            json["pack_advisory"]["selected_pack"],
+            serde_json::json!("python")
+        );
+        assert_eq!(
+            json["pack_advisory"]["suggested_pack"],
+            serde_json::json!("node")
+        );
+        assert_eq!(
+            json["pack_advisory"]["signals"][0],
+            serde_json::json!("package.json")
+        );
+        assert!(
+            json["pack_advisory"]["next"]
+                .as_str()
+                .expect("pack advisory next")
+                .starts_with("ota init --pack node --dry-run")
+        );
+    }
+
+    #[test]
+    fn init_pack_mismatch_renders_text_advisory() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "web",
+  "packageManager": "pnpm@10.0.0"
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Advisory: selected pack `python` does not match"));
+        assert!(stdout.contains("Signals: package.json"));
+        assert!(stdout.contains("ota init --pack node --dry-run"));
+    }
+
+    #[test]
+    fn init_pack_mode_ignores_advisory_detection_failures() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write("package.json", "{\n");
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["pack"], "python");
+        assert!(json["pack_advisory"].is_null());
+        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
     }
 
     #[test]

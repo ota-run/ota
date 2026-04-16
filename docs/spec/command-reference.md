@@ -686,7 +686,7 @@ Create a starter ota contract for a repo that does not yet have one.
 ```bash
 ota init [PATH]
 ota init --bootstrap [PATH]
-ota init --pack <node|python|java-maven|java-gradle> [PATH]
+ota init --pack <node|python|go|rust|java-maven|java-gradle> [PATH]
 ota init --packs
 ota init --dry-run [PATH]
 ota init --json [PATH]
@@ -697,8 +697,8 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
-- `--pack <node|python|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
-- `--packs` lists the built-in starter packs, what they seed, and the exact preview command to try next
+- `--pack <node|python|go|rust|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
+- `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, and the safe dry-run preview command to use next
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
@@ -711,6 +711,32 @@ Current behavior:
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
 - when the detected tasks are confident enough and ota can infer safe writable paths, the starter contract may also include a minimal `agent` block and review notes; see [`contract-reference.md`](contract-reference.md) for the `agent` field semantics
+
+Choosing an init path:
+
+- use `ota init --dry-run` when detector-led init should shape the first draft from repo signals
+- use plain `ota init` only after reviewing that detector-led starter
+- use `ota init --packs` when you want to compare the explicit starter catalog first
+- use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
+- the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist
+- explicit packs seed short task `description` fields so the authoring pattern is visible immediately
+
+Examples:
+
+```bash
+# detector-led path
+ota init --dry-run
+ota init
+
+# pack-led path
+ota init --packs
+ota init --pack node --dry-run
+ota init --pack python --dry-run
+ota init --pack go --dry-run
+ota init --pack rust --dry-run
+ota init --pack java-maven --dry-run
+ota init --pack java-gradle --dry-run
+```
 
 Modes:
 
@@ -725,7 +751,8 @@ Text output:
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
 - `pack` mode also includes `Pack: <name>` plus an explicit pack-policy note
-- `--packs` renders `INIT PACKS starter packs`, one entry per pack, and a `Try:` line with the matching `ota init --pack ... --dry-run .` command
+- explicit pack mode can also include an advisory note when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
+- `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
 - `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
@@ -738,9 +765,10 @@ JSON output:
 - `written`
 - `mode`
 - optional `pack` when explicit pack mode is used
+- optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, normalized signal markers, and a safe dry-run follow-up command
 - `config`
 - `inferred`
-- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract
+- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, and the seeded runtimes, tools, checks, and tasks
 - failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota agents`
@@ -965,6 +993,7 @@ Current behavior:
 - `latest` resolves the newest release entry, including prereleases if present
 - `--version` overrides the channel when both are set
 - when the chosen target matches the installed binary, the command exits successfully and prints the up-to-date banner instead of reinstalling
+- on Windows, when `ota` is currently running, the downloaded binary is staged and applied after the current process exits
 
 ## `ota policy`
 
@@ -1298,13 +1327,13 @@ ota uninstall
 Current behavior:
 
 - removes the installed ota binary from the current machine
-- on Windows, schedules removal of the running executable after the current process exits
+- on Windows, schedules best-effort removal of the running executable after the current process exits and reports the result as pending until deletion can actually happen
 - on Unix-like systems, removes the current executable directly when possible
 - does not touch repo state, contracts, or workspace state
 
 Text output:
 
-- success: `removed ota from <path>` or `scheduled ota removal from <path>`
+- success: `removed ota from <path>` or `pending ota removal from <path> after the current process exits; removal is not yet verified`
 - already removed: `ota was already removed from <path>`
 
 Use this when you want to remove ota from the machine itself, not when you want to clean a repo.

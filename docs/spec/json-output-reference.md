@@ -1261,6 +1261,22 @@ name. Pack-generated tasks can carry short `description` fields, and `provenance
 fields as `template-derived` with an `ota.init#starter_pack.<name>` source while keeping
 directory-derived values such as `project.name` traced to `ota.init#directory_name`.
 
+When explicit pack mode disagrees with strong detected repo signals, ota adds `pack_advisory`
+without changing the selected pack or merging detector output into the starter:
+
+```json
+{
+  "pack": "python",
+  "pack_advisory": {
+    "selected_pack": "python",
+    "suggested_pack": "node",
+    "summary": "selected pack `python` does not match the strongest detected repo signals; `node` looks closer",
+    "signals": ["package.json"],
+    "next": "ota init --pack node --dry-run ."
+  }
+}
+```
+
 `provenance` is the per-field source map for the starter contract:
 
 - detector-backed fields use `provenance: "detector-inferred"` and `provenance_key: "repo_signals"`
@@ -1292,6 +1308,8 @@ contract:
       "name": "node",
       "summary": "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
       "when": "Use this for repo-level Node apps or services that follow pnpm conventions and need an explicit starter instead of detector-led init.",
+      "command": "ota init --pack node",
+      "next": "ota init --pack node --dry-run .",
       "seeds": {
         "runtimes": ["node"],
         "tools": ["pnpm"],
@@ -1300,19 +1318,40 @@ contract:
       }
     },
     {
+      "name": "go",
+      "summary": "Conventional Go starter with module download, build, and test tasks.",
+      "when": "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
+      "command": "ota init --pack go",
+      "next": "ota init --pack go --dry-run .",
+      "seeds": {
+        "runtimes": ["go"],
+        "tools": [],
+        "checks": ["go-installed"],
+        "tasks": ["setup", "build", "test"]
+      }
+    },
+    {
       "name": "java-maven",
-      "summary": "Conventional Java starter for Maven-driven repos with build and test lifecycles.",
-      "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection.",
+      "summary": "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
+      "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
+      "command": "ota init --pack java-maven",
+      "next": "ota init --pack java-maven --dry-run .",
       "seeds": {
         "runtimes": ["java"],
-        "tools": ["maven"],
-        "checks": ["java-installed", "maven-installed"],
+        "tools": [],
+        "checks": ["java-installed"],
         "tasks": ["setup", "build", "test"]
       }
     }
   ]
 }
 ```
+
+Each catalog entry keeps the operator guidance machine-readable:
+
+- `command` is the exact pack-selection command
+- `next` is the safe dry-run preview command to review before writing
+- `seeds` lists the unconditional starter fields, so wrapper-aware Java packs keep the global Maven or Gradle prerequisite in `when` instead of claiming it is always seeded
 
 ## `ota check --json`
 

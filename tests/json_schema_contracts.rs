@@ -372,7 +372,9 @@ fn init_schema_includes_optional_next_on_failures() {
         .as_array()
         .expect("required array");
     let success = &schema["oneOf"][0]["properties"];
+    let advisory = &success["pack_advisory"]["properties"];
     let catalog = &schema["oneOf"][1]["properties"];
+    let catalog_pack = &catalog["packs"]["items"]["properties"];
     let failure = &schema["oneOf"][2]["properties"];
     let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
@@ -385,10 +387,17 @@ fn init_schema_includes_optional_next_on_failures() {
             .is_some_and(|values| values.iter().any(|value| value == "pack"))
     );
     assert!(success.get("pack").is_some());
+    assert!(success.get("pack_advisory").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("provenance").is_some());
+    assert!(advisory.get("selected_pack").is_some());
+    assert!(advisory.get("suggested_pack").is_some());
+    assert!(advisory.get("summary").is_some());
+    assert!(advisory.get("next").is_some());
     assert!(catalog.get("packs").is_some());
+    assert!(catalog_pack.get("command").is_some());
+    assert!(catalog_pack.get("next").is_some());
     assert!(provenance.get("field").is_some());
     assert!(provenance.get("provenance").is_some());
     assert!(provenance.get("provenance_key").is_some());

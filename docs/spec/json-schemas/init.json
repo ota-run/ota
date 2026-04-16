@@ -19,7 +19,44 @@
           ]
         },
         "pack": {
-          "type": "string"
+          "enum": [
+            "node",
+            "python",
+            "go",
+            "rust",
+            "java-maven",
+            "java-gradle"
+          ]
+        },
+        "pack_advisory": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "selected_pack",
+            "suggested_pack",
+            "summary",
+            "next"
+          ],
+          "properties": {
+            "selected_pack": {
+              "type": "string"
+            },
+            "suggested_pack": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            },
+            "signals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "next": {
+              "type": "string"
+            }
+          }
         },
         "config": { "type": "object" },
         "inferred": {
@@ -56,6 +93,8 @@
               "name",
               "summary",
               "when",
+              "command",
+              "next",
               "seeds"
             ],
             "properties": {
@@ -66,6 +105,12 @@
                 "type": "string"
               },
               "when": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "next": {
                 "type": "string"
               },
               "seeds": {
