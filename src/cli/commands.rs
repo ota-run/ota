@@ -11498,6 +11498,14 @@ fn display_wrap_width(fallback_max_width: usize, reserve: usize) -> usize {
         .max(24)
 }
 
+fn known_display_wrap_width(reserve: usize) -> Option<usize> {
+    env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > reserve + 24)
+        .map(|value| value.saturating_sub(reserve).max(24))
+}
+
 fn labeled_wrap_reserve(indent: &str, label: &str) -> usize {
     indent.chars().count() + label.chars().count() + 1
 }
@@ -11593,18 +11601,27 @@ fn append_aligned_labeled_text<F, K>(
     label: &str,
     value: &str,
     indent: &str,
-    fallback_max_width: usize,
+    _fallback_max_width: usize,
     render_key: K,
     render_value: F,
 ) where
     F: Fn(&str) -> String,
     K: Fn(&str) -> String,
 {
-    let wrapped = wrap_display_tokens_for_terminal(
-        value,
-        fallback_max_width,
-        labeled_wrap_reserve(indent, label),
-    );
+    let reserve = labeled_wrap_reserve(indent, label);
+    let Some(width) = known_display_wrap_width(reserve) else {
+        if value.is_empty() {
+            output.push_str(&format!("\n{indent}{} -", render_key(label)));
+            return;
+        }
+        output.push_str(&format!(
+            "\n{indent}{} {}",
+            render_key(label),
+            render_value(value)
+        ));
+        return;
+    };
+    let wrapped = wrap_display_tokens(value, width);
     if wrapped.is_empty() {
         output.push_str(&format!("\n{indent}{} -", render_key(label)));
         return;
