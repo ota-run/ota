@@ -706,6 +706,7 @@ Current behavior:
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
+- canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
 - confident detected tasks may include a `notes` field that points to the matching `ota run <task>` command
 - when the detected tasks are confident enough and ota can infer safe writable paths, the starter contract may also include a minimal `agent` block and review notes; see [`contract-reference.md`](contract-reference.md) for the `agent` field semantics
 
@@ -1612,7 +1613,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
-- lists task declarations for each acquired repo contract
+- lists task declarations for each acquired repo contract, including task descriptions when the repo contract declares them
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 
