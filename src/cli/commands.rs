@@ -7000,6 +7000,7 @@ pub fn workspace_tasks(
                             WorkspaceTaskSummary {
                                 name: name.clone(),
                                 kind: execution.kind.to_string(),
+                                description: task.description.clone(),
                                 run: (execution.kind == "run").then(|| execution.body.to_string()),
                                 script: (execution.kind == "script")
                                     .then(|| execution.body.to_string()),
@@ -12004,7 +12005,9 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         ["project", "name"] => set_string_field(root, &segments, &change.detected),
         ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
         ["services", _, _] => set_string_field(root, &segments, &change.detected),
-        ["tasks", _, "run"] => set_string_field(root, &segments, &change.detected),
+        ["tasks", _, "run"] | ["tasks", _, "description"] => {
+            set_string_field(root, &segments, &change.detected)
+        }
         ["tasks", _, "safe_for_agent"] => set_bool_field(root, &segments, &change.detected),
         _ => false,
     }
@@ -12043,6 +12046,9 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     }
     for (name, task) in &contract.tasks {
         fields.push(format!("tasks.{name}.run"));
+        if task.description.is_some() {
+            fields.push(format!("tasks.{name}.description"));
+        }
         if task.safe_for_agent {
             fields.push(format!("tasks.{name}.safe_for_agent"));
         }
@@ -21094,6 +21100,13 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             ));
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
+            }
+            if let Some(description) = task.description.as_deref() {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Description:"),
+                    description
+                ));
             }
         }
     }
