@@ -17812,6 +17812,74 @@ tasks:
     }
 
     #[test]
+    fn root_shell_completion_emits_commands_before_global_options() {
+        let _guard = env_mutex_lock();
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "".into()],
+        });
+
+        let values =
+            shell_completion_values(&["ota", ""], 1).expect("shell completion should succeed");
+        let doctor_index = values
+            .iter()
+            .position(|value| value == "doctor")
+            .expect("doctor completion");
+        let debug_index = values
+            .iter()
+            .position(|value| value == "--debug")
+            .expect("debug completion");
+
+        assert!(doctor_index < debug_index);
+    }
+
+    #[test]
+    fn workspace_shell_completion_emits_commands_before_workspace_options() {
+        let _guard = env_mutex_lock();
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "workspace".into(), "".into()],
+        });
+
+        let values = shell_completion_values(&["ota", "workspace", ""], 2)
+            .expect("shell completion should succeed");
+        let validate_index = values
+            .iter()
+            .position(|value| value == "validate")
+            .expect("validate completion");
+        let file_index = values
+            .iter()
+            .position(|value| value == "--file")
+            .expect("file completion");
+
+        assert!(validate_index < file_index);
+    }
+
+    #[test]
+    fn task_completion_candidates_emit_plain_tokens_without_visual_prefixes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  setup:
+    description: Prepare the repo
+    run: echo setup
+"#,
+        );
+
+        let candidates = load_repo_run_task_candidates(fixture.file_path(), &[]);
+        let setup = candidates
+            .iter()
+            .find(|candidate| candidate.name == "setup")
+            .expect("setup completion candidate");
+
+        assert_eq!(setup.name, "setup");
+        assert!(!setup.name.contains('🦦'));
+        assert!(!setup.name.contains("[Task]"));
+        assert!(!setup.name.contains('▸'));
+    }
+
+    #[test]
     fn workspace_help_describes_file_flag_for_workspace_contracts() {
         let output = run_with(["ota", "workspace", "--help"]);
         let stderr = output
