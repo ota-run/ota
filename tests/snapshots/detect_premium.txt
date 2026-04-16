@@ -26,6 +26,7 @@ tools:
   pnpm: 10.1.0
 tasks:
   dev:
+    description: Start the local development loop.
     run: pnpm dev
     notes: |
       Run `ota run dev` to execute this task.
