@@ -26,17 +26,21 @@
 
 ## Unreleased
 
+## 1.4.15
+
+- added `ota completion --remove` as the managed uninstall path for shell completion setup, and updated completion guidance so setup and removal commands are shown together.
+- updated completion setup status handling so rerunning `ota completion --setup` reports `Status: updated` when managed support files are refreshed, while `ota completion --remove` remains idempotent with `Status: not configured` when nothing is installed.
+- changed generated zsh completion output to preserve raw candidate ordering with explicit `nosort` handling and separate `Suggestions`/`Options` groups, keeping commands and tasks ahead of global options in completion menus.
+- upgraded zsh completion display labels to `token: description` and simplified completion rendering so candidate values stay plain while menu text remains clearer.
+
 ## 1.4.14
 
 - added `ota init --pack node|python` as an explicit conventional starter path so repos can seed a reviewable `ota.yaml` pack without depending on detector confidence, including pack-aware text output, stable JSON `pack` metadata, per-field provenance, starter checks, and deterministic starter tasks.
 - pack-generated starter tasks now include short `description` fields, and task-name shell completion can surface those descriptions as candidate help so users see the authoring pattern immediately instead of only learning it from docs.
 - extended short task `description` seeding beyond explicit packs so canonical detector-led starter tasks and workspace-bootstrap repo starters can teach the same task-authoring pattern, and `ota workspace tasks` now surfaces declared descriptions in both text and JSON output.
-- added `ota completion --setup` as an idempotent shell-completion installer that auto-detects the current shell when possible, writes the managed completion hook into the right profile or completion file, adds `ota completion --remove` as the managed uninstall path, adds `ota completion check` for hook verification plus current binary-path visibility, adds `ota completion <shell> --script` for raw registration-script inspection, and keeps the existing `ota completion <shell>` manual hook guidance for explicit setup.
+- added `ota completion --setup` as an idempotent shell-completion installer that auto-detects the current shell when possible, writes the managed completion hook into the right profile or completion file, adds `ota completion check` for hook verification plus current binary-path visibility, adds `ota completion <shell> --script` for raw registration-script inspection, and keeps the existing `ota completion <shell>` manual hook guidance for explicit setup.
 - hardened zsh completion setup so it now writes a managed `_ota` completion file alongside the profile hook, which makes `ota <TAB>` work reliably even in shells that bind `<TAB>` through wrappers such as `fzf-completion`.
 - made zsh completion setup stable across `XDG_CONFIG_HOME` changes by pinning the managed support file to `~/.config/ota/zsh/_ota`, and made `ota completion zsh` print a complete manual setup with both the `_ota` file and the `.zshrc` loader.
-- changed the generated zsh completion file to preserve raw candidate order in the visible menu with explicit `nosort` handling and separate primary-vs-option completion groups, so commands and tasks now stay ahead of global `--flags` instead of being re-sorted ahead of them by the shell helper.
-- removed the extra `rendered=...` temp-variable assignment from the generated zsh completion function so traced shells stay quieter when completion is being debugged.
-- upgraded the zsh completion menu presentation to use clearer `token: description` display labels plus explicit `Suggestions` and `Options` groups, so the completion list reads more like a polished command palette without adding icons or non-portable glyphs.
 - aligned `ota completion --setup` and successful `ota completion check` output with the shared rich CLI styling so completion setup summaries use the same colored key and status treatment as the rest of the interactive surface.
 - added `ota execution plan` as a read-only execution inspector so users and automation can see the resolved backend, lifecycle, image, engine selection, target strategy, compact contract identity, and effective overrides without running `ota up` or `ota run`.
 - added `ota workspace execution plan` as the workspace-level execution inspector so users and automation can see per-repo resolved backend, lifecycle, image/provider/target selection, compact repo contract identity, and honest unrunnable execution failures without running `ota workspace up` or `ota workspace run`.
