@@ -1021,6 +1021,7 @@ provisioning signals without mutating anything.
       "tasks": [
         {
           "name": "setup",
+          "description": "Install repo dependencies.",
           "kind": "run",
           "run": "pnpm install",
           "depends_on": []

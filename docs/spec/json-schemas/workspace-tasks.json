@@ -51,6 +51,7 @@
               "properties": {
                 "name": { "type": "string" },
                 "kind": { "type": "string" },
+                "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },
                 "depends_on": {

@@ -129,18 +129,43 @@ fn task_notes(task_name: &str) -> Option<String> {
     Some(format!("Run `ota run {task_name}` to execute this task.\n"))
 }
 
-fn task_description(task_name: &str) -> Option<String> {
-    match task_name.trim().to_ascii_lowercase().as_str() {
+fn task_description(task_name: &str, source: &str) -> Option<String> {
+    let task_name = task_name.trim().to_ascii_lowercase();
+    let package_script_name = if source.contains("#scripts.") {
+        Some(task_name.as_str())
+    } else {
+        None
+    };
+
+    if matches!(
+        source,
+        "Makefile"
+            | "GNUmakefile"
+            | "makefile"
+            | "bash-script"
+            | "powershell-script"
+            | "scripts/release.sh"
+    ) {
+        return None;
+    }
+
+    match task_name.as_str() {
         "setup" => Some(String::from("Prepare the repo for local work.")),
         "dev" => Some(String::from("Start the local development loop.")),
         "start" => Some(String::from("Start the default application entrypoint.")),
-        "build" => Some(String::from("Build the project artifacts.")),
+        "build" if package_script_name.is_none() => {
+            Some(String::from("Build the project artifacts."))
+        }
         "test" => Some(String::from("Run the default automated test command.")),
         "lint" => Some(String::from("Run the default lint checks.")),
-        "check" => Some(String::from("Run the default verification checks.")),
+        "check" if package_script_name.is_none() => {
+            Some(String::from("Run the default verification checks."))
+        }
         "typecheck" | "type-check" => Some(String::from("Run the default type-checking command.")),
         "fmt" | "format" => Some(String::from("Format the codebase.")),
-        "release" => Some(String::from("Build the project for release.")),
+        "release" if package_script_name.is_none() => {
+            Some(String::from("Build the project for release."))
+        }
         _ => None,
     }
 }
@@ -205,7 +230,7 @@ impl DetectReport {
                 match field_name {
                     "run" => {
                         let notes = task_notes(task_name);
-                        let description = task_description(task_name);
+                        let description = task_description(task_name, &inference.source);
                         contract.tasks.insert(
                             task_name.to_string(),
                             DetectTask {
@@ -3706,7 +3731,7 @@ impl DetectBuilder {
         let field = format!("tasks.{name}.run");
         if self.should_replace(&field, &source, confidence) {
             let notes = task_notes(&name);
-            let description = task_description(&name);
+            let description = task_description(&name, &source);
             self.contract.tasks.insert(
                 name.clone(),
                 DetectTask {
@@ -5985,6 +6010,14 @@ channel = "1.85.0"
                 .map(|task| task.run.as_str()),
             Some("./scripts/release.sh")
         );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("release")
+                .and_then(|task| task.description.as_deref()),
+            None
+        );
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "tasks.release.run"
                 && inference.source == "scripts/release.sh"
@@ -6122,6 +6155,13 @@ name = "ota-api"
         assert_eq!(
             contract.tasks.get("build").map(|task| task.run.as_str()),
             Some("npm run build")
+        );
+        assert_eq!(
+            contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.description.as_deref()),
+            None
         );
         assert_eq!(
             contract.tasks.get("dev").map(|task| task.run.as_str()),
