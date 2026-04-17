@@ -28,6 +28,26 @@
             "java-gradle"
           ]
         },
+        "pack_options": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "package_manager": {
+              "enum": [
+                "npm",
+                "pnpm",
+                "yarn",
+                "bun"
+              ]
+            },
+            "test_runner": {
+              "enum": [
+                "pytest",
+                "unittest"
+              ]
+            }
+          }
+        },
         "pack_advisory": {
           "type": "object",
           "additionalProperties": false,
@@ -112,6 +132,36 @@
               },
               "next": {
                 "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "flag",
+                    "summary",
+                    "default",
+                    "values"
+                  ],
+                  "properties": {
+                    "flag": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "default": {
+                      "type": "string"
+                    },
+                    "values": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
               },
               "seeds": {
                 "type": "object",

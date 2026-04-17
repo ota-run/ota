@@ -229,6 +229,12 @@ enum Commands {
         /// Seed a conventional starter contract pack instead of detector-led init.
         #[arg(long, value_enum, conflicts_with_all = ["bootstrap", "packs"])]
         pack: Option<InitPack>,
+        /// Override the conventional package manager used by the Node starter pack.
+        #[arg(long, value_enum, requires = "pack", conflicts_with = "packs")]
+        package_manager: Option<InitNodePackageManager>,
+        /// Override the conventional test entrypoint used by the Python starter pack.
+        #[arg(long, value_enum, requires = "pack", conflicts_with = "packs")]
+        test_runner: Option<InitPythonTestRunner>,
         /// List the built-in starter packs and what they seed.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["write", "bootstrap", "pack", "dry_run", "path"]
         )]
@@ -569,6 +575,20 @@ enum InitPack {
     JavaMaven,
     #[value(name = "java-gradle")]
     JavaGradle,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum InitNodePackageManager {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum InitPythonTestRunner {
+    Pytest,
+    Unittest,
 }
 
 impl PolicyInitPreset {
@@ -3536,6 +3556,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             write: _write,
             bootstrap,
             pack,
+            package_manager,
+            test_runner,
             packs,
             dry_run,
             json,
@@ -3549,18 +3571,54 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     2,
                 );
             }
+            let pack = match pack {
+                Some(value) => {
+                    let pack = match value {
+                        InitPack::Node => commands::StarterPack::Node,
+                        InitPack::Python => commands::StarterPack::Python,
+                        InitPack::Go => commands::StarterPack::Go,
+                        InitPack::Rust => commands::StarterPack::Rust,
+                        InitPack::JavaMaven => commands::StarterPack::JavaMaven,
+                        InitPack::JavaGradle => commands::StarterPack::JavaGradle,
+                    };
+                    let options = commands::StarterPackOptions {
+                        node_package_manager: package_manager.map(|value| match value {
+                            InitNodePackageManager::Npm => commands::NodePackageManager::Npm,
+                            InitNodePackageManager::Pnpm => commands::NodePackageManager::Pnpm,
+                            InitNodePackageManager::Yarn => commands::NodePackageManager::Yarn,
+                            InitNodePackageManager::Bun => commands::NodePackageManager::Bun,
+                        }),
+                        python_test_runner: test_runner.map(|value| match value {
+                            InitPythonTestRunner::Pytest => commands::PythonTestRunner::Pytest,
+                            InitPythonTestRunner::Unittest => commands::PythonTestRunner::Unittest,
+                        }),
+                    };
+                    match commands::StarterPackConfig::new(pack, options) {
+                        Ok(config) => Some(config),
+                        Err(error) => return CommandOutput::failure_with_code(error, 2),
+                    }
+                }
+                None => {
+                    if package_manager.is_some() {
+                        return CommandOutput::failure_with_code(
+                            String::from("`--package-manager` requires `ota init --pack node`"),
+                            2,
+                        );
+                    }
+                    if test_runner.is_some() {
+                        return CommandOutput::failure_with_code(
+                            String::from("`--test-runner` requires `ota init --pack python`"),
+                            2,
+                        );
+                    }
+                    None
+                }
+            };
             commands::init(
                 path.as_deref(),
                 !dry_run,
                 bootstrap,
-                pack.map(|value| match value {
-                    InitPack::Node => commands::StarterPack::Node,
-                    InitPack::Python => commands::StarterPack::Python,
-                    InitPack::Go => commands::StarterPack::Go,
-                    InitPack::Rust => commands::StarterPack::Rust,
-                    InitPack::JavaMaven => commands::StarterPack::JavaMaven,
-                    InitPack::JavaGradle => commands::StarterPack::JavaGradle,
-                }),
+                pack,
                 packs,
                 format_from_json(json),
                 debug,
@@ -13165,6 +13223,9 @@ agent:
         assert!(stdout.contains("Runtimes:"));
         assert!(stdout.contains("Checks:"));
         assert!(stdout.contains("Tasks:"));
+        assert!(stdout.contains("Options:"));
+        assert!(stdout.contains("`--package-manager` = `npm`, `pnpm`, `yarn`, `bun`"));
+        assert!(stdout.contains("`--test-runner` = `pytest`, `unittest`"));
         assert!(stdout.contains("Next:"));
         assert!(!stdout.contains("Try:"));
         assert!(!stdout.contains("→"));
@@ -13247,6 +13308,23 @@ agent:
         assert_eq!(go["command"], "ota init --pack go");
         assert_eq!(go["next"], "ota init --pack go --dry-run .");
         assert_eq!(go["seeds"]["tasks"][1], "build");
+        assert!(go["options"].is_null());
+        let node = packs
+            .iter()
+            .find(|entry| entry["name"] == "node")
+            .expect("node pack");
+        assert_eq!(node["options"][0]["flag"], "--package-manager");
+        assert_eq!(node["options"][0]["default"], "pnpm");
+        assert_eq!(
+            node["options"][0]["values"],
+            json!(["npm", "pnpm", "yarn", "bun"])
+        );
+        let python = packs
+            .iter()
+            .find(|entry| entry["name"] == "python")
+            .expect("python pack");
+        assert_eq!(python["options"][0]["flag"], "--test-runner");
+        assert_eq!(python["options"][0]["default"], "pytest");
         let rust = packs
             .iter()
             .find(|entry| entry["name"] == "rust")
@@ -13281,6 +13359,7 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Mode: pack (dry-run)"));
         assert!(stdout.contains("Pack: node"));
+        assert!(stdout.contains("Options: `package-manager=pnpm`"));
         assert!(
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
@@ -13301,6 +13380,7 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Mode: pack"));
         assert!(stdout.contains("Pack: node"));
+        assert!(stdout.contains("Options: `package-manager=pnpm`"));
         assert!(
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
@@ -13331,6 +13411,44 @@ agent:
     }
 
     #[test]
+    fn init_pack_node_npm_uses_npm_commands_and_selected_pack_options() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--package-manager",
+            "npm",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "node");
+        assert_eq!(json["pack_options"]["package_manager"], "npm");
+        assert!(json["pack_options"]["test_runner"].is_null());
+        assert_eq!(json["config"]["tasks"]["setup"]["run"], "npm install");
+        assert_eq!(json["config"]["tasks"]["dev"]["run"], "npm run dev");
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "npm test");
+        assert!(json["config"]["tools"]["pnpm"].is_null());
+        assert_eq!(json["config"]["tools"]["npm"], "*");
+        let task_run = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.run")
+            .expect("tasks.setup.run provenance");
+        assert_eq!(
+            task_run["source"],
+            "ota.init#starter_pack.node.package_manager.npm"
+        );
+    }
+
+    #[test]
     fn init_json_pack_python_reports_mode_pack_and_provenance() {
         let fixture = ContractFixture::new_dir();
 
@@ -13350,6 +13468,7 @@ agent:
         assert_eq!(json["written"], false);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "python");
+        assert_eq!(json["pack_options"]["test_runner"], "pytest");
         assert_eq!(json["inferred"], json!([]));
         assert_eq!(json["config"]["runtimes"]["python"], "3.12");
         assert_eq!(json["config"]["checks"][0]["name"], "python-installed");
@@ -13373,19 +13492,105 @@ agent:
             .find(|entry| entry["field"] == "checks.0.run")
             .expect("check provenance");
         assert_eq!(check_run["provenance"], "template-derived");
-        assert_eq!(check_run["source"], "ota.init#starter_pack.python");
+        assert_eq!(
+            check_run["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
         let setup_description = provenance
             .iter()
             .find(|entry| entry["field"] == "tasks.setup.description")
             .expect("setup description provenance");
         assert_eq!(setup_description["provenance"], "template-derived");
-        assert_eq!(setup_description["source"], "ota.init#starter_pack.python");
+        assert_eq!(
+            setup_description["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
         let test_description = provenance
             .iter()
             .find(|entry| entry["field"] == "tasks.test.description")
             .expect("test description provenance");
         assert_eq!(test_description["provenance"], "template-derived");
-        assert_eq!(test_description["source"], "ota.init#starter_pack.python");
+        assert_eq!(
+            test_description["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+    }
+
+    #[test]
+    fn init_pack_python_unittest_uses_unittest_command_and_selected_pack_options() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--test-runner",
+            "unittest",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "python");
+        assert_eq!(json["pack_options"]["test_runner"], "unittest");
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "python -m unittest");
+        assert_eq!(
+            json["config"]["tasks"]["test"]["description"],
+            "Run the default Python unittest suite."
+        );
+        let task_run = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.test.run")
+            .expect("tasks.test.run provenance");
+        assert_eq!(
+            task_run["source"],
+            "ota.init#starter_pack.python.test_runner.unittest"
+        );
+    }
+
+    #[test]
+    fn init_refuses_package_manager_without_node_pack() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "python",
+            "--package-manager",
+            "npm",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("`--package-manager` is only supported with `ota init --pack node`")
+        );
+    }
+
+    #[test]
+    fn init_refuses_test_runner_without_python_pack() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--test-runner",
+            "pytest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--test-runner` is only supported with `ota init --pack python`"));
     }
 
     #[test]
@@ -13627,6 +13832,7 @@ requires-python = ">=3.12"
             .find(|entry| entry["field"] == "tasks.build.description")
             .expect("build description provenance");
         assert_eq!(build_description["source"], "ota.init#starter_pack.rust");
+        assert!(json["pack_options"].is_null());
     }
 
     #[test]

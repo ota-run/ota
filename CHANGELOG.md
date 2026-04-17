@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added explicit `ota init --pack` knobs for the first conventional starter variants: `--package-manager npm|pnpm|yarn|bun` on the Node pack and `--test-runner pytest|unittest` on the Python pack, including catalog metadata, JSON `pack_options`, and variant-specific provenance.
+
 ## 1.4.18
 
 - added platform-aware runtime and tool resolution so required versions, providers, and required flags can now vary by OS through `platforms` entries, with resolver/diagnostics using the effective per-OS values.

@@ -1257,9 +1257,35 @@ including derived starter defaults such as a minimal `agent` block when ota can 
 safely.
 
 When `mode` is `pack`, the payload also includes `pack` with the selected built-in starter pack
-name. Pack-generated tasks can carry short `description` fields, and `provenance` records those
-fields as `template-derived` with an `ota.init#starter_pack.<name>` source while keeping
-directory-derived values such as `project.name` traced to `ota.init#directory_name`.
+name. Pack-generated tasks can carry short `description` fields, optional `pack_options` records
+the selected starter-specific knobs such as Node package manager or Python test runner, and
+`provenance` records those fields as `template-derived` with the selected
+`ota.init#starter_pack...` variant source while keeping directory-derived values such as
+`project.name` traced to `ota.init#directory_name`.
+
+```json
+{
+  "pack": "node",
+  "pack_options": {
+    "package_manager": "npm"
+  },
+  "config": {
+    "tasks": {
+      "setup": {
+        "run": "npm install"
+      }
+    }
+  },
+  "provenance": [
+    {
+      "field": "tasks.setup.run",
+      "provenance": "template-derived",
+      "provenance_key": "template_derived",
+      "source": "ota.init#starter_pack.node.package_manager.npm"
+    }
+  ]
+}
+```
 
 When explicit pack mode disagrees with strong detected repo signals, ota adds `pack_advisory`
 without changing the selected pack or merging detector output into the starter:
@@ -1307,9 +1333,17 @@ contract:
     {
       "name": "node",
       "summary": "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
-      "when": "Use this for repo-level Node apps or services that follow pnpm conventions and need an explicit starter instead of detector-led init.",
+      "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
       "command": "ota init --pack node",
       "next": "ota init --pack node --dry-run .",
+      "options": [
+        {
+          "flag": "--package-manager",
+          "summary": "Choose the package manager used for setup and script execution.",
+          "default": "pnpm",
+          "values": ["npm", "pnpm", "yarn", "bun"]
+        }
+      ],
       "seeds": {
         "runtimes": ["node"],
         "tools": ["pnpm"],

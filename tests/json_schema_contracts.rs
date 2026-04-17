@@ -23,7 +23,7 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 fn load_schema(path: &str) -> Value {
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
@@ -373,8 +373,10 @@ fn init_schema_includes_optional_next_on_failures() {
         .expect("required array");
     let success = &schema["oneOf"][0]["properties"];
     let advisory = &success["pack_advisory"]["properties"];
+    let pack_options = &success["pack_options"]["properties"];
     let catalog = &schema["oneOf"][1]["properties"];
     let catalog_pack = &catalog["packs"]["items"]["properties"];
+    let catalog_option = &catalog_pack["options"]["items"]["properties"];
     let failure = &schema["oneOf"][2]["properties"];
     let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
@@ -387,6 +389,15 @@ fn init_schema_includes_optional_next_on_failures() {
             .is_some_and(|values| values.iter().any(|value| value == "pack"))
     );
     assert!(success.get("pack").is_some());
+    assert!(success.get("pack_options").is_some());
+    assert_eq!(
+        pack_options["package_manager"]["enum"],
+        json!(["npm", "pnpm", "yarn", "bun"])
+    );
+    assert_eq!(
+        pack_options["test_runner"]["enum"],
+        json!(["pytest", "unittest"])
+    );
     assert!(success.get("pack_advisory").is_some());
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
@@ -398,6 +409,11 @@ fn init_schema_includes_optional_next_on_failures() {
     assert!(catalog.get("packs").is_some());
     assert!(catalog_pack.get("command").is_some());
     assert!(catalog_pack.get("next").is_some());
+    assert!(catalog_pack.get("options").is_some());
+    assert!(catalog_option.get("flag").is_some());
+    assert!(catalog_option.get("summary").is_some());
+    assert!(catalog_option.get("default").is_some());
+    assert!(catalog_option.get("values").is_some());
     assert!(provenance.get("field").is_some());
     assert!(provenance.get("provenance").is_some());
     assert!(provenance.get("provenance_key").is_some());
