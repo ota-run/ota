@@ -24447,6 +24447,107 @@ tasks:
     }
 
     #[test]
+    fn workspace_up_container_repo_missing_engine_does_not_fall_back_to_host_provisioning() {
+        let _guard = env_mutex_lock();
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  curl: "8.13.0"
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.dir.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.dir.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: apt
+      package: curl
+      approved_versions:
+        - "8.13.0"
+"#,
+        )
+        .unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let apt_log = fixture.dir.path().join("apt-get.log");
+        let apt_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho apt-get invoked>>\"{}\"\r\nexit /b 1\r\n",
+                apt_log.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' 'apt-get invoked' >> '{}'\nexit 1\n",
+                apt_log.display()
+            )
+        };
+        write_fake_command(&bin_dir, "apt-get", &apt_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "workspace", "up", "--json", fixture.path()]);
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout=\n{}\nstderr=\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        );
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["repos"][0]["name"], "web");
+        assert_eq!(json["repos"][0]["status"], "NOT READY");
+        assert_eq!(json["repos"][0]["phase"], "preconditions");
+        assert!(
+            json["repos"][0]["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| {
+                    finding["summary"] == "Missing container execution backend CLI: docker, podman"
+                })
+        );
+        assert!(
+            !apt_log.exists(),
+            "workspace up should not attempt host provisioning when container execution is explicit"
+        );
+    }
+
+    #[test]
     fn workspace_up_ignores_optional_repo_failure_in_aggregate_status() {
         let fixture = WorkspaceFixture::new();
         fs::write(
