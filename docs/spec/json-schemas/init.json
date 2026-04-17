@@ -24,6 +24,8 @@
             "python",
             "go",
             "rust",
+            "dotnet",
+            "php-composer",
             "java-maven",
             "java-gradle"
           ]
@@ -54,6 +56,8 @@
           "required": [
             "selected_pack",
             "suggested_pack",
+            "selected_pack_score",
+            "suggested_pack_score",
             "summary",
             "next"
           ],
@@ -64,6 +68,14 @@
             "suggested_pack": {
               "type": "string"
             },
+            "selected_pack_score": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "suggested_pack_score": {
+              "type": "integer",
+              "minimum": 0
+            },
             "summary": {
               "type": "string"
             },
@@ -71,6 +83,26 @@
               "type": "array",
               "items": {
                 "type": "string"
+              }
+            },
+            "signal_details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "signal",
+                  "weight"
+                ],
+                "properties": {
+                  "signal": {
+                    "type": "string"
+                  },
+                  "weight": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
               }
             },
             "next": {
@@ -132,6 +164,12 @@
               },
               "next": {
                 "type": "string"
+              },
+              "does_not_infer": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               },
               "options": {
                 "type": "array",

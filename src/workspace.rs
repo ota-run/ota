@@ -37,7 +37,10 @@ use crate::output::DoctorVerdict;
 use crate::parser::{
     LoadContractError, content_fingerprint, load_contract, normalized_path_identity,
 };
-use crate::runner::policy_env_values;
+use crate::runner::{
+    blocking_declared_env_source_label, env_resolution_source_label, load_declared_env_sources,
+    policy_env_values, resolve_declared_env_source_value,
+};
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
 
@@ -164,17 +167,19 @@ pub struct WorkspaceExecutionSummary {
 
 impl WorkspaceExecutionSummary {
     #[allow(dead_code)]
-    pub(crate) fn from_contract(contract: &Contract) -> Option<Self> {
-        Self::from_contract_with_policy(contract, None)
+    pub(crate) fn from_contract(contract: &Contract, contract_path: &Path) -> Option<Self> {
+        Self::from_contract_with_policy(contract, contract_path, None)
     }
 
     pub(crate) fn from_contract_with_policy(
         contract: &Contract,
+        contract_path: &Path,
         policy_env: Option<&BTreeMap<String, String>>,
     ) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
         let repo_policy_env = policy_env_values(contract);
         let workspace_policy_env = policy_env.cloned().unwrap_or_default();
+        let declared_sources = load_declared_env_sources(contract, contract_path);
 
         Some(Self {
             preferred: execution.preferred.map(format_backend).map(str::to_string),
@@ -211,13 +216,26 @@ impl WorkspaceExecutionSummary {
                         .get(name)
                         .cloned()
                         .or_else(|| repo_policy_env.get(name).cloned());
-                    let source = if workspace_policy_env.contains_key(name) {
-                        Some(String::from("workspace policy"))
-                    } else if repo_policy_env.contains_key(name) {
-                        Some(String::from("repo policy"))
-                    } else {
-                        None
-                    };
+                    let source = blocking_declared_env_source_label(&declared_sources)
+                        .or_else(|| {
+                            if workspace_policy_env.contains_key(name) {
+                                Some(String::from("workspace policy"))
+                            } else if repo_policy_env.contains_key(name) {
+                                Some(String::from("repo policy"))
+                            } else if std::env::var(name).is_ok() {
+                                Some(String::from("process"))
+                            } else {
+                                resolve_declared_env_source_value(name, &declared_sources)
+                                    .map(|(_, source)| env_resolution_source_label(&source))
+                                    .or_else(|| {
+                                        requirement
+                                            .default
+                                            .as_ref()
+                                            .map(|_| String::from("default"))
+                                    })
+                            }
+                        })
+                        .or_else(|| Some(String::from("missing")));
 
                     WorkspaceExecutionEnvSummary {
                         name: name.clone(),
@@ -705,6 +723,7 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
             Ok(()) => {
                 execution = WorkspaceExecutionSummary::from_contract_with_policy(
                     &contract,
+                    &repo.contract_path,
                     Some(&repo.policy_env),
                 );
                 extensions = contract.extensions.clone();
@@ -1016,8 +1035,10 @@ mod tests {
 
     use tempfile::TempDir;
 
+    use crate::parser::parse_contract_str;
+
     use super::{
-        diagnose_workspace_contract_with_jobs, load_workspace_contract,
+        WorkspaceExecutionSummary, diagnose_workspace_contract_with_jobs, load_workspace_contract,
         parse_workspace_contract_str, validate_workspace_contract,
     };
 
@@ -1479,5 +1500,46 @@ repos:
 
         assert!(report.ok);
         assert!(started.elapsed() < Duration::from_millis(1800));
+    }
+
+    #[test]
+    fn workspace_execution_summary_reports_blocking_declared_env_source_issue() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        std::fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  preferred: native
+env:
+  vars:
+    DEMO:
+      default: fallback
+  sources:
+    - kind: dotenv
+      path: .env
+tasks:
+  test:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+        std::fs::write(fixture.path().join(".env"), "DEMO=\"unterminated\n").unwrap();
+
+        let contract = parse_contract_str(
+            &contract_path,
+            &std::fs::read_to_string(&contract_path).unwrap(),
+        )
+        .unwrap();
+        let summary =
+            WorkspaceExecutionSummary::from_contract(&contract, &contract_path).expect("summary");
+
+        assert_eq!(
+            summary.env[0].source.as_deref(),
+            Some("invalid dotenv:.env")
+        );
     }
 }

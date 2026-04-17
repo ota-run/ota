@@ -151,18 +151,28 @@ Success:
   "path": "/abs/path/to/ota.yaml",
   "summary": {
     "contract_count": 2,
+    "source_count": 1,
+    "source_issue_count": 0,
     "task_count": 1,
     "resolved_count": 2,
     "missing_count": 0,
     "invalid_count": 0
   },
+  "sources": [
+    {
+      "kind": "dotenv",
+      "path": ".env",
+      "must_exist": true,
+      "status": "loaded"
+    }
+  ],
   "env": [
     {
       "name": "DATABASE_URL",
       "kind": "contract",
       "required": true,
       "value": "postgres://localhost/app",
-      "source": "process",
+      "source": "dotenv:.env",
       "status": "resolved"
     },
     {
@@ -186,11 +196,14 @@ When `--task` is set, the payload includes the task name:
   "task": "test",
   "summary": {
     "contract_count": 2,
+    "source_count": 1,
+    "source_issue_count": 0,
     "task_count": 1,
     "resolved_count": 2,
     "missing_count": 0,
     "invalid_count": 0
   },
+  "sources": [],
   "env": []
 }
 ```
@@ -1296,12 +1309,24 @@ without changing the selected pack or merging detector output into the starter:
   "pack_advisory": {
     "selected_pack": "python",
     "suggested_pack": "node",
+    "selected_pack_score": 0,
+    "suggested_pack_score": 3,
     "summary": "selected pack `python` does not match the strongest detected repo signals; `node` looks closer",
     "signals": ["package.json"],
+    "signal_details": [
+      {
+        "signal": "package.json",
+        "weight": 3
+      }
+    ],
     "next": "ota init --pack node --dry-run ."
   }
 }
 ```
+
+`selected_pack_score` and `suggested_pack_score` show the distinct-signal strength ota saw for
+each pack, and `signal_details` preserves the weighted signal markers behind the flat `signals`
+list so automation can explain the mismatch without scraping the summary text.
 
 `provenance` is the per-field source map for the starter contract:
 
@@ -1336,6 +1361,10 @@ contract:
       "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
       "command": "ota init --pack node",
       "next": "ota init --pack node --dry-run .",
+      "does_not_infer": [
+        "the repo's package manager unless `--package-manager` says so",
+        "repo-specific script names or extra task variants beyond the seeded `setup`, `dev`, and `test` loop"
+      ],
       "options": [
         {
           "flag": "--package-manager",
@@ -1357,6 +1386,9 @@ contract:
       "when": "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
       "command": "ota init --pack go",
       "next": "ota init --pack go --dry-run .",
+      "does_not_infer": [
+        "workspace layout, code generation, or custom build flags beyond the standard module download/build/test loop"
+      ],
       "seeds": {
         "runtimes": ["go"],
         "tools": [],
@@ -1365,11 +1397,46 @@ contract:
       }
     },
     {
+      "name": "dotnet",
+      "summary": "Conventional .NET starter with restore, build, and test tasks.",
+      "when": "Use this for .NET repos that should start from the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+      "command": "ota init --pack dotnet",
+      "next": "ota init --pack dotnet --dry-run .",
+      "does_not_infer": [
+        "solution-specific target selection, test filtering, or custom dotnet CLI flags beyond the standard restore/build/test loop"
+      ],
+      "seeds": {
+        "runtimes": ["dotnet"],
+        "tools": ["dotnet"],
+        "checks": ["dotnet-installed"],
+        "tasks": ["setup", "build", "test"]
+      }
+    },
+    {
+      "name": "php-composer",
+      "summary": "Conventional PHP starter for Composer-managed repos with Composer install and optional existing test-script reuse.",
+      "when": "Use this for Composer-managed PHP repos that should start from `composer install` and, when the repo already declares `scripts.test`, the existing Composer test script without relying on detector-led init.",
+      "command": "ota init --pack php-composer",
+      "next": "ota init --pack php-composer --dry-run .",
+      "does_not_infer": [
+        "framework-specific entrypoints, web server commands, or whether the repo uses phpunit, pest, artisan, or another test wrapper unless the repo already declares a Composer `scripts.test` entry"
+      ],
+      "seeds": {
+        "runtimes": ["php"],
+        "tools": ["composer"],
+        "checks": ["php-installed", "composer-installed"],
+        "tasks": ["setup"]
+      }
+    },
+    {
       "name": "java-maven",
       "summary": "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
       "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
       "command": "ota init --pack java-maven",
       "next": "ota init --pack java-maven --dry-run .",
+      "does_not_infer": [
+        "multi-module reactor details, plugin goals, or org-specific wrapper/bootstrap scripts beyond the standard Maven build/test loop"
+      ],
       "seeds": {
         "runtimes": ["java"],
         "tools": [],
@@ -1380,6 +1447,9 @@ contract:
   ]
 }
 ```
+
+Each catalog entry now carries `does_not_infer` so automation can explain the deliberate boundary of
+each starter pack instead of assuming the pack will absorb repo-specific workflow details.
 
 Each catalog entry keeps the operator guidance machine-readable:
 

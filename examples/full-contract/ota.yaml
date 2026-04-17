@@ -30,20 +30,26 @@ tools:
     only_on:
       - windows
 env:
-  OTA_ENV:
-    required: true
-    allowed:
-      - local
-      - ci
-  OTA_LOG_LEVEL:
-    default: info
-    allowed:
-      - debug
-      - info
-      - warn
-  PATH:
-    prepend:
-      - ./node_modules/.bin
+  vars:
+    OTA_ENV:
+      required: true
+      allowed:
+        - local
+        - ci
+    OTA_LOG_LEVEL:
+      default: info
+      allowed:
+        - debug
+        - info
+        - warn
+    PATH:
+      prepend:
+        - ./node_modules/.bin
+  sources:
+    - kind: dotenv
+      path: .env.local
+    - kind: dotenv
+      path: .env
 tasks:
   setup:
     description: Install project dependencies

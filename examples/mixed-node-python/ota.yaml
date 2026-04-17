@@ -13,11 +13,12 @@ runtimes:
 tools:
   pnpm: "10"
 env:
-  OTA_API_ENV:
-    required: true
-    allowed:
-      - local
-      - staging
+  vars:
+    OTA_API_ENV:
+      required: true
+      allowed:
+        - local
+        - staging
 tasks:
   setup:
     description: Install frontend and backend dependencies

@@ -178,6 +178,10 @@ ota init --pack go --dry-run
 # or:
 ota init --pack rust --dry-run
 # or:
+ota init --pack dotnet --dry-run
+# or:
+ota init --pack php-composer --dry-run
+# or:
 ota init --pack java-maven --dry-run
 # or:
 ota init --pack java-gradle --dry-run
@@ -187,6 +191,9 @@ The Java packs prefer `./mvnw` or `./gradlew` when the repo already ships those 
 wrapper is present, they seed the global Maven or Gradle prerequisite explicitly.
 The Node pack accepts `--package-manager npm|pnpm|yarn|bun`, and the Python pack accepts
 `--test-runner pytest|unittest`.
+The `php-composer` pack stays on the explicit Composer boundary and does not pretend to infer
+framework-specific entrypoints or whether the repo uses phpunit, pest, artisan, or another test
+wrapper unless the repo already declares `scripts.test` in `composer.json`.
 If you choose the wrong explicit pack, ota can surface an advisory note and JSON `pack_advisory`
 field, but it keeps the selected pack authoritative and does not auto-switch starters.
 
@@ -322,7 +329,7 @@ Current behavior:
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, and supports `ota doctor --mode container` for container-targeted readiness
-- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, both detector-led starters plus starter packs can seed short task `description` fields so users can see and refine that authoring pattern immediately, explicit `--pack` mode can emit an advisory note when strong repo signals disagree without auto-switching packs, and the Node/Python starter packs expose explicit knobs for package-manager and test-runner selection
+- `ota init` creates a starter contract for repos that do not yet have `ota.yaml`, both detector-led starters plus starter packs can seed short task `description` fields so users can see and refine that authoring pattern immediately, explicit `--pack` mode can emit an advisory note when strong repo signals disagree without auto-switching packs, the Node/Python starter packs expose explicit knobs for package-manager and test-runner selection, and the built-in pack catalog now spans `node`, `python`, `go`, `rust`, `dotnet`, `php-composer`, `java-maven`, and `java-gradle`
 - `ota agents` exports or syncs a repo-local `AGENTS.md` from the contract’s agent guidance, preserves existing user-authored content by appending an ota-managed block, skips the write when the generated content is already present, and shows a `Managed block:` label in text output so the ota-owned section is explicit, including the `ota run ...` command form for each listed task
 - `ota check` runs configured checks without runtime, tool, env, or task execution
 - `ota up` validates, runs blocking preconditions, runs `setup` early when preconditions fail and the repo declares it, starts required services in declared dependency order, uses required service healthchecks as readiness gates, runs `setup` if present, and re-checks readiness

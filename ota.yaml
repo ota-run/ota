@@ -42,10 +42,11 @@ execution:
         - docker
         - podman
 env:
-  PATH:
-    prepend:
-      - /usr/local/cargo/bin
-      - /usr/local/rustup/bin
+  vars:
+    PATH:
+      prepend:
+        - /usr/local/cargo/bin
+        - /usr/local/rustup/bin
 tools:
   cargo: "*"
 checks:

@@ -279,8 +279,9 @@ version: 1
 project:
   name: web
 env:
-  OTA_WORKSPACE_REQUIRED:
-    required: true
+  vars:
+    OTA_WORKSPACE_REQUIRED:
+      required: true
 "#,
     )
     .unwrap();
@@ -2199,12 +2200,13 @@ version: 1
 project:
   name: docker-legacy
 env:
-  OTA_ENV:
-    required: false
-    default: local
-    allowed:
-      - local
-      - ci
+  vars:
+    OTA_ENV:
+      required: false
+      default: local
+      allowed:
+        - local
+        - ci
 tasks:
   setup:
     run: 'true'
@@ -2228,11 +2230,12 @@ version: 1
 project:
   name: docker-legacy
 env:
-  OTA_ENV:
-    required: false
-    allowed:
-      - local
-      - ci
+  vars:
+    OTA_ENV:
+      required: false
+      allowed:
+        - local
+        - ci
 tasks:
   setup:
     run: 'true'

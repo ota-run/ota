@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AgentConfig, Contract, EnvRequirement, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
+    AgentConfig, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -527,8 +527,26 @@ fn validate_platform_keys<'a>(
     }
 }
 
-fn validate_env(env: &BTreeMap<String, EnvRequirement>, errors: &mut Vec<ValidationError>) {
-    for (name, requirement) in env {
+fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
+    let mut seen_sources = BTreeSet::new();
+
+    for (index, source) in env.sources.iter().enumerate() {
+        if source.path.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "env source #{index} must declare a non-empty `path`"
+            )));
+        }
+
+        let source_key = format!("{}:{}", source.kind, source.path.trim());
+        if !source.path.trim().is_empty() && !seen_sources.insert(source_key) {
+            errors.push(ValidationError::new(format!(
+                "env source #{index} duplicates `{}` source `{}`",
+                source.kind, source.path
+            )));
+        }
+    }
+
+    for (name, requirement) in env.iter() {
         if name.trim().is_empty() {
             errors.push(ValidationError::new("env keys must not be empty"));
         }
@@ -1042,9 +1060,10 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_PATH:
-    prepend:
-      - /opt/ota/bin
+  vars:
+    OTA_TEST_PATH:
+      prepend:
+        - /opt/ota/bin
 tasks:
   test:
     run: cargo test

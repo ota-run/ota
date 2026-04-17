@@ -571,6 +571,9 @@ enum InitPack {
     Python,
     Go,
     Rust,
+    Dotnet,
+    #[value(name = "php-composer")]
+    PhpComposer,
     #[value(name = "java-maven")]
     JavaMaven,
     #[value(name = "java-gradle")]
@@ -2734,20 +2737,20 @@ _ota() {
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    option_display+=("$value: ${completion#*:}")
+                    option_display+=("$value -- ${completion#*:}")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    primary_display+=("$value: ${completion#*:}")
+                    primary_display+=("$value -- ${completion#*:}")
                 else
                     primary_display+=("$value")
                 fi
             fi
         done
-        [[ -n $primary_values ]] && compadd -Q -X 'Suggestions' -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
         [[ -n $option_values ]] && compadd -Q -X 'Options' -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }
@@ -3574,6 +3577,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                         InitPack::Python => commands::StarterPack::Python,
                         InitPack::Go => commands::StarterPack::Go,
                         InitPack::Rust => commands::StarterPack::Rust,
+                        InitPack::Dotnet => commands::StarterPack::Dotnet,
+                        InitPack::PhpComposer => commands::StarterPack::PhpComposer,
                         InitPack::JavaMaven => commands::StarterPack::JavaMaven,
                         InitPack::JavaGradle => commands::StarterPack::JavaGradle,
                     };
@@ -6087,8 +6092,9 @@ workspace:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 tasks:
   test:
     run: printf ready
@@ -6131,8 +6137,9 @@ tasks:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 tasks:
   test:
     run: printf ready
@@ -6197,8 +6204,9 @@ tasks:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 tasks:
   test:
     run: printf ready
@@ -6244,8 +6252,9 @@ workspace:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 "#,
         );
 
@@ -6734,8 +6743,9 @@ version: 1
 project:
   name: receipt-diff
 env:
-  OTA_BASELINE_REQUIRED:
-    required: true
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
 "#,
         );
 
@@ -6832,8 +6842,9 @@ version: 1
 project:
   name: receipt-diff
 env:
-  OTA_BASELINE_REQUIRED:
-    required: true
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
 "#,
         );
 
@@ -7058,8 +7069,9 @@ tasks:
   setup:
     run: echo ready
 env:
-  OTA_PROMOTED_BASELINE_REQUIRED:
-    required: true
+  vars:
+    OTA_PROMOTED_BASELINE_REQUIRED:
+      required: true
 "#,
         );
 
@@ -7478,8 +7490,9 @@ version: 1
 project:
   name: receipt-diff
 env:
-  OTA_BASELINE_REQUIRED:
-    required: true
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
 "#,
         );
 
@@ -7620,9 +7633,10 @@ execution:
   preferred: native
   lifecycle: ephemeral
 env:
-  PATH:
-    prepend:
-      - /usr/local/cargo/bin
+  vars:
+    PATH:
+      prepend:
+        - /usr/local/cargo/bin
 tasks:
   setup:
     run: echo ready
@@ -8102,8 +8116,9 @@ workspace:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 "#,
         );
 
@@ -8243,8 +8258,9 @@ workspace:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 "#,
         );
 
@@ -8895,8 +8911,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -8981,8 +8998,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -9067,8 +9085,9 @@ execution:
       target: pod/ota-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -9148,8 +9167,9 @@ execution:
     container:
       image: ghcr.io/ota/test:latest
 env:
-  OTA_CONTAINER_ONLY_REQUIRED:
-    required: true
+  vars:
+    OTA_CONTAINER_ONLY_REQUIRED:
+      required: true
 tasks:
   setup:
     run: printf ready > prepared.txt
@@ -9242,8 +9262,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -9325,8 +9346,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -9410,8 +9432,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -9495,8 +9518,9 @@ execution:
       target: pod/ota-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -11237,9 +11261,10 @@ version: 1
 project:
   name: ota-web
 env:
-  DATABASE_URL:
-    required: true
-    default: postgres://contract
+  vars:
+    DATABASE_URL:
+      required: true
+      default: postgres://contract
 tasks:
   test:
     env:
@@ -11353,8 +11378,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_DOCTOR_JSON_MISSING:
-    required: true
+  vars:
+    OTA_DOCTOR_JSON_MISSING:
+      required: true
 tasks:
   test:
     run: cargo test
@@ -12204,9 +12230,10 @@ project:
 execution:
   preferred: native
 env:
-  OTA_TEST_BASE_URL:
-    required: true
-    default: http://localhost:8080
+  vars:
+    OTA_TEST_BASE_URL:
+      required: true
+      default: http://localhost:8080
 policies:
   env:
     OTA_TEST_BASE_URL: http://policy.example.com
@@ -12234,7 +12261,9 @@ tasks:
         assert!(stdout.contains(
             "Env: `OTA_TEST_BASE_URL` (policy, required, default=http://localhost:8080)"
         ));
-        assert!(stdout.contains("policy > process > contract default > required missing"));
+        assert!(stdout.contains(
+            "policy > process > declared env sources > contract default > required missing"
+        ));
         assert!(stdout.contains("OTA_TEST_BASE_URL"));
         assert!(stdout.contains("required, default=http://localhost:8080"));
     }
@@ -12249,9 +12278,10 @@ project:
 execution:
   preferred: native
 env:
-  OTA_TEST_BASE_URL:
-    required: true
-    default: http://localhost:8080
+  vars:
+    OTA_TEST_BASE_URL:
+      required: true
+      default: http://localhost:8080
 policies:
   env:
     OTA_TEST_BASE_URL: http://policy.example.com
@@ -12273,6 +12303,36 @@ tasks:
     }
 
     #[test]
+    fn doctor_json_reports_blocking_declared_env_source_in_execution_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+env:
+  vars:
+    OTA_TEST_BASE_URL:
+      default: http://localhost:8080
+  sources:
+    - kind: dotenv
+      path: .env
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+        fixture.write(".env", "OTA_TEST_BASE_URL=\"unterminated\n");
+
+        let output = run_with(["ota", "doctor", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+
+        assert_eq!(output.exit_code, 1);
+        assert_eq!(json["execution"]["env"][0]["source"], "invalid dotenv:.env");
+    }
+
+    #[test]
     fn env_text_reports_contract_and_task_sources() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -12281,11 +12341,12 @@ version: 1
 project:
   name: ota
 env:
-  DATABASE_URL:
-    required: true
-    default: postgres://contract
-  OTA_TEST_ENV_HOME:
-    default: /opt/jdk-21
+  vars:
+    DATABASE_URL:
+      required: true
+      default: postgres://contract
+    OTA_TEST_ENV_HOME:
+      default: /opt/jdk-21
 tasks:
   test:
     env:
@@ -12312,6 +12373,49 @@ tasks:
     }
 
     #[test]
+    fn env_json_reports_declared_dotenv_sources() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        fixture.write(".env", "DATABASE_URL=postgres://dotenv\n");
+        let original = std::env::var_os("DATABASE_URL");
+        unsafe {
+            std::env::remove_var("DATABASE_URL");
+        }
+
+        let output = run_with(["ota", "env", "--json", fixture.path()]);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+
+        match original {
+            Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
+            None => unsafe { std::env::remove_var("DATABASE_URL") },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["summary"]["source_count"], 1);
+        assert_eq!(json["sources"][0]["kind"], "dotenv");
+        assert_eq!(json["sources"][0]["status"], "loaded");
+        assert_eq!(json["env"][0]["source"], "dotenv:.env");
+    }
+
+    #[test]
     fn env_json_reports_missing_required_env() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -12320,8 +12424,9 @@ version: 1
 project:
   name: ota
 env:
-  DATABASE_URL:
-    required: true
+  vars:
+    DATABASE_URL:
+      required: true
 tasks:
   test:
     run: cargo test
@@ -13211,6 +13316,8 @@ agent:
         assert!(stdout.contains("INIT PACKS starter packs"));
         assert!(stdout.contains("go `ota init --pack go`"));
         assert!(stdout.contains("rust `ota init --pack rust`"));
+        assert!(stdout.contains("dotnet `ota init --pack dotnet`"));
+        assert!(stdout.contains("php-composer `ota init --pack php-composer`"));
         assert!(stdout.contains("python `ota init --pack python`"));
         assert!(stdout.contains("java-maven `ota init --pack java-maven`"));
         assert!(stdout.contains("Description:"));
@@ -13219,6 +13326,7 @@ agent:
         assert!(stdout.contains("Checks:"));
         assert!(stdout.contains("Tasks:"));
         assert!(stdout.contains("Options:"));
+        assert!(stdout.contains("Does not infer:"));
         assert!(stdout.contains("`--package-manager` = `npm`, `pnpm`, `yarn`, `bun`"));
         assert!(stdout.contains("`--test-runner` = `pytest`, `unittest`"));
         assert!(stdout.contains("Next:"));
@@ -13325,6 +13433,45 @@ agent:
             .find(|entry| entry["name"] == "rust")
             .expect("rust pack");
         assert_eq!(rust["seeds"]["tools"][0], "cargo");
+        assert_eq!(
+            rust["does_not_infer"][0],
+            "workspace members, feature flags, or custom cargo aliases beyond the standard fetch/build/test loop"
+        );
+        let dotnet = packs
+            .iter()
+            .find(|entry| entry["name"] == "dotnet")
+            .expect("dotnet pack");
+        assert_eq!(dotnet["command"], "ota init --pack dotnet");
+        assert_eq!(dotnet["next"], "ota init --pack dotnet --dry-run .");
+        assert_eq!(dotnet["seeds"]["runtimes"][0], "dotnet");
+        assert_eq!(dotnet["seeds"]["tools"][0], "dotnet");
+        assert_eq!(dotnet["seeds"]["checks"][0], "dotnet-installed");
+        assert_eq!(dotnet["seeds"]["tasks"][2], "test");
+        assert!(
+            dotnet["does_not_infer"][0]
+                .as_str()
+                .expect("dotnet does_not_infer")
+                .contains("solution-specific target selection")
+        );
+        let php_composer = packs
+            .iter()
+            .find(|entry| entry["name"] == "php-composer")
+            .expect("php-composer pack");
+        assert_eq!(php_composer["command"], "ota init --pack php-composer");
+        assert_eq!(
+            php_composer["next"],
+            "ota init --pack php-composer --dry-run ."
+        );
+        assert_eq!(php_composer["seeds"]["runtimes"][0], "php");
+        assert_eq!(php_composer["seeds"]["tools"][0], "composer");
+        assert_eq!(php_composer["seeds"]["checks"][1], "composer-installed");
+        assert_eq!(php_composer["seeds"]["tasks"][0], "setup");
+        assert!(
+            php_composer["does_not_infer"][0]
+                .as_str()
+                .expect("php-composer does_not_infer")
+                .contains("scripts.test")
+        );
         let java_maven = packs
             .iter()
             .find(|entry| entry["name"] == "java-maven")
@@ -13332,6 +13479,12 @@ agent:
         assert_eq!(java_maven["command"], "ota init --pack java-maven");
         assert_eq!(java_maven["seeds"]["tools"], json!([]));
         assert_eq!(java_maven["seeds"]["checks"][0], "java-installed");
+        assert!(
+            java_maven["does_not_infer"][0]
+                .as_str()
+                .expect("java-maven does_not_infer")
+                .contains("multi-module reactor details")
+        );
         let java_gradle = packs
             .iter()
             .find(|entry| entry["name"] == "java-gradle")
@@ -13342,6 +13495,12 @@ agent:
         );
         assert_eq!(java_gradle["seeds"]["tools"], json!([]));
         assert_eq!(java_gradle["seeds"]["tasks"][0], "setup");
+        assert!(
+            java_gradle["does_not_infer"][0]
+                .as_str()
+                .expect("java-gradle does_not_infer")
+                .contains("multi-project build logic")
+        );
     }
 
     #[test]
@@ -13626,8 +13785,24 @@ agent:
             serde_json::json!("node")
         );
         assert_eq!(
+            json["pack_advisory"]["selected_pack_score"],
+            serde_json::json!(0)
+        );
+        assert_eq!(
+            json["pack_advisory"]["suggested_pack_score"],
+            serde_json::json!(3)
+        );
+        assert_eq!(
             json["pack_advisory"]["signals"][0],
             serde_json::json!("package.json")
+        );
+        assert_eq!(
+            json["pack_advisory"]["signal_details"][0]["signal"],
+            serde_json::json!("package.json")
+        );
+        assert_eq!(
+            json["pack_advisory"]["signal_details"][0]["weight"],
+            serde_json::json!(3)
         );
         assert!(
             json["pack_advisory"]["next"]
@@ -13659,8 +13834,10 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Advisory: selected pack `python` does not match"));
-        assert!(stdout.contains("Signals: package.json"));
+        assert!(stdout.contains("Advisory: selected pack `python` stays explicit"));
+        assert!(stdout.contains("Why: selected pack `python` does not match"));
+        assert!(stdout.contains("Signals: package.json (3)"));
+        assert!(stdout.contains("Strength: `node`=3 vs `python`=0"));
         assert!(stdout.contains("ota init --pack node --dry-run"));
     }
 
@@ -13726,6 +13903,8 @@ requires-python = ">=3.12"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "rust");
         assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
+        assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(6));
+        assert_eq!(json["pack_advisory"]["selected_pack_score"], json!(0));
     }
 
     #[test]
@@ -13867,6 +14046,190 @@ requires-python = ">=3.12"
             .expect("build description provenance");
         assert_eq!(build_description["source"], "ota.init#starter_pack.rust");
         assert!(json["pack_options"].is_null());
+    }
+
+    #[test]
+    fn init_json_pack_dotnet_reports_mode_pack_and_tasks() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "dotnet",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "pack");
+        assert_eq!(json["pack"], "dotnet");
+        assert_eq!(json["config"]["runtimes"]["dotnet"], "9.0");
+        assert_eq!(json["config"]["tools"]["dotnet"], "*");
+        assert_eq!(json["config"]["checks"][0]["name"], "dotnet-installed");
+        assert_eq!(json["config"]["tasks"]["setup"]["run"], "dotnet restore");
+        assert_eq!(
+            json["config"]["tasks"]["build"]["description"],
+            "Build the default .NET solution or project."
+        );
+        let build_description = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.build.description")
+            .expect("build description provenance");
+        assert_eq!(build_description["source"], "ota.init#starter_pack.dotnet");
+        assert!(json["pack_options"].is_null());
+    }
+
+    #[test]
+    fn init_json_pack_php_composer_reports_mode_pack_and_tasks() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "php-composer",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["mode"], "pack");
+        assert_eq!(json["pack"], "php-composer");
+        assert_eq!(json["config"]["runtimes"]["php"], "8.3");
+        assert_eq!(json["config"]["tools"]["composer"], "*");
+        assert_eq!(json["config"]["checks"][0]["name"], "php-installed");
+        assert_eq!(json["config"]["checks"][1]["name"], "composer-installed");
+        assert_eq!(json["config"]["tasks"]["setup"]["run"], "composer install");
+        assert!(json["config"]["tasks"]["test"].is_null());
+        let setup_description = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.description")
+            .expect("setup description provenance");
+        assert_eq!(
+            setup_description["source"],
+            "ota.init#starter_pack.php-composer"
+        );
+        assert!(json["pack_options"].is_null());
+    }
+
+    #[test]
+    fn init_pack_php_composer_reuses_existing_test_script_when_present() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "composer.json",
+            r#"{
+  "scripts": {
+    "test": "phpunit"
+  }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "php-composer",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "composer run test");
+        assert_eq!(
+            json["config"]["tasks"]["test"]["description"],
+            "Run the existing Composer test script."
+        );
+    }
+
+    #[test]
+    fn init_pack_advisory_suggests_dotnet_from_dotnet_signals() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "global.json",
+            r#"{
+  "sdk": {
+    "version": "9.0.100"
+  }
+}"#,
+        );
+        fixture.write(
+            "App.csproj",
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "go",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "go");
+        assert_eq!(json["pack_advisory"]["suggested_pack"], "dotnet");
+        assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(8));
+        assert_eq!(
+            json["pack_advisory"]["signals"],
+            json!(["global.json", "project file"])
+        );
+    }
+
+    #[test]
+    fn init_pack_advisory_suggests_php_composer_from_composer_signals() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "composer.json",
+            r#"{
+  "name": "ota/php-app",
+  "require": {
+    "php": "^8.3"
+  },
+  "scripts": {
+    "test": "phpunit"
+  }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "go",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "go");
+        assert_eq!(json["pack_advisory"]["suggested_pack"], "php-composer");
+        assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(8));
+        assert_eq!(
+            json["pack_advisory"]["signals"],
+            json!(["composer php requirement", "composer.json"])
+        );
     }
 
     #[test]
@@ -14784,8 +15147,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_CHECK_REQUIRED:
-    required: true
+  vars:
+    OTA_CHECK_REQUIRED:
+      required: true
 checks:
   - name: health-check
     kind: health
@@ -15093,8 +15457,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_DOCTOR_ORDER_REQUIRED:
-    required: true
+  vars:
+    OTA_DOCTOR_ORDER_REQUIRED:
+      required: true
 tools:
   cargo:
     version: "999.0.0"
@@ -17403,10 +17768,11 @@ edition = "2024"
         );
         assert!(output.stdout.contains("#compdef ota"));
         assert!(
-            output.stdout.contains(
-                "compadd -Q -X 'Suggestions' -V ota_primary -d primary_display -o nosort"
-            )
+            output
+                .stdout
+                .contains("compadd -Q -V ota_primary -d primary_display -o nosort")
         );
+        assert!(!output.stdout.contains("compadd -Q -X 'Suggestions'"));
         assert!(
             output
                 .stdout
@@ -17415,12 +17781,12 @@ edition = "2024"
         assert!(
             output
                 .stdout
-                .contains("primary_display+=(\"$value: ${completion#*:}\")")
+                .contains("primary_display+=(\"$value -- ${completion#*:}\")")
         );
         assert!(
             output
                 .stdout
-                .contains("option_display+=(\"$value: ${completion#*:}\")")
+                .contains("option_display+=(\"$value -- ${completion#*:}\")")
         );
         assert!(!output.stdout.contains("local rendered"));
         assert!(!output.stdout.contains("local desc"));
@@ -19856,8 +20222,9 @@ execution:
       provider: ssh
       target: badtarget
 env:
-  OTA_CONTAINER_MODE_REQUIRED:
-    required: true
+  vars:
+    OTA_CONTAINER_MODE_REQUIRED:
+      required: true
 checks:
   - name: failing-check
     kind: health
@@ -20597,6 +20964,84 @@ policies:
         assert!(text.contains("Mode:"));
         assert!(text.contains("container"));
         assert!(!text.contains("PROVISION FAILED"));
+        assert!(!text.contains("pwsh"));
+        assert!(!text.contains("choco"));
+        assert!(
+            !apt_log.exists(),
+            "host provisioning should not be attempted"
+        );
+    }
+
+    #[test]
+    fn up_container_mode_override_does_not_fall_back_to_host_provisioning() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: override-container
+execution:
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+tasks:
+  setup:
+    run: echo ready
+tools:
+  curl: "8.13.0"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    curl:
+      source: apt
+      package: curl
+      approved_versions:
+        - "8.13.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let apt_log = fixture.dir.path().join("apt-get.log");
+        let apt_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho apt-get invoked>>\"{}\"\r\nexit /b 1\r\n",
+                apt_log.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' 'apt-get invoked' >> '{}'\nexit 1\n",
+                apt_log.display()
+            )
+        };
+        write_fake_command(&bin_dir, "apt-get", &apt_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "up", "--mode", "container", "."]);
+
+        assert_eq!(
+            output.exit_code,
+            1,
+            "stdout=\n{}\nstderr=\n{}",
+            output.stdout,
+            output.stderr.unwrap_or_default()
+        );
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("NOT READY"));
+        assert!(text.contains("Missing container execution backend CLI: docker, podman"));
+        assert!(text.contains("Mode:"));
+        assert!(text.contains("container"));
+        assert!(!text.contains("PROVISION FAILED"));
+        assert!(!text.contains("pwsh"));
+        assert!(!text.contains("choco"));
         assert!(
             !apt_log.exists(),
             "host provisioning should not be attempted"
@@ -22327,8 +22772,9 @@ workspace:
 project:
   name: api
 env:
-  OTA_MEMBER_REQUIRED:
-    required: true
+  vars:
+    OTA_MEMBER_REQUIRED:
+      required: true
 tasks:
   test:
     run: printf api
@@ -22521,8 +22967,9 @@ version: 1
 project:
   name: not-ready
 env:
-  REQUIRED_VALUE:
-    required: true
+  vars:
+    REQUIRED_VALUE:
+      required: true
 "#,
         )
         .unwrap();
@@ -23386,8 +23833,9 @@ execution:
       target: user@host
       cwd: /workspace
 env:
-  OTA_WORKSPACE_REQUIRED:
-    required: true
+  vars:
+    OTA_WORKSPACE_REQUIRED:
+      required: true
 "#,
         )
         .unwrap();
@@ -23633,8 +24081,9 @@ version: 1
 project:
   name: web
 env:
-  OTA_OPTIONAL_REQUIRED:
-    required: true
+  vars:
+    OTA_OPTIONAL_REQUIRED:
+      required: true
 "#,
         )
         .unwrap();
@@ -24475,8 +24924,9 @@ version: 1
 project:
   name: web
 env:
-  OTA_TEST_SHARED:
-    required: true
+  vars:
+    OTA_TEST_SHARED:
+      required: true
 tasks:
   setup:
     script: |
@@ -24543,8 +24993,9 @@ version: 1
 project:
   name: web
 env:
-  OTA_TEST_SHARED:
-    required: true
+  vars:
+    OTA_TEST_SHARED:
+      required: true
 execution:
   preferred: native
   supported:

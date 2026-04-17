@@ -13,11 +13,12 @@ runtimes:
 tools:
   npm: "10.8.2"
 env:
-  OTA_SERVICE_ENV:
-    default: local
-    allowed:
-      - local
-      - ci
+  vars:
+    OTA_SERVICE_ENV:
+      default: local
+      allowed:
+        - local
+        - ci
 tasks:
   setup:
     description: Install application dependencies
