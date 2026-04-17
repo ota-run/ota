@@ -315,6 +315,7 @@ fn should_emit_failed_update_check_notice(
     true
 }
 
+#[cfg(test)]
 fn has_immediate_cached_update_state(has_cached_latest: bool, cache_is_fresh: bool) -> bool {
     has_cached_latest && cache_is_fresh
 }
@@ -327,35 +328,8 @@ fn should_run_update_check_synchronously(
     !has_local_notice && (!has_cached_latest || !cache_is_fresh)
 }
 
-fn has_immediate_update_notice_state(
-    now_secs: u64,
-    notice_state_path: &Path,
-    cache_path: &Path,
-) -> bool {
-    let has_cached_latest = read_latest_release_cache(cache_path).is_some();
-    if has_immediate_cached_update_state(
-        has_cached_latest,
-        latest_release_cache_is_fresh(cache_path, now_secs),
-    ) {
-        return true;
-    }
-
-    should_emit_failed_update_check_notice(
-        now_secs,
-        notice_state_path,
-        &update_notice_failure_record_path_for_state_path(notice_state_path),
-    )
-}
-
 pub(crate) fn preferred_update_notice_wait_timeout() -> Duration {
-    let now_secs = current_unix_timestamp_secs();
-    let notice_state_path = update_check_failure_state_path();
-    let cache_path = latest_release_cache_path();
-    if has_immediate_update_notice_state(now_secs, &notice_state_path, &cache_path) {
-        Duration::from_millis(50)
-    } else {
-        Duration::from_millis(3000)
-    }
+    Duration::from_millis(50)
 }
 
 fn record_update_check_result(
@@ -1043,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn preferred_wait_timeout_is_long_without_local_state() {
+    fn preferred_wait_timeout_stays_short_without_local_state() {
         let _guard = env_mutex_lock();
         let temp = tempdir().unwrap();
 
@@ -1072,7 +1046,7 @@ mod tests {
             None => unsafe { env::remove_var("APPDATA") },
         }
 
-        assert_eq!(timeout, Duration::from_millis(3000));
+        assert_eq!(timeout, Duration::from_millis(50));
     }
 
     #[test]
