@@ -44,7 +44,7 @@ jobs:
         with:
           command: receipt
           path: .
-          ota-version: 1.4.7
+          ota-version: 1.4.18
           archive: true
           annotate: true
           comment-pr: true
