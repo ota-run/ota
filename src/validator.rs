@@ -84,6 +84,7 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
         value.version()
     });
     validate_tool_details(&contract.tools, &mut errors);
+    validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
     validate_services(&contract.services, &mut errors);
     validate_tasks(&contract.tasks, &mut errors);
@@ -109,6 +110,14 @@ fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
 fn validate_project(contract: &Contract, errors: &mut Vec<ValidationError>) {
     if contract.project.name.trim().is_empty() {
         errors.push(ValidationError::new("`project.name` must not be empty"));
+    }
+}
+
+fn validate_policies(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    if contract.policies.contains_key("env") {
+        errors.push(ValidationError::new(
+            "repo contracts must not declare `policies.env`; move approved env values to `.ota/org-policy.yaml` under `policies.env.values`",
+        ));
     }
 }
 
@@ -1820,6 +1829,29 @@ runtimes:
         assert_eq!(
             errors.errors()[0].to_string(),
             "runtime `java` platform `macos` must also appear in `only_on`"
+        );
+    }
+
+    #[test]
+    fn rejects_repo_local_policy_env_overlay() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+policies:
+  env:
+    DATABASE_URL: postgres://local/app
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "repo contracts must not declare `policies.env`; move approved env values to `.ota/org-policy.yaml` under `policies.env.values`"
         );
     }
 }

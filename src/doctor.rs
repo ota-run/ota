@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -45,7 +46,7 @@ use crate::provisioning::{
     render_provisioning_action_command,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, load_declared_env_sources, policy_env_values,
+    DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, load_declared_env_sources,
     resolve_declared_env_source_value,
 };
 use crate::schema::{
@@ -1238,7 +1239,12 @@ fn diagnose_contract_with_scope(
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
         if mode == DoctorMode::Native {
-            diagnose_env(contract, &declared_env_sources, &mut findings);
+            diagnose_env(
+                contract,
+                loaded_policy.as_ref().map(|loaded| loaded.pack.env_values()),
+                &declared_env_sources,
+                &mut findings,
+            );
         } else if contract_has_host_bound_readiness_surfaces(contract) {
             findings.push(container_mode_scope_note_finding(contract));
         }
@@ -1706,14 +1712,14 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
 
 fn diagnose_env(
     contract: &Contract,
+    policy_env: Option<&BTreeMap<String, String>>,
     declared_sources: &[LoadedDeclaredEnvSource],
     findings: &mut Vec<Finding>,
 ) {
-    let policy_env = policy_env_values(contract);
 
     for (name, requirement) in &contract.env {
         let value = policy_env
-            .get(name)
+            .and_then(|values| values.get(name))
             .cloned()
             .or_else(|| std::env::var(name).ok())
             .or_else(|| {

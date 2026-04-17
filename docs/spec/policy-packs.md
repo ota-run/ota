@@ -125,6 +125,10 @@ policies:
           windows:
             approved_versions:
               - "7.6.0"
+  env:
+    values:
+      DOCS_SITE_BASE_URL: https://docs.internal.example
+      RELEASE_CHANNEL: stable
   agent:
     require_safe_tasks: true
     require_writable_paths: true
@@ -190,6 +194,8 @@ That makes the value visible immediately:
 - `version_policy.runtimes.<name>.approved_versions` constrains the repo contract version for that runtime.
 - `version_policy.tools.<name>.approved_versions` constrains the repo contract version for that tool.
 - `version_policy.*.platforms.<os>` overrides approved versions for `linux`, `macos`, or `windows`.
+- `env.values` supplies approved shared env values for vars the repo contract already declares in `env.vars`.
+- `env.values` does not create new repo requirements by itself; it only helps satisfy declared env vars.
 - `agent.require_safe_tasks` requires agent-visible execution surfaces to be explicitly marked safe.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
 - `exports.require_agents_md` requires repo-side agent guidance to be present when the policy pack says so.

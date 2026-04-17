@@ -227,7 +227,8 @@ Current guidance:
 
 - `exports` should describe export preferences or downstream artifact intent
 - `policies` should describe repo-local policy overlays and guardrails
-- `policies.env` is the shipped approved-value map for environment variables
+- repo contracts must not declare `policies.env`; approved env values now live in the org policy pack under `policies.env.values`
+- `policies.env.values` is the shipped approved-value map for environment variables in the org policy pack
 - `policies.provisioning` is the next policy extension point for approved runtime and tool sources
 - neither section should replace core readiness fields such as `tasks`, `services`, or `checks`
 - newer spec drafts discuss additional policy and readiness-gate behavior; those are not part of
@@ -564,7 +565,21 @@ This makes dotenv loading explicit instead of magical:
 - ota reads `.env.local`, then `.env`
 - `.env.local` is optional
 - `.env` must exist
-- process env and `policies.env` still outrank both files
+- process env and `policies.env.values` still outrank both files
+
+```yaml
+policies:
+  env:
+    values:
+      DATABASE_URL: postgres://policy.internal/app
+      RELEASE_CHANNEL: stable
+```
+
+This is the org policy side of env resolution:
+
+- the repo contract still declares the env names in `env.vars`
+- policy can supply the winning value through `policies.env.values`
+- policy does not invent new repo requirements on its own
 
 ```yaml
 tasks:
@@ -595,7 +610,7 @@ Policy-aware env selection and workspace inheritance are described in
 
 Current behavior:
 
-- `run` prefers approved policy env values, then process environment, then declared env sources in
+- `run` prefers approved org-policy env values, then process environment, then declared env sources in
   order, then `default`
 - declared env values are injected into backend execution after resolution, so container and remote backends see the same chosen value
 - `run` rejects disallowed values

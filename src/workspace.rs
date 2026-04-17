@@ -39,7 +39,7 @@ use crate::parser::{
 };
 use crate::runner::{
     blocking_declared_env_source_label, env_resolution_source_label, load_declared_env_sources,
-    policy_env_values, resolve_declared_env_source_value,
+    load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{Contract, ExtensionSpec};
 use crate::validator::validate_contract;
@@ -115,6 +115,27 @@ pub struct WorkspaceRepoRef {
     pub policy_env: BTreeMap<String, String>,
 }
 
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+struct WorkspacePolicyEnvRules {
+    #[serde(default)]
+    values: BTreeMap<String, String>,
+}
+
+fn workspace_policy_env_rules(
+    contract: &WorkspaceContract,
+) -> Result<WorkspacePolicyEnvRules, String> {
+    let Some(policy_env) = contract.policies.get("env") else {
+        return Ok(WorkspacePolicyEnvRules::default());
+    };
+
+    serde_yaml::from_value(policy_env.clone()).map_err(|error| {
+        format!(
+            "workspace `policies.env` must use `values` as a string map: {error}"
+        )
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceExecutionContainerSummary {
     pub image: String,
@@ -177,7 +198,15 @@ impl WorkspaceExecutionSummary {
         policy_env: Option<&BTreeMap<String, String>>,
     ) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
-        let repo_policy_env = policy_env_values(contract);
+        let (repo_policy_env, repo_policy_label, policy_issue) =
+            match load_policy_env_overlay(contract_path) {
+                Ok(overlay) => (overlay.values, overlay.label, None),
+                Err(_) => (
+                    BTreeMap::new(),
+                    String::new(),
+                    Some(String::from("invalid policy pack")),
+                ),
+            };
         let workspace_policy_env = policy_env.cloned().unwrap_or_default();
         let declared_sources = load_declared_env_sources(contract, contract_path);
 
@@ -217,11 +246,12 @@ impl WorkspaceExecutionSummary {
                         .cloned()
                         .or_else(|| repo_policy_env.get(name).cloned());
                     let source = blocking_declared_env_source_label(&declared_sources)
+                        .or_else(|| policy_issue.clone())
                         .or_else(|| {
                             if workspace_policy_env.contains_key(name) {
                                 Some(String::from("workspace policy"))
                             } else if repo_policy_env.contains_key(name) {
-                                Some(String::from("repo policy"))
+                                Some(repo_policy_label.clone())
                             } else if std::env::var(name).is_ok() {
                                 Some(String::from("process"))
                             } else {
@@ -437,17 +467,9 @@ pub fn ordered_workspace_repo_refs(
 }
 
 pub fn workspace_policy_env_values(contract: &WorkspaceContract) -> BTreeMap<String, String> {
-    let Some(policy_env) = contract.policies.get("env") else {
-        return BTreeMap::new();
-    };
-    let Some(mapping) = policy_env.as_mapping() else {
-        return BTreeMap::new();
-    };
-
-    mapping
-        .iter()
-        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
-        .collect()
+    workspace_policy_env_rules(contract)
+        .map(|rules| rules.values)
+        .unwrap_or_default()
 }
 
 pub fn validate_workspace_shape(
@@ -478,6 +500,10 @@ pub fn validate_workspace_shape(
         errors.push(WorkspaceValidationError::new(
             "workspace policy must not be empty",
         ));
+    }
+
+    if let Err(message) = workspace_policy_env_rules(contract) {
+        errors.push(WorkspaceValidationError::new(message));
     }
 
     if contract.repos.is_empty() {
@@ -1070,6 +1096,47 @@ repos:
         .unwrap();
 
         validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract).unwrap();
+    }
+
+    #[test]
+    fn rejects_flat_workspace_policy_env_map() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+policies:
+  env:
+    OTA_TEST_SHARED: workspace-policy
+"#,
+        )
+        .unwrap();
+
+        let error =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("workspace `policies.env` must use `values` as a string map")
+        );
     }
 
     #[test]

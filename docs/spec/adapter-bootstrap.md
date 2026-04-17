@@ -58,7 +58,7 @@ adapter binaries without turning ota into a hidden workstation manager.
 
 - `policies.provisioning` says where repo prerequisites may come from
 - `policies.adapter_bootstrap` says where ota may obtain the adapter binary that performs that work
-- `policies.env` remains the shipped env-value resolver
+- `policies.env.values` remains the shipped env-value resolver
 
 ## Proposed Shape
 

@@ -81,6 +81,8 @@ pub struct PolicyRules {
     #[serde(default)]
     pub version_policy: PolicyVersionRules,
     #[serde(default)]
+    pub env: PolicyEnvRules,
+    #[serde(default)]
     pub agent: Option<PolicyAgentRules>,
     #[serde(default)]
     pub exports: Option<PolicyExportsRules>,
@@ -88,6 +90,13 @@ pub struct PolicyRules {
     pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
     #[serde(default)]
     pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyEnvRules {
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -358,6 +367,10 @@ impl ProvisioningAction {
 }
 
 impl OrgPolicyPack {
+    pub fn env_values(&self) -> &BTreeMap<String, String> {
+        &self.policies.env.values
+    }
+
     pub fn missing_required_sections(&self, contract: &crate::schema::Contract) -> Vec<String> {
         self.policies
             .required_sections

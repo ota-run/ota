@@ -34,6 +34,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 - require the core repo contract sections that make `doctor` and `up` useful
 - require `AGENTS.md` so agent guidance stays visible and reviewable
 - constrain runtime and tool versions explicitly with `version_policy`
+- supply approved shared env values explicitly with `env.values`
 - require explicit agent safety surfaces
 - require `AGENTS.md` generation in exports
 - approve source managers and adapter bootstrap explicitly for the platforms you actually use
@@ -43,6 +44,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 - `ota doctor` becomes a real governance check, not just a local readiness scan
 - repo contracts stay explicit instead of drifting into shell scripts
 - org-approved install sources stay reviewable by platform and by tool
+- shared env values stay explicit in policy instead of hiding in shell setup
 - agent execution surfaces stay safe by default
 - provisioning errors become policy issues instead of mysterious backend failures
 - new repos can adopt the same baseline without inventing their own rules
@@ -77,6 +79,10 @@ policies:
           windows:
             approved_versions:
               - "7.6.0"
+  env:
+    values:
+      DOCS_SITE_BASE_URL: https://docs.internal.example
+      RELEASE_CHANNEL: stable
   agent:
     require_safe_tasks: true
     require_writable_paths: true

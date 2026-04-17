@@ -29,7 +29,7 @@ use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
     blocking_declared_env_source_label, env_resolution_source_label, load_declared_env_sources,
-    policy_env_values, resolve_declared_env_source_value,
+    load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
@@ -498,7 +498,14 @@ pub struct ExecutionSummary<'a> {
 impl<'a> ExecutionSummary<'a> {
     pub fn from_contract(contract: &'a Contract, contract_path: &std::path::Path) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
-        let policy_env = policy_env_values(contract);
+        let (policy_env, policy_label, policy_issue) = match load_policy_env_overlay(contract_path) {
+            Ok(overlay) => (overlay.values, overlay.label, None),
+            Err(_) => (
+                BTreeMap::new(),
+                String::new(),
+                Some(String::from("invalid policy pack")),
+            ),
+        };
         let declared_sources = load_declared_env_sources(contract, contract_path);
 
         Some(Self {
@@ -536,10 +543,11 @@ impl<'a> ExecutionSummary<'a> {
                     default: requirement.default.as_deref(),
                     policy: policy_env.get(name).cloned(),
                     source: blocking_declared_env_source_label(&declared_sources)
+                        .or_else(|| policy_issue.clone())
                         .or_else(|| {
                             policy_env
                                 .get(name)
-                                .map(|_| String::from("policy"))
+                                .map(|_| policy_label.clone())
                                 .or_else(|| {
                                     std::env::var(name).ok().map(|_| String::from("process"))
                                 })
