@@ -114,7 +114,6 @@ policies:
     - agent
   required_files:
     - AGENTS.md
-  strict_versions: true
   version_policy:
     runtimes:
       node:
@@ -186,7 +185,7 @@ That makes the value visible immediately:
 
 - `required_sections` defines contract sections that every governed repo must provide.
 - `required_files` defines files that every governed repo must keep at the repo root or under the governed repo directory.
-- `strict_versions` is a coarse legacy version-discipline flag.
+- `strict_versions` is a coarse legacy version-discipline flag; prefer `version_policy` for explicit runtime and tool approval.
 - `version_policy` defines explicit approved runtime and tool versions without requiring provisioning.
 - `version_policy.runtimes.<name>.approved_versions` constrains the repo contract version for that runtime.
 - `version_policy.tools.<name>.approved_versions` constrains the repo contract version for that tool.

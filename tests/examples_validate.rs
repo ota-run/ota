@@ -24,6 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use ota::parser::{load_contract, parse_contract_str};
+use ota::policy_pack::{OrgPolicyPack, load_org_policy_pack_auto};
 use ota::validator::validate_contract;
 use ota::workspace::{
     load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
@@ -51,6 +52,15 @@ fn workspace_example_paths() -> Vec<PathBuf> {
     vec![
         root.join("workspace-basic").join("ota.workspace.yaml"),
         root.join("workspace-acquire").join("ota.workspace.yaml"),
+    ]
+}
+
+fn policy_example_paths() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    vec![
+        root.join("full-contract")
+            .join(".ota")
+            .join("org-policy.yaml"),
     ]
 }
 
@@ -84,6 +94,7 @@ fn yaml_fenced_blocks(markdown: &str) -> Vec<String> {
 enum DocContractKind {
     Repo,
     Workspace,
+    Policy,
 }
 
 fn canonical_docs_contract_examples() -> Vec<(PathBuf, DocContractKind)> {
@@ -104,6 +115,14 @@ fn canonical_docs_contract_examples() -> Vec<(PathBuf, DocContractKind)> {
             root.join("workspace-reference.md"),
             DocContractKind::Workspace,
         ),
+        (root.join("policy-packs.md"), DocContractKind::Policy),
+        (
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("docs")
+                .join("policy")
+                .join("org-policy.md"),
+            DocContractKind::Policy,
+        ),
     ]
 }
 
@@ -117,6 +136,10 @@ fn is_full_workspace_contract_example(block: &str) -> bool {
     trimmed.starts_with("version:")
         && trimmed.lines().any(|line| line.trim() == "workspace:")
         && trimmed.lines().any(|line| line.trim() == "repos:")
+}
+
+fn is_full_policy_pack_example(block: &str) -> bool {
+    block.trim_start().starts_with("policies:")
 }
 
 #[test]
@@ -149,6 +172,45 @@ fn shipped_workspace_examples_load_and_validate() {
             );
         });
     }
+}
+
+#[test]
+fn shipped_policy_examples_load_and_validate() {
+    for path in policy_example_paths() {
+        let body = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("policy example `{}` should load: {error}", path.display());
+        });
+        let pack: OrgPolicyPack = serde_yaml::from_str(&body).unwrap_or_else(|error| {
+            panic!("policy example `{}` should parse: {error}", path.display());
+        });
+
+        pack.validate().unwrap_or_else(|error| {
+            panic!(
+                "policy example `{}` should validate: {error}",
+                path.display()
+            );
+        });
+    }
+}
+
+#[test]
+fn shipped_example_contracts_discover_repo_policy_packs() {
+    let contract_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("full-contract")
+        .join("ota.yaml");
+    let loaded = load_org_policy_pack_auto(&contract_path)
+        .unwrap_or_else(|error| panic!("policy discovery should succeed: {error}"))
+        .unwrap_or_else(|| panic!("example contract should discover an org policy pack"));
+
+    assert_eq!(
+        loaded.1,
+        contract_path
+            .parent()
+            .unwrap()
+            .join(".ota")
+            .join("org-policy.yaml")
+    );
 }
 
 #[test]
@@ -199,6 +261,26 @@ fn canonical_docs_contract_examples_load_and_validate() {
                     validate_workspace_contract(&path, &contract).unwrap_or_else(|error| {
                         panic!(
                             "workspace contract example in `{}` should validate: {error}",
+                            path.display()
+                        );
+                    });
+                }
+                DocContractKind::Policy => {
+                    if !is_full_policy_pack_example(&block) {
+                        continue;
+                    }
+
+                    let pack: OrgPolicyPack =
+                        serde_yaml::from_str(&block).unwrap_or_else(|error| {
+                            panic!(
+                                "policy pack example in `{}` should parse: {error}",
+                                path.display()
+                            );
+                        });
+
+                    pack.validate().unwrap_or_else(|error| {
+                        panic!(
+                            "policy pack example in `{}` should validate: {error}",
                             path.display()
                         );
                     });

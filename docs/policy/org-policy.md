@@ -33,7 +33,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 
 - require the core repo contract sections that make `doctor` and `up` useful
 - require `AGENTS.md` so agent guidance stays visible and reviewable
-- require strict contract versioning
+- constrain runtime and tool versions explicitly with `version_policy`
 - require explicit agent safety surfaces
 - require `AGENTS.md` generation in exports
 - approve source managers and adapter bootstrap explicitly for the platforms you actually use
@@ -59,7 +59,24 @@ policies:
     - agent
   required_files:
     - AGENTS.md
-  strict_versions: true
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+      java:
+        approved_versions:
+          - "21"
+        platforms:
+          windows:
+            approved_versions:
+              - "21"
+    tools:
+      pwsh:
+        platforms:
+          windows:
+            approved_versions:
+              - "7.6.0"
   agent:
     require_safe_tasks: true
     require_writable_paths: true

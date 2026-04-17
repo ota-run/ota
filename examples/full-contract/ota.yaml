@@ -8,15 +8,27 @@ execution:
   supported:
     - native
 runtimes:
-  node:
-    version: "22"
-    provider: volta
+  node: "22"
   python: ">=3.12"
+  java:
+    version: "21"
+    provider: sdkman
+    distribution: temurin
+    only_on:
+      - windows
+      - macos
+    platforms:
+      windows:
+        distribution: zulu
 tools:
   pnpm:
     version: "10"
-    required: true
   uv: "0.6.0"
+  pwsh:
+    version: "7.6.0"
+    required: false
+    only_on:
+      - windows
 env:
   OTA_ENV:
     required: true
