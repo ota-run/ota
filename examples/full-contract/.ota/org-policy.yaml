@@ -22,6 +22,7 @@
 
 policies:
   required_sections:
+    - project
     - runtimes
     - tools
     - tasks
@@ -29,9 +30,115 @@ policies:
     - agent
   required_files:
     - AGENTS.md
-  strict_versions: true
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+      python:
+        approved_versions:
+          - ">=3.12"
+      java:
+        approved_versions:
+          - "21"
+        platforms:
+          macos:
+            approved_versions:
+              - "21"
+          windows:
+            approved_versions:
+              - "21"
+    tools:
+      pnpm:
+        approved_versions:
+          - "10"
+      uv:
+        approved_versions:
+          - "0.6.0"
+      pwsh:
+        platforms:
+          windows:
+            approved_versions:
+              - "7.6.0"
   agent:
     require_safe_tasks: true
     require_writable_paths: true
   exports:
     require_agents_md: true
+  provisioning:
+    node:
+      source: brew
+      package: node
+      approved_versions:
+        - "22.15.0"
+      platforms:
+        linux:
+          source: apt
+          package: nodejs
+          approved_versions:
+            - "22.15.0"
+        windows:
+          source: choco
+          package: nodejs
+          approved_versions:
+            - "22.15.0"
+    python:
+      source: uv
+      approved_versions:
+        - "3.12.3"
+    java:
+      source: sdkman
+      source_config:
+        distribution: temurin
+      approved_versions:
+        - "21.0.7"
+      platforms:
+        windows:
+          source: choco
+          package: zulu21
+          source_config:
+            distribution: zulu
+          approved_versions:
+            - "21.0.7"
+    pnpm:
+      source: brew
+      package: pnpm
+      approved_versions:
+        - "10.11.0"
+      platforms:
+        linux:
+          source: apt
+          package: pnpm
+          approved_versions:
+            - "10.11.0"
+        windows:
+          source: choco
+          package: pnpm
+          approved_versions:
+            - "10.11.0"
+    uv:
+      source: uv
+      approved_versions:
+        - "0.6.0"
+    pwsh:
+      source: choco
+      package: powershell
+      approved_versions:
+        - "7.6.0"
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+      approved_versions:
+        - "4.4"
+    choco:
+      source: choco-bootstrap
+      approved_versions:
+        - "2.0.0"
+    sdkman:
+      source: sdkman-bootstrap
+      approved_versions:
+        - "1.0"
+    uv:
+      source: uv-bootstrap
+      approved_versions:
+        - "0.6.0"
