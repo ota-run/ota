@@ -39,6 +39,40 @@ pub(crate) enum StarterPack {
     JavaGradle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum NodePackageManager {
+    Npm,
+    Pnpm,
+    Yarn,
+    Bun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum PythonTestRunner {
+    Pytest,
+    Unittest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct StarterPackOptions {
+    pub(crate) node_package_manager: Option<NodePackageManager>,
+    pub(crate) python_test_runner: Option<PythonTestRunner>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StarterPackConfig {
+    pub(crate) pack: StarterPack,
+    pub(crate) options: StarterPackOptions,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StarterPackCatalogOption {
+    pub(crate) flag: &'static str,
+    pub(crate) summary: &'static str,
+    pub(crate) default: &'static str,
+    pub(crate) values: &'static [&'static str],
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StarterPackCatalogEntry {
     pub(crate) pack: StarterPack,
@@ -48,6 +82,7 @@ pub(crate) struct StarterPackCatalogEntry {
     pub(crate) tools: &'static [&'static str],
     pub(crate) checks: &'static [&'static str],
     pub(crate) tasks: &'static [&'static str],
+    pub(crate) options: &'static [StarterPackCatalogOption],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,20 +131,22 @@ impl StarterPack {
             Self::Node => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
-                when: "Use this for repo-level Node apps or services that follow pnpm conventions and need an explicit starter instead of detector-led init.",
+                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
                 runtimes: &["node"],
                 tools: &["pnpm"],
                 checks: &["node-installed"],
                 tasks: &["setup", "dev", "test"],
+                options: NODE_PACK_OPTIONS,
             },
             Self::Python => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Python starter with requirements-based setup and pytest.",
-                when: "Use this for Python repos that install from requirements.txt and run tests through pytest.",
+                when: "Use this for Python repos that install from requirements.txt. The default path uses pytest, and you can switch to `python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
                 runtimes: &["python"],
                 tools: &[],
                 checks: &["python-installed"],
                 tasks: &["setup", "test"],
+                options: PYTHON_PACK_OPTIONS,
             },
             Self::Go => StarterPackCatalogEntry {
                 pack: self,
@@ -119,6 +156,7 @@ impl StarterPack {
                 tools: &[],
                 checks: &["go-installed"],
                 tasks: &["setup", "build", "test"],
+                options: NO_PACK_OPTIONS,
             },
             Self::Rust => StarterPackCatalogEntry {
                 pack: self,
@@ -128,6 +166,7 @@ impl StarterPack {
                 tools: &["cargo"],
                 checks: &["rust-installed"],
                 tasks: &["setup", "build", "test"],
+                options: NO_PACK_OPTIONS,
             },
             Self::JavaMaven => StarterPackCatalogEntry {
                 pack: self,
@@ -137,6 +176,7 @@ impl StarterPack {
                 tools: &[],
                 checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
+                options: NO_PACK_OPTIONS,
             },
             Self::JavaGradle => StarterPackCatalogEntry {
                 pack: self,
@@ -146,8 +186,187 @@ impl StarterPack {
                 tools: &[],
                 checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
+                options: NO_PACK_OPTIONS,
             },
         }
+    }
+}
+
+const NO_PACK_OPTIONS: &[StarterPackCatalogOption] = &[];
+
+const NODE_PACK_OPTIONS: &[StarterPackCatalogOption] = &[StarterPackCatalogOption {
+    flag: "--package-manager",
+    summary: "Choose the package manager used for setup and script execution.",
+    default: "pnpm",
+    values: &["npm", "pnpm", "yarn", "bun"],
+}];
+
+const PYTHON_PACK_OPTIONS: &[StarterPackCatalogOption] = &[StarterPackCatalogOption {
+    flag: "--test-runner",
+    summary: "Choose the conventional Python test entrypoint for the starter.",
+    default: "pytest",
+    values: &["pytest", "unittest"],
+}];
+
+impl NodePackageManager {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Npm => "npm",
+            Self::Pnpm => "pnpm",
+            Self::Yarn => "yarn",
+            Self::Bun => "bun",
+        }
+    }
+
+    pub(crate) const fn default_for_pack() -> Self {
+        Self::Pnpm
+    }
+
+    fn tool(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Npm => Some(("npm", "*")),
+            Self::Pnpm => Some(("pnpm", "10")),
+            Self::Yarn => Some(("yarn", "4")),
+            Self::Bun => Some(("bun", "1.2")),
+        }
+    }
+
+    fn setup_command(self) -> &'static str {
+        match self {
+            Self::Npm => "npm install",
+            Self::Pnpm => "pnpm install",
+            Self::Yarn => "yarn install",
+            Self::Bun => "bun install",
+        }
+    }
+
+    fn dev_command(self) -> &'static str {
+        match self {
+            Self::Npm => "npm run dev",
+            Self::Pnpm => "pnpm dev",
+            Self::Yarn => "yarn dev",
+            Self::Bun => "bun run dev",
+        }
+    }
+
+    fn test_command(self) -> &'static str {
+        match self {
+            Self::Npm => "npm test",
+            Self::Pnpm => "pnpm test",
+            Self::Yarn => "yarn test",
+            Self::Bun => "bun run test",
+        }
+    }
+
+    fn provenance_source(self) -> String {
+        format!(
+            "ota.init#starter_pack.node.package_manager.{}",
+            self.as_str()
+        )
+    }
+}
+
+impl PythonTestRunner {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "unittest",
+        }
+    }
+
+    pub(crate) const fn default_for_pack() -> Self {
+        Self::Pytest
+    }
+
+    fn test_command(self) -> &'static str {
+        match self {
+            Self::Pytest => "pytest",
+            Self::Unittest => "python -m unittest",
+        }
+    }
+
+    fn provenance_source(self) -> String {
+        format!("ota.init#starter_pack.python.test_runner.{}", self.as_str())
+    }
+}
+
+impl StarterPackConfig {
+    pub(crate) fn new(pack: StarterPack, options: StarterPackOptions) -> Result<Self, String> {
+        match pack {
+            StarterPack::Node if options.python_test_runner.is_some() => Err(String::from(
+                "`--test-runner` is only supported with `ota init --pack python`",
+            )),
+            StarterPack::Python if options.node_package_manager.is_some() => Err(String::from(
+                "`--package-manager` is only supported with `ota init --pack node`",
+            )),
+            StarterPack::Go
+            | StarterPack::Rust
+            | StarterPack::JavaMaven
+            | StarterPack::JavaGradle
+                if options.node_package_manager.is_some()
+                    || options.python_test_runner.is_some() =>
+            {
+                if options.node_package_manager.is_some() {
+                    Err(String::from(
+                        "`--package-manager` is only supported with `ota init --pack node`",
+                    ))
+                } else {
+                    Err(String::from(
+                        "`--test-runner` is only supported with `ota init --pack python`",
+                    ))
+                }
+            }
+            _ => Ok(Self { pack, options }),
+        }
+    }
+
+    pub(crate) fn selected_node_package_manager(self) -> Option<NodePackageManager> {
+        (self.pack == StarterPack::Node).then(|| {
+            self.options
+                .node_package_manager
+                .unwrap_or(NodePackageManager::default_for_pack())
+        })
+    }
+
+    pub(crate) fn selected_python_test_runner(self) -> Option<PythonTestRunner> {
+        (self.pack == StarterPack::Python).then(|| {
+            self.options
+                .python_test_runner
+                .unwrap_or(PythonTestRunner::default_for_pack())
+        })
+    }
+
+    pub(crate) fn provenance_source(self) -> String {
+        if let Some(package_manager) = self.selected_node_package_manager() {
+            return package_manager.provenance_source();
+        }
+        if let Some(test_runner) = self.selected_python_test_runner() {
+            return test_runner.provenance_source();
+        }
+        self.pack.provenance_source()
+    }
+
+    pub(crate) fn selected_option_pairs(self) -> Vec<(&'static str, &'static str)> {
+        let mut pairs = Vec::new();
+        if let Some(package_manager) = self.selected_node_package_manager() {
+            pairs.push(("package-manager", package_manager.as_str()));
+        }
+        if let Some(test_runner) = self.selected_python_test_runner() {
+            pairs.push(("test-runner", test_runner.as_str()));
+        }
+        pairs
+    }
+
+    pub(crate) fn command(self) -> String {
+        let mut command = format!("ota init --pack {}", self.pack.as_str());
+        for (name, value) in self.selected_option_pairs() {
+            command.push_str(&format!(" --{name} {value}"));
+        }
+        command
+    }
+
+    pub(crate) fn preview_command(self) -> String {
+        format!("{} --dry-run .", self.command())
     }
 }
 
@@ -409,7 +628,7 @@ fn normalize_pack_signal(source: &str) -> String {
     }
 }
 
-pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectContract {
+pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> DetectContract {
     let project = directory_name_for_root(root).map(|name| DetectProject { name });
     let mut contract = DetectContract {
         version: 1,
@@ -417,14 +636,19 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
         ..DetectContract::default()
     };
 
-    match pack {
+    match config.pack {
         StarterPack::Node => {
+            let package_manager = config
+                .selected_node_package_manager()
+                .expect("node pack should always resolve a package manager");
             contract
                 .runtimes
                 .insert(String::from("node"), String::from("22"));
-            contract
-                .tools
-                .insert(String::from("pnpm"), String::from("10"));
+            if let Some((tool, version)) = package_manager.tool() {
+                contract
+                    .tools
+                    .insert(String::from(tool), String::from(version));
+            }
             contract.checks.push(DetectCheck {
                 name: String::from("node-installed"),
                 kind: DetectCheckKind::Precondition,
@@ -435,7 +659,7 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("setup"),
                 pack_task(
                     "setup",
-                    "pnpm install",
+                    package_manager.setup_command(),
                     Some(String::from("Install repo dependencies.")),
                 ),
             );
@@ -443,7 +667,7 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("dev"),
                 pack_task(
                     "dev",
-                    "pnpm dev",
+                    package_manager.dev_command(),
                     Some(String::from("Start the local development loop.")),
                 ),
             );
@@ -451,12 +675,15 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("test"),
                 pack_task(
                     "test",
-                    "pnpm test",
+                    package_manager.test_command(),
                     Some(String::from("Run the default automated test command.")),
                 ),
             );
         }
         StarterPack::Python => {
+            let test_runner = config
+                .selected_python_test_runner()
+                .expect("python pack should always resolve a test runner");
             contract
                 .runtimes
                 .insert(String::from("python"), String::from("3.12"));
@@ -480,8 +707,15 @@ pub(crate) fn starter_pack_contract(pack: StarterPack, root: &Path) -> DetectCon
                 String::from("test"),
                 pack_task(
                     "test",
-                    "pytest",
-                    Some(String::from("Run the default Python test command.")),
+                    test_runner.test_command(),
+                    Some(match test_runner {
+                        PythonTestRunner::Pytest => {
+                            String::from("Run the default Python test command.")
+                        }
+                        PythonTestRunner::Unittest => {
+                            String::from("Run the default Python unittest suite.")
+                        }
+                    }),
                 ),
             );
         }

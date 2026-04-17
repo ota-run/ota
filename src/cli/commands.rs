@@ -63,21 +63,22 @@ use crate::output::{
     ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
     ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
     ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitPackAdvisory, InitPackCatalogSuccess, InitPackInfo, InitPackSeeds, InitSuccess,
-    MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess,
-    PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    InitPackAdvisory, InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds,
+    InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure,
+    PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline,
+    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
+    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
+    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
+    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -115,7 +116,9 @@ use self::explain_output::{
     explain_action_count, explain_steps, explain_summary, render_explain_steps_text,
     workspace_explain_repos, workspace_explain_summary,
 };
-pub(crate) use self::init_starter::StarterPack;
+pub(crate) use self::init_starter::{
+    NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
+};
 use self::init_starter::{
     apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_advisory,
     starter_pack_catalog, starter_pack_contract,
@@ -4659,7 +4662,7 @@ pub fn init(
     path: Option<&Path>,
     write: bool,
     bootstrap: bool,
-    pack: Option<StarterPack>,
+    pack: Option<StarterPackConfig>,
     packs: bool,
     format: OutputFormat,
     debug: bool,
@@ -4687,7 +4690,7 @@ pub fn init(
         format!("DEBUG bootstrap={bootstrap}"),
         format!(
             "DEBUG pack={}",
-            pack.map(StarterPack::as_str).unwrap_or("none")
+            pack.map(|config| config.pack.as_str()).unwrap_or("none")
         ),
     ];
 
@@ -4730,7 +4733,7 @@ pub fn init(
     let pack_advisory = pack.and_then(|selected_pack| {
         detect_repo(&root)
             .ok()
-            .and_then(|detected| build_pack_advisory(selected_pack, &detected, &root))
+            .and_then(|detected| build_pack_advisory(selected_pack.pack, &detected, &root))
     });
 
     finalize_debug(
@@ -4871,6 +4874,17 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                     paint_key,
                     |value| render_backticked_text(value, None),
                 );
+                if !entry.options.is_empty() {
+                    append_aligned_labeled_text(
+                        &mut stdout,
+                        "Options:",
+                        &render_init_pack_catalog_options_text(&entry),
+                        "  ",
+                        96,
+                        paint_key,
+                        |value| render_backticked_text(value, None),
+                    );
+                }
                 append_aligned_labeled_text(
                     &mut stdout,
                     "Next:",
@@ -4894,6 +4908,20 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                     when: entry.when.to_string(),
                     command: entry.pack.command(),
                     next: entry.pack.preview_command(),
+                    options: entry
+                        .options
+                        .iter()
+                        .map(|option| InitPackOption {
+                            flag: option.flag.to_string(),
+                            summary: option.summary.to_string(),
+                            default: option.default.to_string(),
+                            values: option
+                                .values
+                                .iter()
+                                .map(|value| (*value).to_string())
+                                .collect(),
+                        })
+                        .collect(),
                     seeds: InitPackSeeds {
                         runtimes: entry
                             .runtimes
@@ -4920,6 +4948,29 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                 .collect(),
         })),
     }
+}
+
+fn render_init_pack_catalog_options_text(
+    entry: &self::init_starter::StarterPackCatalogEntry,
+) -> String {
+    entry
+        .options
+        .iter()
+        .map(|option| {
+            format!(
+                "`{}` = {} (default `{}`)",
+                option.flag,
+                option
+                    .values
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                option.default
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 pub fn agents(
@@ -10146,6 +10197,36 @@ fn build_pack_advisory(
     })
 }
 
+fn init_selected_pack_options(config: StarterPackConfig) -> Option<InitSelectedPackOptions> {
+    let options = InitSelectedPackOptions {
+        package_manager: config
+            .selected_node_package_manager()
+            .map(|value| value.as_str().to_string()),
+        test_runner: config
+            .selected_python_test_runner()
+            .map(|value| value.as_str().to_string()),
+    };
+    (options.package_manager.is_some() || options.test_runner.is_some()).then_some(options)
+}
+
+fn render_init_pack_options_text(stdout: &mut String, config: StarterPackConfig) {
+    let options = config
+        .selected_option_pairs()
+        .into_iter()
+        .map(|(name, value)| format!("`{name}={value}`"))
+        .collect::<Vec<_>>();
+    if options.is_empty() {
+        return;
+    }
+
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
+        paint_key("Options:"),
+        render_backticked_text(&options.join(", "), None)
+    ));
+}
+
 fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPackAdvisory>) {
     let Some(advisory) = advisory else {
         return;
@@ -10183,7 +10264,7 @@ fn render_init(
     contract_path: &Path,
     write: bool,
     bootstrap: bool,
-    pack: Option<StarterPack>,
+    pack: Option<StarterPackConfig>,
     pack_advisory: Option<InitPackAdvisory>,
     format: OutputFormat,
 ) -> CommandOutput {
@@ -10265,7 +10346,7 @@ fn render_init(
         apply_starter_contract_defaults(&mut write_contract, &report.root);
         let starter_project_source = String::from("ota.init#directory_name");
         let starter_contract_source = pack
-            .map(StarterPack::provenance_source)
+            .map(StarterPackConfig::provenance_source)
             .unwrap_or_else(|| String::from("ota.init#starter_contract"));
         let provenance = init_contract_provenance(
             &write_contract,
@@ -10377,8 +10458,9 @@ fn render_init(
                             "\n{} {} {}",
                             mode_icon(),
                             paint_key("Pack:"),
-                            paint_mode_value(pack.as_str())
+                            paint_mode_value(pack.pack.as_str())
                         ));
+                        render_init_pack_options_text(&mut stdout, pack);
                         stdout.push_str(&format!(
                             "\n{} {} {}",
                             mode_icon(),
@@ -10428,7 +10510,8 @@ fn render_init(
                     path: &path_display,
                     written: true,
                     mode,
-                    pack: pack.map(StarterPack::as_str),
+                    pack: pack.map(|config| config.pack.as_str()),
+                    pack_options: pack.and_then(init_selected_pack_options),
                     pack_advisory,
                     config: &write_contract,
                     inferred: &report.inferences,
@@ -10454,7 +10537,7 @@ fn render_init(
     match format {
         OutputFormat::Text => {
             let highlighted_init = paint_code(&if let Some(pack) = pack {
-                format!("ota init --pack {} {}", pack.as_str(), compact_root_display)
+                format!("{} {}", pack.command(), compact_root_display)
             } else {
                 format!("ota init {}", compact_root_display)
             });
@@ -10468,8 +10551,9 @@ fn render_init(
                     "\n{} {} {}",
                     mode_icon(),
                     paint_key("Pack:"),
-                    paint_mode_value(pack.as_str())
+                    paint_mode_value(pack.pack.as_str())
                 ));
+                render_init_pack_options_text(&mut stdout, pack);
                 stdout.push_str(&format!(
                     "\n{} {} {}",
                     mode_icon(),
@@ -10498,7 +10582,8 @@ fn render_init(
             path: &path_display,
             written: false,
             mode,
-            pack: pack.map(StarterPack::as_str),
+            pack: pack.map(|config| config.pack.as_str()),
+            pack_options: pack.and_then(init_selected_pack_options),
             pack_advisory,
             config: &bootstrap_contract,
             inferred: &report.inferences,
@@ -10508,7 +10593,7 @@ fn render_init(
                 &report.inferences,
                 "ota.init#directory_name",
                 &pack
-                    .map(StarterPack::provenance_source)
+                    .map(StarterPackConfig::provenance_source)
                     .unwrap_or_else(|| String::from("ota.init#starter_contract")),
             ),
         })),

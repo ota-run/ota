@@ -687,6 +687,8 @@ Create a starter ota contract for a repo that does not yet have one.
 ota init [PATH]
 ota init --bootstrap [PATH]
 ota init --pack <node|python|go|rust|java-maven|java-gradle> [PATH]
+ota init --pack node --package-manager <npm|pnpm|yarn|bun> [PATH]
+ota init --pack python --test-runner <pytest|unittest> [PATH]
 ota init --packs
 ota init --dry-run [PATH]
 ota init --json [PATH]
@@ -698,7 +700,9 @@ Current behavior:
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
 - `--pack <node|python|go|rust|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
-- `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, and the safe dry-run preview command to use next
+- `--pack node --package-manager <npm|pnpm|yarn|bun>` keeps pack mode explicit while swapping the conventional Node starter commands and seeded tool requirement to the selected package manager
+- `--pack python --test-runner <pytest|unittest>` keeps pack mode explicit while swapping the conventional Python test entrypoint to the selected runner
+- `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, the safe dry-run preview command to use next, and any explicit starter knobs exposed by that pack
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
 - supports preview mode with `--dry-run`
 - refuses to run when `ota.yaml` already exists
@@ -718,6 +722,8 @@ Choosing an init path:
 - use plain `ota init` only after reviewing that detector-led starter
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
+- use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write
+- use `ota init --pack python --test-runner <name> --dry-run` when the repo is intentionally `pytest`- or `unittest`-driven and you want the starter to reflect that test command directly
 - the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist
 - explicit packs seed short task `description` fields so the authoring pattern is visible immediately
 
@@ -731,7 +737,9 @@ ota init
 # pack-led path
 ota init --packs
 ota init --pack node --dry-run
+ota init --pack node --package-manager yarn --dry-run
 ota init --pack python --dry-run
+ota init --pack python --test-runner unittest --dry-run
 ota init --pack go --dry-run
 ota init --pack rust --dry-run
 ota init --pack java-maven --dry-run
@@ -750,9 +758,9 @@ Text output:
 - dry-run header: `INIT <path>`
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
-- `pack` mode also includes `Pack: <name>` plus an explicit pack-policy note
+- `pack` mode also includes `Pack: <name>`, optional `Options: ...` when the selected starter pack supports explicit knobs, plus an explicit pack-policy note
 - explicit pack mode can also include an advisory note when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
-- `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
+- `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, any starter-specific option rows, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
 - `detected` mode write output explicitly calls out the write policy and any excluded low-confidence fields
@@ -765,10 +773,11 @@ JSON output:
 - `written`
 - `mode`
 - optional `pack` when explicit pack mode is used
+- optional `pack_options` when explicit pack mode selected a starter-specific knob such as Node package manager or Python test runner
 - optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, normalized signal markers, and a safe dry-run follow-up command
 - `config`
 - `inferred`
-- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, and the seeded runtimes, tools, checks, and tasks
+- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, optional starter `options`, and the seeded runtimes, tools, checks, and tasks
 - failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota agents`
