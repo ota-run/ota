@@ -60,6 +60,10 @@ policies:
           windows:
             approved_versions:
               - "7.6.0"
+  env:
+    values:
+      OTA_ENV: local
+      OTA_LOG_LEVEL: info
   agent:
     require_safe_tasks: true
     require_writable_paths: true

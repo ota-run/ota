@@ -30,8 +30,8 @@ This document explains how ota chooses approved sources for declared runtimes an
 
 For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapters.md).
 
-This is not the current shipped `env` resolver. The shipped contract still treats `policies.env`
-as a flat approved-value map. This page covers the provisioning source selection layer that
+This is not the current shipped `env` resolver. The shipped contract treats `policies.env.values`
+as the approved-value map in the org policy pack. This page covers the provisioning source selection layer that
 decides where an approved runtime or tool comes from when a repo asks for one.
 Org policy packs are currently discovered from `.ota/org-policy.yaml` by walking ancestor
 directories from the repo contract path; one ancestor policy file can therefore cover a workspace
@@ -314,7 +314,7 @@ Until ota has a declared, reproducible selection model, the safer truth is:
 - `tools` declares supporting CLI dependencies
 - `checks` proves readiness before execution
 - `env` declares runtime environment requirements
-- `policies.env` supplies approved env values today
+- `policies.env.values` supplies approved env values today
 - `policies.provisioning` supplies approved source selection for provisioning
 
 ## Proposed Policy Shape
@@ -506,4 +506,4 @@ This spec becomes implementation-bound when ota can:
 - resolve a repo-declared runtime or tool through an approved source
 - refuse unapproved sources
 - explain the chosen source in diagnostics and receipts
-- keep the current `policies.env` behavior unchanged
+- keep the current `policies.env.values` behavior unchanged

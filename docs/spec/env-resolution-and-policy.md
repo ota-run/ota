@@ -39,8 +39,9 @@ concepts:
 - `env.vars` declares which values the repo needs
 - `env.sources` declares where ota may read values from
 
-`policies.env` remains the org-level approved-value map. See [`policy-packs.md`](policy-packs.md)
+`policies.env.values` is the org-level approved-value map. See [`policy-packs.md`](policy-packs.md)
 for how ota finds the policy pack itself.
+Repo contracts do not declare `policies.env`; approved shared values live in `.ota/org-policy.yaml`.
 
 `PATH` is still the special env key that supports `prepend` and `append`. Ordinary env vars such as
 `JAVA_HOME` should stay as single explicit values.
@@ -91,13 +92,22 @@ This means:
 
 ## Resolution Order
 
-When a repo declares an env name in `env.vars`, ota resolves it in this order:
+When a repo declares an env name in `env.vars`, repo-level commands resolve it in this order:
 
 1. `tasks.<name>.env` for the task that declares it
-2. `policies.env`
+2. `policies.env.values`
 3. the shell process environment
 4. declared `env.sources`, in order
 5. the contract `default`
+
+Workspace commands add one higher-priority shared layer:
+
+1. `tasks.<name>.env` for the task that declares it
+2. `ota.workspace.yaml` `policies.env.values`
+3. org policy `policies.env.values`
+4. the shell process environment
+5. declared `env.sources`, in order
+6. the contract `default`
 
 If none of those provide a value and the env is required, validation or execution fails.
 
@@ -113,7 +123,7 @@ even if another layer provides the env value.
 - use `default` when the repo has a safe fallback
 - use `allowed` when the value must stay within a fixed set
 - use `tasks.<name>.env` when one task needs a fixed override
-- use `policies.env` when the organization wants an approved shared value
+- use `policies.env.values` when the organization wants an approved shared value
 - use `prepend` and `append` only on `PATH`
 
 ## Examples
@@ -143,9 +153,47 @@ tasks:
 ```yaml
 policies:
   env:
-    JAVA_HOME: /opt/jdk-22
-    AWS_PROFILE: ota-prod
+    values:
+      JAVA_HOME: /opt/jdk-22
+      AWS_PROFILE: ota-prod
 ```
+
+```yaml
+env:
+  vars:
+    DOCS_SITE_BASE_URL:
+      required: true
+    RELEASE_CHANNEL:
+      default: stable
+      allowed:
+        - stable
+        - canary
+  sources:
+    - kind: dotenv
+      path: .env.local
+
+policies:
+  env:
+    values:
+      DOCS_SITE_BASE_URL: https://docs.internal.example
+      RELEASE_CHANNEL: stable
+```
+
+This means:
+
+- `DOCS_SITE_BASE_URL` is a repo requirement
+- the org policy pack can satisfy it without relying on the shell or dotenv files
+- `RELEASE_CHANNEL` still has to pass `allowed`, regardless of whether it came from policy, the shell, or a declared source
+
+```yaml
+policies:
+  env:
+    values:
+      OTA_TEST_SHARED: workspace-policy
+```
+
+In `ota.workspace.yaml`, that shape supplies workspace-wide shared values that outrank the org policy
+pack during `ota workspace ...` commands.
 
 If the process `PATH` is:
 

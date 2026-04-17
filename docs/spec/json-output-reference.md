@@ -563,7 +563,7 @@ unchanged for machine consumers.
 
 `ota workspace doctor --json` uses the same finding shape for per-repo findings, so the same
 additive policy keys may appear there as well. When a repo declares execution metadata, the shared
-`execution.env` array may include policy provenance with `source` values such as `repo policy`
+`execution.env` array may include policy provenance with `source` values such as `org policy`
 or `workspace policy`.
 
 When a workspace repo declares runtimes or tools and policy provides approved sources for them,

@@ -5378,26 +5378,16 @@ tasks:
             r#"
 version: 1
 policies:
-  env:
-    OTA_ENV:
-      required: false
-      default: local
-      allowed:
-        - local
-        - ci
+  review:
+    require_signed_tags: false
 "#,
         );
         let target = ContractFixture::new(
             r#"
 version: 1
 policies:
-  env:
-    OTA_ENV:
-      required: false
-      default: ci
-      allowed:
-        - local
-        - ci
+  review:
+    require_signed_tags: true
 "#,
         );
 
@@ -5408,7 +5398,7 @@ policies:
 
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         let changes = json["changes"].as_array().unwrap();
-        assert_eq!(changes[0]["path"], "policies.env.OTA_ENV.default");
+        assert_eq!(changes[0]["path"], "policies.review.require_signed_tags");
         assert_eq!(changes[0]["provenance"], "policy");
 
         let text = run_with(["ota", "diff", base.path(), target.path()]);
@@ -12234,12 +12224,18 @@ env:
     OTA_TEST_BASE_URL:
       required: true
       default: http://localhost:8080
-policies:
-  env:
-    OTA_TEST_BASE_URL: http://policy.example.com
 tasks:
   setup:
     run: cargo build
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_BASE_URL: http://policy.example.com
 "#,
         );
 
@@ -12259,10 +12255,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Env precedence:"));
         assert!(stdout.contains(
-            "Env: `OTA_TEST_BASE_URL` (policy, required, default=http://localhost:8080)"
+            "Env: `OTA_TEST_BASE_URL` (org policy, required, default=http://localhost:8080)"
         ));
         assert!(stdout.contains(
-            "policy > process > declared env sources > contract default > required missing"
+            "org policy > process > declared env sources > contract default > required missing"
         ));
         assert!(stdout.contains("OTA_TEST_BASE_URL"));
         assert!(stdout.contains("required, default=http://localhost:8080"));
@@ -12282,12 +12278,18 @@ env:
     OTA_TEST_BASE_URL:
       required: true
       default: http://localhost:8080
-policies:
-  env:
-    OTA_TEST_BASE_URL: http://policy.example.com
 tasks:
   setup:
     run: cargo build
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_BASE_URL: http://policy.example.com
 "#,
         );
 
@@ -12300,6 +12302,38 @@ tasks:
             json["execution"]["env"][0]["policy"],
             "http://policy.example.com"
         );
+    }
+
+    #[test]
+    fn env_reports_invalid_policy_pack_instead_of_missing_env() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_BASE_URL:
+      required: true
+tasks:
+  setup:
+    run: cargo build
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values: [broken
+"#,
+        );
+
+        let output = run_with(["ota", "env", fixture.path()]);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or(""));
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stderr.contains("failed to parse policy pack"));
     }
 
     #[test]
@@ -24913,7 +24947,8 @@ repos:
     path: apps/web
 policies:
   env:
-    OTA_TEST_SHARED: workspace-policy
+    values:
+      OTA_TEST_SHARED: workspace-policy
 "#,
         )
         .unwrap();
@@ -24982,7 +25017,8 @@ repos:
     path: apps/web
 policies:
   env:
-    OTA_TEST_SHARED: workspace-policy
+    values:
+      OTA_TEST_SHARED: workspace-policy
 "#,
         )
         .unwrap();
@@ -25025,6 +25061,88 @@ tasks:
         );
         assert_eq!(
             body["repos"][0]["execution"]["env"][0]["source"],
+            "workspace policy"
+        );
+    }
+
+    #[test]
+    fn repo_env_reports_workspace_policy_provenance() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.workspace_file(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  policy: policy/org-policy.yaml
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.dir.path().join("policy")).unwrap();
+        fs::write(
+            fixture.dir.path().join("policy").join("org-policy.yaml"),
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_SHARED: workspace-policy
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+env:
+  vars:
+    OTA_TEST_SHARED:
+      required: true
+execution:
+  preferred: native
+tasks:
+  setup:
+    run: printf ok
+"#,
+        )
+        .unwrap();
+
+        let env_text = run_with([
+            "ota",
+            "env",
+            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+        ]);
+        assert_eq!(env_text.exit_code, 0);
+        let stdout = strip_ansi(&env_text.stdout);
+        assert!(stdout.contains("Source: workspace policy"));
+
+        let env_json = run_with([
+            "ota",
+            "env",
+            "--json",
+            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+        ]);
+        assert_eq!(env_json.exit_code, 0);
+        let body: Value = serde_json::from_str(&env_json.stdout).unwrap();
+        assert_eq!(
+            body["env"][0]["source"],
+            "workspace policy"
+        );
+
+        let doctor_json = run_with([
+            "ota",
+            "doctor",
+            "--json",
+            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+        ]);
+        assert_eq!(doctor_json.exit_code, 0);
+        let doctor_body: Value = serde_json::from_str(&doctor_json.stdout).unwrap();
+        assert_eq!(
+            doctor_body["execution"]["env"][0]["source"],
             "workspace policy"
         );
     }

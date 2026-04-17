@@ -96,7 +96,7 @@ use crate::runner::{
     DeclaredEnvSourceStatus, EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue,
     ResolvedExecutionBackend, RunError, StaleContainerOwnership, clean_execution,
     clean_stale_execution, effective_execution, env_resolution_source_label,
-    load_declared_env_sources, resolve_declared_env_source_value, resolve_execution_backend,
+    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value, resolve_execution_backend,
     resolve_task_env_details, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
@@ -1132,7 +1132,7 @@ fn build_env_report(
         None => None,
     };
 
-    let policy_env = crate::runner::policy_env_values(contract);
+    let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
     let mut env = Vec::new();
     let mut sources = Vec::new();
@@ -1187,9 +1187,10 @@ fn build_env_report(
         }
 
         let mut resolved = policy_env
+            .values
             .get(name)
             .cloned()
-            .map(|value| (String::from("policy"), value))
+            .map(|value| (policy_env.label.clone(), value))
             .or_else(|| {
                 std::env::var(name)
                     .ok()
@@ -15224,7 +15225,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
             &paint_key("Env precedence:"),
-            "policy env > process env > declared env sources > contract default > required missing",
+            "org policy > process > declared env sources > contract default > required missing",
         ));
         stdout.push('\n');
         stdout.push_str(&format!("{} {}", detail_arrow(), paint_key("Env:")));
@@ -15449,7 +15450,7 @@ fn render_doctor_execution_summary_text(
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Env precedence:"),
-            "policy > process > declared env sources > contract default > required missing",
+            "org policy > process > declared env sources > contract default > required missing",
         ));
         for item in &execution.env {
             let mut details = Vec::new();
@@ -21934,7 +21935,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     }
     if !execution.env.is_empty() {
         lines.push(format!(
-            " {}  {} workspace policy > repo policy > process > declared env sources > contract default > required missing",
+            " {}  {} workspace policy > org policy > process > declared env sources > contract default > required missing",
             summary_bullet(),
             paint_key("Env precedence:")
         ));
@@ -23416,7 +23417,7 @@ fn workspace_env_sources(
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Vec<ExecutionReceiptEnvSource> {
-    let repo_policy_env = crate::runner::policy_env_values(contract);
+    let repo_policy = load_policy_env_overlay(contract_path).unwrap_or_default();
     let workspace_policy_env = policy_env.cloned().unwrap_or_default();
 
     resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
@@ -23427,13 +23428,17 @@ fn workspace_env_sources(
                 EnvResolutionSource::Process => String::from("process"),
                 EnvResolutionSource::Default => String::from("default"),
                 EnvResolutionSource::Task => String::from("task"),
-                EnvResolutionSource::Policy => {
+                EnvResolutionSource::Policy(label) => {
                     if workspace_policy_env.contains_key(&name) {
                         String::from("workspace policy")
-                    } else if repo_policy_env.contains_key(&name) {
-                        String::from("repo policy")
+                    } else if repo_policy.values.contains_key(&name) {
+                        if label.is_empty() {
+                            repo_policy.label.clone()
+                        } else {
+                            label.to_string()
+                        }
                     } else {
-                        String::from("policy")
+                        label.to_string()
                     }
                 }
                 EnvResolutionSource::Source(label) => label.clone(),

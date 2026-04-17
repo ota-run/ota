@@ -40,6 +40,7 @@ use serde_json;
 use crate::execution::{
     available_container_engines, container_engine_candidates, selected_container_engine,
 };
+use crate::policy_pack::{LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details};
 use crate::schema::{
     Backend, Contract, EnvRequirement, EnvSourceKind, ExtensionKind, Lifecycle, TaskSpec,
 };
@@ -322,6 +323,8 @@ pub enum RunError {
         path: String,
         details: String,
     },
+    #[error("{details}")]
+    InvalidPolicyPack { details: String },
     #[error("task `{task}` input `{input}` is not declared in ota.yaml")]
     UnknownTaskInput { task: String, input: String },
     #[error("task `{task}` input `{input}` is required but was not provided")]
@@ -353,7 +356,7 @@ pub enum RunError {
 pub enum EnvResolutionSource {
     Process,
     Default,
-    Policy,
+    Policy(String),
     Task,
     Source(String),
 }
@@ -363,6 +366,12 @@ pub struct ResolvedEnvValue {
     pub value: String,
     pub source: EnvResolutionSource,
     pub secret: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PolicyEnvOverlay {
+    pub values: BTreeMap<String, String>,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,7 +472,7 @@ pub fn resolve_task_env(
         if matches!(
             resolved.source,
             EnvResolutionSource::Default
-                | EnvResolutionSource::Policy
+                | EnvResolutionSource::Policy(_)
                 | EnvResolutionSource::Task
                 | EnvResolutionSource::Source(_)
         ) {
@@ -489,7 +498,11 @@ pub fn resolve_task_env_details_with_policy(
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
-    let repo_policy_env = policy_env_values(contract);
+    let repo_policy = load_policy_env_overlay(contract_path).map_err(|error| {
+        RunError::InvalidPolicyPack {
+            details: error.to_string(),
+        }
+    })?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
     ensure_declared_env_sources_ready(&declared_sources)?;
 
@@ -497,15 +510,23 @@ pub fn resolve_task_env_details_with_policy(
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
-        let policy_value = policy_env
-            .and_then(|values| values.get(name))
-            .cloned()
-            .or_else(|| repo_policy_env.get(name).cloned());
         let process_value = std::env::var(name).ok();
         let task_value = task_env.and_then(|values| values.get(name)).cloned();
         let resolved = task_value
             .map(|value| (value, EnvResolutionSource::Task))
-            .or_else(|| policy_value.map(|value| (value, EnvResolutionSource::Policy)))
+            .or_else(|| {
+                policy_env.and_then(|values| values.get(name)).cloned().map(|value| {
+                    (
+                        value,
+                        EnvResolutionSource::Policy(String::from("workspace policy")),
+                    )
+                })
+            })
+            .or_else(|| {
+                repo_policy.values.get(name).cloned().map(|value| {
+                    (value, EnvResolutionSource::Policy(repo_policy.label.clone()))
+                })
+            })
             .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
             .or_else(|| resolve_declared_env_source_value(name, &declared_sources))
             .or_else(|| {
@@ -706,7 +727,7 @@ pub fn env_resolution_source_label(source: &EnvResolutionSource) -> String {
     match source {
         EnvResolutionSource::Process => String::from("process"),
         EnvResolutionSource::Default => String::from("default"),
-        EnvResolutionSource::Policy => String::from("policy"),
+        EnvResolutionSource::Policy(label) => label.clone(),
         EnvResolutionSource::Task => String::from("task"),
         EnvResolutionSource::Source(label) => label.clone(),
     }
@@ -751,18 +772,21 @@ fn command_with_path_export(command: &str, path_export: Option<&str>) -> String 
     format!("export PATH={}; {command}", shell_quote(path))
 }
 
-pub fn policy_env_values(contract: &Contract) -> BTreeMap<String, String> {
-    let Some(policy_env) = contract.policies.get("env") else {
-        return BTreeMap::new();
-    };
-    let Some(mapping) = policy_env.as_mapping() else {
-        return BTreeMap::new();
-    };
+fn policy_env_label(source: PolicyPackSource) -> String {
+    match source {
+        PolicyPackSource::WorkspacePolicy => String::from("workspace policy"),
+        PolicyPackSource::EnvOverride | PolicyPackSource::RepoPolicy => String::from("org policy"),
+    }
+}
 
-    mapping
-        .iter()
-        .filter_map(|(key, value)| Some((key.as_str()?.to_string(), value.as_str()?.to_string())))
-        .collect()
+pub fn load_policy_env_overlay(contract_path: &Path) -> Result<PolicyEnvOverlay, LoadPolicyPackError> {
+    Ok(match load_org_policy_pack_auto_details(contract_path)? {
+        Some(loaded) => PolicyEnvOverlay {
+            values: loaded.pack.env_values().clone(),
+            label: policy_env_label(loaded.source),
+        },
+        None => PolicyEnvOverlay::default(),
+    })
 }
 
 pub fn resolve_task_env_with_policy(
@@ -3000,8 +3024,7 @@ tasks:
     #[test]
     fn policy_env_overrides_process_env_before_defaults() {
         let _guard = env_mutex_lock();
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+        let fixture = ContractFixture::new(
             r#"
 version: 1
 project:
@@ -3010,27 +3033,33 @@ env:
   vars:
     OTA_TEST_POLICY:
       default: repo-default
-policies:
-  env:
-    OTA_TEST_POLICY: policy-value
 tasks:
   test:
     run: echo test
 "#,
-        )
-        .unwrap();
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_POLICY: policy-value
+"#,
+        );
 
         let original = env::var_os("OTA_TEST_POLICY");
         unsafe {
             env::set_var("OTA_TEST_POLICY", "process-value");
         }
 
-        let resolved = resolve_task_env_details(&contract, Path::new("ota.yaml"), None).unwrap();
-        let overrides = resolve_task_env(&contract, Path::new("ota.yaml"), None).unwrap();
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+        let overrides = resolve_task_env(&fixture.contract, fixture.file_path(), None).unwrap();
 
         assert_eq!(
             resolved["OTA_TEST_POLICY"].source,
-            EnvResolutionSource::Policy
+            EnvResolutionSource::Policy(String::from("org policy"))
         );
         assert_eq!(resolved["OTA_TEST_POLICY"].value, "policy-value");
         assert_eq!(overrides["OTA_TEST_POLICY"], "policy-value");
@@ -3102,12 +3131,18 @@ env:
   sources:
     - kind: dotenv
       path: .env
-policies:
-  env:
-    OTA_TEST_POLICY: policy-value
 tasks:
   test:
     run: echo test
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_POLICY: policy-value
 "#,
         );
         fs::write(
@@ -3125,7 +3160,7 @@ tasks:
 
         assert_eq!(
             resolved["OTA_TEST_POLICY"].source,
-            EnvResolutionSource::Policy
+            EnvResolutionSource::Policy(String::from("org policy"))
         );
         assert_eq!(resolved["OTA_TEST_POLICY"].value, "policy-value");
 
@@ -3164,6 +3199,90 @@ tasks:
             RunError::MissingRequiredEnvSource { kind, path }
                 if kind == "dotenv" && path == ".env"
         ));
+    }
+
+    #[test]
+    fn invalid_policy_pack_fails_task_env_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_POLICY:
+      required: true
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values: [broken
+"#,
+        );
+
+        let error = resolve_task_env_details(&fixture.contract, fixture.file_path(), None)
+            .expect_err("invalid policy should fail env resolution");
+
+        match error {
+            RunError::InvalidPolicyPack { details } => {
+                assert!(details.contains("failed to parse policy pack"));
+            }
+            other => panic!("expected invalid policy pack error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn workspace_policy_fallback_preserves_policy_env_provenance() {
+        let fixture = ContractFixture::new_in(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_POLICY:
+      required: true
+tasks:
+  test:
+    run: echo test
+"#,
+            "repo/ota.yaml",
+        );
+        fixture.write(
+            "ota.workspace.yaml",
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+  policy: policy/org-policy.yaml
+repos:
+  repo:
+    path: repo
+"#,
+        );
+        fixture.write(
+            "policy/org-policy.yaml",
+            r#"
+policies:
+  env:
+    values:
+      OTA_TEST_POLICY: workspace-policy
+"#,
+        );
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(
+            resolved["OTA_TEST_POLICY"].source,
+            EnvResolutionSource::Policy(String::from("workspace policy"))
+        );
     }
 
     #[test]
@@ -4836,8 +4955,15 @@ exec /bin/sh -lc "$1"
 
     impl ContractFixture {
         fn new(contents: &str) -> Self {
+            Self::new_in(contents, "ota.yaml")
+        }
+
+        fn new_in(contents: &str, relative: &str) -> Self {
             let dir = TempDir::new().unwrap();
-            let file_path = dir.path().join("ota.yaml");
+            let file_path = dir.path().join(relative);
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
             fs::write(&file_path, contents.trim_start()).unwrap();
             let contract = parse_contract_str(&file_path, contents.trim_start()).unwrap();
 
@@ -4850,6 +4976,14 @@ exec /bin/sh -lc "$1"
 
         fn file_path(&self) -> &Path {
             &self.file_path
+        }
+
+        fn write(&self, relative: &str, contents: &str) {
+            let path = self.dir.path().join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, contents.trim_start()).unwrap();
         }
     }
 }

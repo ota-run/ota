@@ -27,7 +27,7 @@
 ## Unreleased
 
 - removed the redundant `Suggestions` title from zsh completion menus while keeping commands and tasks ahead of global `--flags`
-- redesigned contract env authoring around `env.vars` and `env.sources`, making dotenv loading explicit instead of magical while keeping task env and `policies.env` as higher-precedence overrides.
+- redesigned env resolution end to end around `env.vars`, `env.sources`, and typed policy values at `policies.env.values`, making dotenv loading explicit, org policy values explicit, and the precedence surface honest across repo, workspace, and execution output.
 - added declared dotenv source resolution to `ota doctor`, `ota env`, `ota run`, and execution summaries, including ordered source precedence, `must_exist` readiness checks, and winning-source provenance such as `dotenv:.env`.
 - updated the contract/env docs, JSON env schema reference, and shipped examples so the public contract, command output, and repo fixtures all use the new env-source model consistently.
 - added `php-composer` as a workflow-shaped starter pack for explicit Composer-managed PHP repos, including pack-catalog discovery, Composer-backed advisory matching, and a review-first `does_not_infer` boundary instead of a vague language-level PHP pack.
