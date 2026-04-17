@@ -393,6 +393,7 @@ Rules:
 
 - runtime names must not be empty
 - versions must not be empty
+- `required` defaults to `true` and controls whether missing or mismatched runtimes are blocking
 - `only_on`, when set, scopes the runtime to `linux`, `macos`, or `windows`
 - `provider`, when set, must not be empty
 - `distribution`, when set, must not be empty
@@ -412,6 +413,7 @@ Version syntax examples:
 
 Runtime detail fields:
 
+- `required`: optional boolean; defaults to `true`
 - `only_on`: optional OS inclusion list; if omitted, the runtime is required on all supported OSes
 - `provider`: optional runtime manager or provisioning source hint such as `volta`
 - `distribution`: optional runtime flavor where version alone is not sufficient, especially Java
@@ -419,6 +421,7 @@ Runtime detail fields:
 - `platforms`: optional per-OS overrides keyed by `linux`, `macos`, or `windows`
 
 Use `only_on` to scope where a runtime is required, and use `platforms` only when values change on a matching OS.
+`required: false` keeps the runtime active but downgrades missing/version mismatch findings to warnings.
 Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `tools`
@@ -449,6 +452,7 @@ Rules:
 
 - tool names must not be empty
 - versions must not be empty
+- `required` defaults to `true` and controls whether missing or mismatched tools are blocking
 - `only_on`, when set, scopes the tool to `linux`, `macos`, or `windows`
 - `platforms` may override `version` per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
@@ -456,6 +460,7 @@ Rules:
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 
 Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
+`required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.
 Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `env`

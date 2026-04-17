@@ -14981,10 +14981,10 @@ project:
 version: 1
 project:
   name: ota
-services:
-  cache:
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
     required: false
-    healthcheck: exit 1
 tasks:
   test:
     run: cargo test
@@ -14997,7 +14997,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
         assert!(stdout.contains("Primary Finding"));
-        assert!(stdout.contains("Service healthcheck failed: cache"));
+        assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
     }
 
     #[test]
@@ -15007,10 +15007,10 @@ tasks:
 version: 1
 project:
   name: ota
-services:
-  cache:
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
     required: false
-    healthcheck: exit 1
 tasks:
   test:
     run: cargo test
@@ -15061,10 +15061,10 @@ project:
 env:
   OTA_DOCTOR_ORDER_REQUIRED:
     required: true
-services:
-  cache:
+tools:
+  cargo:
+    version: "999.0.0"
     required: false
-    healthcheck: exit 1
 checks:
   - name: informational-check
     kind: health
@@ -15082,7 +15082,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         let error_index = stdout.find("Primary Blocker").unwrap();
         let warn_index = stdout
-            .find("WARN  Service healthcheck failed: cache")
+            .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
         let info_index = stdout
             .find("INFO  Check failed: informational-check")
@@ -17221,10 +17221,10 @@ tasks:
 version: 1
 project:
   name: ota
-services:
-  cache:
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
     required: false
-    healthcheck: exit 1
 tasks:
   test:
     run: cargo test
