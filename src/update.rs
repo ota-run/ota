@@ -235,6 +235,7 @@ fn clear_update_check_failure_record(state_path: &Path) {
     let _ = fs::remove_file(state_path);
 }
 
+#[cfg(test)]
 fn update_notice_cache_path_for_state_path(state_path: &Path) -> PathBuf {
     state_path.with_file_name("latest-release-tag.txt")
 }
@@ -391,6 +392,7 @@ fn maybe_update_notice_with_cache_state(
     )
 }
 
+#[cfg(test)]
 fn maybe_update_notice_with_state(
     current_version: &str,
     latest_result: Result<String, ()>,

@@ -320,12 +320,24 @@ impl StarterPackConfig {
         }
     }
 
+    pub(crate) fn explicit_node_package_manager(self) -> Option<NodePackageManager> {
+        (self.pack == StarterPack::Node)
+            .then_some(self.options.node_package_manager)
+            .flatten()
+    }
+
     pub(crate) fn selected_node_package_manager(self) -> Option<NodePackageManager> {
         (self.pack == StarterPack::Node).then(|| {
             self.options
                 .node_package_manager
                 .unwrap_or(NodePackageManager::default_for_pack())
         })
+    }
+
+    pub(crate) fn explicit_python_test_runner(self) -> Option<PythonTestRunner> {
+        (self.pack == StarterPack::Python)
+            .then_some(self.options.python_test_runner)
+            .flatten()
     }
 
     pub(crate) fn selected_python_test_runner(self) -> Option<PythonTestRunner> {
@@ -346,12 +358,12 @@ impl StarterPackConfig {
         self.pack.provenance_source()
     }
 
-    pub(crate) fn selected_option_pairs(self) -> Vec<(&'static str, &'static str)> {
+    pub(crate) fn explicit_option_pairs(self) -> Vec<(&'static str, &'static str)> {
         let mut pairs = Vec::new();
-        if let Some(package_manager) = self.selected_node_package_manager() {
+        if let Some(package_manager) = self.explicit_node_package_manager() {
             pairs.push(("package-manager", package_manager.as_str()));
         }
-        if let Some(test_runner) = self.selected_python_test_runner() {
+        if let Some(test_runner) = self.explicit_python_test_runner() {
             pairs.push(("test-runner", test_runner.as_str()));
         }
         pairs
@@ -359,14 +371,10 @@ impl StarterPackConfig {
 
     pub(crate) fn command(self) -> String {
         let mut command = format!("ota init --pack {}", self.pack.as_str());
-        for (name, value) in self.selected_option_pairs() {
+        for (name, value) in self.explicit_option_pairs() {
             command.push_str(&format!(" --{name} {value}"));
         }
         command
-    }
-
-    pub(crate) fn preview_command(self) -> String {
-        format!("{} --dry-run .", self.command())
     }
 }
 
