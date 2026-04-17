@@ -27,6 +27,8 @@
 ## Unreleased
 
 - added explicit `ota init --pack` knobs for the first conventional starter variants: `--package-manager npm|pnpm|yarn|bun` on the Node pack and `--test-runner pytest|unittest` on the Python pack, including catalog metadata, JSON `pack_options`, and variant-specific provenance.
+- tightened background update-notice delivery so successful interactive commands keep the short non-blocking wait budget instead of riding the full release-check timeout on slow or offline networks.
+- made explicit `ota init --pack ...` advisories compare distinct repo-signal strength instead of suppressing warnings as soon as the selected pack has any incidental match.
 - replaced runtime/tool OS scoping via `platforms.<os>.required` with a cleaner `only_on` contract surface, while keeping root `required` as the blocking-vs-warning control and `platforms` for per-OS value overrides only.
 
 ## 1.4.18

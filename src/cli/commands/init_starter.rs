@@ -396,13 +396,9 @@ pub(crate) fn starter_pack_advisory(
         }
     }
 
-    let selected_score = scores.get(&selected_pack).copied().unwrap_or_default();
-    if selected_score > 0 {
-        return None;
-    }
-
     let mut ranked = scores
-        .into_iter()
+        .iter()
+        .map(|(pack, score)| (*pack, *score))
         .filter(|(pack, score)| *pack != selected_pack && *score >= 3)
         .collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
@@ -417,6 +413,11 @@ pub(crate) fn starter_pack_advisory(
         .get(1)
         .is_some_and(|(_, next_score)| *next_score == best_score)
     {
+        return None;
+    }
+
+    let selected_score = scores.get(&selected_pack).copied().unwrap_or_default();
+    if best_score <= selected_score {
         return None;
     }
 

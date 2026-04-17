@@ -2444,6 +2444,7 @@ fn update_notice_wait_timeout() -> Duration {
     crate::update::preferred_update_notice_wait_timeout()
 }
 
+#[cfg(test)]
 fn update_notice_wait_timeout_for_platform(_is_windows: bool) -> Duration {
     Duration::from_millis(50)
 }
@@ -13731,6 +13732,45 @@ requires-python = ">=3.12"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "rust");
         assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
+    }
+
+    #[test]
+    fn init_pack_advisory_still_surfaces_when_selected_pack_has_weaker_incidental_signal() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "pyproject.toml",
+            r#"[project]
+name = "service"
+requires-python = ">=3.12"
+"#,
+        );
+        fixture.write("requirements.txt", "pytest==8.3.0\n");
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "frontend",
+  "packageManager": "pnpm@10.0.0"
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "node");
+        assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
+        assert_eq!(
+            json["pack_advisory"]["signals"],
+            json!(["pyproject.toml", "requirements.txt"])
+        );
     }
 
     #[test]
