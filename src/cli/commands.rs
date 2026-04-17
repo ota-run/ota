@@ -10341,14 +10341,23 @@ fn build_pack_advisory(
         suggested_pack: advisory.suggested_pack.as_str().to_string(),
         selected_pack_score: advisory.selected_pack_score,
         suggested_pack_score: advisory.suggested_pack_score,
+        score_gap: advisory.score_gap,
         summary: format!(
-            "selected pack `{}` does not match the strongest detected repo signals; `{}` looks closer",
-            selected_pack.as_str(),
-            advisory.suggested_pack.as_str()
+            "stronger distinct repo signals favor `{}` over the selected pack `{}`",
+            advisory.suggested_pack.as_str(),
+            selected_pack.as_str()
         ),
         signals: advisory.signals,
         signal_details: advisory
             .signal_details
+            .into_iter()
+            .map(|signal| InitPackAdvisorySignal {
+                signal: signal.marker,
+                weight: signal.weight,
+            })
+            .collect(),
+        selected_signal_details: advisory
+            .selected_signal_details
             .into_iter()
             .map(|signal| InitPackAdvisorySignal {
                 signal: signal.marker,
@@ -10394,28 +10403,23 @@ fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPac
         return;
     };
 
-    let signals = if !advisory.signal_details.is_empty() {
-        advisory
-            .signal_details
-            .iter()
-            .map(|signal| format!("{} ({})", paint_code(&signal.signal), signal.weight))
-            .collect::<Vec<_>>()
-            .join(", ")
-    } else {
-        advisory
-            .signals
-            .iter()
-            .map(|signal| paint_code(signal))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    let suggested_signals = render_pack_advisory_signal_details(
+        &advisory.signal_details,
+        &advisory.signals,
+        "none detected",
+    );
+    let selected_signals = render_pack_advisory_signal_details(
+        &advisory.selected_signal_details,
+        &[],
+        "none detected on the selected pack",
+    );
 
     stdout.push_str(&format!(
         "\n{} {} {}",
         mode_icon(),
         paint_key("Advisory:"),
         format!(
-            "selected pack `{}` stays explicit, but repo signals look closer to `{}`",
+            "selected pack `{}` stays explicit, but stronger repo signals favor `{}`",
             advisory.selected_pack, advisory.suggested_pack
         )
     ));
@@ -10425,14 +10429,6 @@ fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPac
         paint_key("Why:"),
         advisory.summary
     ));
-    if !signals.is_empty() {
-        stdout.push_str(&format!(
-            "\n{} {} {}",
-            mode_icon(),
-            paint_key("Signals:"),
-            signals
-        ));
-    }
     stdout.push_str(&format!(
         "\n{} {} `{}`={} vs `{}`={}",
         mode_icon(),
@@ -10445,9 +10441,53 @@ fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPac
     stdout.push_str(&format!(
         "\n{} {} {}",
         mode_icon(),
+        paint_key("Signals:"),
+        suggested_signals
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
+        paint_key("Selected signals:"),
+        selected_signals
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} `{}` leads by {} point{}",
+        mode_icon(),
+        paint_key("Gap:"),
+        advisory.suggested_pack,
+        advisory.score_gap,
+        if advisory.score_gap == 1 { "" } else { "s" }
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
         paint_next_label(),
         paint_code(&advisory.next)
     ));
+}
+
+fn render_pack_advisory_signal_details(
+    details: &[InitPackAdvisorySignal],
+    fallback_signals: &[String],
+    empty_label: &str,
+) -> String {
+    if !details.is_empty() {
+        return details
+            .iter()
+            .map(|signal| format!("{} ({})", paint_code(&signal.signal), signal.weight))
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+
+    if !fallback_signals.is_empty() {
+        return fallback_signals
+            .iter()
+            .map(|signal| paint_code(signal))
+            .collect::<Vec<_>>()
+            .join(", ");
+    }
+
+    empty_label.to_string()
 }
 
 fn render_init(

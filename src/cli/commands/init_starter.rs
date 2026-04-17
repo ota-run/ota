@@ -102,8 +102,10 @@ pub(crate) struct StarterPackAdvisory {
     pub(crate) suggested_pack: StarterPack,
     pub(crate) selected_pack_score: usize,
     pub(crate) suggested_pack_score: usize,
+    pub(crate) score_gap: usize,
     pub(crate) signals: Vec<String>,
     pub(crate) signal_details: Vec<StarterPackSignal>,
+    pub(crate) selected_signal_details: Vec<StarterPackSignal>,
 }
 
 impl StarterPack {
@@ -458,7 +460,6 @@ pub(crate) fn starter_pack_advisory(
     detected: &DetectReport,
 ) -> Option<StarterPackAdvisory> {
     let mut scores = BTreeMap::<StarterPack, usize>::new();
-    let mut signals = BTreeMap::<StarterPack, BTreeSet<String>>::new();
     let mut signal_weights = BTreeMap::<StarterPack, BTreeMap<String, usize>>::new();
     let mut seen_signals = BTreeSet::<(StarterPack, String)>::new();
 
@@ -468,7 +469,6 @@ pub(crate) fn starter_pack_advisory(
         };
         if seen_signals.insert((pack, signal.clone())) {
             *scores.entry(pack).or_default() += weight;
-            signals.entry(pack).or_default().insert(signal.clone());
             signal_weights
                 .entry(pack)
                 .or_default()
@@ -501,35 +501,43 @@ pub(crate) fn starter_pack_advisory(
         return None;
     }
 
-    let signal_details = signals
-        .get(&suggested_pack)
-        .into_iter()
-        .flat_map(|set| set.iter())
-        .filter_map(|signal| {
-            signal_weights
-                .get(&suggested_pack)
-                .and_then(|weights| weights.get(signal))
-                .copied()
-                .map(|weight| StarterPackSignal {
-                    marker: signal.clone(),
-                    weight,
-                })
-        })
-        .take(3)
-        .collect::<Vec<_>>();
+    let signal_details = top_pack_signal_details(signal_weights.get(&suggested_pack));
+    let selected_signal_details = top_pack_signal_details(signal_weights.get(&selected_pack));
 
     Some(StarterPackAdvisory {
         suggested_pack,
         selected_pack_score: selected_score,
         suggested_pack_score: best_score,
-        signals: signals
-            .remove(&suggested_pack)
-            .unwrap_or_default()
-            .into_iter()
-            .take(3)
+        score_gap: best_score.saturating_sub(selected_score),
+        signals: signal_details
+            .iter()
+            .map(|signal| signal.marker.clone())
             .collect(),
         signal_details,
+        selected_signal_details,
     })
+}
+
+fn top_pack_signal_details(weights: Option<&BTreeMap<String, usize>>) -> Vec<StarterPackSignal> {
+    let Some(weights) = weights else {
+        return Vec::new();
+    };
+
+    let mut details = weights
+        .iter()
+        .map(|(signal, weight)| StarterPackSignal {
+            marker: signal.clone(),
+            weight: *weight,
+        })
+        .collect::<Vec<_>>();
+    details.sort_by(|left, right| {
+        right
+            .weight
+            .cmp(&left.weight)
+            .then_with(|| left.marker.cmp(&right.marker))
+    });
+    details.truncate(3);
+    details
 }
 
 pub(super) fn bootstrap_init_contract(report: &DetectReport) -> DetectContract {

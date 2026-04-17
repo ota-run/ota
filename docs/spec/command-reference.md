@@ -765,7 +765,7 @@ Text output:
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
 - `pack` mode also includes `Pack: <name>`, optional `Options: ...` when the selected starter pack supports explicit knobs, plus an explicit pack-policy note
-- explicit pack mode can also include an advisory note with `Why`, weighted `Signals`, `Strength`, and `Next` rows when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
+- explicit pack mode can also include an advisory note with `Why`, weighted `Signals`, `Selected signals`, `Strength`, `Gap`, and `Next` rows when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
 - `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, any starter-specific option rows, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
@@ -780,7 +780,7 @@ JSON output:
 - `mode`
 - optional `pack` when explicit pack mode is used
 - optional `pack_options` when explicit pack mode selected a starter-specific knob such as Node package manager or Python test runner
-- optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, distinct-signal scores, normalized signal markers, weighted signal details, and a safe dry-run follow-up command
+- optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, distinct-signal scores, score gap, normalized signal markers, weighted signal details for both the suggested and selected pack, and a safe dry-run follow-up command
 - `config`
 - `inferred`
 - `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, optional starter `options`, explicit `does_not_infer` boundaries, and the seeded runtimes, tools, checks, and tasks

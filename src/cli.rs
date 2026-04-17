@@ -13826,6 +13826,7 @@ agent:
             json["pack_advisory"]["suggested_pack_score"],
             serde_json::json!(3)
         );
+        assert_eq!(json["pack_advisory"]["score_gap"], serde_json::json!(3));
         assert_eq!(
             json["pack_advisory"]["signals"][0],
             serde_json::json!("package.json")
@@ -13838,6 +13839,7 @@ agent:
             json["pack_advisory"]["signal_details"][0]["weight"],
             serde_json::json!(3)
         );
+        assert!(json["pack_advisory"]["selected_signal_details"].is_null());
         assert!(
             json["pack_advisory"]["next"]
                 .as_str()
@@ -13869,9 +13871,11 @@ agent:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Advisory: selected pack `python` stays explicit"));
-        assert!(stdout.contains("Why: selected pack `python` does not match"));
+        assert!(stdout.contains("Why: stronger distinct repo signals favor `node`"));
         assert!(stdout.contains("Signals: package.json (3)"));
+        assert!(stdout.contains("Selected signals: none detected on the selected pack"));
         assert!(stdout.contains("Strength: `node`=3 vs `python`=0"));
+        assert!(stdout.contains("Gap: `node` leads by 3 points"));
         assert!(stdout.contains("ota init --pack node --dry-run"));
     }
 
@@ -13939,6 +13943,7 @@ requires-python = ">=3.12"
         assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
         assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(6));
         assert_eq!(json["pack_advisory"]["selected_pack_score"], json!(0));
+        assert_eq!(json["pack_advisory"]["score_gap"], json!(6));
     }
 
     #[test]
@@ -13974,9 +13979,14 @@ requires-python = ">=3.12"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "node");
         assert_eq!(json["pack_advisory"]["suggested_pack"], "python");
+        assert_eq!(json["pack_advisory"]["score_gap"], json!(3));
         assert_eq!(
             json["pack_advisory"]["signals"],
             json!(["pyproject.toml", "requirements.txt"])
+        );
+        assert_eq!(
+            json["pack_advisory"]["selected_signal_details"],
+            json!([{ "signal": "package.json", "weight": 3 }])
         );
     }
 
@@ -14223,6 +14233,7 @@ requires-python = ">=3.12"
         assert_eq!(json["pack"], "go");
         assert_eq!(json["pack_advisory"]["suggested_pack"], "dotnet");
         assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(8));
+        assert_eq!(json["pack_advisory"]["score_gap"], json!(8));
         assert_eq!(
             json["pack_advisory"]["signals"],
             json!(["global.json", "project file"])
@@ -14260,6 +14271,7 @@ requires-python = ">=3.12"
         assert_eq!(json["pack"], "go");
         assert_eq!(json["pack_advisory"]["suggested_pack"], "php-composer");
         assert_eq!(json["pack_advisory"]["suggested_pack_score"], json!(8));
+        assert_eq!(json["pack_advisory"]["score_gap"], json!(8));
         assert_eq!(
             json["pack_advisory"]["signals"],
             json!(["composer php requirement", "composer.json"])

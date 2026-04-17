@@ -1311,7 +1311,8 @@ without changing the selected pack or merging detector output into the starter:
     "suggested_pack": "node",
     "selected_pack_score": 0,
     "suggested_pack_score": 3,
-    "summary": "selected pack `python` does not match the strongest detected repo signals; `node` looks closer",
+    "score_gap": 3,
+    "summary": "stronger distinct repo signals favor `node` over the selected pack `python`",
     "signals": ["package.json"],
     "signal_details": [
       {
@@ -1325,8 +1326,10 @@ without changing the selected pack or merging detector output into the starter:
 ```
 
 `selected_pack_score` and `suggested_pack_score` show the distinct-signal strength ota saw for
-each pack, and `signal_details` preserves the weighted signal markers behind the flat `signals`
-list so automation can explain the mismatch without scraping the summary text.
+each pack, `score_gap` shows how far the suggested pack leads, `signal_details` preserves the
+weighted signal markers behind the flat `signals` list for the suggested pack, and
+`selected_signal_details` does the same for any incidental signals that still matched the
+explicitly selected pack.
 
 `provenance` is the per-field source map for the starter contract:
 
