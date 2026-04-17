@@ -25114,7 +25114,14 @@ tasks:
         let env_text = run_with([
             "ota",
             "env",
-            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+            fixture
+                .dir
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml")
+                .to_str()
+                .unwrap(),
         ]);
         assert_eq!(env_text.exit_code, 0);
         let stdout = strip_ansi(&env_text.stdout);
@@ -25124,20 +25131,31 @@ tasks:
             "ota",
             "env",
             "--json",
-            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+            fixture
+                .dir
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml")
+                .to_str()
+                .unwrap(),
         ]);
         assert_eq!(env_json.exit_code, 0);
         let body: Value = serde_json::from_str(&env_json.stdout).unwrap();
-        assert_eq!(
-            body["env"][0]["source"],
-            "workspace policy"
-        );
+        assert_eq!(body["env"][0]["source"], "workspace policy");
 
         let doctor_json = run_with([
             "ota",
             "doctor",
             "--json",
-            fixture.dir.path().join("apps").join("web").join("ota.yaml").to_str().unwrap(),
+            fixture
+                .dir
+                .path()
+                .join("apps")
+                .join("web")
+                .join("ota.yaml")
+                .to_str()
+                .unwrap(),
         ]);
         assert_eq!(doctor_json.exit_code, 0);
         let doctor_body: Value = serde_json::from_str(&doctor_json.stdout).unwrap();

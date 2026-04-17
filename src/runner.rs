@@ -40,7 +40,9 @@ use serde_json;
 use crate::execution::{
     available_container_engines, container_engine_candidates, selected_container_engine,
 };
-use crate::policy_pack::{LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details};
+use crate::policy_pack::{
+    LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details,
+};
 use crate::schema::{
     Backend, Contract, EnvRequirement, EnvSourceKind, ExtensionKind, Lifecycle, TaskSpec,
 };
@@ -498,11 +500,10 @@ pub fn resolve_task_env_details_with_policy(
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
-    let repo_policy = load_policy_env_overlay(contract_path).map_err(|error| {
-        RunError::InvalidPolicyPack {
+    let repo_policy =
+        load_policy_env_overlay(contract_path).map_err(|error| RunError::InvalidPolicyPack {
             details: error.to_string(),
-        }
-    })?;
+        })?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
     ensure_declared_env_sources_ready(&declared_sources)?;
 
@@ -515,16 +516,22 @@ pub fn resolve_task_env_details_with_policy(
         let resolved = task_value
             .map(|value| (value, EnvResolutionSource::Task))
             .or_else(|| {
-                policy_env.and_then(|values| values.get(name)).cloned().map(|value| {
-                    (
-                        value,
-                        EnvResolutionSource::Policy(String::from("workspace policy")),
-                    )
-                })
+                policy_env
+                    .and_then(|values| values.get(name))
+                    .cloned()
+                    .map(|value| {
+                        (
+                            value,
+                            EnvResolutionSource::Policy(String::from("workspace policy")),
+                        )
+                    })
             })
             .or_else(|| {
                 repo_policy.values.get(name).cloned().map(|value| {
-                    (value, EnvResolutionSource::Policy(repo_policy.label.clone()))
+                    (
+                        value,
+                        EnvResolutionSource::Policy(repo_policy.label.clone()),
+                    )
                 })
             })
             .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
@@ -779,7 +786,9 @@ fn policy_env_label(source: PolicyPackSource) -> String {
     }
 }
 
-pub fn load_policy_env_overlay(contract_path: &Path) -> Result<PolicyEnvOverlay, LoadPolicyPackError> {
+pub fn load_policy_env_overlay(
+    contract_path: &Path,
+) -> Result<PolicyEnvOverlay, LoadPolicyPackError> {
     Ok(match load_org_policy_pack_auto_details(contract_path)? {
         Some(loaded) => PolicyEnvOverlay {
             values: loaded.pack.env_values().clone(),

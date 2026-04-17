@@ -498,7 +498,8 @@ pub struct ExecutionSummary<'a> {
 impl<'a> ExecutionSummary<'a> {
     pub fn from_contract(contract: &'a Contract, contract_path: &std::path::Path) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
-        let (policy_env, policy_label, policy_issue) = match load_policy_env_overlay(contract_path) {
+        let (policy_env, policy_label, policy_issue) = match load_policy_env_overlay(contract_path)
+        {
             Ok(overlay) => (overlay.values, overlay.label, None),
             Err(_) => (
                 BTreeMap::new(),

@@ -96,8 +96,8 @@ use crate::runner::{
     DeclaredEnvSourceStatus, EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue,
     ResolvedExecutionBackend, RunError, StaleContainerOwnership, clean_execution,
     clean_stale_execution, effective_execution, env_resolution_source_label,
-    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value, resolve_execution_backend,
-    resolve_task_env_details, resolve_task_env_details_with_policy,
+    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value,
+    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };

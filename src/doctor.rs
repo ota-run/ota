@@ -1241,7 +1241,9 @@ fn diagnose_contract_with_scope(
         if mode == DoctorMode::Native {
             diagnose_env(
                 contract,
-                loaded_policy.as_ref().map(|loaded| loaded.pack.env_values()),
+                loaded_policy
+                    .as_ref()
+                    .map(|loaded| loaded.pack.env_values()),
                 &declared_env_sources,
                 &mut findings,
             );
@@ -1716,7 +1718,6 @@ fn diagnose_env(
     declared_sources: &[LoadedDeclaredEnvSource],
     findings: &mut Vec<Finding>,
 ) {
-
     for (name, requirement) in &contract.env {
         let value = policy_env
             .and_then(|values| values.get(name))
