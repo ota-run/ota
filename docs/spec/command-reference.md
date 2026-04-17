@@ -326,6 +326,7 @@ Current behavior:
 - when `--member` is set, inspects the merged member contract
 - when `--task` is set, includes task-scoped env alongside the contract env view
 - resolves values in the same precedence order as task execution
+- reports declared env source status alongside the env-variable view
 - shows the winning source for each contract env entry
 - reports missing required env and invalid allowed values
 - stays read-only
@@ -333,15 +334,16 @@ Current behavior:
 Text output:
 
 - header: `ENV <path>`
-- includes a readiness status line, a short overview, and separate `Contract env` / `Task env` sections when task-specific env is present
+- includes a readiness status line, a short overview, a `Declared env sources` section when sources exist, and separate `Contract env` / `Task env` sections when task-specific env is present
 - each env entry may include `kind`, `required`, `value`, `source`, `status`, `allowed`, `default`, and `Next`
+- each declared source may include `kind`, `path`, `must_exist`, `status`, `detail`, and `Next`
 - missing or invalid contract env entries point to a specific fix rather than guessing
 
 JSON output:
 
-- success: `ok`, `path`, `summary`, `env`
+- success: `ok`, `path`, `summary`, `sources`, `env`
 - success with task scope also includes `task`
-- `summary` includes contract, task, resolved, missing, and invalid counts
+- `summary` includes contract, declared-source, task, resolved, missing, and invalid counts
 - failure: `ok`, `path`, `task` when relevant, and `error`
 
 ## `ota execution plan`
@@ -686,7 +688,7 @@ Create a starter ota contract for a repo that does not yet have one.
 ```bash
 ota init [PATH]
 ota init --bootstrap [PATH]
-ota init --pack <node|python|go|rust|java-maven|java-gradle> [PATH]
+ota init --pack <node|python|go|rust|dotnet|php-composer|java-maven|java-gradle> [PATH]
 ota init --pack node --package-manager <npm|pnpm|yarn|bun> [PATH]
 ota init --pack python --test-runner <pytest|unittest> [PATH]
 ota init --packs
@@ -699,7 +701,7 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
-- `--pack <node|python|go|rust|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
+- `--pack <node|python|go|rust|dotnet|php-composer|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
 - `--pack node --package-manager <npm|pnpm|yarn|bun>` keeps pack mode explicit while swapping the conventional Node starter commands and seeded tool requirement to the selected package manager
 - `--pack python --test-runner <pytest|unittest>` keeps pack mode explicit while swapping the conventional Python test entrypoint to the selected runner
 - `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, the safe dry-run preview command to use next, and any explicit starter knobs exposed by that pack
@@ -724,6 +726,8 @@ Choosing an init path:
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
 - use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write
 - use `ota init --pack python --test-runner <name> --dry-run` when the repo is intentionally `pytest`- or `unittest`-driven and you want the starter to reflect that test command directly
+- use `ota init --pack dotnet --dry-run` when the repo is intentionally .NET-first and the standard `dotnet restore` / `dotnet build` / `dotnet test` loop is already the honest first draft
+- use `ota init --pack php-composer --dry-run` when the repo is intentionally Composer-managed PHP and `composer install` plus reuse of an existing `scripts.test` entry is the honest first draft you want to review
 - the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist
 - explicit packs seed short task `description` fields so the authoring pattern is visible immediately
 
@@ -742,6 +746,8 @@ ota init --pack python --dry-run
 ota init --pack python --test-runner unittest --dry-run
 ota init --pack go --dry-run
 ota init --pack rust --dry-run
+ota init --pack dotnet --dry-run
+ota init --pack php-composer --dry-run
 ota init --pack java-maven --dry-run
 ota init --pack java-gradle --dry-run
 ```
@@ -759,7 +765,7 @@ Text output:
 - write success: `WROTE <path>`
 - includes `Mode: blank` or `Mode: detected`
 - `pack` mode also includes `Pack: <name>`, optional `Options: ...` when the selected starter pack supports explicit knobs, plus an explicit pack-policy note
-- explicit pack mode can also include an advisory note when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
+- explicit pack mode can also include an advisory note with `Why`, weighted `Signals`, `Strength`, and `Next` rows when strong repo signals disagree with the selected pack; ota does not auto-switch or merge detector output into the pack
 - `--packs` renders `INIT PACKS starter packs`, one entry per pack, the exact `ota init --pack ...` command, any starter-specific option rows, and a `Next:` line with the matching `ota init --pack ... --dry-run .` preview command
 - includes a `Next:` line that tells the user how to review or validate the starter contract
 - `blank` mode explicitly warns that the starter contract is minimal coverage only
@@ -774,10 +780,10 @@ JSON output:
 - `mode`
 - optional `pack` when explicit pack mode is used
 - optional `pack_options` when explicit pack mode selected a starter-specific knob such as Node package manager or Python test runner
-- optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, normalized signal markers, and a safe dry-run follow-up command
+- optional `pack_advisory` when explicit pack mode disagrees with strong detected repo signals; it includes the selected pack, suggested pack, distinct-signal scores, normalized signal markers, weighted signal details, and a safe dry-run follow-up command
 - `config`
 - `inferred`
-- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, optional starter `options`, and the seeded runtimes, tools, checks, and tasks
+- `packs` when `mode` is `catalog` and ota is listing the built-in starter packs instead of previewing one contract; each entry includes `name`, `summary`, `when`, the exact `command`, a safe `next` preview command, optional starter `options`, explicit `does_not_infer` boundaries, and the seeded runtimes, tools, checks, and tasks
 - failure responses can include `next` when ota can point to one safe follow-up command
 
 ## `ota agents`
@@ -1241,20 +1247,20 @@ _ota() {
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    option_display+=("$value: ${completion#*:}")
+                    option_display+=("$value -- ${completion#*:}")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    primary_display+=("$value: ${completion#*:}")
+                    primary_display+=("$value -- ${completion#*:}")
                 else
                     primary_display+=("$value")
                 fi
             fi
         done
-        [[ -n $primary_values ]] && compadd -Q -X 'Suggestions' -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
         [[ -n $option_values ]] && compadd -Q -X 'Options' -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }

@@ -21,7 +21,10 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
+
+use serde_json::Value as JsonValue;
 
 use crate::detector::{
     DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
@@ -35,6 +38,8 @@ pub(crate) enum StarterPack {
     Python,
     Go,
     Rust,
+    Dotnet,
+    PhpComposer,
     JavaMaven,
     JavaGradle,
 }
@@ -83,12 +88,22 @@ pub(crate) struct StarterPackCatalogEntry {
     pub(crate) checks: &'static [&'static str],
     pub(crate) tasks: &'static [&'static str],
     pub(crate) options: &'static [StarterPackCatalogOption],
+    pub(crate) does_not_infer: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StarterPackSignal {
+    pub(crate) marker: String,
+    pub(crate) weight: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StarterPackAdvisory {
     pub(crate) suggested_pack: StarterPack,
+    pub(crate) selected_pack_score: usize,
+    pub(crate) suggested_pack_score: usize,
     pub(crate) signals: Vec<String>,
+    pub(crate) signal_details: Vec<StarterPackSignal>,
 }
 
 impl StarterPack {
@@ -98,6 +113,8 @@ impl StarterPack {
             StarterPack::Python,
             StarterPack::Go,
             StarterPack::Rust,
+            StarterPack::Dotnet,
+            StarterPack::PhpComposer,
             StarterPack::JavaMaven,
             StarterPack::JavaGradle,
         ]
@@ -109,6 +126,8 @@ impl StarterPack {
             Self::Python => "python",
             Self::Go => "go",
             Self::Rust => "rust",
+            Self::Dotnet => "dotnet",
+            Self::PhpComposer => "php-composer",
             Self::JavaMaven => "java-maven",
             Self::JavaGradle => "java-gradle",
         }
@@ -137,6 +156,10 @@ impl StarterPack {
                 checks: &["node-installed"],
                 tasks: &["setup", "dev", "test"],
                 options: NODE_PACK_OPTIONS,
+                does_not_infer: &[
+                    "the repo's package manager unless `--package-manager` says so",
+                    "repo-specific script names or extra task variants beyond the seeded `setup`, `dev`, and `test` loop",
+                ],
             },
             Self::Python => StarterPackCatalogEntry {
                 pack: self,
@@ -147,6 +170,10 @@ impl StarterPack {
                 checks: &["python-installed"],
                 tasks: &["setup", "test"],
                 options: PYTHON_PACK_OPTIONS,
+                does_not_infer: &[
+                    "pyproject-, poetry-, uv-, or pipenv-specific dependency flows beyond the seeded requirements-based starter",
+                    "repo-specific test layout beyond the selected `pytest` or `unittest` entrypoint",
+                ],
             },
             Self::Go => StarterPackCatalogEntry {
                 pack: self,
@@ -157,6 +184,9 @@ impl StarterPack {
                 checks: &["go-installed"],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "workspace layout, code generation, or custom build flags beyond the standard module download/build/test loop",
+                ],
             },
             Self::Rust => StarterPackCatalogEntry {
                 pack: self,
@@ -167,6 +197,35 @@ impl StarterPack {
                 checks: &["rust-installed"],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "workspace members, feature flags, or custom cargo aliases beyond the standard fetch/build/test loop",
+                ],
+            },
+            Self::Dotnet => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional .NET starter with restore, build, and test tasks.",
+                when: "Use this for .NET repos that should start from the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+                runtimes: &["dotnet"],
+                tools: &["dotnet"],
+                checks: &["dotnet-installed"],
+                tasks: &["setup", "build", "test"],
+                options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "solution-specific target selection, test filtering, or custom dotnet CLI flags beyond the standard restore/build/test loop",
+                ],
+            },
+            Self::PhpComposer => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional PHP starter for Composer-managed repos with Composer install and optional existing test-script reuse.",
+                when: "Use this for Composer-managed PHP repos that should start from `composer install` and, when the repo already declares `scripts.test`, the existing Composer test script without relying on detector-led init.",
+                runtimes: &["php"],
+                tools: &["composer"],
+                checks: &["php-installed", "composer-installed"],
+                tasks: &["setup"],
+                options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "framework-specific entrypoints, web server commands, or whether the repo uses phpunit, pest, artisan, or another test wrapper unless the repo already declares a Composer `scripts.test` entry",
+                ],
             },
             Self::JavaMaven => StarterPackCatalogEntry {
                 pack: self,
@@ -177,6 +236,9 @@ impl StarterPack {
                 checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "multi-module reactor details, plugin goals, or org-specific wrapper/bootstrap scripts beyond the standard Maven build/test loop",
+                ],
             },
             Self::JavaGradle => StarterPackCatalogEntry {
                 pack: self,
@@ -187,6 +249,9 @@ impl StarterPack {
                 checks: &["java-installed"],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "multi-project build logic, custom Gradle tasks, or org-specific wrapper/bootstrap scripts beyond the standard Gradle build/test loop",
+                ],
             },
         }
     }
@@ -301,6 +366,8 @@ impl StarterPackConfig {
             )),
             StarterPack::Go
             | StarterPack::Rust
+            | StarterPack::Dotnet
+            | StarterPack::PhpComposer
             | StarterPack::JavaMaven
             | StarterPack::JavaGradle
                 if options.node_package_manager.is_some()
@@ -392,6 +459,7 @@ pub(crate) fn starter_pack_advisory(
 ) -> Option<StarterPackAdvisory> {
     let mut scores = BTreeMap::<StarterPack, usize>::new();
     let mut signals = BTreeMap::<StarterPack, BTreeSet<String>>::new();
+    let mut signal_weights = BTreeMap::<StarterPack, BTreeMap<String, usize>>::new();
     let mut seen_signals = BTreeSet::<(StarterPack, String)>::new();
 
     for inference in &detected.inferences {
@@ -400,7 +468,11 @@ pub(crate) fn starter_pack_advisory(
         };
         if seen_signals.insert((pack, signal.clone())) {
             *scores.entry(pack).or_default() += weight;
-            signals.entry(pack).or_default().insert(signal);
+            signals.entry(pack).or_default().insert(signal.clone());
+            signal_weights
+                .entry(pack)
+                .or_default()
+                .insert(signal, weight);
         }
     }
 
@@ -429,14 +501,34 @@ pub(crate) fn starter_pack_advisory(
         return None;
     }
 
+    let signal_details = signals
+        .get(&suggested_pack)
+        .into_iter()
+        .flat_map(|set| set.iter())
+        .filter_map(|signal| {
+            signal_weights
+                .get(&suggested_pack)
+                .and_then(|weights| weights.get(signal))
+                .copied()
+                .map(|weight| StarterPackSignal {
+                    marker: signal.clone(),
+                    weight,
+                })
+        })
+        .take(3)
+        .collect::<Vec<_>>();
+
     Some(StarterPackAdvisory {
         suggested_pack,
+        selected_pack_score: selected_score,
+        suggested_pack_score: best_score,
         signals: signals
             .remove(&suggested_pack)
             .unwrap_or_default()
             .into_iter()
             .take(3)
             .collect(),
+        signal_details,
     })
 }
 
@@ -599,6 +691,15 @@ fn pack_signal_for_inference(inference: &Inference) -> Option<(StarterPack, usiz
         return Some((StarterPack::Rust, 4, normalize_pack_signal(source)));
     }
 
+    if source.starts_with("global.json") || source.ends_with(".sln") || source.ends_with(".csproj")
+    {
+        return Some((StarterPack::Dotnet, 4, normalize_pack_signal(source)));
+    }
+
+    if source.starts_with("composer.json") {
+        return Some((StarterPack::PhpComposer, 4, normalize_pack_signal(source)));
+    }
+
     if source.starts_with("pom.xml") || source.starts_with(".mvn/wrapper/maven-wrapper.properties")
     {
         return Some((StarterPack::JavaMaven, 4, normalize_pack_signal(source)));
@@ -622,6 +723,16 @@ fn normalize_pack_signal(source: &str) -> String {
         value if value.starts_with("setup.cfg") => String::from("setup.cfg"),
         value if value.starts_with("go.mod") => String::from("go.mod"),
         value if value.starts_with("Cargo.toml") => String::from("Cargo.toml"),
+        value if value.starts_with("global.json") => String::from("global.json"),
+        value if value.starts_with("composer.json#config.platform.php") => {
+            String::from("composer platform php")
+        }
+        value if value.starts_with("composer.json#require.php") => {
+            String::from("composer php requirement")
+        }
+        value if value.starts_with("composer.json") => String::from("composer.json"),
+        value if value.ends_with(".sln") => String::from("solution file"),
+        value if value.ends_with(".csproj") => String::from("project file"),
         value if value.starts_with("pom.xml") => String::from("pom.xml"),
         value if value.starts_with("build.gradle.kts") => String::from("build.gradle.kts"),
         value if value.starts_with("build.gradle") => String::from("build.gradle"),
@@ -801,6 +912,82 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 ),
             );
         }
+        StarterPack::Dotnet => {
+            contract
+                .runtimes
+                .insert(String::from("dotnet"), String::from("9.0"));
+            contract
+                .tools
+                .insert(String::from("dotnet"), String::from("*"));
+            contract.checks.push(DetectCheck {
+                name: String::from("dotnet-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("dotnet --version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "dotnet restore",
+                    Some(String::from("Restore the default .NET dependencies.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("build"),
+                pack_task(
+                    "build",
+                    "dotnet build",
+                    Some(String::from("Build the default .NET solution or project.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "dotnet test",
+                    Some(String::from("Run the default .NET test suite.")),
+                ),
+            );
+        }
+        StarterPack::PhpComposer => {
+            contract
+                .runtimes
+                .insert(String::from("php"), String::from("8.3"));
+            contract
+                .tools
+                .insert(String::from("composer"), String::from("*"));
+            contract.checks.push(DetectCheck {
+                name: String::from("php-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("php --version"),
+            });
+            contract.checks.push(DetectCheck {
+                name: String::from("composer-installed"),
+                kind: DetectCheckKind::Precondition,
+                severity: DetectCheckSeverity::Error,
+                run: String::from("composer --version"),
+            });
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "composer install",
+                    Some(String::from("Install Composer dependencies for the repo.")),
+                ),
+            );
+            if composer_has_test_script(root) {
+                contract.tasks.insert(
+                    String::from("test"),
+                    pack_task(
+                        "test",
+                        "composer run test",
+                        Some(String::from("Run the existing Composer test script.")),
+                    ),
+                );
+            }
+        }
         StarterPack::JavaMaven => {
             let uses_wrapper = root.join("mvnw").exists();
             contract
@@ -939,4 +1126,19 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
         notes: Some(notes),
         safe_for_agent: false,
     }
+}
+
+fn composer_has_test_script(root: &Path) -> bool {
+    let path = root.join("composer.json");
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(composer) = serde_json::from_str::<JsonValue>(&contents) else {
+        return false;
+    };
+
+    composer
+        .get("scripts")
+        .and_then(JsonValue::as_object)
+        .is_some_and(|scripts| scripts.contains_key("test"))
 }

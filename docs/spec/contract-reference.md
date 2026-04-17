@@ -74,12 +74,13 @@ runtimes:
 tools:
   pnpm: "10"
 env:
-  OTA_ENV:
-    required: true
-    default: local
-    allowed:
-      - local
-      - ci
+  vars:
+    OTA_ENV:
+      required: true
+      default: local
+      allowed:
+        - local
+        - ci
 tasks:
   setup:
     run: pnpm install
@@ -469,28 +470,48 @@ Optional.
 
 ```yaml
 env:
-  OTA_ENV:
-    required: true
-    secret: false
-    default: local
-    allowed:
-      - local
-      - ci
-  PATH:
-    prepend:
-      - ./node_modules/.bin
-      - /opt/ota/bin
+  vars:
+    OTA_ENV:
+      required: true
+      secret: false
+      default: local
+      allowed:
+        - local
+        - ci
+    PATH:
+      prepend:
+        - ./node_modules/.bin
+        - /opt/ota/bin
+  sources:
+    - kind: dotenv
+      path: .env.local
+    - kind: dotenv
+      path: .env
+      must_exist: true
 ```
 
 Fields:
+
+- `vars`: env-variable requirements keyed by env name
+- `sources`: ordered declared env sources
+
+`env.vars.<NAME>` fields:
 
 - `required`: optional boolean
 - `secret`: optional boolean; secret values are redacted in execution receipts and are not
   passed through remote shell wrappers
 - `default`: optional string
 - `allowed`: optional list of allowed values
-- `prepend`: optional list of path entries to add before the resolved value when the env key is `PATH`; these take priority
-- `append`: optional list of path entries to add after the resolved value when the env key is `PATH`; these act as fallback locations
+- `prepend`: optional list of path entries to add before the resolved value when the env key is
+  `PATH`; these take priority
+- `append`: optional list of path entries to add after the resolved value when the env key is
+  `PATH`; these act as fallback locations
+
+`env.sources[]` fields:
+
+- `kind`: source type; today ota ships `dotenv`
+- `path`: source path relative to the contract directory
+- `must_exist`: optional boolean; when `true`, the source artifact itself is part of readiness
 
 `PATH` is a standard search-path env var, so it is the one env key that supports structured
 composition. Most env vars are simple single values instead.
@@ -502,10 +523,11 @@ Examples:
 
 ```yaml
 env:
-  PATH:
-    prepend:
-      - ./node_modules/.bin
-      - /usr/local/cargo/bin
+  vars:
+    PATH:
+      prepend:
+        - ./node_modules/.bin
+        - /usr/local/cargo/bin
 ```
 
 If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value becomes
@@ -513,12 +535,36 @@ If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value become
 
 ```yaml
 env:
-  JAVA_HOME:
-    required: true
-    default: /opt/jdk-22
+  vars:
+    JAVA_HOME:
+      required: true
+      default: /opt/jdk-22
 ```
 
 This sets one explicit Java location. It does not merge with other values.
+
+```yaml
+env:
+  vars:
+    DISCORD_TOKEN:
+      required: true
+      secret: true
+    SUPABASE_URL:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env.local
+    - kind: dotenv
+      path: .env
+      must_exist: true
+```
+
+This makes dotenv loading explicit instead of magical:
+
+- ota reads `.env.local`, then `.env`
+- `.env.local` is optional
+- `.env` must exist
+- process env and `policies.env` still outrank both files
 
 ```yaml
 tasks:
@@ -534,10 +580,11 @@ Example:
 
 ```yaml
 env:
-  PATH:
-    prepend:
-      - ./node_modules/.bin
-      - /opt/ota/bin
+  vars:
+    PATH:
+      prepend:
+        - ./node_modules/.bin
+        - /opt/ota/bin
 ```
 
 If the existing `PATH` is `/usr/local/bin:/usr/bin:/bin`, the final value becomes
@@ -548,10 +595,12 @@ Policy-aware env selection and workspace inheritance are described in
 
 Current behavior:
 
-- `run` prefers approved policy env values, then process environment, then `default`
+- `run` prefers approved policy env values, then process environment, then declared env sources in
+  order, then `default`
 - declared env values are injected into backend execution after resolution, so container and remote backends see the same chosen value
 - `run` rejects disallowed values
-- `doctor` reports missing required vars and invalid values
+- `doctor` reports missing required vars, invalid values, and missing or invalid declared env
+  sources
 - `secret: true` may not be combined with a default value
 - secret env values are redacted in execution receipts
 - remote task execution rejects secret env values instead of inlining them into remote shell

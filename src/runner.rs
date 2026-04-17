@@ -24,6 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
@@ -39,7 +40,9 @@ use serde_json;
 use crate::execution::{
     available_container_engines, container_engine_candidates, selected_container_engine,
 };
-use crate::schema::{Backend, Contract, EnvRequirement, ExtensionKind, Lifecycle, TaskSpec};
+use crate::schema::{
+    Backend, Contract, EnvRequirement, EnvSourceKind, ExtensionKind, Lifecycle, TaskSpec,
+};
 
 #[derive(Clone)]
 pub(crate) struct StreamPhaseNotifier {
@@ -309,6 +312,16 @@ pub enum RunError {
     SecretEnvNotSupportedForRemote { task: String, names: String },
     #[error("secret environment variable `{name}` cannot define a default value")]
     SecretEnvCannotHaveDefault { name: String },
+    #[error(
+        "declared environment source `{kind}:{path}` is required for task execution but is missing"
+    )]
+    MissingRequiredEnvSource { kind: String, path: String },
+    #[error("declared environment source `{kind}:{path}` could not be read: {details}")]
+    InvalidEnvSource {
+        kind: String,
+        path: String,
+        details: String,
+    },
     #[error("task `{task}` input `{input}` is not declared in ota.yaml")]
     UnknownTaskInput { task: String, input: String },
     #[error("task `{task}` input `{input}` is required but was not provided")]
@@ -342,6 +355,7 @@ pub enum EnvResolutionSource {
     Default,
     Policy,
     Task,
+    Source(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -349,6 +363,29 @@ pub struct ResolvedEnvValue {
     pub value: String,
     pub source: EnvResolutionSource,
     pub secret: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclaredEnvSourceStatus {
+    Loaded,
+    Missing,
+    Invalid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedDeclaredEnvSource {
+    pub kind: EnvSourceKind,
+    pub path: String,
+    pub must_exist: bool,
+    pub status: DeclaredEnvSourceStatus,
+    pub details: Option<String>,
+    pub values: BTreeMap<String, String>,
+}
+
+impl LoadedDeclaredEnvSource {
+    pub fn label(&self) -> String {
+        format!("{}:{}", self.kind, self.path)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -416,15 +453,19 @@ pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPl
 
 pub fn resolve_task_env(
     contract: &Contract,
+    contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, String>, RunError> {
-    let resolved = resolve_task_env_details_with_policy(contract, task_env, None)?;
+    let resolved = resolve_task_env_details_with_policy(contract, contract_path, task_env, None)?;
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
         if matches!(
             resolved.source,
-            EnvResolutionSource::Default | EnvResolutionSource::Policy | EnvResolutionSource::Task
+            EnvResolutionSource::Default
+                | EnvResolutionSource::Policy
+                | EnvResolutionSource::Task
+                | EnvResolutionSource::Source(_)
         ) {
             overrides.insert(name, resolved.value);
         }
@@ -435,20 +476,24 @@ pub fn resolve_task_env(
 
 pub fn resolve_task_env_details(
     contract: &Contract,
+    contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
-    resolve_task_env_details_with_policy(contract, task_env, None)
+    resolve_task_env_details_with_policy(contract, contract_path, task_env, None)
 }
 
 pub fn resolve_task_env_details_with_policy(
     contract: &Contract,
+    contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, ResolvedEnvValue>, RunError> {
     let mut resolved_values = BTreeMap::new();
     let repo_policy_env = policy_env_values(contract);
+    let declared_sources = load_declared_env_sources(contract, contract_path);
+    ensure_declared_env_sources_ready(&declared_sources)?;
 
-    for (name, requirement) in &contract.env {
+    for (name, requirement) in contract.env.iter() {
         if requirement.secret && requirement.default.is_some() {
             return Err(RunError::SecretEnvCannotHaveDefault { name: name.clone() });
         }
@@ -462,6 +507,7 @@ pub fn resolve_task_env_details_with_policy(
             .map(|value| (value, EnvResolutionSource::Task))
             .or_else(|| policy_value.map(|value| (value, EnvResolutionSource::Policy)))
             .or_else(|| process_value.map(|value| (value, EnvResolutionSource::Process)))
+            .or_else(|| resolve_declared_env_source_value(name, &declared_sources))
             .or_else(|| {
                 requirement
                     .default
@@ -522,6 +568,159 @@ pub fn resolve_task_env_details_with_policy(
     Ok(resolved_values)
 }
 
+pub fn load_declared_env_sources(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Vec<LoadedDeclaredEnvSource> {
+    let contract_dir = contract_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+
+    contract
+        .env
+        .sources
+        .iter()
+        .map(|source| {
+            load_declared_env_source(&contract_dir, source.kind, &source.path, source.must_exist)
+        })
+        .collect()
+}
+
+fn load_declared_env_source(
+    contract_dir: &Path,
+    kind: EnvSourceKind,
+    path: &str,
+    must_exist: bool,
+) -> LoadedDeclaredEnvSource {
+    let source_path = contract_dir.join(path);
+    match kind {
+        EnvSourceKind::Dotenv => load_dotenv_source(kind, path, must_exist, &source_path),
+    }
+}
+
+fn load_dotenv_source(
+    kind: EnvSourceKind,
+    path: &str,
+    must_exist: bool,
+    source_path: &Path,
+) -> LoadedDeclaredEnvSource {
+    let file = match File::open(source_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return LoadedDeclaredEnvSource {
+                kind,
+                path: path.to_string(),
+                must_exist,
+                status: DeclaredEnvSourceStatus::Missing,
+                details: None,
+                values: BTreeMap::new(),
+            };
+        }
+        Err(error) => {
+            return LoadedDeclaredEnvSource {
+                kind,
+                path: path.to_string(),
+                must_exist,
+                status: DeclaredEnvSourceStatus::Invalid,
+                details: Some(error.to_string()),
+                values: BTreeMap::new(),
+            };
+        }
+    };
+
+    let mut values = BTreeMap::new();
+    for entry in dotenvy::from_read_iter(file) {
+        match entry {
+            Ok((name, value)) => {
+                values.insert(name, value);
+            }
+            Err(error) => {
+                return LoadedDeclaredEnvSource {
+                    kind,
+                    path: path.to_string(),
+                    must_exist,
+                    status: DeclaredEnvSourceStatus::Invalid,
+                    details: Some(error.to_string()),
+                    values: BTreeMap::new(),
+                };
+            }
+        }
+    }
+
+    LoadedDeclaredEnvSource {
+        kind,
+        path: path.to_string(),
+        must_exist,
+        status: DeclaredEnvSourceStatus::Loaded,
+        details: None,
+        values,
+    }
+}
+
+fn ensure_declared_env_sources_ready(sources: &[LoadedDeclaredEnvSource]) -> Result<(), RunError> {
+    for source in sources {
+        match source.status {
+            DeclaredEnvSourceStatus::Loaded => {}
+            DeclaredEnvSourceStatus::Missing if !source.must_exist => {}
+            DeclaredEnvSourceStatus::Missing => {
+                return Err(RunError::MissingRequiredEnvSource {
+                    kind: source.kind.to_string(),
+                    path: source.path.clone(),
+                });
+            }
+            DeclaredEnvSourceStatus::Invalid => {
+                return Err(RunError::InvalidEnvSource {
+                    kind: source.kind.to_string(),
+                    path: source.path.clone(),
+                    details: source
+                        .details
+                        .clone()
+                        .unwrap_or_else(|| String::from("unknown parse error")),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn resolve_declared_env_source_value(
+    name: &str,
+    sources: &[LoadedDeclaredEnvSource],
+) -> Option<(String, EnvResolutionSource)> {
+    sources.iter().find_map(|source| {
+        if source.status != DeclaredEnvSourceStatus::Loaded {
+            return None;
+        }
+
+        source
+            .values
+            .get(name)
+            .cloned()
+            .map(|value| (value, EnvResolutionSource::Source(source.label())))
+    })
+}
+
+pub fn env_resolution_source_label(source: &EnvResolutionSource) -> String {
+    match source {
+        EnvResolutionSource::Process => String::from("process"),
+        EnvResolutionSource::Default => String::from("default"),
+        EnvResolutionSource::Policy => String::from("policy"),
+        EnvResolutionSource::Task => String::from("task"),
+        EnvResolutionSource::Source(label) => label.clone(),
+    }
+}
+
+pub fn blocking_declared_env_source_label(sources: &[LoadedDeclaredEnvSource]) -> Option<String> {
+    sources.iter().find_map(|source| match source.status {
+        DeclaredEnvSourceStatus::Loaded => None,
+        DeclaredEnvSourceStatus::Missing if !source.must_exist => None,
+        DeclaredEnvSourceStatus::Missing => Some(format!("missing required {}", source.label())),
+        DeclaredEnvSourceStatus::Invalid => Some(format!("invalid {}", source.label())),
+    })
+}
+
 fn compose_path_value(
     name: &str,
     base: &str,
@@ -568,10 +767,12 @@ pub fn policy_env_values(contract: &Contract) -> BTreeMap<String, String> {
 
 pub fn resolve_task_env_with_policy(
     contract: &Contract,
+    contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<BTreeMap<String, String>, RunError> {
-    let resolved = resolve_task_env_details_with_policy(contract, task_env, policy_env)?;
+    let resolved =
+        resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)?;
     let mut overrides = BTreeMap::new();
 
     for (name, resolved) in resolved {
@@ -1023,8 +1224,12 @@ fn run_task_internal(
                 os: current_os.to_string(),
             });
         };
-        let env_details =
-            resolve_task_env_details_with_policy(contract, Some(&task.env), policy_env)?;
+        let env_details = resolve_task_env_details_with_policy(
+            contract,
+            contract_path,
+            Some(&task.env),
+            policy_env,
+        )?;
         let secret_env_names: BTreeSet<String> = env_details
             .iter()
             .filter(|(_, value)| value.secret)
@@ -1038,7 +1243,8 @@ fn run_task_internal(
                 names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
             });
         }
-        let env_overrides = resolve_task_env_with_policy(contract, Some(&task.env), policy_env)?;
+        let env_overrides =
+            resolve_task_env_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
         let path_export = match backend {
             ResolvedExecutionBackend::Container { .. } => env_details
                 .get("PATH")
@@ -2513,9 +2719,10 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_DEFAULT_ONLY:
-    required: true
-    default: ready
+  vars:
+    OTA_TEST_DEFAULT_ONLY:
+      required: true
+      default: ready
 tasks:
   test:
     run: echo test
@@ -2523,7 +2730,7 @@ tasks:
         )
         .unwrap();
 
-        let resolved = resolve_task_env(&contract, None).unwrap();
+        let resolved = resolve_task_env(&contract, Path::new("ota.yaml"), None).unwrap();
         assert_eq!(
             resolved.get("OTA_TEST_DEFAULT_ONLY"),
             Some(&"ready".to_string())
@@ -2540,10 +2747,11 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_PROCESS:
-    required: true
-  OTA_TEST_DEFAULT:
-    default: ready
+  vars:
+    OTA_TEST_PROCESS:
+      required: true
+    OTA_TEST_DEFAULT:
+      default: ready
 tasks:
   test:
     run: echo test
@@ -2559,7 +2767,7 @@ tasks:
             env::remove_var("OTA_TEST_DEFAULT");
         }
 
-        let resolved = resolve_task_env_details(&fixture, None).unwrap();
+        let resolved = resolve_task_env_details(&fixture, Path::new("ota.yaml"), None).unwrap();
         assert_eq!(
             resolved["OTA_TEST_PROCESS"].source,
             EnvResolutionSource::Process
@@ -2593,9 +2801,10 @@ version: 1
 project:
   name: ota
 env:
-  PATH:
-    prepend:
-      - /opt/ota/bin
+  vars:
+    PATH:
+      prepend:
+        - /opt/ota/bin
 tasks:
   test:
     run: echo test
@@ -2608,8 +2817,10 @@ tasks:
             env::set_var("PATH", "/usr/bin");
         }
 
-        let resolved = resolve_task_env_details(&contract, None).unwrap();
-        let overrides = super::resolve_task_env_with_policy(&contract, None, None).unwrap();
+        let resolved = resolve_task_env_details(&contract, Path::new("ota.yaml"), None).unwrap();
+        let overrides =
+            super::resolve_task_env_with_policy(&contract, Path::new("ota.yaml"), None, None)
+                .unwrap();
 
         assert_eq!(resolved["PATH"].source, EnvResolutionSource::Process);
         assert!(resolved["PATH"].value.starts_with("/opt/ota/bin:"));
@@ -2631,8 +2842,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_MISSING_REQUIRED:
-    required: true
+  vars:
+    OTA_TEST_MISSING_REQUIRED:
+      required: true
 tasks:
   test:
     run: echo test
@@ -2640,7 +2852,7 @@ tasks:
         )
         .unwrap();
 
-        let error = resolve_task_env(&contract, None).unwrap_err();
+        let error = resolve_task_env(&contract, Path::new("ota.yaml"), None).unwrap_err();
         assert!(matches!(
             error,
             RunError::MissingRequiredEnv { name } if name == "OTA_TEST_MISSING_REQUIRED"
@@ -2656,8 +2868,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_REQUIRED:
-    required: true
+  vars:
+    OTA_TEST_REQUIRED:
+      required: true
 tasks:
   test:
     env:
@@ -2668,7 +2881,8 @@ tasks:
         .unwrap();
 
         let task_env = &contract.tasks.get("test").unwrap().env;
-        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
+        let resolved =
+            resolve_task_env_details(&contract, Path::new("ota.yaml"), Some(task_env)).unwrap();
 
         assert_eq!(
             resolved["OTA_TEST_REQUIRED"].source,
@@ -2687,8 +2901,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_ENV:
-    default: repo-default
+  vars:
+    OTA_TEST_ENV:
+      default: repo-default
 tasks:
   test:
     env:
@@ -2704,8 +2919,9 @@ tasks:
         }
 
         let task_env = &contract.tasks.get("test").unwrap().env;
-        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
-        let overrides = resolve_task_env(&contract, Some(task_env)).unwrap();
+        let resolved =
+            resolve_task_env_details(&contract, Path::new("ota.yaml"), Some(task_env)).unwrap();
+        let overrides = resolve_task_env(&contract, Path::new("ota.yaml"), Some(task_env)).unwrap();
 
         assert_eq!(resolved["OTA_TEST_ENV"].source, EnvResolutionSource::Task);
         assert_eq!(resolved["OTA_TEST_ENV"].value, "task-value");
@@ -2726,9 +2942,10 @@ version: 1
 project:
   name: ota
 env:
-  OTA_MODE:
-    allowed:
-      - safe
+  vars:
+    OTA_MODE:
+      allowed:
+        - safe
 tasks:
   test:
     env:
@@ -2739,7 +2956,8 @@ tasks:
         .unwrap();
 
         let task_env = &contract.tasks.get("test").unwrap().env;
-        let error = resolve_task_env_details(&contract, Some(task_env)).unwrap_err();
+        let error =
+            resolve_task_env_details(&contract, Path::new("ota.yaml"), Some(task_env)).unwrap_err();
 
         assert!(matches!(
             error,
@@ -2757,9 +2975,10 @@ version: 1
 project:
   name: ota
 env:
-  PATH:
-    prepend:
-      - /opt/ota/bin
+  vars:
+    PATH:
+      prepend:
+        - /opt/ota/bin
 tasks:
   test:
     env:
@@ -2770,7 +2989,8 @@ tasks:
         .unwrap();
 
         let task_env = &contract.tasks.get("test").unwrap().env;
-        let resolved = resolve_task_env_details(&contract, Some(task_env)).unwrap();
+        let resolved =
+            resolve_task_env_details(&contract, Path::new("ota.yaml"), Some(task_env)).unwrap();
 
         assert_eq!(resolved["PATH"].source, EnvResolutionSource::Task);
         assert!(resolved["PATH"].value.starts_with("/opt/ota/bin:"));
@@ -2787,8 +3007,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_POLICY:
-    default: repo-default
+  vars:
+    OTA_TEST_POLICY:
+      default: repo-default
 policies:
   env:
     OTA_TEST_POLICY: policy-value
@@ -2804,8 +3025,8 @@ tasks:
             env::set_var("OTA_TEST_POLICY", "process-value");
         }
 
-        let resolved = resolve_task_env_details(&contract, None).unwrap();
-        let overrides = resolve_task_env(&contract, None).unwrap();
+        let resolved = resolve_task_env_details(&contract, Path::new("ota.yaml"), None).unwrap();
+        let overrides = resolve_task_env(&contract, Path::new("ota.yaml"), None).unwrap();
 
         assert_eq!(
             resolved["OTA_TEST_POLICY"].source,
@@ -2821,6 +3042,131 @@ tasks:
     }
 
     #[test]
+    fn declared_dotenv_sources_resolve_env_values_before_defaults() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_FROM_DOTENV:
+      required: true
+      default: fallback
+  sources:
+    - kind: dotenv
+      path: .env
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join(".env"),
+            "OTA_TEST_FROM_DOTENV=from-dotenv\n",
+        )
+        .unwrap();
+        let original = env::var_os("OTA_TEST_FROM_DOTENV");
+        unsafe {
+            env::remove_var("OTA_TEST_FROM_DOTENV");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(
+            resolved["OTA_TEST_FROM_DOTENV"].source,
+            EnvResolutionSource::Source(String::from("dotenv:.env"))
+        );
+        assert_eq!(resolved["OTA_TEST_FROM_DOTENV"].value, "from-dotenv");
+
+        match original {
+            Some(value) => unsafe { env::set_var("OTA_TEST_FROM_DOTENV", value) },
+            None => unsafe { env::remove_var("OTA_TEST_FROM_DOTENV") },
+        }
+    }
+
+    #[test]
+    fn policy_env_overrides_declared_dotenv_source_values() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_POLICY:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+policies:
+  env:
+    OTA_TEST_POLICY: policy-value
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+        fs::write(
+            fixture.dir.path().join(".env"),
+            "OTA_TEST_POLICY=dotenv-value\n",
+        )
+        .unwrap();
+        let original = env::var_os("OTA_TEST_POLICY");
+        unsafe {
+            env::remove_var("OTA_TEST_POLICY");
+        }
+
+        let resolved =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap();
+
+        assert_eq!(
+            resolved["OTA_TEST_POLICY"].source,
+            EnvResolutionSource::Policy
+        );
+        assert_eq!(resolved["OTA_TEST_POLICY"].value, "policy-value");
+
+        match original {
+            Some(value) => unsafe { env::set_var("OTA_TEST_POLICY", value) },
+            None => unsafe { env::remove_var("OTA_TEST_POLICY") },
+        }
+    }
+
+    #[test]
+    fn missing_must_exist_dotenv_source_fails_task_env_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_TEST_REQUIRED:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  test:
+    run: echo test
+"#,
+        );
+
+        let error =
+            resolve_task_env_details(&fixture.contract, fixture.file_path(), None).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RunError::MissingRequiredEnvSource { kind, path }
+                if kind == "dotenv" && path == ".env"
+        ));
+    }
+
+    #[test]
     fn rejects_secret_env_defaults() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -2829,9 +3175,10 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_SECRET:
-    secret: true
-    default: leaked
+  vars:
+    OTA_TEST_SECRET:
+      secret: true
+      default: leaked
 tasks:
   test:
     run: echo test
@@ -2839,7 +3186,7 @@ tasks:
         )
         .unwrap();
 
-        let error = resolve_task_env_details(&contract, None).unwrap_err();
+        let error = resolve_task_env_details(&contract, Path::new("ota.yaml"), None).unwrap_err();
         assert!(matches!(
             error,
             RunError::SecretEnvCannotHaveDefault { name } if name == "OTA_TEST_SECRET"
@@ -2855,8 +3202,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_SECRET:
-    secret: true
+  vars:
+    OTA_TEST_SECRET:
+      secret: true
 execution:
   preferred: remote
   backends:
@@ -3270,8 +3618,9 @@ execution:
     container:
       image: ghcr.io/ota/test:latest
 env:
-  OTA_CONTAINER_FLAG:
-    default: from-container
+  vars:
+    OTA_CONTAINER_FLAG:
+      default: from-container
 tasks:
   setup:
     script: |
@@ -3347,9 +3696,10 @@ execution:
     container:
       image: ghcr.io/ota/test:latest
 env:
-  PATH:
-    prepend:
-      - /opt/ota/bin
+  vars:
+    PATH:
+      prepend:
+        - /opt/ota/bin
 tasks:
   setup:
     script: |
@@ -3411,8 +3761,9 @@ execution:
       engines:
         - podman
 env:
-  OTA_CONTAINER_FLAG:
-    default: from-container
+  vars:
+    OTA_CONTAINER_FLAG:
+      default: from-container
 tasks:
   setup:
     script: |
@@ -3786,8 +4137,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -3860,8 +4212,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -3944,8 +4297,9 @@ execution:
       target: sandbox-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt
@@ -4028,8 +4382,9 @@ execution:
       target: pod/ota-dev
       cwd: {}
 env:
-  OTA_REMOTE_ENV:
-    default: remote
+  vars:
+    OTA_REMOTE_ENV:
+      default: remote
 tasks:
   setup:
     run: printf "$OTA_REMOTE_ENV" > prepared.txt

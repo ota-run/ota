@@ -33,9 +33,10 @@ execution:
       engines:
         - docker-test
 env:
-  PATH:
-    prepend:
-      - ./bin
+  vars:
+    PATH:
+      prepend:
+        - ./bin
 tasks:
   setup:
     run: cargo --version > prepared.txt

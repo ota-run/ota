@@ -27,7 +27,10 @@ use std::collections::BTreeMap;
 use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
-use crate::runner::policy_env_values;
+use crate::runner::{
+    blocking_declared_env_source_label, env_resolution_source_label, load_declared_env_sources,
+    policy_env_values, resolve_declared_env_source_value,
+};
 use crate::schema::{
     AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
     TaskVariantView,
@@ -473,6 +476,7 @@ pub struct ExecutionEnvSummary<'a> {
     pub default: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy: Option<String>,
+    pub source: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<&'a str>,
 }
@@ -492,9 +496,10 @@ pub struct ExecutionSummary<'a> {
 }
 
 impl<'a> ExecutionSummary<'a> {
-    pub fn from_contract(contract: &'a Contract) -> Option<Self> {
+    pub fn from_contract(contract: &'a Contract, contract_path: &std::path::Path) -> Option<Self> {
         let execution = contract.execution.as_ref()?;
         let policy_env = policy_env_values(contract);
+        let declared_sources = load_declared_env_sources(contract, contract_path);
 
         Some(Self {
             preferred: execution.preferred.map(format_backend),
@@ -530,6 +535,26 @@ impl<'a> ExecutionSummary<'a> {
                     required: requirement.required,
                     default: requirement.default.as_deref(),
                     policy: policy_env.get(name).cloned(),
+                    source: blocking_declared_env_source_label(&declared_sources)
+                        .or_else(|| {
+                            policy_env
+                                .get(name)
+                                .map(|_| String::from("policy"))
+                                .or_else(|| {
+                                    std::env::var(name).ok().map(|_| String::from("process"))
+                                })
+                                .or_else(|| {
+                                    resolve_declared_env_source_value(name, &declared_sources)
+                                        .map(|(_, source)| env_resolution_source_label(&source))
+                                })
+                                .or_else(|| {
+                                    requirement
+                                        .default
+                                        .as_ref()
+                                        .map(|_| String::from("default"))
+                                })
+                        })
+                        .unwrap_or_else(|| String::from("missing")),
                     allowed: requirement.allowed.iter().map(String::as_str).collect(),
                 })
                 .collect(),
@@ -1012,12 +1037,22 @@ pub struct InitSuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct InitPackAdvisorySignal {
+    pub signal: String,
+    pub weight: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct InitPackAdvisory {
     pub selected_pack: String,
     pub suggested_pack: String,
+    pub selected_pack_score: usize,
+    pub suggested_pack_score: usize,
     pub summary: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub signals: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub signal_details: Vec<InitPackAdvisorySignal>,
     pub next: String,
 }
 
@@ -1054,6 +1089,8 @@ pub struct InitPackInfo {
     pub next: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<InitPackOption>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub does_not_infer: Vec<String>,
     pub seeds: InitPackSeeds,
 }
 
@@ -1323,6 +1360,7 @@ pub struct EnvSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'a str>,
     pub summary: EnvSummary,
+    pub sources: Vec<EnvSourceEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvEntry>,
 }
@@ -1339,10 +1377,32 @@ pub struct EnvFailure<'a> {
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
 pub struct EnvSummary {
     pub contract_count: usize,
+    pub source_count: usize,
+    pub source_issue_count: usize,
     pub task_count: usize,
     pub resolved_count: usize,
     pub missing_count: usize,
     pub invalid_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvSourceStatus {
+    Loaded,
+    Missing,
+    Invalid,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct EnvSourceEntry {
+    pub kind: String,
+    pub path: String,
+    pub must_exist: bool,
+    pub status: EnvSourceStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]

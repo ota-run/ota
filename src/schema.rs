@@ -40,7 +40,7 @@ pub struct Contract {
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
     #[serde(default)]
-    pub env: BTreeMap<String, EnvRequirement>,
+    pub env: EnvConfig,
     #[serde(default)]
     pub services: BTreeMap<String, ServiceSpec>,
     #[serde(default)]
@@ -330,6 +330,65 @@ pub struct ToolPlatformDetail {
 
 fn default_required() -> bool {
     true
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EnvConfig {
+    #[serde(default)]
+    pub vars: BTreeMap<String, EnvRequirement>,
+    #[serde(default)]
+    pub sources: Vec<EnvSource>,
+}
+
+impl EnvConfig {
+    pub fn is_empty(&self) -> bool {
+        self.vars.is_empty() && self.sources.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.vars.len()
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.vars.contains_key(name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &EnvRequirement)> {
+        self.vars.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a EnvConfig {
+    type Item = (&'a String, &'a EnvRequirement);
+    type IntoIter = std::collections::btree_map::Iter<'a, String, EnvRequirement>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.vars.iter()
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvSourceKind {
+    Dotenv,
+}
+
+impl std::fmt::Display for EnvSourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dotenv => f.write_str("dotenv"),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct EnvSource {
+    pub kind: EnvSourceKind,
+    pub path: String,
+    #[serde(default)]
+    pub must_exist: bool,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

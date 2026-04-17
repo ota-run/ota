@@ -44,20 +44,20 @@ _ota() {
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    option_display+=("$value: ${completion#*:}")
+                    option_display+=("$value -- ${completion#*:}")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
                 if [[ "$completion" == *:* ]]; then
-                    primary_display+=("$value: ${completion#*:}")
+                    primary_display+=("$value -- ${completion#*:}")
                 else
                     primary_display+=("$value")
                 fi
             fi
         done
-        [[ -n $primary_values ]] && compadd -Q -X 'Suggestions' -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
+        [[ -n $primary_values ]] && compadd -Q -V ota_primary -d primary_display -o nosort -- "${primary_values[@]}"
         [[ -n $option_values ]] && compadd -Q -X 'Options' -V ota_options -d option_display -o nosort -- "${option_values[@]}"
     fi
 }

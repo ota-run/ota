@@ -51,7 +51,7 @@ use crate::doctor::{
 };
 use crate::execution::{
     container_engine_candidates, ephemeral_container_target, execution_image, execution_target,
-    format_backend, format_lifecycle, selected_container_engine,
+    format_backend, format_lifecycle,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -59,19 +59,20 @@ use crate::output::{
     ContractIdentityMetadata, ContractIdentityProject, DetectComparison, DetectComparisonChange,
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
     DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
-    DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSuccess, EnvSummary,
-    ExecutionPlanFailure, ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess,
-    ExecutionReceipt, ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary,
-    ExecutionSummary, ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure,
-    InitPackAdvisory, InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds,
-    InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure,
-    PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline,
-    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary,
-    ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution,
-    UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary,
-    WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSourceEntry,
+    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides,
+    ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource,
+    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
+    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
+    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
+    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
+    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
+    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
     WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
     WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
     WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
@@ -92,9 +93,11 @@ use crate::provisioning::{
     ProvisioningOutputMode, apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue, ResolvedExecutionBackend, RunError,
-    StaleContainerOwnership, clean_execution, clean_stale_execution, effective_execution,
-    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
+    DeclaredEnvSourceStatus, EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue,
+    ResolvedExecutionBackend, RunError, StaleContainerOwnership, clean_execution,
+    clean_stale_execution, effective_execution, env_resolution_source_label,
+    load_declared_env_sources, resolve_declared_env_source_value, resolve_execution_backend,
+    resolve_task_env_details, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -779,7 +782,8 @@ pub fn execution_plan(
             Ok(target) => {
                 let contract_path_display = target.contract_path.display().to_string();
                 let contract_identity = repo_contract_identity(&target.contract);
-                let declared_execution = ExecutionSummary::from_contract(&target.contract);
+                let declared_execution =
+                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                 match resolve_execution_plan(&target.contract, &target.contract_path, overrides) {
                     Ok(resolved_execution) => {
                         let applied_overrides = execution_plan_overrides(overrides);
@@ -1017,6 +1021,7 @@ fn resolve_execution_plan(
 struct EnvReport {
     ok: bool,
     summary: EnvSummary,
+    sources: Vec<EnvSourceEntry>,
     env: Vec<EnvEntry>,
 }
 
@@ -1055,7 +1060,7 @@ pub fn env(
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => match build_env_report(&target.contract, task) {
+            Ok(target) => match build_env_report(&target.contract, &target.contract_path, task) {
                 Ok(report) => match format {
                     OutputFormat::Text => CommandOutput {
                         stdout: render_env_text(&text_path_display, task, &report),
@@ -1068,6 +1073,7 @@ pub fn env(
                             path: &path_display,
                             task,
                             summary: report.summary,
+                            sources: report.sources,
                             env: report.env,
                         }),
                         stderr: None,
@@ -1108,7 +1114,11 @@ pub fn env(
     )
 }
 
-fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvReport, String> {
+fn build_env_report(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: Option<&str>,
+) -> Result<EnvReport, String> {
     let task_env = match task_name {
         Some(task_name) => {
             let Some(task) = contract.tasks.get(task_name) else {
@@ -1123,10 +1133,49 @@ fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvR
     };
 
     let policy_env = crate::runner::policy_env_values(contract);
+    let declared_sources = load_declared_env_sources(contract, contract_path);
     let mut env = Vec::new();
+    let mut sources = Vec::new();
     let mut contract_resolved_count = 0usize;
     let mut missing_count = 0usize;
     let mut invalid_count = 0usize;
+    let mut source_issue_count = 0usize;
+
+    for source in &declared_sources {
+        let (status, detail, next, issue_count) = match source.status {
+            DeclaredEnvSourceStatus::Loaded => (EnvSourceStatus::Loaded, None, None, 0usize),
+            DeclaredEnvSourceStatus::Missing if !source.must_exist => {
+                (EnvSourceStatus::Missing, None, None, 0usize)
+            }
+            DeclaredEnvSourceStatus::Missing => (
+                EnvSourceStatus::Missing,
+                Some(String::from("declared source missing")),
+                Some(format!(
+                    "create `{}` or remove `must_exist: true`, then rerun `ota env`",
+                    source.path
+                )),
+                1usize,
+            ),
+            DeclaredEnvSourceStatus::Invalid => (
+                EnvSourceStatus::Invalid,
+                source.details.clone(),
+                Some(format!(
+                    "fix `{}` so ota can parse it as a dotenv file, then rerun `ota env`",
+                    source.path
+                )),
+                1usize,
+            ),
+        };
+        source_issue_count += issue_count;
+        sources.push(EnvSourceEntry {
+            kind: source.kind.to_string(),
+            path: source.path.clone(),
+            must_exist: source.must_exist,
+            status,
+            detail,
+            next,
+        });
+    }
 
     for (name, requirement) in &contract.env {
         let task_override = task_env.and_then(|task_env| task_env.get(name));
@@ -1140,9 +1189,22 @@ fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvR
         let mut resolved = policy_env
             .get(name)
             .cloned()
-            .map(|value| ("policy", value))
-            .or_else(|| std::env::var(name).ok().map(|value| ("process", value)))
-            .or_else(|| requirement.default.clone().map(|value| ("default", value)));
+            .map(|value| (String::from("policy"), value))
+            .or_else(|| {
+                std::env::var(name)
+                    .ok()
+                    .map(|value| (String::from("process"), value))
+            })
+            .or_else(|| {
+                resolve_declared_env_source_value(name, &declared_sources)
+                    .map(|(value, source)| (env_resolution_source_label(&source), value))
+            })
+            .or_else(|| {
+                requirement
+                    .default
+                    .clone()
+                    .map(|value| (String::from("default"), value))
+            });
 
         match resolved.as_mut() {
             Some((source, value)) => {
@@ -1161,7 +1223,7 @@ fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvR
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
-                        source: (*source).to_string(),
+                        source: source.clone(),
                         status: EnvEntryStatus::Invalid,
                         next: Some(env_next_for_invalid(name, &requirement.allowed)),
                     });
@@ -1174,7 +1236,7 @@ fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvR
                         default: requirement.default.clone(),
                         allowed: requirement.allowed.clone(),
                         value: Some(display_env_value(value.as_str(), requirement.secret)),
-                        source: (*source).to_string(),
+                        source: source.clone(),
                         status: EnvEntryStatus::Resolved,
                         next: None,
                     });
@@ -1235,14 +1297,17 @@ fn build_env_report(contract: &Contract, task_name: Option<&str>) -> Result<EnvR
         .count();
 
     Ok(EnvReport {
-        ok: missing_count == 0 && invalid_count == 0,
+        ok: missing_count == 0 && invalid_count == 0 && source_issue_count == 0,
         summary: EnvSummary {
             contract_count: contract.env.len(),
+            source_count: declared_sources.len(),
+            source_issue_count,
             task_count,
             resolved_count: contract_resolved_count,
             missing_count,
             invalid_count,
         },
+        sources,
         env,
     })
 }
@@ -1276,9 +1341,11 @@ fn display_env_value(value: &str, secret: bool) -> String {
 fn env_next_for_missing(name: &str, task_name: Option<&str>) -> String {
     match task_name {
         Some(task_name) => format!(
-            "set {name} in the shell, policy, or task env for `{task_name}`, then rerun `ota env --task {task_name}`"
+            "set {name} in policy env, the shell, a declared env source, or task env for `{task_name}`, then rerun `ota env --task {task_name}`"
         ),
-        None => format!("set {name} in the shell or policy, then rerun `ota env`"),
+        None => format!(
+            "set {name} in policy env, the shell, or a declared env source, then rerun `ota env`"
+        ),
     }
 }
 
@@ -1329,6 +1396,18 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
     stdout.push_str(&format!(
         "\n{} {} {}",
         summary_bullet(),
+        paint_key("Declared sources:"),
+        report.summary.source_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
+        paint_key("Source issues:"),
+        report.summary.source_issue_count
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        summary_bullet(),
         paint_key("Task env:"),
         report.summary.task_count
     ));
@@ -1362,6 +1441,16 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
             .filter(|entry| matches!(entry.kind, EnvEntryKind::Contract))
         {
             stdout.push_str(&render_env_entry_text(entry));
+        }
+    }
+
+    if !report.sources.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Declared env sources")
+        ));
+        for source in &report.sources {
+            stdout.push_str(&render_env_source_text(source));
         }
     }
 
@@ -1414,6 +1503,37 @@ fn render_env_entry_text(entry: &EnvEntry) -> String {
         output.push_str(&format!("\n  {} {}", paint_key("Default:"), default));
     }
     if let Some(next) = entry.next.as_deref() {
+        output.push_str(&format!("\n  {} {}", paint_key("Next:"), next));
+    }
+    output
+}
+
+fn render_env_source_text(source: &EnvSourceEntry) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
+        "\n{} {}:{}",
+        list_bullet(),
+        paint(&source.kind, "1"),
+        source.path
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Must Exist:"),
+        if source.must_exist { "true" } else { "false" }
+    ));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Status:"),
+        match source.status {
+            EnvSourceStatus::Loaded => "loaded",
+            EnvSourceStatus::Missing => "missing",
+            EnvSourceStatus::Invalid => "invalid",
+        }
+    ));
+    if let Some(detail) = &source.detail {
+        output.push_str(&format!("\n  {} {}", paint_key("Detail:"), detail));
+    }
+    if let Some(next) = &source.next {
         output.push_str(&format!("\n  {} {}", paint_key("Next:"), next));
     }
     output
@@ -3219,7 +3339,8 @@ pub fn doctor(
                     .agent
                     .as_ref()
                     .and_then(AgentSummary::from_config);
-                let execution_summary = ExecutionSummary::from_contract(&target.contract);
+                let execution_summary =
+                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -3317,8 +3438,10 @@ pub fn doctor(
                                 .agent
                                 .as_ref()
                                 .and_then(AgentSummary::from_config);
-                            let member_execution =
-                                ExecutionSummary::from_contract(&member_target.contract);
+                            let member_execution = ExecutionSummary::from_contract(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                            );
                             text_sections.push(render_doctor_section(
                                 &display_contract_target(
                                     &compact_path_display,
@@ -3388,7 +3511,10 @@ pub fn doctor(
                                         Some(mode),
                                     ),
                                     agent: agent_summary,
-                                    execution: ExecutionSummary::from_contract(&target.contract),
+                                    execution: ExecutionSummary::from_contract(
+                                        &target.contract,
+                                        &target.contract_path,
+                                    ),
                                     provisioning: report
                                         .provisioning
                                         .as_ref()
@@ -3476,7 +3602,8 @@ pub fn doctor(
                         .agent
                         .as_ref()
                         .and_then(AgentSummary::from_config);
-                    let execution_summary = ExecutionSummary::from_contract(&target.contract);
+                    let execution_summary =
+                        ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                     text_sections.push(render_doctor_section(
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
                         &target.contract_path,
@@ -3845,7 +3972,8 @@ pub fn check(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
                 let report = diagnose_checks_only(&target.contract, &target.contract_path);
-                let execution_summary = ExecutionSummary::from_contract(&target.contract);
+                let execution_summary =
+                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                 if members.is_empty()
                     && target.contract_path == resolved_path
                     && target.contract.workspace.as_ref().is_some_and(|workspace| {
@@ -3933,8 +4061,10 @@ pub fn check(
                                     member_target.contract.agent.as_ref(),
                                 ),
                             );
-                            let member_execution =
-                                ExecutionSummary::from_contract(&member_target.contract);
+                            let member_execution = ExecutionSummary::from_contract(
+                                &member_target.contract,
+                                &member_target.contract_path,
+                            );
                             text_sections.push(render_report_section(
                                 "CHECK",
                                 &display_contract_target(
@@ -4072,7 +4202,8 @@ pub fn check(
                     if !report.ok {
                         overall_ok = false;
                     }
-                    let execution_summary = ExecutionSummary::from_contract(&target.contract);
+                    let execution_summary =
+                        ExecutionSummary::from_contract(&target.contract, &target.contract_path);
                     text_sections.push(render_report_section(
                         "CHECK",
                         &display_contract_target(&compact_path_display, Some(member.as_str())),
@@ -4887,6 +5018,20 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                 }
                 append_aligned_labeled_text(
                     &mut stdout,
+                    "Does not infer:",
+                    &entry
+                        .does_not_infer
+                        .iter()
+                        .map(|value| value.to_string())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                    "  ",
+                    96,
+                    paint_key,
+                    |value| render_backticked_text(value, None),
+                );
+                append_aligned_labeled_text(
+                    &mut stdout,
                     "Next:",
                     &format!("`{}`", entry.pack.preview_command()),
                     "  ",
@@ -4921,6 +5066,11 @@ fn init_packs(format: OutputFormat) -> CommandOutput {
                                 .map(|value| (*value).to_string())
                                 .collect(),
                         })
+                        .collect(),
+                    does_not_infer: entry
+                        .does_not_infer
+                        .iter()
+                        .map(|value| (*value).to_string())
                         .collect(),
                     seeds: InitPackSeeds {
                         runtimes: entry
@@ -7412,6 +7562,7 @@ pub fn workspace_list(
                             execution: contract.as_ref().and_then(|contract| {
                                 WorkspaceExecutionSummary::from_contract_with_policy(
                                     contract,
+                                    &repo.contract_path,
                                     Some(&repo.policy_env),
                                 )
                             }),
@@ -10187,12 +10338,22 @@ fn build_pack_advisory(
     Some(InitPackAdvisory {
         selected_pack: selected_pack.as_str().to_string(),
         suggested_pack: advisory.suggested_pack.as_str().to_string(),
+        selected_pack_score: advisory.selected_pack_score,
+        suggested_pack_score: advisory.suggested_pack_score,
         summary: format!(
             "selected pack `{}` does not match the strongest detected repo signals; `{}` looks closer",
             selected_pack.as_str(),
             advisory.suggested_pack.as_str()
         ),
         signals: advisory.signals,
+        signal_details: advisory
+            .signal_details
+            .into_iter()
+            .map(|signal| InitPackAdvisorySignal {
+                signal: signal.marker,
+                weight: signal.weight,
+            })
+            .collect(),
         next,
     })
 }
@@ -10232,25 +10393,54 @@ fn render_init_pack_advisory_text(stdout: &mut String, advisory: Option<&InitPac
         return;
     };
 
+    let signals = if !advisory.signal_details.is_empty() {
+        advisory
+            .signal_details
+            .iter()
+            .map(|signal| format!("{} ({})", paint_code(&signal.signal), signal.weight))
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        advisory
+            .signals
+            .iter()
+            .map(|signal| paint_code(signal))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
     stdout.push_str(&format!(
         "\n{} {} {}",
         mode_icon(),
         paint_key("Advisory:"),
+        format!(
+            "selected pack `{}` stays explicit, but repo signals look closer to `{}`",
+            advisory.selected_pack, advisory.suggested_pack
+        )
+    ));
+    stdout.push_str(&format!(
+        "\n{} {} {}",
+        mode_icon(),
+        paint_key("Why:"),
         advisory.summary
     ));
-    if !advisory.signals.is_empty() {
+    if !signals.is_empty() {
         stdout.push_str(&format!(
             "\n{} {} {}",
             mode_icon(),
             paint_key("Signals:"),
-            advisory
-                .signals
-                .iter()
-                .map(|signal| paint_code(signal))
-                .collect::<Vec<_>>()
-                .join(", ")
+            signals
         ));
     }
+    stdout.push_str(&format!(
+        "\n{} {} `{}`={} vs `{}`={}",
+        mode_icon(),
+        paint_key("Strength:"),
+        advisory.suggested_pack,
+        advisory.suggested_pack_score,
+        advisory.selected_pack,
+        advisory.selected_pack_score
+    ));
     stdout.push_str(&format!(
         "\n{} {} {}",
         mode_icon(),
@@ -15034,21 +15224,12 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
             &paint_key("Env precedence:"),
-            "policy env > process env > contract default > required missing",
+            "policy env > process env > declared env sources > contract default > required missing",
         ));
         stdout.push('\n');
         stdout.push_str(&format!("{} {}", detail_arrow(), paint_key("Env:")));
         for item in &execution.env {
             let mut details = Vec::new();
-            let source = if item.policy.is_some() {
-                "policy"
-            } else if std::env::var_os(item.name).is_some() {
-                "process"
-            } else if item.default.is_some() {
-                "default"
-            } else {
-                "missing"
-            };
             if item.required {
                 details.push("required".to_string());
             }
@@ -15063,7 +15244,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
                 paint_key(item.name),
                 details.join(", ")
             ));
-            stdout.push_str(&format!("\n      {} {source}", paint_key("Source:")));
+            stdout.push_str(&format!("\n      {} {}", paint_key("Source:"), item.source));
         }
     }
     stdout
@@ -15268,20 +15449,11 @@ fn render_doctor_execution_summary_text(
         lines.push(section_list_row(
             &summary_bullet(),
             &paint_key("Env precedence:"),
-            "policy > process > contract default > required missing",
+            "policy > process > declared env sources > contract default > required missing",
         ));
         for item in &execution.env {
             let mut details = Vec::new();
-            let source = if item.policy.is_some() {
-                "policy"
-            } else if std::env::var_os(item.name).is_some() {
-                "process"
-            } else if item.default.is_some() {
-                "default"
-            } else {
-                "missing"
-            };
-            details.push(source.to_string());
+            details.push(item.source.clone());
             if item.required {
                 details.push(String::from("required"));
             }
@@ -18055,6 +18227,7 @@ policies:
                 required: false,
                 default: None,
                 policy: None,
+                source: String::from("missing"),
                 allowed: Vec::new(),
             }],
         };
@@ -18271,8 +18444,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_TEST_SECRET:
-    secret: true
+  vars:
+    OTA_TEST_SECRET:
+      secret: true
 tasks:
   test:
     env:
@@ -20476,12 +20650,7 @@ fn receipt_env_value(resolved: &ResolvedEnvValue) -> String {
 }
 
 fn receipt_env_source(resolved: &ResolvedEnvValue) -> String {
-    match resolved.source {
-        EnvResolutionSource::Process => String::from("process"),
-        EnvResolutionSource::Default => String::from("default"),
-        EnvResolutionSource::Policy => String::from("policy"),
-        EnvResolutionSource::Task => String::from("task"),
-    }
+    env_resolution_source_label(&resolved.source)
 }
 
 fn source_config_summary(
@@ -20563,7 +20732,8 @@ fn run_execution_receipt(
     let image = execution_image(contract, backend);
     let target = target.or_else(|| execution_target(contract, contract_path, backend, lifecycle));
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
-    let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
+    let env_details =
+        resolve_task_env_details(contract, contract_path, task_env).unwrap_or_default();
     let step_detail = if executed_tasks.is_empty() {
         None
     } else {
@@ -21764,7 +21934,7 @@ fn render_workspace_execution_text(execution: &WorkspaceExecutionSummary) -> Str
     }
     if !execution.env.is_empty() {
         lines.push(format!(
-            " {}  {} workspace policy > repo policy > contract default > required missing",
+            " {}  {} workspace policy > repo policy > process > declared env sources > contract default > required missing",
             summary_bullet(),
             paint_key("Env precedence:")
         ));
@@ -22932,7 +23102,7 @@ fn repo_execution_receipt(
     let task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
         .map(|task| &task.env);
-    let env_details = resolve_task_env_details(contract, task_env).unwrap_or_default();
+    let env_details = resolve_task_env_details(contract, path, task_env).unwrap_or_default();
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
     let detail = service
         .map(|service| format!("service `{service}`"))
@@ -23242,34 +23412,36 @@ fn render_repo_receipt_history(
 
 fn workspace_env_sources(
     contract: &Contract,
+    contract_path: &Path,
     task_env: Option<&BTreeMap<String, String>>,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Vec<ExecutionReceiptEnvSource> {
     let repo_policy_env = crate::runner::policy_env_values(contract);
     let workspace_policy_env = policy_env.cloned().unwrap_or_default();
 
-    resolve_task_env_details_with_policy(contract, task_env, policy_env)
+    resolve_task_env_details_with_policy(contract, contract_path, task_env, policy_env)
         .unwrap_or_default()
         .into_iter()
         .map(|(name, value)| {
-            let source = match value.source {
-                EnvResolutionSource::Process => "process",
-                EnvResolutionSource::Default => "default",
-                EnvResolutionSource::Task => "task",
+            let source = match &value.source {
+                EnvResolutionSource::Process => String::from("process"),
+                EnvResolutionSource::Default => String::from("default"),
+                EnvResolutionSource::Task => String::from("task"),
                 EnvResolutionSource::Policy => {
                     if workspace_policy_env.contains_key(&name) {
-                        "workspace policy"
+                        String::from("workspace policy")
                     } else if repo_policy_env.contains_key(&name) {
-                        "repo policy"
+                        String::from("repo policy")
                     } else {
-                        "policy"
+                        String::from("policy")
                     }
                 }
+                EnvResolutionSource::Source(label) => label.clone(),
             };
             ExecutionReceiptEnvSource {
                 name,
                 value: receipt_env_value(&value),
-                source: source.to_string(),
+                source,
             }
         })
         .collect()
@@ -23603,39 +23775,6 @@ fn run_git_command(
     }
 }
 
-fn provisioning_execution_target(
-    contract: &Contract,
-    overrides: ExecutionOverrides,
-) -> ProvisioningExecutionTarget {
-    let (backend, lifecycle) = effective_execution(contract, overrides);
-    if !matches!(backend, Backend::Container) {
-        return ProvisioningExecutionTarget::Native;
-    }
-
-    let Some(container) = contract
-        .execution
-        .as_ref()
-        .and_then(|execution| execution.backends.as_ref())
-        .and_then(|backends| backends.container.as_ref())
-    else {
-        return ProvisioningExecutionTarget::Native;
-    };
-
-    let Some(engine) = selected_container_engine(contract) else {
-        return ProvisioningExecutionTarget::Native;
-    };
-
-    let Some(lifecycle) = lifecycle else {
-        return ProvisioningExecutionTarget::Native;
-    };
-
-    ProvisioningExecutionTarget::Container {
-        image: container.image.clone(),
-        engine,
-        lifecycle,
-    }
-}
-
 fn resolve_provisioning_execution_target(
     contract: &Contract,
     overrides: ExecutionOverrides,
@@ -23655,11 +23794,36 @@ fn resolve_provisioning_execution_target(
             engine,
             lifecycle,
         }),
-        Ok(
-            ResolvedExecutionBackend::Native
-            | ResolvedExecutionBackend::Remote { .. }
-            | ResolvedExecutionBackend::BackendProvider { .. },
-        ) => Ok(provisioning_execution_target(contract, overrides)),
+        Ok(ResolvedExecutionBackend::Native) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution could not be resolved"),
+            why: String::from(
+                "`ota up --mode container` selected container execution, but setup resolved to the native host instead of the declared container boundary",
+            ),
+            next: String::from(
+                "inspect `execution.backends.container`, `execution.lifecycle`, and `--mode`, then rerun `ota up --mode container`",
+            ),
+        }),
+        Ok(ResolvedExecutionBackend::Remote { provider, .. }) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution could not be resolved"),
+            why: format!(
+                "`ota up --mode container` selected container execution, but setup resolved to remote provider `{provider}` instead of the declared container boundary"
+            ),
+            next: String::from(
+                "inspect `execution.backends.container`, `execution.lifecycle`, and `--mode`, then rerun `ota up --mode container`",
+            ),
+        }),
+        Ok(ResolvedExecutionBackend::BackendProvider { provider, .. }) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution could not be resolved"),
+            why: format!(
+                "`ota up --mode container` selected container execution, but setup resolved through backend provider `{provider}` instead of the declared container boundary"
+            ),
+            next: String::from(
+                "inspect `execution.backends.container`, `execution.lifecycle`, and `--mode`, then rerun `ota up --mode container`",
+            ),
+        }),
         Err(RunError::MissingContainerImage { .. }) => Err(Finding {
             severity: FindingSeverity::Error,
             summary: String::from("Container execution is not configured"),
@@ -23688,7 +23852,14 @@ fn resolve_provisioning_execution_target(
                 "install one of the supported container engines, then rerun `ota up --mode container`",
             ),
         }),
-        Err(_) => Ok(provisioning_execution_target(contract, overrides)),
+        Err(error) => Err(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Container execution could not be resolved"),
+            why: render_run_error(error),
+            next: String::from(
+                "repair the declared container execution settings, then rerun `ota up --mode container`",
+            ),
+        }),
     }
 }
 
@@ -25684,7 +25855,12 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 .tasks
                 .get("setup")
                 .map(|task| {
-                    workspace_env_sources(&target.contract, Some(&task.env), Some(&repo.policy_env))
+                    workspace_env_sources(
+                        &target.contract,
+                        &target.contract_path,
+                        Some(&task.env),
+                        Some(&repo.policy_env),
+                    )
                 })
                 .unwrap_or_default();
 
@@ -26227,6 +26403,7 @@ fn run_workspace_repo_execution_plan(
             let contract_identity = repo_contract_identity(&contract);
             let declared_execution = WorkspaceExecutionSummary::from_contract_with_policy(
                 &contract,
+                &repo.contract_path,
                 Some(&repo.policy_env),
             );
 
@@ -26861,7 +27038,12 @@ fn run_workspace_repo_task(
                 .tasks
                 .get(task)
                 .map(|task_spec| {
-                    workspace_env_sources(&contract, Some(&task_spec.env), Some(&repo.policy_env))
+                    workspace_env_sources(
+                        &contract,
+                        &repo.contract_path,
+                        Some(&task_spec.env),
+                        Some(&repo.policy_env),
+                    )
                 })
                 .unwrap_or_default();
             let run_result = match mode {
@@ -27182,6 +27364,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     ),
                     execution: WorkspaceExecutionSummary::from_contract_with_policy(
                         &contract,
+                        &repo.contract_path,
                         Some(&repo.policy_env),
                     ),
                     provisioning: None,
@@ -27224,6 +27407,7 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                 agent_verdict: crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 execution: WorkspaceExecutionSummary::from_contract_with_policy(
                     &contract,
+                    &repo.contract_path,
                     Some(&repo.policy_env),
                 ),
                 provisioning: None,

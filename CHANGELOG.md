@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- removed the redundant `Suggestions` title from zsh completion menus while keeping commands and tasks ahead of global `--flags`
+- redesigned contract env authoring around `env.vars` and `env.sources`, making dotenv loading explicit instead of magical while keeping task env and `policies.env` as higher-precedence overrides.
+- added declared dotenv source resolution to `ota doctor`, `ota env`, `ota run`, and execution summaries, including ordered source precedence, `must_exist` readiness checks, and winning-source provenance such as `dotenv:.env`.
+- updated the contract/env docs, JSON env schema reference, and shipped examples so the public contract, command output, and repo fixtures all use the new env-source model consistently.
+- added `php-composer` as a workflow-shaped starter pack for explicit Composer-managed PHP repos, including pack-catalog discovery, Composer-backed advisory matching, and a review-first `does_not_infer` boundary instead of a vague language-level PHP pack.
+- expanded the explicit starter-pack catalog with `dotnet`, seeding a conventional `dotnet restore` / `dotnet build` / `dotnet test` first draft plus dotnet-aware advisory matching from `global.json`, solution, and project signals.
+- extended `ota init --packs` so each catalog entry now exposes explicit `does_not_infer` boundaries in both text and JSON, making the starter-pack scope visible without inventing fake pack knobs.
+- enriched `ota init --pack ... --json` advisories with explicit selected-versus-suggested signal scores plus structured weighted signal details, and mirrored the same strength summary in text output.
+- clarified human `ota init --pack ...` advisories so text output now explains why the mismatch exists, shows weighted signal markers directly, and keeps the explicit review step obvious without weakening pack authority.
+- removed the remaining native fallback branches from explicit `ota up --mode container` provisioning resolution, so container mode now fails in preconditions instead of ever escaping into host provisioning or host `setup`.
 - added explicit `ota init --pack` knobs for the first conventional starter variants: `--package-manager npm|pnpm|yarn|bun` on the Node pack and `--test-runner pytest|unittest` on the Python pack, including catalog metadata, JSON `pack_options` for explicit overrides only, and variant-specific provenance.
 - tightened background update-notice delivery so successful interactive commands keep the short non-blocking wait budget instead of riding the full release-check timeout on slow or offline networks.
 - made explicit `ota init --pack ...` advisories compare distinct repo-signal strength instead of suppressing warnings as soon as the selected pack has any incidental match.
@@ -64,7 +74,7 @@
 - added `ota completion --remove` as the managed uninstall path for shell completion setup, and updated completion guidance so setup and removal commands are shown together.
 - updated completion setup status handling so rerunning `ota completion --setup` reports `Status: updated` when managed support files are refreshed, while `ota completion --remove` remains idempotent with `Status: not configured` when nothing is installed.
 - changed generated zsh completion output to preserve raw candidate ordering with explicit `nosort` handling and separate `Suggestions`/`Options` groups, keeping commands and tasks ahead of global options in completion menus.
-- upgraded zsh completion display labels to `token: description` and simplified completion rendering so candidate values stay plain while menu text remains clearer.
+- upgraded zsh completion display labels to `token -- description` and simplified completion rendering so candidate values stay plain while menu text remains clearer.
 
 ## 1.4.14
 

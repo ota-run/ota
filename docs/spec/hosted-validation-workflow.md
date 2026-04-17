@@ -189,8 +189,9 @@ services:
     healthcheck: pg_isready -h localhost -p 5432
 
 env:
-  DATABASE_URL:
-    required: true
+  vars:
+    DATABASE_URL:
+      required: true
 
 tasks:
   lint:

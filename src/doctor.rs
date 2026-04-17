@@ -44,6 +44,10 @@ use crate::provisioning::{
     ProvisioningFailureKind, probe_provisioning_installability_with_target,
     render_provisioning_action_command,
 };
+use crate::runner::{
+    DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, load_declared_env_sources, policy_env_values,
+    resolve_declared_env_source_value,
+};
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
     ServiceSpec,
@@ -1231,8 +1235,10 @@ fn diagnose_contract_with_scope(
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
+        let declared_env_sources = load_declared_env_sources(contract, contract_path);
+        diagnose_env_sources(&declared_env_sources, &mut findings);
         if mode == DoctorMode::Native {
-            diagnose_env(contract, &mut findings);
+            diagnose_env(contract, &declared_env_sources, &mut findings);
         } else if contract_has_host_bound_readiness_surfaces(contract) {
             findings.push(container_mode_scope_note_finding(contract));
         }
@@ -1497,12 +1503,12 @@ fn container_mode_not_configured_finding() -> Finding {
 }
 
 fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
-    !contract.env.is_empty() || !contract.checks.is_empty() || !contract.services.is_empty()
+    !contract.env.vars.is_empty() || !contract.checks.is_empty() || !contract.services.is_empty()
 }
 
 fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
     let mut skipped = Vec::new();
-    if !contract.env.is_empty() {
+    if !contract.env.vars.is_empty() {
         skipped.push("env requirements");
     }
     if !contract.checks.is_empty() {
@@ -1663,10 +1669,56 @@ fn compose_service_healthcheck_command(name: &str, healthcheck: &str) -> String 
     )
 }
 
-fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
+fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: &mut Vec<Finding>) {
+    for source in declared_sources {
+        match source.status {
+            DeclaredEnvSourceStatus::Loaded => {}
+            DeclaredEnvSourceStatus::Missing if !source.must_exist => {}
+            DeclaredEnvSourceStatus::Missing => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Missing environment source: {}", source.path),
+                why: format!(
+                    "the repo declares `{}:{}` with `must_exist: true`, but that file is missing",
+                    source.kind, source.path
+                ),
+                next: format!(
+                    "create `{}` or update `env.sources`, then rerun `ota doctor`",
+                    source.path
+                ),
+            }),
+            DeclaredEnvSourceStatus::Invalid => findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: format!("Invalid environment source: {}", source.path),
+                why: format!(
+                    "ota could not read declared source `{}:{}`: {}",
+                    source.kind,
+                    source.path,
+                    source.details.as_deref().unwrap_or("unknown parse error")
+                ),
+                next: format!(
+                    "fix `{}` so ota can parse it as a dotenv file, then rerun `ota doctor`",
+                    source.path
+                ),
+            }),
+        }
+    }
+}
+
+fn diagnose_env(
+    contract: &Contract,
+    declared_sources: &[LoadedDeclaredEnvSource],
+    findings: &mut Vec<Finding>,
+) {
+    let policy_env = policy_env_values(contract);
+
     for (name, requirement) in &contract.env {
-        let value = std::env::var(name)
-            .ok()
+        let value = policy_env
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+            .or_else(|| {
+                resolve_declared_env_source_value(name, &declared_sources).map(|(value, _)| value)
+            })
             .or_else(|| requirement.default.clone());
 
         match value {
@@ -1688,7 +1740,9 @@ fn diagnose_env(contract: &Contract, findings: &mut Vec<Finding>) {
                 severity: FindingSeverity::Error,
                 summary: format!("Missing environment variable: {name}"),
                 why: format!("{name} is required by this repo contract"),
-                next: format!("set {name} in your environment before running tasks"),
+                next: format!(
+                    "set {name} in policy env, the shell, or a declared env source before running tasks"
+                ),
             }),
             None => {}
         }
@@ -3373,8 +3427,8 @@ mod tests {
 
     use super::{
         DoctorMode, FindingSeverity, compose_service_healthcheck_command, diagnose_checks_only,
-        diagnose_contract, diagnose_preconditions, diagnose_preconditions_with_mode,
-        tool_executable_name, version_matches,
+        diagnose_contract, diagnose_contract_in_mode, diagnose_preconditions,
+        diagnose_preconditions_with_mode, tool_executable_name, version_matches,
     };
 
     #[cfg(unix)]
@@ -3418,8 +3472,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_DOCTOR_REQUIRED_MISSING:
-    required: true
+  vars:
+    OTA_DOCTOR_REQUIRED_MISSING:
+      required: true
 services:
   cache:
     required: false
@@ -3508,8 +3563,9 @@ execution:
     container:
       image: jdxcode/mise:latest
 env:
-  OTA_CONTAINER_ONLY_REQUIRED:
-    required: true
+  vars:
+    OTA_CONTAINER_ONLY_REQUIRED:
+      required: true
 tasks:
   test:
     run: cargo test
@@ -4345,12 +4401,13 @@ version: 1
 project:
   name: ota
 env:
-  OTA_DOCTOR_ALLOWED:
-    required: false
-    default: prod
-    allowed:
-      - development
-      - test
+  vars:
+    OTA_DOCTOR_ALLOWED:
+      required: false
+      default: prod
+      allowed:
+        - development
+        - test
 tasks:
   test:
     run: cargo test
@@ -4361,6 +4418,73 @@ tasks:
         let report = diagnose_contract(&contract, synthetic_contract_path());
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+    }
+
+    #[test]
+    fn reports_missing_required_env_sources() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_REQUIRED:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  test:
+    run: cargo test
+"#;
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract(&contract, &contract_path);
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing environment source: .env")
+        );
+    }
+
+    #[test]
+    fn container_mode_still_reports_missing_required_env_sources() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contents = r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: node:22-bookworm-slim
+env:
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  test:
+    run: cargo test
+"#;
+        let contract = parse_contract_str(&contract_path, contents.trim_start()).unwrap();
+
+        let report = diagnose_contract_in_mode(&contract, &contract_path, DoctorMode::Container);
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing environment source: .env")
+        );
     }
 
     #[test]
@@ -4397,8 +4521,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_REQUIRED:
-    required: true
+  vars:
+    OTA_REQUIRED:
+      required: true
 tools:
   ota-tool-that-does-not-exist:
     version: "*"
@@ -4691,8 +4816,9 @@ version: 1
 project:
   name: ota
 env:
-  OTA_DOCTOR_SORT_REQUIRED:
-    required: true
+  vars:
+    OTA_DOCTOR_SORT_REQUIRED:
+      required: true
 services:
   cache:
     required: false
