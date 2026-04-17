@@ -2444,11 +2444,6 @@ fn update_notice_wait_timeout() -> Duration {
     crate::update::preferred_update_notice_wait_timeout()
 }
 
-#[cfg(test)]
-fn update_notice_wait_timeout_for_platform(_is_windows: bool) -> Duration {
-    Duration::from_millis(50)
-}
-
 fn maybe_append_update_notice(
     output: CommandOutput,
     update_notice_rx: Option<mpsc::Receiver<Option<String>>>,
@@ -4320,7 +4315,7 @@ mod tests {
         complete_repo_run_task_candidates, completion_command, load_repo_run_task_candidates,
         load_workspace_task_candidates, maybe_append_update_notice,
         maybe_append_update_notice_with_timeout, maybe_handle_shell_completion, run_with,
-        update_notice_wait_timeout_for_platform,
+        update_notice_wait_timeout,
     };
     use crate::output::CommandOutput;
 
@@ -10045,8 +10040,7 @@ tasks:
 
     #[test]
     fn wait_budget_stays_small_on_all_platforms() {
-        assert!(update_notice_wait_timeout_for_platform(true) <= Duration::from_millis(50));
-        assert!(update_notice_wait_timeout_for_platform(false) <= Duration::from_millis(50));
+        assert!(update_notice_wait_timeout() <= Duration::from_millis(50));
     }
 
     #[test]
@@ -10061,7 +10055,7 @@ tasks:
         let output = maybe_append_update_notice_with_timeout(
             CommandOutput::success(String::from("ok")),
             Some(rx),
-            update_notice_wait_timeout_for_platform(true),
+            update_notice_wait_timeout(),
         );
 
         assert_eq!(output.stdout, "ok");
@@ -10080,7 +10074,7 @@ tasks:
         let output = maybe_append_update_notice_with_timeout(
             CommandOutput::success(String::from("ok")),
             Some(rx),
-            update_notice_wait_timeout_for_platform(false),
+            update_notice_wait_timeout(),
         );
 
         assert_eq!(output.stdout, "ok");
@@ -13360,7 +13354,7 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Mode: pack (dry-run)"));
         assert!(stdout.contains("Pack: node"));
-        assert!(stdout.contains("Options: `package-manager=pnpm`"));
+        assert!(!stdout.contains("Options:"));
         assert!(
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
@@ -13381,7 +13375,7 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Mode: pack"));
         assert!(stdout.contains("Pack: node"));
-        assert!(stdout.contains("Options: `package-manager=pnpm`"));
+        assert!(!stdout.contains("Options:"));
         assert!(
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
@@ -13469,7 +13463,7 @@ agent:
         assert_eq!(json["written"], false);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "python");
-        assert_eq!(json["pack_options"]["test_runner"], "pytest");
+        assert!(json["pack_options"].is_null());
         assert_eq!(json["inferred"], json!([]));
         assert_eq!(json["config"]["runtimes"]["python"], "3.12");
         assert_eq!(json["config"]["checks"][0]["name"], "python-installed");

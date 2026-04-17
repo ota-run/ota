@@ -10200,10 +10200,10 @@ fn build_pack_advisory(
 fn init_selected_pack_options(config: StarterPackConfig) -> Option<InitSelectedPackOptions> {
     let options = InitSelectedPackOptions {
         package_manager: config
-            .selected_node_package_manager()
+            .explicit_node_package_manager()
             .map(|value| value.as_str().to_string()),
         test_runner: config
-            .selected_python_test_runner()
+            .explicit_python_test_runner()
             .map(|value| value.as_str().to_string()),
     };
     (options.package_manager.is_some() || options.test_runner.is_some()).then_some(options)
@@ -10211,7 +10211,7 @@ fn init_selected_pack_options(config: StarterPackConfig) -> Option<InitSelectedP
 
 fn render_init_pack_options_text(stdout: &mut String, config: StarterPackConfig) {
     let options = config
-        .selected_option_pairs()
+        .explicit_option_pairs()
         .into_iter()
         .map(|(name, value)| format!("`{name}={value}`"))
         .collect::<Vec<_>>();
