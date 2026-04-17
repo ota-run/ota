@@ -1710,10 +1710,10 @@ fn diagnose_runtimes(
     let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
     for (name, requirement) in &contract.runtimes {
-        let required = requirement.required_for_os(target_os);
-        if !required {
+        if !requirement.active_for_os(target_os) {
             continue;
         }
+        let required = requirement.required_for_os(target_os);
 
         container_probe_started |= diagnose_command_version(
             "runtime",
@@ -1747,10 +1747,10 @@ fn diagnose_tools(
     let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
     for (name, requirement) in &contract.tools {
-        let required = requirement.required_for_os(target_os);
-        if !required {
+        if !requirement.active_for_os(target_os) {
             continue;
         }
+        let required = requirement.required_for_os(target_os);
 
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -4421,7 +4421,7 @@ tasks:
     }
 
     #[test]
-    fn reports_tool_version_mismatches_as_errors() {
+    fn reports_optional_tool_version_mismatches_as_warnings() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
@@ -4455,6 +4455,7 @@ project:
 tools:
   rustc:
     version: "999.0.0"
+    required: false
 tasks:
   test:
     run: rustc --version
@@ -4473,9 +4474,9 @@ tasks:
             },
         }
 
-        assert!(!report.ok);
+        assert!(report.ok);
         assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(
             report.findings[0].summary,
             "Version mismatch for tool: rustc"

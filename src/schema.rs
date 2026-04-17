@@ -180,6 +180,16 @@ pub enum RuntimeRequirement {
 }
 
 impl RuntimeRequirement {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed(detail) => detail
+                .only_on
+                .as_ref()
+                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
+        }
+    }
+
     pub fn version(&self) -> &str {
         match self {
             Self::Simple(version) => version,
@@ -201,10 +211,7 @@ impl RuntimeRequirement {
     pub fn required_for_os(&self, os: &str) -> bool {
         match self {
             Self::Simple(_) => true,
-            Self::Detailed(detail) => detail
-                .only_on
-                .as_ref()
-                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
+            Self::Detailed(detail) => self.active_for_os(os) && detail.required,
         }
     }
 
@@ -235,6 +242,8 @@ impl RuntimeRequirement {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeDetail {
     pub version: String,
+    #[serde(default = "default_required")]
+    pub required: bool,
     #[serde(default)]
     pub only_on: Option<Vec<String>>,
     #[serde(default)]
@@ -264,6 +273,16 @@ pub enum ToolRequirement {
 }
 
 impl ToolRequirement {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed(detail) => detail
+                .only_on
+                .as_ref()
+                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
+        }
+    }
+
     pub fn version(&self) -> &str {
         match self {
             Self::Simple(version) => version,
@@ -285,10 +304,7 @@ impl ToolRequirement {
     pub fn required_for_os(&self, os: &str) -> bool {
         match self {
             Self::Simple(_) => true,
-            Self::Detailed(detail) => detail
-                .only_on
-                .as_ref()
-                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
+            Self::Detailed(detail) => self.active_for_os(os) && detail.required,
         }
     }
 }
@@ -297,6 +313,8 @@ impl ToolRequirement {
 #[serde(deny_unknown_fields)]
 pub struct ToolDetail {
     pub version: String,
+    #[serde(default = "default_required")]
+    pub required: bool,
     #[serde(default)]
     pub only_on: Option<Vec<String>>,
     #[serde(default)]
@@ -308,6 +326,10 @@ pub struct ToolDetail {
 pub struct ToolPlatformDetail {
     #[serde(default)]
     pub version: Option<String>,
+}
+
+fn default_required() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
