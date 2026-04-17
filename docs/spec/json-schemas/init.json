@@ -76,6 +76,10 @@
               "type": "integer",
               "minimum": 0
             },
+            "score_gap": {
+              "type": "integer",
+              "minimum": 1
+            },
             "summary": {
               "type": "string"
             },
@@ -86,6 +90,26 @@
               }
             },
             "signal_details": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "signal",
+                  "weight"
+                ],
+                "properties": {
+                  "signal": {
+                    "type": "string"
+                  },
+                  "weight": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "selected_signal_details": {
               "type": "array",
               "items": {
                 "type": "object",

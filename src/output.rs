@@ -1057,11 +1057,14 @@ pub struct InitPackAdvisory {
     pub suggested_pack: String,
     pub selected_pack_score: usize,
     pub suggested_pack_score: usize,
+    pub score_gap: usize,
     pub summary: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub signals: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub signal_details: Vec<InitPackAdvisorySignal>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub selected_signal_details: Vec<InitPackAdvisorySignal>,
     pub next: String,
 }
 

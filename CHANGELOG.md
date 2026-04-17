@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- refined explicit `ota init --pack ...` advisories so the text output now compares both sides of the mismatch more clearly with suggested signals, selected-pack incidental signals, and an explicit score gap while keeping the pack choice authoritative.
+- extended `pack_advisory` in `ota init --json` with additive comparison fields such as `score_gap` and `selected_signal_details`, making the advisory easier to explain in automation without scraping human text.
+
 ## 1.4.19
 
 - removed the redundant `Suggestions` title from zsh completion menus while keeping commands and tasks ahead of global `--flags`

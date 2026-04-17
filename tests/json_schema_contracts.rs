@@ -413,8 +413,10 @@ fn init_schema_includes_optional_next_on_failures() {
     assert!(advisory.get("suggested_pack").is_some());
     assert!(advisory.get("selected_pack_score").is_some());
     assert!(advisory.get("suggested_pack_score").is_some());
+    assert!(advisory.get("score_gap").is_some());
     assert!(advisory.get("summary").is_some());
     assert!(advisory.get("signal_details").is_some());
+    assert!(advisory.get("selected_signal_details").is_some());
     assert!(advisory.get("next").is_some());
     assert!(catalog.get("packs").is_some());
     assert!(catalog_pack.get("command").is_some());
