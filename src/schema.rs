@@ -202,10 +202,9 @@ impl RuntimeRequirement {
         match self {
             Self::Simple(_) => true,
             Self::Detailed(detail) => detail
-                .platforms
-                .get(os)
-                .and_then(|platform| platform.required)
-                .unwrap_or(detail.required),
+                .only_on
+                .as_ref()
+                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
         }
     }
 
@@ -236,8 +235,8 @@ impl RuntimeRequirement {
 #[serde(deny_unknown_fields)]
 pub struct RuntimeDetail {
     pub version: String,
-    #[serde(default = "default_required")]
-    pub required: bool,
+    #[serde(default)]
+    pub only_on: Option<Vec<String>>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -251,8 +250,6 @@ pub struct RuntimeDetail {
 pub struct RuntimePlatformDetail {
     #[serde(default)]
     pub version: Option<String>,
-    #[serde(default)]
-    pub required: Option<bool>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -289,10 +286,9 @@ impl ToolRequirement {
         match self {
             Self::Simple(_) => true,
             Self::Detailed(detail) => detail
-                .platforms
-                .get(os)
-                .and_then(|platform| platform.required)
-                .unwrap_or(detail.required),
+                .only_on
+                .as_ref()
+                .is_none_or(|platforms| platforms.iter().any(|platform| platform == os)),
         }
     }
 }
@@ -301,8 +297,8 @@ impl ToolRequirement {
 #[serde(deny_unknown_fields)]
 pub struct ToolDetail {
     pub version: String,
-    #[serde(default = "default_required")]
-    pub required: bool,
+    #[serde(default)]
+    pub only_on: Option<Vec<String>>,
     #[serde(default)]
     pub platforms: BTreeMap<String, ToolPlatformDetail>,
 }
@@ -312,12 +308,6 @@ pub struct ToolDetail {
 pub struct ToolPlatformDetail {
     #[serde(default)]
     pub version: Option<String>,
-    #[serde(default)]
-    pub required: Option<bool>,
-}
-
-fn default_required() -> bool {
-    true
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

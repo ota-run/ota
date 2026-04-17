@@ -658,10 +658,8 @@ project:
 tools:
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      {}:
-        required: true
+    only_on:
+      - {}
 "#,
                 match super::current_os() {
                     "windows" => "linux",
@@ -695,10 +693,8 @@ project:
 tools:
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      {}:
-        required: true
+    only_on:
+      - {}
 "#,
                 match super::current_os() {
                     "windows" => "linux",
@@ -733,10 +729,8 @@ project:
 runtimes:
   powershell:
     version: "7.6.0"
-    required: false
-    platforms:
-      {}:
-        required: true
+    only_on:
+      - {}
 "#,
                 match super::current_os() {
                     "windows" => "linux",
