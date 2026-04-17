@@ -1045,11 +1045,12 @@ version: 1
 project:
   name: ota
 env:
-  PATH:
-    prepend:
-      - /opt/ota/bin
-    append:
-      - /opt/ota/sbin
+  vars:
+    PATH:
+      prepend:
+        - /opt/ota/bin
+      append:
+        - /opt/ota/sbin
 tasks:
   test:
     run: cargo test
