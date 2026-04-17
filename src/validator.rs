@@ -383,7 +383,15 @@ fn validate_runtime_details(
             )));
         }
 
+        validate_only_on("runtime", name, detail.only_on.as_ref(), errors);
         validate_platform_keys("runtime", name, detail.platforms.keys(), errors);
+        validate_platform_scope(
+            "runtime",
+            name,
+            detail.only_on.as_ref(),
+            detail.platforms.keys(),
+            errors,
+        );
 
         for (platform, platform_detail) in &detail.platforms {
             if platform_detail
@@ -428,7 +436,15 @@ fn validate_tool_details(
             continue;
         };
 
+        validate_only_on("tool", name, detail.only_on.as_ref(), errors);
         validate_platform_keys("tool", name, detail.platforms.keys(), errors);
+        validate_platform_scope(
+            "tool",
+            name,
+            detail.only_on.as_ref(),
+            detail.platforms.keys(),
+            errors,
+        );
 
         for (platform, platform_detail) in &detail.platforms {
             if platform_detail
@@ -440,6 +456,58 @@ fn validate_tool_details(
                     "tool `{name}` platform `{platform}` must not declare an empty `version`"
                 )));
             }
+        }
+    }
+}
+
+fn validate_only_on(
+    label: &str,
+    name: &str,
+    only_on: Option<&Vec<String>>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(only_on) = only_on else {
+        return;
+    };
+
+    if only_on.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "{label} `{name}` must not declare an empty `only_on` list"
+        )));
+        return;
+    }
+
+    let mut seen = BTreeSet::new();
+    for platform in only_on {
+        if !matches!(platform.as_str(), "linux" | "macos" | "windows") {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` has unsupported `only_on` platform `{platform}`; expected one of: linux, macos, windows"
+            )));
+        } else if !seen.insert(platform) {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` must not declare duplicate `only_on` platform `{platform}`"
+            )));
+        }
+    }
+}
+
+fn validate_platform_scope<'a>(
+    label: &str,
+    name: &str,
+    only_on: Option<&Vec<String>>,
+    platforms: impl Iterator<Item = &'a String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(only_on) = only_on else {
+        return;
+    };
+
+    let allowed: BTreeSet<&str> = only_on.iter().map(String::as_str).collect();
+    for platform in platforms {
+        if !allowed.contains(platform.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` platform `{platform}` must also appear in `only_on`"
+            )));
         }
     }
 }
@@ -1660,7 +1728,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_runtime_platform_with_unsupported_os() {
+    fn rejects_runtime_only_on_with_unsupported_os() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -1670,10 +1738,8 @@ project:
 runtimes:
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      bsd:
-        required: true
+    only_on:
+      - bsd
 "#,
         )
         .unwrap();
@@ -1682,7 +1748,59 @@ runtimes:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "runtime `pwsh` has unsupported platform `bsd`; expected one of: linux, macos, windows"
+            "runtime `pwsh` has unsupported `only_on` platform `bsd`; expected one of: linux, macos, windows"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_only_on_list() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  pwsh:
+    version: "7.6.0"
+    only_on: []
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "tool `pwsh` must not declare an empty `only_on` list"
+        );
+    }
+
+    #[test]
+    fn rejects_platform_override_outside_only_on_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  java:
+    version: "21"
+    only_on:
+      - windows
+    platforms:
+      macos:
+        distribution: temurin
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "runtime `java` platform `macos` must also appear in `only_on`"
         );
     }
 }

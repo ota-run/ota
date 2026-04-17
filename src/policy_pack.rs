@@ -2644,10 +2644,8 @@ project:
 tools:
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      windows:
-        required: true
+    only_on:
+      - windows
 "#,
         )
         .unwrap();
@@ -2691,10 +2689,8 @@ runtimes:
 tools:
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      windows:
-        required: true
+    only_on:
+      - windows
 "#,
         )
         .unwrap();

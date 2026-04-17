@@ -46,7 +46,7 @@ use crate::provisioning::{
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
-    ServiceSpec, ToolRequirement,
+    ServiceSpec,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1711,11 +1711,7 @@ fn diagnose_runtimes(
     let mut container_probe_started = false;
     for (name, requirement) in &contract.runtimes {
         let required = requirement.required_for_os(target_os);
-        let has_platform_override = match requirement {
-            RuntimeRequirement::Detailed(detail) => !detail.platforms.is_empty(),
-            RuntimeRequirement::Simple(_) => false,
-        };
-        if !required && has_platform_override {
+        if !required {
             continue;
         }
 
@@ -1752,11 +1748,7 @@ fn diagnose_tools(
     let mut container_probe_started = false;
     for (name, requirement) in &contract.tools {
         let required = requirement.required_for_os(target_os);
-        let has_platform_override = match requirement {
-            ToolRequirement::Detailed(detail) => !detail.platforms.is_empty(),
-            ToolRequirement::Simple(_) => false,
-        };
-        if !required && has_platform_override {
+        if !required {
             continue;
         }
 
@@ -3425,13 +3417,13 @@ mod tests {
 version: 1
 project:
   name: ota
-tools:
-  ota-tool-that-does-not-exist:
-    version: "*"
-    required: false
 env:
   OTA_DOCTOR_REQUIRED_MISSING:
     required: true
+services:
+  cache:
+    required: false
+    healthcheck: exit 1
 tasks:
   test:
     run: cargo test
@@ -4410,7 +4402,6 @@ env:
 tools:
   ota-tool-that-does-not-exist:
     version: "*"
-    required: true
 checks:
   - name: health-check
     kind: health
@@ -4430,7 +4421,7 @@ tasks:
     }
 
     #[test]
-    fn reports_optional_tool_version_mismatches_as_warnings() {
+    fn reports_tool_version_mismatches_as_errors() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
@@ -4464,7 +4455,6 @@ project:
 tools:
   rustc:
     version: "999.0.0"
-    required: false
 tasks:
   test:
     run: rustc --version
@@ -4483,9 +4473,9 @@ tasks:
             },
         }
 
-        assert!(report.ok);
+        assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
-        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
         assert_eq!(
             report.findings[0].summary,
             "Version mismatch for tool: rustc"
@@ -4702,10 +4692,10 @@ project:
 env:
   OTA_DOCTOR_SORT_REQUIRED:
     required: true
-tools:
-  cargo:
-    version: "999.0.0"
+services:
+  cache:
     required: false
+    healthcheck: exit 1
 checks:
   - name: informational-check
     kind: health
@@ -4957,10 +4947,8 @@ project:
 tools:
   definitely-not-installed:
     version: "1.0.0"
-    required: false
-    platforms:
-      {}:
-        required: true
+    only_on:
+      - {}
 tasks:
   test:
     run: cargo test
@@ -5002,10 +4990,8 @@ project:
 runtimes:
   definitely-not-installed:
     version: "1.0.0"
-    required: false
-    platforms:
-      {}:
-        required: true
+    only_on:
+      - {}
 tasks:
   test:
     run: cargo test

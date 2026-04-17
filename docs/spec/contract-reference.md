@@ -376,28 +376,29 @@ Detailed form:
 runtimes:
   java:
     version: "21"
-    required: true
     distribution: temurin
   node:
     version: "22"
     provider: volta
   pwsh:
     version: "7.6.0"
-    required: false
+    only_on:
+      - windows
     platforms:
       windows:
-        required: true
+        distribution: zulu
 ```
 
 Rules:
 
 - runtime names must not be empty
 - versions must not be empty
-- `required` defaults to `true`
+- `only_on`, when set, scopes the runtime to `linux`, `macos`, or `windows`
 - `provider`, when set, must not be empty
 - `distribution`, when set, must not be empty
-- `platforms` may override `version`, `required`, `provider`, and `distribution` per OS using
+- `platforms` may override `version`, `provider`, and `distribution` per OS using
   `linux`, `macos`, or `windows`
+- `platforms` entries must also appear in `only_on` when `only_on` is declared
 - workspace overlays may specialize member runtime requirements, but the winning value must be explainable
 
 Version syntax examples:
@@ -411,14 +412,14 @@ Version syntax examples:
 
 Runtime detail fields:
 
-- `required`: optional boolean; defaults to `true`
+- `only_on`: optional OS inclusion list; if omitted, the runtime is required on all supported OSes
 - `provider`: optional runtime manager or provisioning source hint such as `volta`
 - `distribution`: optional runtime flavor where version alone is not sufficient, especially Java
   distributions such as `temurin`, `corretto`, `graalvm`, `oracle`, or `zulu`
 - `platforms`: optional per-OS overrides keyed by `linux`, `macos`, or `windows`
 
-Use `platforms` when a runtime is only required on some operating systems.
-Root fields act as the default, and the matching `platforms.<os>` entry overrides them for that OS.
+Use `only_on` to scope where a runtime is required, and use `platforms` only when values change on a matching OS.
+Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `tools`
 
@@ -438,26 +439,24 @@ Detailed form:
 tools:
   pnpm:
     version: "10"
-    required: true
   pwsh:
     version: "7.6.0"
-    required: false
-    platforms:
-      windows:
-        required: true
+    only_on:
+      - windows
 ```
 
 Rules:
 
 - tool names must not be empty
 - versions must not be empty
-- `required` defaults to `true`
-- `platforms` may override `version` and `required` per OS using `linux`, `macos`, or `windows`
+- `only_on`, when set, scopes the tool to `linux`, `macos`, or `windows`
+- `platforms` may override `version` per OS using `linux`, `macos`, or `windows`
+- `platforms` entries must also appear in `only_on` when `only_on` is declared
 - some tool keys map to different executables; for example, `tools.maven` is checked via `mvn`
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 
-Use `platforms` when a tool is only required on some operating systems.
-Root fields act as the default, and the matching `platforms.<os>` entry overrides them for that OS.
+Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
+Root fields act as the default values, and the matching `platforms.<os>` entry overrides them for that OS.
 
 ## `env`
 
