@@ -23,6 +23,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ota::doctor::{FindingSeverity, diagnose_policy_review};
 use ota::parser::{load_contract, parse_contract_str};
 use ota::policy_pack::{OrgPolicyPack, load_org_policy_pack_auto};
 use ota::validator::validate_contract;
@@ -210,6 +211,39 @@ fn shipped_example_contracts_discover_repo_policy_packs() {
             .unwrap()
             .join(".ota")
             .join("org-policy.yaml")
+    );
+}
+
+#[test]
+fn shipped_example_contracts_pass_policy_review_with_discovered_repo_policy() {
+    let contract_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("full-contract")
+        .join("ota.yaml");
+    let contract = load_contract(&contract_path).unwrap_or_else(|error| {
+        panic!(
+            "example contract `{}` should load for policy review: {error}",
+            contract_path.display()
+        );
+    });
+
+    let review = diagnose_policy_review(&contract, &contract_path);
+
+    assert!(
+        review.policy.is_some(),
+        "example contract should discover a repo policy pack during policy review"
+    );
+    assert!(
+        review.report.ok,
+        "example contract and repo policy pack should stay policy-review ready"
+    );
+    assert!(
+        !review
+            .report
+            .findings
+            .iter()
+            .any(|finding| finding.severity == FindingSeverity::Error),
+        "policy review should not surface blocking findings for the shipped example pair"
     );
 }
 
