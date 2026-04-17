@@ -130,9 +130,7 @@ fn workspace_policy_env_rules(
     };
 
     serde_yaml::from_value(policy_env.clone()).map_err(|error| {
-        format!(
-            "workspace `policies.env` must use `values` as a string map: {error}"
-        )
+        format!("workspace `policies.env` must use `values` as a string map: {error}")
     })
 }
 

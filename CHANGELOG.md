@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.4.19
+
 - removed the redundant `Suggestions` title from zsh completion menus while keeping commands and tasks ahead of global `--flags`
 - redesigned env resolution end to end around `env.vars`, `env.sources`, and typed policy values at `policies.env.values`, making dotenv loading explicit, org policy values explicit, and the precedence surface honest across repo, workspace, and execution output.
 - added declared dotenv source resolution to `ota doctor`, `ota env`, `ota run`, and execution summaries, including ordered source precedence, `must_exist` readiness checks, and winning-source provenance such as `dotenv:.env`.
