@@ -332,12 +332,16 @@ fn default_required() -> bool {
     true
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvConfig {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, EnvRequirement>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<EnvSource>,
 }
 
@@ -347,7 +351,7 @@ impl EnvConfig {
     }
 
     pub fn len(&self) -> usize {
-        self.vars.len()
+        self.vars.len() + self.sources.len()
     }
 
     pub fn contains_key(&self, name: &str) -> bool {
@@ -368,7 +372,7 @@ impl<'a> IntoIterator for &'a EnvConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvSourceKind {
     Dotenv,
@@ -382,25 +386,25 @@ impl std::fmt::Display for EnvSourceKind {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvSource {
     pub kind: EnvSourceKind,
     pub path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub must_exist: bool,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct EnvRequirement {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub required: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub secret: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prepend: Vec<String>,

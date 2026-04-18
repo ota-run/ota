@@ -124,8 +124,9 @@ pub(crate) use self::init_starter::{
     NodePackageManager, PythonTestRunner, StarterPack, StarterPackConfig, StarterPackOptions,
 };
 use self::init_starter::{
-    apply_starter_contract_defaults, bootstrap_init_contract, starter_pack_advisory,
-    starter_pack_catalog, starter_pack_contract,
+    apply_inferred_init_env_sources, apply_starter_contract_defaults, bootstrap_init_contract,
+    inferred_init_env_inferences, starter_pack_advisory, starter_pack_catalog,
+    starter_pack_contract,
 };
 use self::workspace_diagnostics::{
     apply_workspace_doctor_filters, render_check_summary_text, render_workspace_check_text,
@@ -10727,7 +10728,11 @@ fn render_init(
     pack_advisory: Option<InitPackAdvisory>,
     format: OutputFormat,
 ) -> CommandOutput {
-    let mode = pack.map_or_else(|| init_mode(&report), |_| "pack");
+    let mut init_inferences = report.inferences.clone();
+    if pack.is_none() {
+        init_inferences.extend(inferred_init_env_inferences(&report.root));
+    }
+    let mode = pack.map_or_else(|| init_mode(&init_inferences), |_| "pack");
     let path_display = contract_path.display().to_string();
     let compact_path_display = compact_contract_path(contract_path);
     let compact_root_display = compact_repo_path(&report.root);
@@ -10736,7 +10741,7 @@ fn render_init(
     } else {
         bootstrap_init_contract(&report)
     };
-    let preview_detected_contract = if mode == "detected" || mode == "pack" {
+    let mut preview_detected_contract = if mode == "detected" || mode == "pack" {
         report.contract.clone()
     } else {
         DetectContract {
@@ -10744,6 +10749,9 @@ fn render_init(
             ..DetectContract::default()
         }
     };
+    if pack.is_none() {
+        apply_inferred_init_env_sources(&mut preview_detected_contract, &report.root);
+    }
     let review_yaml = serde_yaml::to_string(&bootstrap_contract)
         .expect("serializing init contract should not fail");
 
@@ -10797,6 +10805,10 @@ fn render_init(
                 ..DetectContract::default()
             }
         };
+        let mut selected_detected_contract = selected_detected_contract;
+        if mode == "detected" {
+            apply_inferred_init_env_sources(&mut selected_detected_contract, &report.root);
+        }
         let mut write_contract = if mode == "detected" {
             selected_detected_contract.clone()
         } else {
@@ -10810,7 +10822,7 @@ fn render_init(
         let provenance = init_contract_provenance(
             &write_contract,
             &selected_detected_contract,
-            &report.inferences,
+            &init_inferences,
             &starter_project_source,
             &starter_contract_source,
         );
@@ -10942,7 +10954,7 @@ fn render_init(
                                 "\nWrite policy: detected mode writes high- and medium-confidence fields; low-confidence fields remain excluded",
                             );
                         }
-                        let excluded = report.inferences.iter().filter(|inference| {
+                        let excluded = init_inferences.iter().filter(|inference| {
                             if bootstrap {
                                 false
                             } else {
@@ -10961,7 +10973,7 @@ fn render_init(
                         format!("run `{highlighted_validate}`"),
                         format!("run `{highlighted_doctor}`"),
                     ]));
-                    render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
+                    render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
                     CommandOutput::success(stdout)
                 }
                 OutputFormat::Json => CommandOutput::success(to_json(&InitSuccess {
@@ -10973,7 +10985,7 @@ fn render_init(
                     pack_options: pack.and_then(init_selected_pack_options),
                     pack_advisory,
                     config: &write_contract,
-                    inferred: &report.inferences,
+                    inferred: &init_inferences,
                     provenance,
                 })),
             },
@@ -11033,7 +11045,7 @@ fn render_init(
                     "\nCoverage: blank mode is a minimal starter; add runtimes, tools, env, tasks, and checks before relying on it",
                 );
             }
-            render_inference_section(&mut stdout, "Annotations", report.inferences.iter());
+            render_inference_section(&mut stdout, "Annotations", init_inferences.iter());
             CommandOutput::success(stdout)
         }
         OutputFormat::Json => CommandOutput::success(to_json(&InitSuccess {
@@ -11045,11 +11057,11 @@ fn render_init(
             pack_options: pack.and_then(init_selected_pack_options),
             pack_advisory,
             config: &bootstrap_contract,
-            inferred: &report.inferences,
+            inferred: &init_inferences,
             provenance: init_contract_provenance(
                 &bootstrap_contract,
                 &preview_detected_contract,
-                &report.inferences,
+                &init_inferences,
                 "ota.init#directory_name",
                 &pack
                     .map(StarterPackConfig::provenance_source)
@@ -12874,6 +12886,13 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     for name in contract.tools.keys() {
         fields.push(format!("tools.{name}"));
     }
+    for (index, source) in contract.env.sources.iter().enumerate() {
+        fields.push(format!("env.sources.{index}.kind"));
+        fields.push(format!("env.sources.{index}.path"));
+        if source.must_exist {
+            fields.push(format!("env.sources.{index}.must_exist"));
+        }
+    }
     for (name, service) in &contract.services {
         if service.provider.is_some() {
             fields.push(format!("services.{name}.provider"));
@@ -13014,6 +13033,28 @@ fn init_contract_provenance(
             format!("tools.{name}"),
             starter_contract_source,
         );
+    }
+    for (index, source) in contract.env.sources.iter().enumerate() {
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("env.sources.{index}.kind"),
+            "ota.init#dotenv_source",
+        );
+        push_init_field_provenance(
+            &mut provenance,
+            &inference_map,
+            &detected_fields,
+            format!("env.sources.{index}.path"),
+            "ota.init#dotenv_source",
+        );
+        if source.must_exist {
+            provenance.push(template_field_provenance(
+                format!("env.sources.{index}.must_exist"),
+                "ota.init#dotenv_source",
+            ));
+        }
     }
     for (name, service) in &contract.services {
         if service.provider.is_some() {
@@ -28874,10 +28915,9 @@ fn render_confidence(confidence: Confidence) -> String {
     }
 }
 
-fn init_mode(report: &DetectReport) -> &'static str {
-    if report.inferences.is_empty()
-        || report
-            .inferences
+fn init_mode(inferences: &[Inference]) -> &'static str {
+    if inferences.is_empty()
+        || inferences
             .iter()
             .all(|inference| inference.source == "directory-name")
     {

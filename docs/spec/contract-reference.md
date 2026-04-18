@@ -703,8 +703,7 @@ Task input semantics:
 - task inputs override repo-level env only for the task they belong to
 - task dependencies do not inherit the parent task’s declared inputs
 - if every declared input has a default, the task can be run with no input flags
-- task input names must not collide with reserved `ota run` / `ota workspace run` flag names and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`
-- migration for existing contracts: rename generic inputs to task-specific names such as `mode -> suite_mode`, `json -> output_json`, `member -> target_member`, or `backend -> execution_backend`
+- task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
 
 Example:
 

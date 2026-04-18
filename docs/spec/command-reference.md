@@ -582,8 +582,7 @@ Current behavior:
 - repeated `--member` values run the task across those members in the provided order
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
-- task input names must not reuse `ota run` / `ota workspace run` flag names and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`
-- migration for existing contracts: rename generic inputs to task-specific names such as `mode -> suite_mode`, `json -> output_json`, `member -> target_member`, or `backend -> execution_backend`
+- when a task input overlaps an ota command flag name such as `mode` or `jobs`, put the ota command flag before the task and the task input after the task
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
 - `default` values are applied when the caller omits an input
 - `required: true` makes an input mandatory unless a default exists
@@ -750,6 +749,7 @@ Current behavior:
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
+- when repo-root `.env.local` or `.env` files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract; explicit `--pack` mode does not infer env sources from repo files
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
 - low-confidence fields remain excluded from plain `ota init` writes
 - canonical detected tasks can include short `description` fields so the starter contract teaches the task-authoring pattern immediately instead of only relying on notes
@@ -759,6 +759,7 @@ Current behavior:
 Choosing an init path:
 
 - use `ota init --dry-run` when detector-led init should shape the first draft from repo signals
+- use detector-led init when you want ota to carry existing runtime dotenv sources such as `.env.local` or `.env` into `env.sources`
 - use plain `ota init` only after reviewing that detector-led starter
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
