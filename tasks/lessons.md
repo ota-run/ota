@@ -107,3 +107,6 @@
 - Pattern: Verifying hook reruns at the parent task only is not enough when the real side effect lives in a dependency like `setup`.
 - Correction: Treat hook reruns as fresh execution subtrees and verify the exact dependency path that produces the user-visible artifact, not just the hook task itself.
 - Rule: For task outcome hooks, validate the whole rerun subtree the user depends on; a rerun is incomplete if its stale dependency side effects still stay cached.
+- Pattern: Repo-run parser and validator changes can look correct on a root contract while still regressing monorepo member runs or turning existing contracts into silent breaking changes.
+- Correction: When `ota run` syntax depends on the effective contract shape, test root and `--member` resolution paths, and pair any new validation rejection with migration guidance in the error, docs, and changelog.
+- Rule: CLI and validation changes are not complete until member-scoped runs and contract-migration surfaces are covered alongside the main happy path.

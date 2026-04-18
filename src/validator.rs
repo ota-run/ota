@@ -598,7 +598,7 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
             }
             if is_reserved_task_input_name(input_name) {
                 errors.push(ValidationError::new(format!(
-                    "task `{name}` input `{input_name}` collides with reserved ota CLI flag `--{}`; rename the input to avoid `ota run` / `ota workspace run` ambiguity",
+                    "task `{name}` input `{input_name}` collides with reserved ota CLI flag `--{}`; rename the input to a task-specific name such as `suite_mode`, `output_json`, `target_member`, or `execution_backend` to avoid `ota run` / `ota workspace run` ambiguity",
                     input_name.replace('_', "-")
                 )));
             }
@@ -1739,6 +1739,9 @@ tasks:
             error.contains(
                 "task `release` input `jobs` collides with reserved ota CLI flag `--jobs`",
             )
+        }));
+        assert!(rendered.iter().all(|error| {
+            error.contains("rename the input to a task-specific name such as `suite_mode`")
         }));
     }
 

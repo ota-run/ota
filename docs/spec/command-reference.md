@@ -582,7 +582,8 @@ Current behavior:
 - repeated `--member` values run the task across those members in the provided order
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
-- task input names must not reuse ota CLI flag names like `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
+- task input names must not reuse `ota run` / `ota workspace run` flag names and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`
+- migration for existing contracts: rename generic inputs to task-specific names such as `mode -> suite_mode`, `json -> output_json`, `member -> target_member`, or `backend -> execution_backend`
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
 - `default` values are applied when the caller omits an input
 - `required: true` makes an input mandatory unless a default exists

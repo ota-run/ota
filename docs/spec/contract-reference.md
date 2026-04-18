@@ -703,7 +703,8 @@ Task input semantics:
 - task inputs override repo-level env only for the task they belong to
 - task dependencies do not inherit the parent task’s declared inputs
 - if every declared input has a default, the task can be run with no input flags
-- task input names must not collide with reserved ota CLI flags such as `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
+- task input names must not collide with reserved `ota run` / `ota workspace run` flag names and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`
+- migration for existing contracts: rename generic inputs to task-specific names such as `mode -> suite_mode`, `json -> output_json`, `member -> target_member`, or `backend -> execution_backend`
 
 Example:
 
@@ -758,7 +759,8 @@ Input fields:
 Input rules:
 
 - input names must use lowercase snake_case
-- input names must not collide with reserved ota CLI flags such as `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
+- input names must not collide with reserved `ota run` / `ota workspace run` flag names and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`
+- if an existing contract already uses one of those names, rename it to a task-specific variant such as `suite_mode`, `output_json`, `target_member`, or `execution_backend` before upgrading
 - `default` must be non-empty when present
 - `allowed` values must be non-empty
 - when `allowed` is declared, `default` must be one of the allowed values
