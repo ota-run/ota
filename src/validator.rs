@@ -596,6 +596,12 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
                     "task `{name}` input `{input_name}` must use lowercase snake_case"
                 )));
             }
+            if is_reserved_task_input_name(input_name) {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` input `{input_name}` collides with reserved ota CLI flag `--{}`; rename the input to avoid `ota run` / `ota workspace run` ambiguity",
+                    input_name.replace('_', "-")
+                )));
+            }
             if let Some(default) = input.default.as_deref()
                 && default.trim().is_empty()
             {
@@ -758,6 +764,28 @@ fn is_task_input_name(name: &str) -> bool {
         return false;
     }
     chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn is_reserved_task_input_name(name: &str) -> bool {
+    matches!(
+        name,
+        "backend"
+            | "concise"
+            | "debug"
+            | "ephemeral"
+            | "file"
+            | "help"
+            | "jobs"
+            | "json"
+            | "lifecycle"
+            | "member"
+            | "mode"
+            | "persistent"
+            | "plain"
+            | "receipt"
+            | "stream"
+            | "verbose"
+    )
 }
 
 fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<ValidationError>) {
@@ -1676,6 +1704,42 @@ tasks:
             errors.errors()[0].to_string(),
             "task `setup` must not declare multiple variants for `when.os: macos`"
         );
+    }
+
+    #[test]
+    fn rejects_task_inputs_that_collide_with_reserved_ota_flags() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  release:
+    inputs:
+      stream:
+        required: true
+      jobs:
+        required: true
+    run: echo release
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let rendered = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(rendered.iter().any(|error| error.contains(
+            "task `release` input `stream` collides with reserved ota CLI flag `--stream`"
+        )));
+        assert!(rendered.iter().any(|error| {
+            error.contains(
+                "task `release` input `jobs` collides with reserved ota CLI flag `--jobs`",
+            )
+        }));
     }
 
     #[test]

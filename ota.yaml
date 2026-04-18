@@ -133,6 +133,36 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  contract:validate:
+    description: Validate the ota repo contract with the current checkout
+    notes: |
+      Use this to self-host the contract validator against `./ota.yaml`.
+      It exercises hook follow-ups inside the main repo without touching build artifacts or snapshots.
+    category: dev
+    run: cargo run --quiet -- validate ./ota.yaml --plain
+    after_success:
+      - contract:tasks
+    after_failure:
+      - contract:doctor
+    depends_on:
+      - setup
+    safe_for_agent: true
+  contract:tasks:
+    description: Show the next runnable task surface after contract validation succeeds
+    notes: |
+      Use this as the success follow-up for `ota run contract:validate`.
+      It keeps the repo contract self-hosting by pointing straight at the validated task surface.
+    category: dev
+    run: cargo run --quiet -- tasks . --use --plain
+    safe_for_agent: true
+  contract:doctor:
+    description: Show readiness detail after contract validation fails
+    notes: |
+      Use this as the failure follow-up for `ota run contract:validate`.
+      It points the operator at concrete readiness findings instead of stopping at a raw validation error.
+    category: dev
+    run: cargo run --quiet -- doctor . --plain
+    safe_for_agent: true
   compat:
     description: Run the compatibility test gate
     notes: |
@@ -231,6 +261,7 @@ agent:
     - check
     - test
     - ci
+    - contract:validate
     - doctor-annotations
   verify_after_changes:
     - fmt
@@ -258,6 +289,7 @@ agent:
     Use `ota doctor` to inspect readiness and agent guidance.
     Use `ota tasks` to discover runnable repo actions.
     Use `ota run setup` to prepare the repo.
+    Use `ota run contract:validate` to self-host the contract validator against this checkout.
     Use `ota run ci` to run the canonical verification path.
     Prefer narrow changes with regression tests.
     Keep public docs and contracts aligned with implementation.

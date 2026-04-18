@@ -142,7 +142,10 @@ enum Commands {
         #[command(subcommand)]
         command: ExecutionCommands,
     },
-    #[command(display_order = 4)]
+    #[command(
+        display_order = 4,
+        after_help = "Ordering:\n  Put ota command flags like `--stream`, `--receipt`, `--mode`, and `--lifecycle` before task inputs.\n\nExamples:\n  ota run version:bump --stream --version patch\n  ota run version:bump patch"
+    )]
     /// Run a validated task from an Ota contract.
     Run {
         /// Task name to execute.
@@ -166,10 +169,10 @@ enum Commands {
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
-        /// Optional repo path. Put it after the task name and before task inputs.
+        /// Optional repo path. If present, put it immediately after the task name and before task inputs.
         #[arg(index = 2, value_hint = ValueHint::AnyPath)]
         path: Option<PathBuf>,
-        /// Task inputs such as `--base-url http://...`, placed after the path.
+        /// Task inputs such as `--base-url http://...`, placed after the optional path. Put ota command flags like `--stream` or `--receipt` before task inputs.
         #[arg(index = 3, add = ArgValueCompleter::new(complete_repo_run_input_candidates))]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
@@ -981,6 +984,9 @@ enum WorkspaceCommands {
         /// Path to an ota.workspace.yaml file or a directory containing one.
         path: Option<PathBuf>,
     },
+    #[command(
+        after_help = "Ordering:\n  Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs.\n\nExample:\n  ota workspace run deploy --stream --region eu"
+    )]
     /// Run a task across workspace repos.
     Run {
         /// Task name to execute.
@@ -998,10 +1004,10 @@ enum WorkspaceCommands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue)]
         receipt: bool,
-        /// Optional workspace path. Put it after the task name and before task inputs.
+        /// Optional workspace path. If present, put it immediately after the task name and before task inputs.
         #[arg(index = 2)]
         path: Option<PathBuf>,
-        /// Task inputs such as `--base-url http://...`, placed after the path.
+        /// Task inputs such as `--base-url http://...`, placed after the optional path. Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs.
         #[arg(index = 3)]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
@@ -10078,6 +10084,32 @@ tasks:
     }
 
     #[test]
+    fn run_help_documents_flag_order_before_task_inputs() {
+        let output = run_with(["ota", "run", "--help"]);
+
+        assert_eq!(output.exit_code, 0);
+        let help = output
+            .stderr
+            .as_deref()
+            .expect("help text should be present in stderr");
+        assert!(help.contains("Put ota command flags like `--stream`, `--receipt`, `--mode`, and `--lifecycle` before task inputs."));
+        assert!(help.contains("ota run version:bump --stream --version patch"));
+    }
+
+    #[test]
+    fn workspace_run_help_documents_flag_order_before_task_inputs() {
+        let output = run_with(["ota", "workspace", "run", "--help"]);
+
+        assert_eq!(output.exit_code, 0);
+        let help = output
+            .stderr
+            .as_deref()
+            .expect("help text should be present in stderr");
+        assert!(help.contains("Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs."));
+        assert!(help.contains("ota workspace run deploy --stream --region eu"));
+    }
+
+    #[test]
     fn workspace_services_typo_points_to_repo_services_and_workspace_doctor() {
         let output = run_with(["ota", "workspace", "services"]);
 
@@ -15617,6 +15649,62 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("version.txt")).unwrap(),
             "0.1.3"
+        );
+    }
+
+    #[test]
+    fn run_executes_single_task_input_shorthand_without_explicit_path() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bump-version:
+    inputs:
+      version:
+        required: true
+    script: |
+      printf '%s' "$OTA_INPUT_VERSION" > version.txt
+"#,
+        );
+
+        let _guard = cwd_mutex_lock();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "bump-version", "patch"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("version.txt")).unwrap(),
+            "patch"
+        );
+    }
+
+    #[test]
+    fn run_preserves_missing_explicit_path_for_path_like_tokens() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bump-version:
+    inputs:
+      version:
+        required: true
+    script: |
+      printf '%s' "$OTA_INPUT_VERSION" > version.txt
+"#,
+        );
+
+        let _guard = cwd_mutex_lock();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "bump-version", "./missing"]);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+                .contains("contract path does not exist: `./missing`")
         );
     }
 

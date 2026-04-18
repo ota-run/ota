@@ -101,3 +101,9 @@
 - Pattern: Public docs that enumerate the currently covered backends drift quickly once parity work continues adapter by adapter.
 - Correction: Once the implementation truly covers the shipped adapter family, describe the capability at the family level and only call out backend-specific nuance where it materially differs.
 - Rule: Prefer durable capability wording like "all shipped mutating provisioning adapters" over long backend lists once parity is real.
+
+## 2026-04-18
+
+- Pattern: Verifying hook reruns at the parent task only is not enough when the real side effect lives in a dependency like `setup`.
+- Correction: Treat hook reruns as fresh execution subtrees and verify the exact dependency path that produces the user-visible artifact, not just the hook task itself.
+- Rule: For task outcome hooks, validate the whole rerun subtree the user depends on; a rerun is incomplete if its stale dependency side effects still stay cached.

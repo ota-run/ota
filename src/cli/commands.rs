@@ -2325,8 +2325,14 @@ pub fn run_command(
         );
     }
 
-    let resolved_path = match resolve_contract_path(path, file_override) {
-        Ok(path) => path,
+    let (resolved_path, normalized_task_inputs) = match resolve_repo_run_path_and_inputs(
+        task_name,
+        path,
+        file_override,
+        members,
+        task_inputs,
+    ) {
+        Ok(target) => target,
         Err(error) => {
             return finalize_debug(
                 CommandOutput::failure(error.to_string()),
@@ -2344,6 +2350,12 @@ pub fn run_command(
         format!("DEBUG task={task_name}"),
         format!("DEBUG contract_path={path_display}"),
     ];
+    if normalized_task_inputs != task_inputs {
+        debug_lines.push(format!(
+            "DEBUG task_inputs={}",
+            normalized_task_inputs.join(" ")
+        ));
+    }
     if let Some(backend) = overrides.backend {
         debug_lines.push(format!(
             "DEBUG backend_override={}",
@@ -2366,7 +2378,7 @@ pub fn run_command(
             &resolved_path,
             overrides,
             members,
-            task_inputs,
+            &normalized_task_inputs,
             show_receipt,
             run_command_streaming_enabled(stream),
         ) {
@@ -2396,6 +2408,67 @@ pub fn run_command(
         debug,
         debug_lines,
     )
+}
+
+fn resolve_repo_run_path_and_inputs(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    task_inputs: &[String],
+) -> Result<(PathBuf, Vec<String>), ResolveContractError> {
+    match resolve_contract_path(path, file_override) {
+        Ok(path) => Ok((path, task_inputs.to_vec())),
+        Err(error @ ResolveContractError::MissingExplicitPath { .. }) => {
+            maybe_reinterpret_missing_repo_run_path(
+                task_name,
+                path,
+                file_override,
+                members,
+                task_inputs,
+            )
+            .ok_or(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn maybe_reinterpret_missing_repo_run_path(
+    task_name: &str,
+    path: Option<&Path>,
+    file_override: Option<&Path>,
+    members: &[String],
+    task_inputs: &[String],
+) -> Option<(PathBuf, Vec<String>)> {
+    let shorthand_value = path?;
+    if !members.is_empty()
+        || !task_inputs.is_empty()
+        || !can_reinterpret_missing_repo_run_path(shorthand_value)
+    {
+        return None;
+    }
+
+    let resolved_path = resolve_contract_path(None, file_override).ok()?;
+    let contract = load_contract(&resolved_path).ok()?;
+    let task = contract.tasks.get(task_name)?;
+    if task.inputs.len() != 1 {
+        return None;
+    }
+
+    Some((
+        resolved_path,
+        vec![shorthand_value.as_os_str().to_string_lossy().to_string()],
+    ))
+}
+
+fn can_reinterpret_missing_repo_run_path(path: &Path) -> bool {
+    let value = path.as_os_str().to_string_lossy();
+    !value.is_empty()
+        && !value.starts_with('.')
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.ends_with(".yaml")
+        && !value.ends_with(".yml")
 }
 
 fn run_command_streaming_enabled(force_stream: bool) -> bool {
@@ -18106,6 +18179,7 @@ tasks:
                 name: String::from("build"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
+                generation: 0,
             }],
             0,
             true,
@@ -19338,6 +19412,7 @@ tasks:
                 name: String::from("test"),
                 exit_code: 0,
                 relation: TaskExecutionRelation::Requested,
+                generation: 0,
             }],
             0,
             true,
@@ -19389,6 +19464,7 @@ tasks:
                 name: String::from("fail"),
                 exit_code: 127,
                 relation: TaskExecutionRelation::Requested,
+                generation: 0,
             }],
             127,
             false,
@@ -19405,6 +19481,74 @@ tasks:
         assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
         assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦  RUN SUMMARY\n\nScope:"));
+    }
+
+    #[test]
+    fn run_execution_receipt_marks_hook_reruns_in_step_detail() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota-site
+tasks:
+  version:bump:
+    run: echo version-bump
+  build:
+    run: echo build
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "version:bump",
+            None,
+            &[
+                ExecutedTaskStep {
+                    name: String::from("version:bump"),
+                    exit_code: 0,
+                    relation: TaskExecutionRelation::Requested,
+                    generation: 0,
+                },
+                ExecutedTaskStep {
+                    name: String::from("build"),
+                    exit_code: 0,
+                    relation: TaskExecutionRelation::AfterSuccess {
+                        parent: String::from("version:bump"),
+                    },
+                    generation: 1,
+                },
+                ExecutedTaskStep {
+                    name: String::from("setup"),
+                    exit_code: 0,
+                    relation: TaskExecutionRelation::DependsOn {
+                        parent: String::from("build"),
+                    },
+                    generation: 1,
+                },
+            ],
+            0,
+            true,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            receipt.steps[1].detail.as_deref(),
+            Some("rerun via after_success for `version:bump`")
+        );
+        assert_eq!(
+            receipt.steps[2].detail.as_deref(),
+            Some("dependency of rerun `build`")
+        );
+
+        let rendered = render_execution_receipt_text(&receipt);
+        assert!(rendered.contains("rerun via after_success for `version:bump`"));
+        assert!(rendered.contains("dependency of rerun `build`"));
     }
 
     #[test]
@@ -21682,15 +21826,33 @@ fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) 
                 None
             }
         }
-        TaskExecutionRelation::DependsOn { parent } => Some(format!("depends_on for `{parent}`")),
+        TaskExecutionRelation::DependsOn { parent } => {
+            if step.generation == 0 {
+                Some(format!("depends_on for `{parent}`"))
+            } else {
+                Some(format!("dependency of rerun `{parent}`"))
+            }
+        }
         TaskExecutionRelation::AfterSuccess { parent } => {
-            Some(format!("after_success for `{parent}`"))
+            if step.generation == 0 {
+                Some(format!("after_success for `{parent}`"))
+            } else {
+                Some(format!("rerun via after_success for `{parent}`"))
+            }
         }
         TaskExecutionRelation::AfterFailure { parent } => {
-            Some(format!("after_failure for `{parent}`"))
+            if step.generation == 0 {
+                Some(format!("after_failure for `{parent}`"))
+            } else {
+                Some(format!("rerun via after_failure for `{parent}`"))
+            }
         }
         TaskExecutionRelation::AfterAlways { parent } => {
-            Some(format!("after_always for `{parent}`"))
+            if step.generation == 0 {
+                Some(format!("after_always for `{parent}`"))
+            } else {
+                Some(format!("rerun via after_always for `{parent}`"))
+            }
         }
     }
 }
