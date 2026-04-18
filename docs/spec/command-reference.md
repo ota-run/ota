@@ -339,6 +339,26 @@ Text output:
 - each declared source may include `kind`, `path`, `must_exist`, `status`, `detail`, and `Next`
 - missing or invalid contract env entries point to a specific fix rather than guessing
 
+Example:
+
+```text
+ENV ./ota.yaml
+
+Ready: yes
+
+Declared env sources
+- dotenv .env.local status=loaded
+- dotenv .env must_exist=true status=loaded
+
+Contract env
+- DISCORD_TOKEN required=true value=*** source=dotenv:.env status=resolved
+- DOCS_SITE_BASE_URL required=true value=https://docs.internal.example source=org policy status=resolved
+- RELEASE_CHANNEL required=false value=stable source=default status=resolved allowed=[stable, canary]
+
+Task env
+- CI value=true source=task status=task
+```
+
 JSON output:
 
 - success: `ok`, `path`, `summary`, `sources`, `env`
@@ -462,16 +482,18 @@ Current behavior:
 
 - reads ota JSON from a file or from stdin when `--input -` is used
 - emits one primary blocker line when `summary.primary_blocker` is present
-- emits one line per finding
+- does not repeat that same primary blocker as a second finding line
+- emits one line per remaining finding
 - ignores `finding_groups` and stays one-annotation-per-finding by default
 - maps `severity: error` to `::error` or `ERROR` and all other severities to
   `::warning` or `WARNING`
 - scopes workspace findings with the repo name and path so annotations stay actionable
+- labels additive `Provenance:` and `Next:` segments when those fields are present in the input JSON
 - serves as the canonical binary entrypoint for repo-local and CI annotation adapters
 
 Text output:
 
-- `NOTICE: ...` for primary blockers
+- `ERROR: ...`, `WARNING: ...`, or `NOTICE: ...` for primary blockers depending on their severity
 - `ERROR: ...` and `WARNING: ...` for findings
 
 JSON output:

@@ -150,15 +150,21 @@ Success:
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
   "summary": {
-    "contract_count": 2,
-    "source_count": 1,
+    "contract_count": 3,
+    "source_count": 2,
     "source_issue_count": 0,
     "task_count": 1,
-    "resolved_count": 2,
+    "resolved_count": 3,
     "missing_count": 0,
     "invalid_count": 0
   },
   "sources": [
+    {
+      "kind": "dotenv",
+      "path": ".env.local",
+      "must_exist": false,
+      "status": "loaded"
+    },
     {
       "kind": "dotenv",
       "path": ".env",
@@ -168,11 +174,19 @@ Success:
   ],
   "env": [
     {
-      "name": "DATABASE_URL",
+      "name": "DISCORD_TOKEN",
       "kind": "contract",
       "required": true,
-      "value": "postgres://localhost/app",
+      "value": "***",
       "source": "dotenv:.env",
+      "status": "resolved"
+    },
+    {
+      "name": "DOCS_SITE_BASE_URL",
+      "kind": "contract",
+      "required": true,
+      "value": "https://docs.internal.example",
+      "source": "org policy",
       "status": "resolved"
     },
     {
@@ -186,6 +200,10 @@ Success:
   ]
 }
 ```
+
+When a declared source is missing or invalid, `sources` carries the source status and `summary` counts
+the issue. Missing or invalid required env values remain visible in `env` with `status` such as
+`missing` or `invalid`.
 
 When `--task` is set, the payload includes the task name:
 

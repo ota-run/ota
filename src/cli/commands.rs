@@ -13442,24 +13442,19 @@ pub fn annotations(
 
     match mode {
         AnnotationMode::Doctor => {
-            if let Some(primary_blocker) = report
+            let primary_blocker = report
                 .get("summary")
                 .and_then(|summary| summary.get("primary_blocker"))
-                .and_then(|value| value.as_object())
-            {
-                let summary = primary_blocker
-                    .get("summary")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                let next = primary_blocker
-                    .get("next")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
+                .and_then(annotation_primary_blocker);
+
+            if let Some(primary_blocker) = primary_blocker {
                 lines.push(render_annotation_primary_blocker(
                     format,
+                    primary_blocker.severity,
                     &format!("{title} primary blocker"),
-                    summary,
-                    next,
+                    primary_blocker.summary,
+                    primary_blocker.next,
+                    primary_blocker.provenance,
                 ));
             }
 
@@ -13468,6 +13463,11 @@ pub fn annotations(
                     let Some(finding) = finding.as_object() else {
                         continue;
                     };
+                    if primary_blocker.is_some_and(|blocker| {
+                        annotation_finding_matches_primary_blocker(finding, None, blocker)
+                    }) {
+                        continue;
+                    }
                     let severity = finding
                         .get("severity")
                         .and_then(|value| value.as_str())
@@ -13480,39 +13480,36 @@ pub fn annotations(
                         .get("next")
                         .and_then(|value| value.as_str())
                         .unwrap_or("");
+                    let provenance = finding
+                        .get("provenance")
+                        .and_then(|value| value.as_str())
+                        .filter(|value| !value.is_empty());
                     lines.push(render_annotation_finding(
                         format,
                         severity,
                         &format!("{title} finding"),
                         summary,
                         next,
+                        provenance,
                     ));
                 }
             }
         }
         AnnotationMode::WorkspaceDoctor => {
-            if let Some(primary_blocker) = report
+            let primary_blocker = report
                 .get("summary")
                 .and_then(|summary| summary.get("primary_blocker"))
-                .and_then(|value| value.as_object())
-            {
-                let repo = primary_blocker
-                    .get("repo")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                let summary = primary_blocker
-                    .get("summary")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
-                let next = primary_blocker
-                    .get("next")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("");
+                .and_then(annotation_primary_blocker);
+
+            if let Some(primary_blocker) = primary_blocker {
+                let repo = primary_blocker.repo.unwrap_or("");
                 lines.push(render_annotation_primary_blocker(
                     format,
+                    primary_blocker.severity,
                     &format!("{title} primary blocker [{repo}]"),
-                    summary,
-                    next,
+                    primary_blocker.summary,
+                    primary_blocker.next,
+                    primary_blocker.provenance,
                 ));
             }
 
@@ -13535,6 +13532,15 @@ pub fn annotations(
                             let Some(finding) = finding.as_object() else {
                                 continue;
                             };
+                            if primary_blocker.is_some_and(|blocker| {
+                                annotation_finding_matches_primary_blocker(
+                                    finding,
+                                    Some(name),
+                                    blocker,
+                                )
+                            }) {
+                                continue;
+                            }
                             let severity = finding
                                 .get("severity")
                                 .and_then(|value| value.as_str())
@@ -13547,12 +13553,17 @@ pub fn annotations(
                                 .get("next")
                                 .and_then(|value| value.as_str())
                                 .unwrap_or("");
+                            let provenance = finding
+                                .get("provenance")
+                                .and_then(|value| value.as_str())
+                                .filter(|value| !value.is_empty());
                             lines.push(render_annotation_finding(
                                 format,
                                 severity,
                                 &format!("{title} finding [{name}]"),
                                 &format!("{path}: {summary}"),
                                 next,
+                                provenance,
                             ));
                         }
                     }
@@ -13577,13 +13588,86 @@ fn read_annotations_input(input: &Path) -> Result<String, String> {
         .map_err(|error| format!("failed to read {}: {error}", input.display()))
 }
 
+#[derive(Clone, Copy)]
+struct AnnotationPrimaryBlocker<'a> {
+    repo: Option<&'a str>,
+    severity: &'a str,
+    summary: &'a str,
+    next: &'a str,
+    provenance: Option<&'a str>,
+}
+
+fn annotation_primary_blocker(value: &JsonValue) -> Option<AnnotationPrimaryBlocker<'_>> {
+    let blocker = value.as_object()?;
+    Some(AnnotationPrimaryBlocker {
+        repo: blocker.get("repo").and_then(|value| value.as_str()),
+        severity: blocker
+            .get("severity")
+            .and_then(|value| value.as_str())
+            .unwrap_or("warn"),
+        summary: blocker
+            .get("summary")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+        next: blocker
+            .get("next")
+            .and_then(|value| value.as_str())
+            .unwrap_or(""),
+        provenance: blocker
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty()),
+    })
+}
+
+fn annotation_finding_matches_primary_blocker(
+    finding: &serde_json::Map<String, JsonValue>,
+    repo: Option<&str>,
+    primary_blocker: AnnotationPrimaryBlocker<'_>,
+) -> bool {
+    finding
+        .get("severity")
+        .and_then(|value| value.as_str())
+        .unwrap_or("warn")
+        == primary_blocker.severity
+        && finding
+            .get("summary")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            == primary_blocker.summary
+        && finding
+            .get("next")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            == primary_blocker.next
+        && finding
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            == primary_blocker.provenance
+        && repo == primary_blocker.repo
+}
+
+fn annotation_message(body: &str, next: &str, provenance: Option<&str>) -> String {
+    let mut parts = vec![body.to_string()];
+    if let Some(provenance) = provenance {
+        parts.push(format!("Provenance: {provenance}"));
+    }
+    if !next.is_empty() {
+        parts.push(format!("Next: {next}"));
+    }
+    parts.join(" | ")
+}
+
 fn render_annotation_finding(
     format: AnnotationFormat,
     severity: &str,
     heading: &str,
     body: &str,
     next: &str,
+    provenance: Option<&str>,
 ) -> String {
+    let message = annotation_message(body, next, provenance);
     match format {
         AnnotationFormat::Github => {
             let severity = if severity == "error" {
@@ -13592,11 +13676,10 @@ fn render_annotation_finding(
                 "warning"
             };
             format!(
-                "::{} title={}::{} | {}",
+                "::{} title={}::{}",
                 severity,
                 escape_github_value(heading),
-                escape_github_value(body),
-                escape_github_value(next)
+                escape_github_value(&message)
             )
         }
         AnnotationFormat::Plain => {
@@ -13605,25 +13688,49 @@ fn render_annotation_finding(
             } else {
                 "WARNING"
             };
-            format!("{severity}: {heading}: {body} | {next}")
+            format!("{severity}: {heading}: {message}")
         }
     }
 }
 
 fn render_annotation_primary_blocker(
     format: AnnotationFormat,
+    severity: &str,
     heading: &str,
     body: &str,
     next: &str,
+    provenance: Option<&str>,
 ) -> String {
+    let message = annotation_message(body, next, provenance);
     match format {
         AnnotationFormat::Github => format!(
-            "::notice title={}::{} | {}",
+            "::{} title={}::{}",
+            annotation_github_severity(severity),
             escape_github_value(heading),
-            escape_github_value(body),
-            escape_github_value(next)
+            escape_github_value(&message)
         ),
-        AnnotationFormat::Plain => format!("NOTICE: {heading}: {body} | {next}"),
+        AnnotationFormat::Plain => {
+            format!(
+                "{}: {heading}: {message}",
+                annotation_plain_severity(severity)
+            )
+        }
+    }
+}
+
+fn annotation_github_severity(severity: &str) -> &'static str {
+    match severity {
+        "error" => "error",
+        "info" => "notice",
+        _ => "warning",
+    }
+}
+
+fn annotation_plain_severity(severity: &str) -> &'static str {
+    match severity {
+        "error" => "ERROR",
+        "info" => "NOTICE",
+        _ => "WARNING",
     }
 }
 

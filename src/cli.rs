@@ -10667,7 +10667,8 @@ tasks:
       "severity": "error",
       "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install one of the supported container engines"
+      "next": "install one of the supported container engines",
+      "provenance": "repo contract"
     }
   },
   "findings": [
@@ -10675,13 +10676,15 @@ tasks:
       "severity": "error",
       "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install one of the supported container engines"
+      "next": "install one of the supported container engines",
+      "provenance": "repo contract"
     },
     {
       "severity": "warn",
       "summary": "Lifecycle is advisory only",
       "why": "This repo still runs tasks natively when lifecycle is ephemeral",
-      "next": "review execution.lifecycle"
+      "next": "review execution.lifecycle",
+      "provenance": "repo signals"
     }
   ]
 }
@@ -10703,13 +10706,13 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(
-            "::notice title=ota doctor primary blocker::Missing container execution backend CLI: docker, podman | install one of the supported container engines"
+            "::error title=ota doctor primary blocker::Missing container execution backend CLI: docker, podman | Provenance: repo contract | Next: install one of the supported container engines"
         ));
         assert!(stdout.contains(
-            "::error title=ota doctor finding::Missing container execution backend CLI: docker, podman | install one of the supported container engines"
+            "::warning title=ota doctor finding::Lifecycle is advisory only | Provenance: repo signals | Next: review execution.lifecycle"
         ));
-        assert!(stdout.contains(
-            "::warning title=ota doctor finding::Lifecycle is advisory only | review execution.lifecycle"
+        assert!(!stdout.contains(
+            "::error title=ota doctor finding::Missing container execution backend CLI: docker, podman"
         ));
     }
 
@@ -10735,7 +10738,8 @@ tasks:
       "severity": "error",
       "summary": "Missing container execution backend CLI: docker, podman",
       "why": "Required because execution.preferred=container",
-      "next": "install one of the supported container engines"
+      "next": "install one of the supported container engines",
+      "provenance": "org policy"
     }
   },
   "repos": [
@@ -10755,13 +10759,15 @@ tasks:
           "severity": "error",
           "summary": "Missing container execution backend CLI: docker, podman",
           "why": "Required because execution.preferred=container",
-          "next": "install one of the supported container engines"
+          "next": "install one of the supported container engines",
+          "provenance": "org policy"
         },
         {
           "severity": "warn",
           "summary": "Lifecycle is advisory only",
           "why": "This repo still runs tasks natively when lifecycle is ephemeral",
-          "next": "review execution.lifecycle"
+          "next": "review execution.lifecycle",
+          "provenance": "repo contract"
         }
       ]
     }
@@ -10785,13 +10791,13 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains(
-            "NOTICE: ota workspace doctor primary blocker [api]: Missing container execution backend CLI: docker, podman | install one of the supported container engines"
+            "ERROR: ota workspace doctor primary blocker [api]: Missing container execution backend CLI: docker, podman | Provenance: org policy | Next: install one of the supported container engines"
         ));
         assert!(stdout.contains(
-            "ERROR: ota workspace doctor finding [api]: ./api: Missing container execution backend CLI: docker, podman | install one of the supported container engines"
+            "WARNING: ota workspace doctor finding [api]: ./api: Lifecycle is advisory only | Provenance: repo contract | Next: review execution.lifecycle"
         ));
-        assert!(stdout.contains(
-            "WARNING: ota workspace doctor finding [api]: ./api: Lifecycle is advisory only | review execution.lifecycle"
+        assert!(!stdout.contains(
+            "ERROR: ota workspace doctor finding [api]: ./api: Missing container execution backend CLI: docker, podman"
         ));
     }
 
