@@ -29,6 +29,8 @@ use serde_json::Value as JsonValue;
 use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
+use crate::schema::EnvConfig;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
@@ -54,6 +56,8 @@ pub struct DetectContract {
     pub runtimes: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub tools: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "EnvConfig::is_empty")]
+    pub env: EnvConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub services: BTreeMap<String, DetectService>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

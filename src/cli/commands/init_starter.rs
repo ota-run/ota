@@ -27,10 +27,14 @@ use std::path::Path;
 use serde_json::Value as JsonValue;
 
 use crate::detector::{
-    DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
-    DetectTask, Inference,
+    Confidence, DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject,
+    DetectReport, DetectTask, Inference,
 };
-use crate::schema::{AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig};
+use crate::schema::{
+    AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentConfig, EnvSource, EnvSourceKind,
+};
+
+const INIT_DOTENV_SOURCE_PATHS: &[&str] = &[".env.local", ".env"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum StarterPack {
@@ -161,6 +165,7 @@ impl StarterPack {
                 does_not_infer: &[
                     "the repo's package manager unless `--package-manager` says so",
                     "repo-specific script names or extra task variants beyond the seeded `setup`, `dev`, and `test` loop",
+                    "dotenv env sources from repo files such as `.env.local` or `.env`",
                 ],
             },
             Self::Python => StarterPackCatalogEntry {
@@ -542,8 +547,59 @@ fn top_pack_signal_details(weights: Option<&BTreeMap<String, usize>>) -> Vec<Sta
 
 pub(super) fn bootstrap_init_contract(report: &DetectReport) -> DetectContract {
     let mut contract = report.contract.clone();
+    apply_inferred_init_env_sources(&mut contract, &report.root);
     apply_starter_contract_defaults(&mut contract, &report.root);
     contract
+}
+
+pub(super) fn apply_inferred_init_env_sources(contract: &mut DetectContract, root: &Path) {
+    for source in inferred_init_env_sources(root) {
+        if contract
+            .env
+            .sources
+            .iter()
+            .any(|existing| existing.kind == source.kind && existing.path == source.path)
+        {
+            continue;
+        }
+        contract.env.sources.push(source);
+    }
+}
+
+pub(super) fn inferred_init_env_inferences(root: &Path) -> Vec<Inference> {
+    inferred_init_env_sources(root)
+        .into_iter()
+        .enumerate()
+        .flat_map(|(index, source)| {
+            let source_path = source.path.clone();
+            [
+                Inference {
+                    field: format!("env.sources.{index}.kind"),
+                    value: String::from("dotenv"),
+                    source: source_path.clone(),
+                    confidence: Confidence::Medium,
+                },
+                Inference {
+                    field: format!("env.sources.{index}.path"),
+                    value: source.path,
+                    source: source_path,
+                    confidence: Confidence::Medium,
+                },
+            ]
+        })
+        .collect()
+}
+
+fn inferred_init_env_sources(root: &Path) -> Vec<EnvSource> {
+    INIT_DOTENV_SOURCE_PATHS
+        .iter()
+        .filter(|path| root.join(path).is_file())
+        .map(|path| EnvSource {
+            kind: EnvSourceKind::Dotenv,
+            path: (*path).to_string(),
+            must_exist: false,
+        })
+        .collect()
 }
 
 pub(super) fn apply_starter_contract_defaults(contract: &mut DetectContract, root: &Path) {

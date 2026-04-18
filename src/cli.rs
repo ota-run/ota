@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
@@ -1300,29 +1301,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
 }
 
 fn workspace_command_value_span(flag: &str) -> Option<usize> {
-    const VALUED: &[&str] = &[
-        "--file",
-        "--repo",
-        "--status",
-        "--severity",
-        "--jobs",
-        "--ref",
-    ];
-    const SWITCHES: &[&str] = &[
-        "--json",
-        "--stream",
-        "--quiet",
-        "--receipt",
-        "--dry-run",
-        "--force",
-        "--prune",
-        "--plain",
-        "--concise",
-        "--verbose",
-        "--debug",
-    ];
-
-    completion_value_span_with(flag, VALUED, SWITCHES)
+    command_flag_span(flag, workspace_run_flag_spec)
 }
 
 fn parse_completion_path(
@@ -2280,78 +2259,336 @@ where
 
 fn rewrite_task_input_path_hint(args: Vec<OsString>) -> Vec<OsString> {
     let mut rewritten = args;
-    let Some((_, mut index)) = locate_task_command(&rewritten) else {
+    let Some(location) = locate_task_command(&rewritten) else {
         return rewritten;
     };
-
-    let mut input_flag_index = None;
-
-    while index < rewritten.len() {
-        let token = rewritten[index].to_string_lossy().to_string();
-        let token_str = token.as_str();
-
-        if token_str == "--" {
-            input_flag_index = Some(index + 1);
-            break;
+    let declared_inputs = declared_run_task_inputs(&rewritten, &location);
+    if let Some(boundary) = find_task_input_start_index(&rewritten, &location, &declared_inputs)
+        && boundary.index < rewritten.len()
+    {
+        let mut insert_at = boundary.index;
+        if boundary.needs_path_hint {
+            rewritten.insert(insert_at, OsString::from("."));
+            insert_at += 1;
         }
-
-        if let Some(skip) = run_command_value_span(token_str) {
-            index += skip;
-            continue;
-        }
-
-        if token_str.starts_with('-') {
-            input_flag_index = Some(index);
-            break;
-        }
-
-        // A non-flag token after the task-specific flags is the explicit path.
-        return rewritten;
-    }
-
-    if let Some(index) = input_flag_index {
-        if index < rewritten.len() {
-            rewritten.insert(index, OsString::from("."));
+        if rewritten[insert_at].to_string_lossy().starts_with('-') {
+            rewritten.insert(insert_at, OsString::from("--"));
         }
     }
 
     rewritten
 }
 
-fn locate_task_command(args: &[OsString]) -> Option<(usize, usize)> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunCommandKind {
+    Repo,
+    Workspace,
+}
+
+#[derive(Clone)]
+struct RunTaskLocation {
+    kind: RunCommandKind,
+    task_index: usize,
+    seen_flags_before_task: BTreeSet<&'static str>,
+}
+
+#[derive(Clone, Copy)]
+struct RunFlagSpec {
+    canonical: &'static str,
+    takes_value: bool,
+    value_kind: RunFlagValueKind,
+}
+
+#[derive(Clone, Copy)]
+enum RunFlagValueKind {
+    Any,
+    Enum(&'static [&'static str]),
+    Usize,
+}
+
+struct RunFlagOccurrence {
+    canonical: &'static str,
+    input_name: Option<String>,
+    takes_value: bool,
+    valid_for_flag: bool,
+    span: usize,
+}
+
+struct RunTaskInputBoundary {
+    index: usize,
+    needs_path_hint: bool,
+}
+
+fn locate_task_command(args: &[OsString]) -> Option<RunTaskLocation> {
     let mut index = 1;
     while index < args.len() {
         let current = args[index].to_string_lossy();
-        if current.as_ref() == "run" {
-            return Some((index, index + 2));
-        }
         if current.as_ref() == "workspace"
             && index + 1 < args.len()
             && args[index + 1].to_string_lossy().as_ref() == "run"
         {
-            return Some((index + 1, index + 3));
+            return scan_run_task_location(args, index + 2, RunCommandKind::Workspace);
+        }
+        if current.as_ref() == "run" {
+            return scan_run_task_location(args, index + 1, RunCommandKind::Repo);
         }
         index += 1;
     }
     None
 }
 
-fn run_command_value_span(flag: &str) -> Option<usize> {
-    if let Some((name, _)) = flag.split_once('=') {
-        return match name {
-            "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(1),
-            "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" | "--plain"
-            | "--concise" | "--verbose" | "--debug" => Some(1),
-            _ => None,
-        };
+fn scan_run_task_location(
+    args: &[OsString],
+    mut index: usize,
+    kind: RunCommandKind,
+) -> Option<RunTaskLocation> {
+    let mut seen_flags_before_task = BTreeSet::new();
+
+    while index < args.len() {
+        if let Some(flag) = parse_run_flag_occurrence(args, index, kind) {
+            seen_flags_before_task.insert(flag.canonical);
+            index += flag.span;
+            continue;
+        }
+
+        let token = args[index].to_string_lossy();
+        if token.starts_with('-') || token.is_empty() {
+            index += 1;
+            continue;
+        }
+
+        return Some(RunTaskLocation {
+            kind,
+            task_index: index,
+            seen_flags_before_task,
+        });
     }
 
-    match flag {
-        "--backend" | "--mode" | "--lifecycle" | "--member" | "--jobs" | "--file" => Some(2),
-        "--receipt" | "--json" | "--stream" | "--ephemeral" | "--persistent" | "--plain"
-        | "--concise" | "--verbose" | "--debug" => Some(1),
+    None
+}
+
+fn declared_run_task_inputs(args: &[OsString], location: &RunTaskLocation) -> BTreeSet<String> {
+    match location.kind {
+        RunCommandKind::Repo => {
+            let context = parse_repo_run_completion_context(args);
+            let Some(task) = context.task.as_deref() else {
+                return BTreeSet::new();
+            };
+            let Some(contract_path) =
+                resolve_completion_contract_path(context.path.as_deref(), args)
+            else {
+                return BTreeSet::new();
+            };
+            load_repo_run_task_inputs(&contract_path, &context.members, task)
+                .into_keys()
+                .collect()
+        }
+        RunCommandKind::Workspace => {
+            let context = parse_workspace_run_completion_context(args);
+            let Some(task) = context.task.as_deref() else {
+                return BTreeSet::new();
+            };
+            let Some(workspace_path) =
+                resolve_completion_workspace_path(context.path.as_deref(), args)
+            else {
+                return BTreeSet::new();
+            };
+            load_workspace_run_task_inputs(&workspace_path, task)
+                .into_keys()
+                .collect()
+        }
+    }
+}
+
+fn find_task_input_start_index(
+    args: &[OsString],
+    location: &RunTaskLocation,
+    declared_inputs: &BTreeSet<String>,
+) -> Option<RunTaskInputBoundary> {
+    let mut index = location.task_index + 1;
+    let mut seen_flags = location.seen_flags_before_task.clone();
+    let mut saw_explicit_path = false;
+
+    while index < args.len() {
+        let token = args[index].to_string_lossy().to_string();
+        if token == "--" {
+            return (index + 1 < args.len()).then_some(RunTaskInputBoundary {
+                index: index + 1,
+                needs_path_hint: false,
+            });
+        }
+
+        if let Some(flag) = parse_run_flag_occurrence(args, index, location.kind) {
+            let overlaps_task_input = flag
+                .input_name
+                .as_deref()
+                .is_some_and(|name| declared_inputs.contains(name));
+            if overlaps_task_input
+                && (seen_flags.contains(flag.canonical)
+                    || (flag.takes_value && !flag.valid_for_flag))
+            {
+                return Some(RunTaskInputBoundary {
+                    index,
+                    needs_path_hint: !saw_explicit_path,
+                });
+            }
+
+            seen_flags.insert(flag.canonical);
+            index += flag.span;
+            continue;
+        }
+
+        if token.starts_with('-') {
+            return Some(RunTaskInputBoundary {
+                index,
+                needs_path_hint: !saw_explicit_path,
+            });
+        }
+
+        if !saw_explicit_path && index + 1 < args.len() {
+            saw_explicit_path = true;
+            index += 1;
+            continue;
+        }
+
+        // A lone non-flag token after the task is either the explicit path or the shorthand task input.
+        return None;
+    }
+
+    None
+}
+
+fn parse_run_flag_occurrence(
+    args: &[OsString],
+    index: usize,
+    kind: RunCommandKind,
+) -> Option<RunFlagOccurrence> {
+    let token = args.get(index)?.to_string_lossy().to_string();
+    let (name, inline_value) = token
+        .split_once('=')
+        .map_or((token.as_str(), None), |(name, value)| (name, Some(value)));
+    let spec = match kind {
+        RunCommandKind::Repo => repo_run_flag_spec(name),
+        RunCommandKind::Workspace => workspace_run_flag_spec(name),
+    }?;
+    let next_value = args
+        .get(index + 1)
+        .map(|value| value.to_string_lossy().to_string());
+    let span = if inline_value.is_some() || !spec.takes_value {
+        1
+    } else if next_value.is_some() {
+        2
+    } else {
+        1
+    };
+    let value = inline_value.map(str::to_string).or(next_value);
+    let valid_for_flag = match spec.value_kind {
+        RunFlagValueKind::Any => value.is_some() || !spec.takes_value,
+        RunFlagValueKind::Enum(allowed) => value
+            .as_deref()
+            .is_some_and(|candidate| allowed.contains(&candidate)),
+        RunFlagValueKind::Usize => value
+            .as_deref()
+            .is_some_and(|candidate| candidate.parse::<usize>().is_ok()),
+    };
+
+    Some(RunFlagOccurrence {
+        canonical: spec.canonical,
+        input_name: task_input_name_from_flag(name),
+        takes_value: spec.takes_value,
+        valid_for_flag,
+        span,
+    })
+}
+
+fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
+    const BACKENDS: &[&str] = &["native", "container", "remote"];
+    const LIFECYCLES: &[&str] = &["persistent", "ephemeral"];
+
+    match name {
+        "--mode" | "--backend" => Some(RunFlagSpec {
+            canonical: "mode",
+            takes_value: true,
+            value_kind: RunFlagValueKind::Enum(BACKENDS),
+        }),
+        "--lifecycle" => Some(RunFlagSpec {
+            canonical: "lifecycle",
+            takes_value: true,
+            value_kind: RunFlagValueKind::Enum(LIFECYCLES),
+        }),
+        "--member" | "--file" => Some(RunFlagSpec {
+            canonical: match name {
+                "--member" => "member",
+                _ => "file",
+            },
+            takes_value: true,
+            value_kind: RunFlagValueKind::Any,
+        }),
+        "--ephemeral" | "--receipt" | "--stream" | "--debug" | "--plain" | "--concise"
+        | "--verbose" => Some(RunFlagSpec {
+            canonical: match name {
+                "--ephemeral" => "ephemeral",
+                "--receipt" => "receipt",
+                "--stream" => "stream",
+                "--debug" => "debug",
+                "--plain" => "plain",
+                "--concise" => "concise",
+                "--verbose" => "verbose",
+                _ => unreachable!("matched repo run switch"),
+            },
+            takes_value: false,
+            value_kind: RunFlagValueKind::Any,
+        }),
         _ => None,
     }
+}
+
+fn workspace_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
+    match name {
+        "--jobs" => Some(RunFlagSpec {
+            canonical: "jobs",
+            takes_value: true,
+            value_kind: RunFlagValueKind::Usize,
+        }),
+        "--file" => Some(RunFlagSpec {
+            canonical: "file",
+            takes_value: true,
+            value_kind: RunFlagValueKind::Any,
+        }),
+        "--json" | "--stream" | "--receipt" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+            Some(RunFlagSpec {
+                canonical: match name {
+                    "--json" => "json",
+                    "--stream" => "stream",
+                    "--receipt" => "receipt",
+                    "--debug" => "debug",
+                    "--plain" => "plain",
+                    "--concise" => "concise",
+                    "--verbose" => "verbose",
+                    _ => unreachable!("matched workspace run switch"),
+                },
+                takes_value: false,
+                value_kind: RunFlagValueKind::Any,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn command_flag_span(flag: &str, resolver: fn(&str) -> Option<RunFlagSpec>) -> Option<usize> {
+    let (name, inline_value) = flag
+        .split_once('=')
+        .map_or((flag, None), |(name, value)| (name, Some(value)));
+    let spec = resolver(name)?;
+    Some(if inline_value.is_some() || !spec.takes_value {
+        1
+    } else {
+        2
+    })
+}
+
+fn run_command_value_span(flag: &str) -> Option<usize> {
+    command_flag_span(flag, repo_run_flag_spec)
 }
 
 fn run_cli(cli: Cli) -> CommandOutput {
@@ -13223,6 +13460,31 @@ tasks:
     }
 
     #[test]
+    fn env_json_counts_declared_dotenv_sources_in_contract_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  sources:
+    - kind: dotenv
+      path: .env.local
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+
+        let output = run_with(["ota", "env", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["summary"]["contract_count"], 1);
+        assert_eq!(json["summary"]["source_count"], 1);
+    }
+
+    #[test]
     fn env_json_reports_missing_required_env() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -14229,6 +14491,15 @@ agent:
             node["options"][0]["values"],
             json!(["npm", "pnpm", "yarn", "bun"])
         );
+        assert!(
+            node["does_not_infer"]
+                .as_array()
+                .expect("node does_not_infer")
+                .iter()
+                .any(|entry| entry
+                    .as_str()
+                    .is_some_and(|value| value.contains(".env.local") && value.contains(".env")))
+        );
         let python = packs
             .iter()
             .find(|entry| entry["name"] == "python")
@@ -15202,6 +15473,107 @@ requires-python = ">=3.12"
     }
 
     #[test]
+    fn init_detected_write_infers_existing_dotenv_sources() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": {
+    "test": "pnpm test"
+  }
+}"#,
+        );
+        fixture.write(".env.local", "APP_URL=http://localhost:3000\n");
+        fixture.write(".env", "NODE_ENV=development\n");
+
+        let output = run_with(["ota", "init", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "detected");
+        assert_eq!(json["config"]["env"]["sources"][0]["kind"], "dotenv");
+        assert_eq!(json["config"]["env"]["sources"][0]["path"], ".env.local");
+        assert_eq!(json["config"]["env"]["sources"][1]["kind"], "dotenv");
+        assert_eq!(json["config"]["env"]["sources"][1]["path"], ".env");
+        let inferred = json["inferred"].as_array().expect("inferred array");
+        assert!(inferred.iter().any(|entry| {
+            entry["field"] == "env.sources.0.path"
+                && entry["value"] == ".env.local"
+                && entry["source"] == ".env.local"
+                && entry["confidence"] == "medium"
+        }));
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let env_source = provenance
+            .iter()
+            .find(|entry| entry["field"] == "env.sources.0.path")
+            .expect("env.sources.0.path provenance");
+        assert_eq!(env_source["provenance"], "detector-inferred");
+        assert_eq!(env_source["provenance_key"], "repo_signals");
+        assert_eq!(env_source["source"], ".env.local");
+        assert_eq!(env_source["confidence"], "medium");
+
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("env:"));
+        assert!(written.contains("path: .env.local"));
+        assert!(written.contains("path: .env"));
+        assert!(!written.contains("vars: {}"));
+        assert!(!written.contains("must_exist: false"));
+    }
+
+    #[test]
+    fn init_pack_node_does_not_infer_env_sources_from_repo_files() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(".env.local", "APP_URL=http://localhost:3000\n");
+        fixture.write(".env", "NODE_ENV=development\n");
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["config"]["env"].is_null());
+        assert!(
+            !json["inferred"]
+                .as_array()
+                .expect("inferred array")
+                .iter()
+                .any(|entry| entry["field"]
+                    .as_str()
+                    .is_some_and(|field| field.starts_with("env.sources.")))
+        );
+    }
+
+    #[test]
+    fn init_env_only_dry_run_reports_detected_mode_and_repo_signal_provenance() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(".env.local", "APP_URL=http://localhost:3000\n");
+
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "detected");
+        assert_eq!(json["config"]["env"]["sources"][0]["path"], ".env.local");
+        let provenance = json["provenance"].as_array().expect("provenance array");
+        let env_source = provenance
+            .iter()
+            .find(|entry| entry["field"] == "env.sources.0.path")
+            .expect("env.sources.0.path provenance");
+        assert_eq!(env_source["provenance"], "detector-inferred");
+        assert_eq!(env_source["provenance_key"], "repo_signals");
+        assert_eq!(env_source["source"], ".env.local");
+        assert_eq!(env_source["confidence"], "medium");
+    }
+
+    #[test]
     fn init_json_write_marks_directory_fallback_project_as_template_derived() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -15718,6 +16090,78 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("api").join("version.txt")).unwrap(),
             "patch"
+        );
+    }
+
+    #[test]
+    fn run_preserves_valid_post_task_mode_override_when_task_declares_mode_input() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  api:automation:live:
+    inputs:
+      mode: {}
+    run: printf ready > prepared.txt
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "api:automation:live", "--mode", "native"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn run_allows_pre_task_mode_override_with_post_task_mode_input() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: ghcr.io/ota/test:latest
+tasks:
+  api:automation:live:
+    inputs:
+      mode: {}
+    script: |
+      printf '%s' "$OTA_INPUT_MODE" > mode.txt
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with([
+            "ota",
+            "run",
+            "--mode",
+            "native",
+            "api:automation:live",
+            "--mode",
+            "smoke",
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("mode.txt")).unwrap(),
+            "smoke"
         );
     }
 
@@ -25941,6 +26385,46 @@ tasks:
             )
             .unwrap(),
             "http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn workspace_run_allows_pre_task_jobs_override_with_post_task_jobs_input() {
+        let _guard = cwd_mutex_lock();
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    inputs:
+      jobs: {}
+    script: |
+      printf '%s' "$OTA_INPUT_JOBS" > jobs.txt
+"#,
+        )
+        .unwrap();
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with([
+            "ota",
+            "workspace",
+            "run",
+            "--jobs",
+            "2",
+            "setup",
+            "--jobs",
+            "smoke",
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("apps").join("web").join("jobs.txt"))
+                .unwrap(),
+            "smoke"
         );
     }
 
