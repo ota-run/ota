@@ -272,6 +272,18 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff.get("resolved").is_some());
     assert!(diff.get("unchanged").is_some());
     assert!(diff.get("gate").is_some());
+    assert!(diff["gate"]["properties"].get("blocking_summary").is_some());
+    assert!(diff["gate"]["properties"].get("blocking_next").is_some());
+    assert!(
+        diff["gate"]["properties"]
+            .get("blocking_provenance")
+            .is_some()
+    );
+    assert!(
+        diff["gate"]["properties"]
+            .get("blocking_provenance_key")
+            .is_some()
+    );
     assert!(diff_baseline.get("selection_path").is_some());
     assert!(diff_baseline.get("promoted_at").is_some());
     assert!(diff_baseline.get("contract_identity").is_some());
@@ -288,6 +300,27 @@ fn receipt_schema_includes_receipt_and_findings() {
     );
     assert!(diff_summary.get("baseline_ok").is_some());
     assert!(diff_summary.get("current_ok").is_some());
+    assert!(diff_summary.get("comparison").is_some());
+    assert!(
+        diff_summary["comparison"]["properties"]
+            .get("baseline_identity_label")
+            .is_some()
+    );
+    assert!(
+        diff_summary["comparison"]["properties"]
+            .get("current_identity_label")
+            .is_some()
+    );
+    assert!(
+        diff_summary["comparison"]["properties"]
+            .get("identity_changed")
+            .is_some()
+    );
+    assert!(
+        diff_summary["comparison"]["properties"]
+            .get("readiness_change")
+            .is_some()
+    );
     assert!(diff_summary.get("introduced").is_some());
     assert!(diff_summary.get("resolved").is_some());
     assert!(diff_summary.get("unchanged").is_some());

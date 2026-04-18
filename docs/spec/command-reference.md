@@ -475,6 +475,8 @@ Render ota doctor findings as CI annotations or provider-neutral log lines.
 ```bash
 ota annotations --mode doctor --format github --input ./doctor.json
 ota annotations --mode workspace-doctor --format plain --input ./workspace-doctor.json
+ota annotations --mode doctor --format markdown --input ./doctor.json
+ota annotations --mode receipt-diff --format markdown --input ./receipt-diff.json
 ota doctor --json | ota annotations --mode doctor --format github --input -
 ```
 
@@ -487,6 +489,10 @@ Current behavior:
 - ignores `finding_groups` and stays one-annotation-per-finding by default
 - maps `severity: error` to `::error` or `ERROR` and all other severities to
   `::warning` or `WARNING`
+- `--format markdown` renders a compact summary block for step summaries or PR comments with status,
+  counts, the primary blocker when present, and remaining findings
+- `--mode receipt-diff` expects `ota receipt --json --baseline ...` diff output and currently
+  supports `--format markdown` only
 - scopes workspace findings with the repo name and path so annotations stay actionable
 - labels additive `Provenance:` and `Next:` segments when those fields are present in the input JSON
 - serves as the canonical binary entrypoint for repo-local and CI annotation adapters
@@ -495,6 +501,10 @@ Text output:
 
 - `ERROR: ...`, `WARNING: ...`, or `NOTICE: ...` for primary blockers depending on their severity
 - `ERROR: ...` and `WARNING: ...` for findings
+- markdown output uses `## <title>`, `Status`, `Counts`, optional `Primary blocker`, and `Findings`
+  sections instead of one-line annotations
+- receipt-diff markdown output uses `Baseline source`, `Compare`, `Drift`, `Counts`, optional
+  `Gate`, optional `Primary blocker`, and compact `Introduced` / `Resolved` sections
 
 JSON output:
 
@@ -943,7 +953,9 @@ JSON output:
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
 - `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
+- diff `summary` also carries a compact `comparison` block so wrappers can show baseline/current identity labels plus readiness drift without reconstructing it from the full baseline/current sections
 - `--fail-on-new-blockers` adds `gate.rule`, `gate.passed`, and `gate.new_blocker_count` to diff JSON when the compare gate is active
+- when that compare gate blocks, diff JSON also carries the first blocking summary, next step, and provenance so CI summaries and PR comments do not need to scrape the full `introduced` array
 
 Current non-goals:
 

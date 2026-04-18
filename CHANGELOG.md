@@ -26,7 +26,16 @@
 
 ## Unreleased
 
+- CI wrapper scripts `scripts/emit-ota-findings.sh` and `scripts/emit-ota-findings.ps1` now
+  delegate directly to `ota annotations`, including markdown summaries and `receipt-diff`, so
+  wrapper paths reuse the canonical CLI renderers instead of maintaining duplicate formatting;
+  they also resolve the current checkout binary before falling back to an ambient install
+
 - polished `ota annotations` for CI and PR consumption by suppressing duplicate primary-blocker finding lines and labeling additive `Provenance:` plus `Next:` segments when those fields exist in the input JSON.
+- added `ota annotations --format markdown` as the canonical compact summary renderer for doctor and workspace-doctor JSON, so step summaries and PR comments can reuse ota’s own status, blocker, provenance, and next-step wording instead of rebuilding it downstream.
+- extended `ota annotations` with `--mode receipt-diff --format markdown`, so baseline compare output now has the same canonical compact renderer for PR comments and step summaries instead of forcing wrappers to rebuild compare/gate wording from raw receipt diff JSON.
+- extended `ota receipt --baseline --fail-on-new-blockers` so the compare gate now carries the first blocking summary, next step, and provenance in both JSON and text output, making CI summaries and PR comments easier to render without scraping the full introduced-finding list.
+- added a compact additive receipt diff comparison summary so JSON and text output can surface baseline/current identity labels plus readiness drift in one small block instead of forcing wrappers to reconstruct that view from the full baseline/current sections.
 - refined explicit `ota init --pack ...` advisories so the text output now compares both sides of the mismatch more clearly with suggested signals, selected-pack incidental signals, and an explicit score gap while keeping the pack choice authoritative.
 - extended `pack_advisory` in `ota init --json` with additive comparison fields such as `score_gap` and `selected_signal_details`, making the advisory easier to explain in automation without scraping human text.
 - clarified the env-resolution docs so root contract env is explained as a repo-wide execution contract, not just a validation surface, including the injected-process boundary for `ota run` / `ota up` and when ota can functionally replace in-app dotenv loading.

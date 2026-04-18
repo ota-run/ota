@@ -673,12 +673,15 @@ struct CompletionSetupPlan {
 enum AnnotationMode {
     Doctor,
     WorkspaceDoctor,
+    #[value(name = "receipt-diff")]
+    ReceiptDiff,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum AnnotationFormat {
     Plain,
     Github,
+    Markdown,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -2731,20 +2734,30 @@ _ota() {
         local -a primary_display=()
         local -a option_values=()
         local -a option_display=()
+        local placeholder=$'\x1f'
         local completion
         for completion in $completions; do
-            local value="${completion%%:*}"
+            local escaped_completion="${completion//\\:/$placeholder}"
+            local value="${escaped_completion%%:*}"
+            local help=""
+            if [[ "$escaped_completion" == *:* ]]; then
+                help="${escaped_completion#*:}"
+            fi
+            value="${value//$placeholder/:}"
+            help="${help//$placeholder/:}"
+            value="${(Q)value}"
+            help="${(Q)help}"
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
-                if [[ "$completion" == *:* ]]; then
-                    option_display+=("$value -- ${completion#*:}")
+                if [[ -n "$help" ]]; then
+                    option_display+=("$value -- $help")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
-                if [[ "$completion" == *:* ]]; then
-                    primary_display+=("$value -- ${completion#*:}")
+                if [[ -n "$help" ]]; then
+                    primary_display+=("$value -- $help")
                 else
                     primary_display+=("$value")
                 fi
@@ -6910,6 +6923,16 @@ env:
         assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
         assert_eq!(json["gate"]["passed"], false);
         assert_eq!(json["gate"]["new_blocker_count"], 1);
+        assert_eq!(
+            json["gate"]["blocking_summary"],
+            "Missing environment variable: OTA_BASELINE_REQUIRED"
+        );
+        assert_eq!(
+            json["gate"]["blocking_next"],
+            "set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+        );
+        assert_eq!(json["gate"]["blocking_provenance"], "repo contract");
+        assert_eq!(json["gate"]["blocking_provenance_key"], "repo_contract");
         assert_eq!(json["summary"]["introduced"]["error_count"], 1);
     }
 
@@ -6946,6 +6969,10 @@ project:
         assert_eq!(json["gate"]["rule"], "fail_on_new_blockers");
         assert_eq!(json["gate"]["passed"], true);
         assert_eq!(json["gate"]["new_blocker_count"], 0);
+        assert!(json["gate"]["blocking_summary"].is_null());
+        assert!(json["gate"]["blocking_next"].is_null());
+        assert!(json["gate"]["blocking_provenance"].is_null());
+        assert!(json["gate"]["blocking_provenance_key"].is_null());
         assert_eq!(json["summary"]["introduced"]["error_count"], 0);
     }
 
@@ -7104,7 +7131,99 @@ env:
             1
         );
         assert!(json["baseline"]["promoted_at"].is_string());
+        assert_eq!(
+            json["summary"]["comparison"]["baseline_identity_label"],
+            "ota.yaml"
+        );
+        assert_eq!(
+            json["summary"]["comparison"]["current_identity_label"],
+            "ota.yaml"
+        );
+        assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
+        assert_eq!(
+            json["summary"]["comparison"]["readiness_change"],
+            "regressed"
+        );
         assert_eq!(json["summary"]["introduced"]["error_count"], 1);
+    }
+
+    #[test]
+    fn receipt_json_diff_legacy_explicit_baseline_keeps_same_contract_identity() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+        );
+
+        let baseline_file = fixture.dir.path().join("legacy-baseline.json");
+        fs::write(
+            &baseline_file,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 1,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 1,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    {
+                        "severity": "error",
+                        "summary": "No tasks defined in contract",
+                        "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                        "next": "add at least one `tasks.<name>.run` or `tasks.<name>.script` entry, or run `ota detect --dry-run` and `ota detect --write` to regenerate"
+                    }
+                ]
+            }))
+                .unwrap(),
+        )
+            .unwrap();
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--baseline",
+            baseline_file.to_str().unwrap(),
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["summary"]["comparison"]["baseline_identity_label"],
+            "ota.yaml"
+        );
+        assert_eq!(
+            json["summary"]["comparison"]["current_identity_label"],
+            "ota.yaml"
+        );
+        assert_eq!(json["summary"]["comparison"]["identity_changed"], false);
     }
 
     #[test]
@@ -7547,10 +7666,103 @@ env:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("RECEIPT DIFF"));
+        assert!(stdout.contains("Compare:"));
+        assert!(stdout.contains("ota.yaml"));
+        assert!(stdout.contains("Drift: identity unchanged; readiness unchanged"));
         assert!(stdout.contains("Introduced Findings"));
         assert!(stdout.contains("Resolved Findings"));
         assert!(stdout.contains("Missing environment variable: OTA_BASELINE_REQUIRED"));
         assert!(stdout.contains("Missing tool: old-tool"));
+    }
+
+    #[test]
+    fn receipt_text_fail_on_new_blockers_surfaces_blocking_summary_and_next() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
+"#,
+        );
+
+        let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(current.exit_code, 1);
+        let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+        let unchanged = current_json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["summary"] == "No tasks defined in contract")
+            .cloned()
+            .unwrap();
+
+        fixture.write(
+            ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+            &serde_json::to_string_pretty(&serde_json::json!({
+                "ok": false,
+                "path": fixture.file_path().display().to_string(),
+                "mode": "receipt",
+                "summary": {
+                    "error_count": 2,
+                    "warn_count": 0,
+                    "info_count": 0,
+                    "step_count": 1
+                },
+                "receipt": {
+                    "ok": false,
+                    "path": fixture.file_path().display().to_string(),
+                    "scope": "repo",
+                    "contract": fixture.file_path().display().to_string(),
+                    "backend": "native",
+                    "summary": {
+                        "error_count": 2,
+                        "warn_count": 0,
+                        "info_count": 0,
+                        "step_count": 1
+                    },
+                    "steps": [
+                        {
+                            "order": 1,
+                            "label": "readiness",
+                            "status": "NOT READY"
+                        }
+                    ]
+                },
+                "findings": [
+                    unchanged,
+                    {
+                        "severity": "error",
+                        "summary": "Missing tool: old-tool",
+                        "why": "the contract requires `old-tool`, but ota could not find it on PATH",
+                        "next": "install `old-tool` and make it available on PATH, then rerun `ota doctor`"
+                    }
+                ]
+            }))
+                .unwrap(),
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--baseline",
+            "latest",
+            "--fail-on-new-blockers",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Gate: fail on new blockers -> blocked (1 new blocker)"));
+        assert!(stdout.contains("Blocker: Missing environment variable: OTA_BASELINE_REQUIRED"));
+        assert!(stdout.contains("Provenance: repo contract"));
+        assert!(stdout.contains(
+            "Next: set OTA_BASELINE_REQUIRED in policy env, the shell, or a declared env source before running tasks"
+        ));
     }
 
     #[test]
@@ -10799,6 +11011,529 @@ tasks:
         assert!(!stdout.contains(
             "ERROR: ota workspace doctor finding [api]: ./api: Missing container execution backend CLI: docker, podman"
         ));
+    }
+
+    #[test]
+    fn annotations_renders_doctor_findings_into_markdown_summary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("doctor.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/ota.yaml",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0,
+    "primary_blocker": {
+      "severity": "error",
+      "summary": "Missing container execution backend CLI: docker, podman",
+      "why": "Required because execution.preferred=container",
+      "next": "install one of the supported container engines",
+      "provenance": "repo contract"
+    }
+  },
+  "findings": [
+    {
+      "severity": "error",
+      "summary": "Missing container execution backend CLI: docker, podman",
+      "why": "Required because execution.preferred=container",
+      "next": "install one of the supported container engines",
+      "provenance": "repo contract"
+    },
+    {
+      "severity": "warn",
+      "summary": "Lifecycle is advisory only",
+      "why": "This repo still runs tasks natively when lifecycle is ephemeral",
+      "next": "review execution.lifecycle",
+      "provenance": "repo signals"
+    }
+  ]
+}
+"#,
+        )
+        .expect("write doctor json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "doctor",
+            "--format",
+            "markdown",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("## ota doctor"));
+        assert!(stdout.contains("**Status:** NOT READY"));
+        assert!(stdout.contains("**Counts:** 1 error(s), 1 warning(s), 0 info"));
+        assert!(stdout.contains(
+            "- **Primary blocker:** ERROR: Missing container execution backend CLI: docker, podman"
+        ));
+        assert!(stdout.contains("  - **Provenance:** repo contract"));
+        assert!(stdout.contains("  - **Next:** install one of the supported container engines"));
+        assert!(stdout.contains("### Findings"));
+        assert!(stdout.contains("- **WARNING:** Lifecycle is advisory only"));
+        assert!(
+            !stdout
+                .contains("- **ERROR:** Missing container execution backend CLI: docker, podman")
+        );
+    }
+
+    #[test]
+    fn annotations_renders_workspace_doctor_findings_into_markdown_summary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("workspace-doctor.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/ota.workspace.yaml",
+  "summary": {
+    "repo_count": 1,
+    "ready_count": 0,
+    "not_ready_count": 1,
+    "error_count": 1,
+    "warn_count": 1,
+    "info_count": 0,
+    "primary_blocker": {
+      "repo": "api",
+      "severity": "error",
+      "summary": "Missing container execution backend CLI: docker, podman",
+      "why": "Required because execution.preferred=container",
+      "next": "install one of the supported container engines",
+      "provenance": "org policy"
+    }
+  },
+  "repos": [
+    {
+      "name": "api",
+      "path": "./api",
+      "contract_path": "./api/ota.yaml",
+      "required": true,
+      "ok": false,
+      "summary": {
+        "error_count": 1,
+        "warn_count": 1,
+        "info_count": 0
+      },
+      "findings": [
+        {
+          "severity": "error",
+          "summary": "Missing container execution backend CLI: docker, podman",
+          "why": "Required because execution.preferred=container",
+          "next": "install one of the supported container engines",
+          "provenance": "org policy"
+        },
+        {
+          "severity": "warn",
+          "summary": "Lifecycle is advisory only",
+          "why": "This repo still runs tasks natively when lifecycle is ephemeral",
+          "next": "review execution.lifecycle",
+          "provenance": "repo contract"
+        }
+      ]
+    }
+  ]
+}
+"#,
+        )
+        .expect("write workspace doctor json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "workspace-doctor",
+            "--format",
+            "markdown",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("## ota workspace doctor"));
+        assert!(stdout.contains("**Status:** NOT READY"));
+        assert!(stdout.contains("- **Primary blocker:** ERROR: [api] Missing container execution backend CLI: docker, podman"));
+        assert!(stdout.contains("- **WARNING:** \\[api\\] ./api: Lifecycle is advisory only"));
+        assert!(!stdout.contains(
+            "- **ERROR:** \\[api\\] ./api: Missing container execution backend CLI: docker, podman"
+        ));
+    }
+
+    #[test]
+    fn annotations_markdown_escapes_dynamic_content() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("doctor.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/ota.yaml",
+  "summary": {
+    "error_count": 1,
+    "warn_count": 0,
+    "info_count": 0,
+    "primary_blocker": {
+      "severity": "error",
+      "summary": "Missing *engine* <docker>",
+      "why": "Required because execution.preferred=container",
+      "next": "install `docker`\nthen rerun",
+      "provenance": "repo_[signals]"
+    }
+  },
+  "findings": []
+}
+"#,
+        )
+        .expect("write doctor json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "doctor",
+            "--format",
+            "markdown",
+            "--title",
+            "ota doctor [summary]",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("## ota doctor \\[summary\\]"));
+        assert!(
+            stdout.contains("- **Primary blocker:** ERROR: Missing \\*engine\\* &lt;docker&gt;")
+        );
+        assert!(stdout.contains("  - **Provenance:** repo\\_\\[signals\\]"));
+        assert!(stdout.contains("  - **Next:** install \\`docker\\`<br>then rerun"));
+    }
+
+    #[test]
+    fn annotations_renders_blocked_receipt_diff_into_markdown_summary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("receipt-diff.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": false,
+  "path": "/tmp/repo",
+  "mode": "diff",
+  "baseline": {
+    "source": "latest",
+    "ok": false,
+    "contract": "/tmp/repo/ota.yaml",
+    "contract_identity": "ota.yaml",
+    "summary": {
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "current": {
+    "ok": false,
+    "contract": "/tmp/repo/ota.yaml",
+    "contract_identity": "ota.yaml",
+    "summary": {
+      "error_count": 2,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "summary": {
+    "baseline_ok": false,
+    "current_ok": false,
+    "comparison": {
+      "baseline_identity_label": "ota.yaml",
+      "current_identity_label": "ota.yaml",
+      "identity_changed": false,
+      "readiness_change": "unchanged"
+    },
+    "introduced": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "resolved": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "unchanged": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    }
+  },
+  "gate": {
+    "rule": "fail_on_new_blockers",
+    "passed": false,
+    "new_blocker_count": 1,
+    "blocking_summary": "Missing environment variable: OTA_BASELINE_REQUIRED",
+    "blocking_next": "set OTA_BASELINE_REQUIRED before running tasks",
+    "blocking_provenance": "repo contract",
+    "blocking_provenance_key": "repo_contract"
+  },
+  "introduced": [
+    {
+      "severity": "error",
+      "summary": "Missing environment variable: OTA_BASELINE_REQUIRED",
+      "next": "set OTA_BASELINE_REQUIRED before running tasks",
+      "provenance": "repo contract"
+    }
+  ],
+  "resolved": [
+    {
+      "severity": "error",
+      "summary": "Missing tool: old-tool",
+      "next": "install old-tool",
+      "provenance": "baseline receipt"
+    }
+  ],
+  "unchanged": [
+    {
+      "severity": "error",
+      "summary": "No tasks defined in contract"
+    }
+  ]
+}
+"#,
+        )
+        .expect("write receipt diff json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "receipt-diff",
+            "--format",
+            "markdown",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("## ota receipt diff"));
+        assert!(stdout.contains("**Baseline source:** latest"));
+        assert!(stdout.contains("**Compare:** ota.yaml (NOT READY) -> ota.yaml (NOT READY)"));
+        assert!(stdout.contains("**Drift:** identity unchanged; readiness unchanged"));
+        assert!(stdout.contains("**Gate:** fail on new blockers -> blocked (1 new blocker)"));
+        assert!(stdout.contains(
+            "- **Primary blocker:** ERROR: Missing environment variable: OTA\\_BASELINE\\_REQUIRED"
+        ));
+        assert!(stdout.contains("  - **Provenance:** repo contract"));
+        assert!(
+            stdout.contains("  - **Next:** set OTA\\_BASELINE\\_REQUIRED before running tasks")
+        );
+        assert!(stdout.contains("### Resolved"));
+        assert!(stdout.contains("- **ERROR:** Missing tool: old\\-tool"));
+        assert!(!stdout.contains("### Introduced"));
+    }
+
+    #[test]
+    fn annotations_renders_passing_receipt_diff_into_markdown_summary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("receipt-diff.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": true,
+  "path": "/tmp/repo",
+  "mode": "diff",
+  "baseline": {
+    "source": "promoted",
+    "ok": false,
+    "contract": "/tmp/repo/ota.yaml",
+    "contract_identity": "ota.yaml",
+    "summary": {
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "current": {
+    "ok": true,
+    "contract": "/tmp/repo/ota.yaml",
+    "contract_identity": "ota.yaml",
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "summary": {
+    "baseline_ok": false,
+    "current_ok": true,
+    "comparison": {
+      "baseline_identity_label": "ota.yaml",
+      "current_identity_label": "ota.yaml",
+      "identity_changed": false,
+      "readiness_change": "improved"
+    },
+    "introduced": {
+      "count": 0,
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "resolved": {
+      "count": 1,
+      "error_count": 1,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "unchanged": {
+      "count": 0,
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0
+    }
+  },
+  "gate": {
+    "rule": "fail_on_new_blockers",
+    "passed": true,
+    "new_blocker_count": 0
+  },
+  "introduced": [],
+  "resolved": [
+    {
+      "severity": "error",
+      "summary": "Missing tool: old-tool",
+      "next": "install old-tool"
+    }
+  ],
+  "unchanged": []
+}
+"#,
+        )
+        .expect("write receipt diff json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "receipt-diff",
+            "--format",
+            "markdown",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("**Baseline source:** promoted"));
+        assert!(stdout.contains("**Compare:** ota.yaml (NOT READY) -> ota.yaml (READY)"));
+        assert!(stdout.contains("**Drift:** identity unchanged; readiness improved"));
+        assert!(stdout.contains("**Gate:** fail on new blockers -> passed"));
+        assert!(!stdout.contains("Primary blocker"));
+        assert!(stdout.contains("### Resolved"));
+        assert!(stdout.contains("- **ERROR:** Missing tool: old\\-tool"));
+    }
+
+    #[test]
+    fn annotations_rejects_receipt_diff_in_non_markdown_formats() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let input = dir.path().join("receipt-diff.json");
+        fs::write(
+            &input,
+            r#"
+{
+  "ok": true,
+  "path": "/tmp/repo",
+  "mode": "diff",
+  "baseline": {
+    "source": "latest",
+    "ok": true,
+    "contract": "/tmp/repo/ota.yaml",
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "current": {
+    "ok": true,
+    "contract": "/tmp/repo/ota.yaml",
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "summary": {
+    "baseline_ok": true,
+    "current_ok": true,
+    "comparison": {
+      "baseline_identity_label": "ota.yaml",
+      "current_identity_label": "ota.yaml",
+      "identity_changed": false,
+      "readiness_change": "unchanged"
+    },
+    "introduced": {
+      "count": 0,
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "resolved": {
+      "count": 0,
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0
+    },
+    "unchanged": {
+      "count": 0,
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0
+    }
+  },
+  "introduced": [],
+  "resolved": [],
+  "unchanged": []
+}
+"#,
+        )
+        .expect("write receipt diff json");
+
+        let output = run_with([
+            "ota",
+            "annotations",
+            "--mode",
+            "receipt-diff",
+            "--format",
+            "plain",
+            "--input",
+            input.to_str().expect("utf8 path"),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(&output.stderr.unwrap_or_default());
+        assert!(
+            stderr.contains("receipt-diff summaries currently support only `--format markdown`")
+        );
     }
 
     #[test]
@@ -17833,13 +18568,12 @@ edition = "2024"
         assert!(
             output
                 .stdout
-                .contains("primary_display+=(\"$value -- ${completion#*:}\")")
+                .contains("local escaped_completion=\"${completion//\\\\:/$placeholder}\"")
         );
-        assert!(
-            output
-                .stdout
-                .contains("option_display+=(\"$value -- ${completion#*:}\")")
-        );
+        assert!(output.stdout.contains("value=\"${value//$placeholder/:}\""));
+        assert!(output.stdout.contains("value=\"${(Q)value}\""));
+        assert!(output.stdout.contains("help=\"${(Q)help}\""));
+        assert!(!output.stdout.contains("local value=\"${completion%%:*}\""));
         assert!(!output.stdout.contains("local rendered"));
         assert!(!output.stdout.contains("local desc"));
         assert!(!output.stdout.contains("_describe 'values'"));
@@ -18446,6 +19180,35 @@ tasks:
             completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("d")));
 
         assert_eq!(values, vec![String::from("dev"), String::from("doctor")]);
+    }
+
+    #[test]
+    fn repo_run_task_completion_preserves_colon_task_names() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: completion-demo
+tasks:
+  "deploy:cloudflare":
+    run: wrangler deploy
+  "version:bump":
+    run: npm version patch
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec!["ota".into(), "run".into(), "d".into()],
+        });
+
+        let deploy_values =
+            completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("d")));
+        assert_eq!(deploy_values, vec![String::from("deploy:cloudflare")]);
+
+        let version_values =
+            completion_values(complete_repo_run_task_candidates(std::ffi::OsStr::new("v")));
+        assert_eq!(version_values, vec![String::from("version:bump")]);
     }
 
     #[test]

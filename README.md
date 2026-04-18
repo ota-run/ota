@@ -510,6 +510,10 @@ If the runner is GitHub Actions and you want the official wrapper for step summa
 pull-request comments, and receipt artifacts, use
 [ota-run/action](https://github.com/ota-run/action) and see
 [docs/spec/github-action-workflow.md](docs/spec/github-action-workflow.md).
+If you need a repo-local summary renderer outside that wrapper, `ota annotations --format markdown`
+emits a compact step-summary or PR-comment block from the same canonical doctor JSON, and
+`ota annotations --mode receipt-diff --format markdown` does the same for
+`ota receipt --json --baseline ...` compare output.
 
 That is different from host provisioning. ota can provision declared services and run tasks in a
 container or remote backend, but it does not replace the OS package manager, language installer,

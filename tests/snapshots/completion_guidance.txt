@@ -38,20 +38,30 @@ _ota() {
         local -a primary_display=()
         local -a option_values=()
         local -a option_display=()
+        local placeholder=$'\x1f'
         local completion
         for completion in $completions; do
-            local value="${completion%%:*}"
+            local escaped_completion="${completion//\\:/$placeholder}"
+            local value="${escaped_completion%%:*}"
+            local help=""
+            if [[ "$escaped_completion" == *:* ]]; then
+                help="${escaped_completion#*:}"
+            fi
+            value="${value//$placeholder/:}"
+            help="${help//$placeholder/:}"
+            value="${(Q)value}"
+            help="${(Q)help}"
             if [[ "$value" == -* ]]; then
                 option_values+=("$value")
-                if [[ "$completion" == *:* ]]; then
-                    option_display+=("$value -- ${completion#*:}")
+                if [[ -n "$help" ]]; then
+                    option_display+=("$value -- $help")
                 else
                     option_display+=("$value")
                 fi
             else
                 primary_values+=("$value")
-                if [[ "$completion" == *:* ]]; then
-                    primary_display+=("$value -- ${completion#*:}")
+                if [[ -n "$help" ]]; then
+                    primary_display+=("$value -- $help")
                 else
                     primary_display+=("$value")
                 fi

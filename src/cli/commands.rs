@@ -66,20 +66,20 @@ use crate::output::{
     ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
     InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffCounts,
-    ReceiptDiffGate, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
-    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
-    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
-    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
-    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
-    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
-    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
-    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
-    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
-    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
-    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
-    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
+    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
+    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
+    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
+    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
+    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
+    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
+    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
+    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
+    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
+    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
+    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
+    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -9979,9 +9979,33 @@ fn build_repo_receipt_diff_report(
         lifecycle: current_receipt.lifecycle.clone(),
         summary: current_receipt.summary,
     };
+    let identity_changed = receipt_diff_identity_changed(
+        baseline.contract_identity.as_deref(),
+        &baseline.contract,
+        current.contract_identity.as_deref(),
+        &current.contract,
+    );
+    let baseline_identity_label = receipt_diff_identity_label(
+        baseline.contract_identity.as_deref(),
+        &baseline.contract,
+        current.contract_identity.as_deref(),
+        &current.contract,
+    );
+    let current_identity_label = receipt_diff_identity_label(
+        current.contract_identity.as_deref(),
+        &current.contract,
+        None,
+        &current.contract,
+    );
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
         current_ok: current.ok,
+        comparison: ReceiptDiffComparison {
+            baseline_identity_label: baseline_identity_label.clone(),
+            current_identity_label: current_identity_label.clone(),
+            identity_changed,
+            readiness_change: receipt_diff_readiness_change(baseline.ok, current.ok),
+        },
         introduced: receipt_diff_counts(&introduced),
         resolved: receipt_diff_counts(&resolved),
         unchanged: receipt_diff_counts(&unchanged),
@@ -10004,14 +10028,86 @@ fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
     )
 }
 
+fn receipt_diff_identity_changed(
+    baseline_identity: Option<&str>,
+    baseline_contract: &str,
+    current_identity: Option<&str>,
+    current_contract: &str,
+) -> bool {
+    match (baseline_identity, current_identity) {
+        (Some(baseline), Some(current)) => baseline != current,
+        _ => {
+            normalized_display_path(Path::new(baseline_contract))
+                != normalized_display_path(Path::new(current_contract))
+        }
+    }
+}
+
+fn receipt_diff_identity_label(
+    identity: Option<&str>,
+    contract: &str,
+    current_identity: Option<&str>,
+    current_contract: &str,
+) -> String {
+    if let Some(identity) = identity {
+        return identity.to_string();
+    }
+
+    if let Some(current_identity) = current_identity
+        && normalized_display_path(Path::new(contract))
+            == normalized_display_path(Path::new(current_contract))
+    {
+        return current_identity.to_string();
+    }
+
+    contract.to_string()
+}
+
+fn receipt_diff_readiness_change(
+    baseline_ok: bool,
+    current_ok: bool,
+) -> ReceiptDiffReadinessChange {
+    match (baseline_ok, current_ok) {
+        (true, false) => ReceiptDiffReadinessChange::Regressed,
+        (false, true) => ReceiptDiffReadinessChange::Improved,
+        _ => ReceiptDiffReadinessChange::Unchanged,
+    }
+}
+
+fn render_receipt_diff_drift(summary: &ReceiptDiffSummary) -> String {
+    let identity = if summary.comparison.identity_changed {
+        "identity changed"
+    } else {
+        "identity unchanged"
+    };
+    let readiness = match summary.comparison.readiness_change {
+        ReceiptDiffReadinessChange::Unchanged => "readiness unchanged",
+        ReceiptDiffReadinessChange::Improved => "readiness improved",
+        ReceiptDiffReadinessChange::Regressed => "readiness regressed",
+    };
+    format!("{identity}; {readiness}")
+}
+
+fn render_receipt_diff_identity_label(label: &str) -> String {
+    compact_path(Path::new(label), label)
+}
+
 fn build_receipt_diff_gate(
     summary: &ReceiptDiffSummary,
+    introduced: &[Finding],
     fail_on_new_blockers: bool,
 ) -> Option<ReceiptDiffGate> {
+    let blocking = introduced
+        .iter()
+        .find(|finding| finding.severity == FindingSeverity::Error);
     fail_on_new_blockers.then(|| ReceiptDiffGate {
         rule: String::from("fail_on_new_blockers"),
         passed: summary.introduced.error_count == 0,
         new_blocker_count: summary.introduced.error_count,
+        blocking_summary: blocking.map(|finding| finding.summary.clone()),
+        blocking_next: blocking.map(|finding| finding.next.clone()),
+        blocking_provenance: blocking.and_then(|finding| finding.provenance()),
+        blocking_provenance_key: blocking.and_then(|finding| finding.provenance_key()),
     })
 }
 
@@ -10025,6 +10121,34 @@ fn render_receipt_diff_gate(gate: &ReceiptDiffGate) -> String {
             "fail on new blockers -> blocked ({} new blockers)",
             gate.new_blocker_count
         )
+    }
+}
+
+fn append_receipt_diff_gate_details(stdout: &mut String, gate: &ReceiptDiffGate) {
+    let Some(summary) = gate.blocking_summary.as_deref() else {
+        return;
+    };
+    stdout.push_str(&format!(
+        "\n {}  {} {}",
+        summary_bullet(),
+        paint_key("Blocker:"),
+        summary
+    ));
+    if let Some(provenance) = gate.blocking_provenance.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Provenance:"),
+            provenance
+        ));
+    }
+    if let Some(next) = gate.blocking_next.as_deref() {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Next:"),
+            next
+        ));
     }
 }
 
@@ -10140,7 +10264,7 @@ fn render_repo_receipt_diff(
         current_receipt,
         current_findings,
     );
-    let gate = build_receipt_diff_gate(&report.summary, fail_on_new_blockers);
+    let gate = build_receipt_diff_gate(&report.summary, &report.introduced, fail_on_new_blockers);
     let exit_code = gate
         .as_ref()
         .map(|gate| if gate.passed { 0 } else { 1 })
@@ -10234,6 +10358,25 @@ fn render_repo_receipt_diff(
                 ));
             }
             stdout.push_str(&format!(
+                "\n {}  {} {} ({}) -> {} ({})",
+                summary_bullet(),
+                paint_key("Compare:"),
+                render_receipt_diff_identity_label(
+                    &report.summary.comparison.baseline_identity_label,
+                ),
+                render_readiness_status(report.baseline.ok),
+                render_receipt_diff_identity_label(
+                    &report.summary.comparison.current_identity_label,
+                ),
+                render_readiness_status(report.current.ok)
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Drift:"),
+                render_receipt_diff_drift(&report.summary)
+            ));
+            stdout.push_str(&format!(
                 "\n {}  {} {}",
                 summary_bullet(),
                 paint_key("Introduced:"),
@@ -10258,6 +10401,7 @@ fn render_repo_receipt_diff(
                     paint_key("Gate:"),
                     render_receipt_diff_gate(gate)
                 ));
+                append_receipt_diff_gate_details(&mut stdout, gate);
             }
 
             append_receipt_diff_side_section(
@@ -13436,7 +13580,25 @@ pub fn annotations(
     let title = title.unwrap_or(match mode {
         AnnotationMode::Doctor => "ota doctor",
         AnnotationMode::WorkspaceDoctor => "ota workspace doctor",
+        AnnotationMode::ReceiptDiff => "ota receipt diff",
     });
+
+    if matches!(format, AnnotationFormat::Markdown) {
+        let stdout = match mode {
+            AnnotationMode::Doctor => render_annotations_markdown_doctor(title, &report),
+            AnnotationMode::WorkspaceDoctor => {
+                render_annotations_markdown_workspace_doctor(title, &report)
+            }
+            AnnotationMode::ReceiptDiff => render_annotations_markdown_receipt_diff(title, &report),
+        };
+        return CommandOutput::success(stdout);
+    }
+
+    if matches!(mode, AnnotationMode::ReceiptDiff) {
+        return CommandOutput::failure(
+            "receipt-diff summaries currently support only `--format markdown`".to_string(),
+        );
+    }
 
     let mut lines = Vec::new();
 
@@ -13570,6 +13732,7 @@ pub fn annotations(
                 }
             }
         }
+        AnnotationMode::ReceiptDiff => unreachable!("receipt diff handled earlier"),
     }
 
     CommandOutput::success(lines.join("\n"))
@@ -13659,6 +13822,534 @@ fn annotation_message(body: &str, next: &str, provenance: Option<&str>) -> Strin
     parts.join(" | ")
 }
 
+fn annotation_markdown_severity(severity: &str) -> &'static str {
+    match severity {
+        "error" => "ERROR",
+        "info" => "NOTICE",
+        _ => "WARNING",
+    }
+}
+
+fn annotation_markdown_status(ok: bool) -> &'static str {
+    if ok { "READY" } else { "NOT READY" }
+}
+
+fn escape_markdown_text(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '\n' => out.push_str("<br>"),
+            '\r' => {}
+            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '!'
+            | '|' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn annotation_summary_counts(summary: &JsonValue) -> Option<String> {
+    let error_count = summary.get("error_count")?.as_u64()?;
+    let warn_count = summary.get("warn_count")?.as_u64()?;
+    let info_count = summary.get("info_count")?.as_u64()?;
+    Some(format!(
+        "{error_count} error(s), {warn_count} warning(s), {info_count} info"
+    ))
+}
+
+fn render_markdown_primary_blocker(
+    lines: &mut Vec<String>,
+    primary_blocker: AnnotationPrimaryBlocker<'_>,
+) {
+    let summary = match primary_blocker.repo {
+        Some(repo) => format!(
+            "[{}] {}",
+            escape_markdown_text(repo),
+            escape_markdown_text(primary_blocker.summary)
+        ),
+        None => escape_markdown_text(primary_blocker.summary),
+    };
+    lines.push(format!(
+        "- **Primary blocker:** {}: {}",
+        annotation_markdown_severity(primary_blocker.severity),
+        summary
+    ));
+    if let Some(provenance) = primary_blocker.provenance {
+        lines.push(format!(
+            "  - **Provenance:** {}",
+            escape_markdown_text(provenance)
+        ));
+    }
+    if !primary_blocker.next.is_empty() {
+        lines.push(format!(
+            "  - **Next:** {}",
+            escape_markdown_text(primary_blocker.next)
+        ));
+    }
+}
+
+fn render_markdown_finding(
+    lines: &mut Vec<String>,
+    severity: &str,
+    summary: &str,
+    next: &str,
+    provenance: Option<&str>,
+) {
+    lines.push(format!(
+        "- **{}:** {}",
+        annotation_markdown_severity(severity),
+        escape_markdown_text(summary)
+    ));
+    if let Some(provenance) = provenance {
+        lines.push(format!(
+            "  - **Provenance:** {}",
+            escape_markdown_text(provenance)
+        ));
+    }
+    if !next.is_empty() {
+        lines.push(format!("  - **Next:** {}", escape_markdown_text(next)));
+    }
+}
+
+fn render_annotations_markdown_doctor(title: &str, report: &JsonValue) -> String {
+    let mut lines = vec![format!("## {}", escape_markdown_text(title))];
+    let ok = report
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    lines.push(format!("**Status:** {}", annotation_markdown_status(ok)));
+    if let Some(summary) = report.get("summary")
+        && let Some(counts) = annotation_summary_counts(summary)
+    {
+        lines.push(format!("**Counts:** {counts}"));
+    }
+
+    let primary_blocker = report
+        .get("summary")
+        .and_then(|summary| summary.get("primary_blocker"))
+        .and_then(annotation_primary_blocker);
+
+    if let Some(primary_blocker) = primary_blocker {
+        lines.push(String::new());
+        render_markdown_primary_blocker(&mut lines, primary_blocker);
+    }
+
+    let mut finding_lines = Vec::new();
+    if let Some(findings) = report.get("findings").and_then(|value| value.as_array()) {
+        for finding in findings {
+            let Some(finding) = finding.as_object() else {
+                continue;
+            };
+            if primary_blocker.is_some_and(|blocker| {
+                annotation_finding_matches_primary_blocker(finding, None, blocker)
+            }) {
+                continue;
+            }
+            render_markdown_finding(
+                &mut finding_lines,
+                finding
+                    .get("severity")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("warn"),
+                finding
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("next")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("provenance")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
+            );
+        }
+    }
+
+    if !finding_lines.is_empty() {
+        lines.push(String::new());
+        lines.push(String::from("### Findings"));
+        lines.extend(finding_lines);
+    }
+
+    lines.join("\n")
+}
+
+fn render_annotations_markdown_workspace_doctor(title: &str, report: &JsonValue) -> String {
+    let mut lines = vec![format!("## {}", escape_markdown_text(title))];
+    let ok = report
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    lines.push(format!("**Status:** {}", annotation_markdown_status(ok)));
+    if let Some(summary) = report.get("summary")
+        && let Some(counts) = annotation_summary_counts(summary)
+    {
+        lines.push(format!("**Counts:** {counts}"));
+    }
+
+    let primary_blocker = report
+        .get("summary")
+        .and_then(|summary| summary.get("primary_blocker"))
+        .and_then(annotation_primary_blocker);
+
+    if let Some(primary_blocker) = primary_blocker {
+        lines.push(String::new());
+        render_markdown_primary_blocker(&mut lines, primary_blocker);
+    }
+
+    let mut finding_lines = Vec::new();
+    if let Some(repos) = report.get("repos").and_then(|value| value.as_array()) {
+        for repo in repos {
+            let Some(repo) = repo.as_object() else {
+                continue;
+            };
+            let name = repo
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let path = repo
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if let Some(findings) = repo.get("findings").and_then(|value| value.as_array()) {
+                for finding in findings {
+                    let Some(finding) = finding.as_object() else {
+                        continue;
+                    };
+                    if primary_blocker.is_some_and(|blocker| {
+                        annotation_finding_matches_primary_blocker(finding, Some(name), blocker)
+                    }) {
+                        continue;
+                    }
+                    let finding_summary = finding
+                        .get("summary")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    render_markdown_finding(
+                        &mut finding_lines,
+                        finding
+                            .get("severity")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("warn"),
+                        &format!("[{name}] {path}: {finding_summary}"),
+                        finding
+                            .get("next")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or(""),
+                        finding
+                            .get("provenance")
+                            .and_then(|value| value.as_str())
+                            .filter(|value| !value.is_empty()),
+                    );
+                }
+            }
+        }
+    }
+
+    if !finding_lines.is_empty() {
+        lines.push(String::new());
+        lines.push(String::from("### Findings"));
+        lines.extend(finding_lines);
+    }
+
+    lines.join("\n")
+}
+
+fn annotation_receipt_diff_counts(summary: &JsonValue, key: &str) -> Option<String> {
+    let counts = summary.get(key)?;
+    let count = counts.get("count")?.as_u64()?;
+    let error_count = counts.get("error_count")?.as_u64()?;
+    let warn_count = counts.get("warn_count")?.as_u64()?;
+    let info_count = counts.get("info_count")?.as_u64()?;
+    Some(format!(
+        "{count} (errors={error_count}, warnings={warn_count}, info={info_count})"
+    ))
+}
+
+fn annotation_receipt_diff_gate(gate: &JsonValue) -> Option<String> {
+    let passed = gate.get("passed")?.as_bool()?;
+    let new_blocker_count = gate.get("new_blocker_count")?.as_u64()?;
+    if passed {
+        Some(String::from("fail on new blockers -> passed"))
+    } else if new_blocker_count == 1 {
+        Some(String::from(
+            "fail on new blockers -> blocked (1 new blocker)",
+        ))
+    } else {
+        Some(format!(
+            "fail on new blockers -> blocked ({new_blocker_count} new blockers)"
+        ))
+    }
+}
+
+fn annotation_receipt_diff_finding_matches_gate_blocker(
+    finding: &serde_json::Map<String, JsonValue>,
+    gate: &JsonValue,
+) -> bool {
+    finding
+        .get("severity")
+        .and_then(|value| value.as_str())
+        .unwrap_or("warn")
+        == "error"
+        && finding
+            .get("summary")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            == gate
+                .get("blocking_summary")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+        && finding
+            .get("next")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            == gate
+                .get("blocking_next")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+        && finding
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty())
+            == gate
+                .get("blocking_provenance")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+}
+
+fn render_annotations_markdown_receipt_diff(title: &str, report: &JsonValue) -> String {
+    let mut lines = vec![format!("## {}", escape_markdown_text(title))];
+
+    let baseline_source = report
+        .get("baseline")
+        .and_then(|value| value.get("source"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("-");
+    let baseline_ok = report
+        .get("summary")
+        .and_then(|value| value.get("baseline_ok"))
+        .and_then(|value| value.as_bool())
+        .or_else(|| {
+            report
+                .get("baseline")
+                .and_then(|value| value.get("ok"))
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(false);
+    let current_ok = report
+        .get("summary")
+        .and_then(|value| value.get("current_ok"))
+        .and_then(|value| value.as_bool())
+        .or_else(|| {
+            report
+                .get("current")
+                .and_then(|value| value.get("ok"))
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(false);
+    let baseline_identity_label = report
+        .get("summary")
+        .and_then(|value| value.get("comparison"))
+        .and_then(|value| value.get("baseline_identity_label"))
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            report
+                .get("baseline")
+                .and_then(|value| value.get("contract_identity"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            report
+                .get("baseline")
+                .and_then(|value| value.get("contract"))
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or("-");
+    let current_identity_label = report
+        .get("summary")
+        .and_then(|value| value.get("comparison"))
+        .and_then(|value| value.get("current_identity_label"))
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            report
+                .get("current")
+                .and_then(|value| value.get("contract_identity"))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            report
+                .get("current")
+                .and_then(|value| value.get("contract"))
+                .and_then(|value| value.as_str())
+        })
+        .unwrap_or("-");
+    let identity_changed = report
+        .get("summary")
+        .and_then(|value| value.get("comparison"))
+        .and_then(|value| value.get("identity_changed"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(baseline_identity_label != current_identity_label);
+    let readiness_change = report
+        .get("summary")
+        .and_then(|value| value.get("comparison"))
+        .and_then(|value| value.get("readiness_change"))
+        .and_then(|value| value.as_str())
+        .unwrap_or("unchanged");
+    let introduced = report
+        .get("summary")
+        .and_then(|summary| annotation_receipt_diff_counts(summary, "introduced"))
+        .unwrap_or_else(|| String::from("-"));
+    let resolved = report
+        .get("summary")
+        .and_then(|summary| annotation_receipt_diff_counts(summary, "resolved"))
+        .unwrap_or_else(|| String::from("-"));
+    let unchanged = report
+        .get("summary")
+        .and_then(|summary| annotation_receipt_diff_counts(summary, "unchanged"))
+        .unwrap_or_else(|| String::from("-"));
+
+    lines.push(format!(
+        "**Baseline source:** {}",
+        escape_markdown_text(baseline_source)
+    ));
+    lines.push(format!(
+        "**Compare:** {} ({}) -> {} ({})",
+        escape_markdown_text(baseline_identity_label),
+        annotation_markdown_status(baseline_ok),
+        escape_markdown_text(current_identity_label),
+        annotation_markdown_status(current_ok)
+    ));
+    lines.push(format!(
+        "**Drift:** identity {}; readiness {}",
+        if identity_changed {
+            "changed"
+        } else {
+            "unchanged"
+        },
+        match readiness_change {
+            "improved" => "improved",
+            "regressed" => "regressed",
+            _ => "unchanged",
+        }
+    ));
+    lines.push(format!(
+        "**Counts:** introduced {}; resolved {}; unchanged {}",
+        introduced, resolved, unchanged
+    ));
+
+    let gate = report.get("gate");
+    if let Some(gate) = gate
+        && let Some(label) = annotation_receipt_diff_gate(gate)
+    {
+        lines.push(format!("**Gate:** {label}"));
+    }
+
+    if let Some(gate) = gate
+        && let Some(summary) = gate
+            .get("blocking_summary")
+            .and_then(|value| value.as_str())
+    {
+        lines.push(String::new());
+        lines.push(format!(
+            "- **Primary blocker:** ERROR: {}",
+            escape_markdown_text(summary)
+        ));
+        if let Some(provenance) = gate
+            .get("blocking_provenance")
+            .and_then(|value| value.as_str())
+        {
+            lines.push(format!(
+                "  - **Provenance:** {}",
+                escape_markdown_text(provenance)
+            ));
+        }
+        if let Some(next) = gate.get("blocking_next").and_then(|value| value.as_str()) {
+            lines.push(format!("  - **Next:** {}", escape_markdown_text(next)));
+        }
+    }
+
+    let mut introduced_lines = Vec::new();
+    if let Some(findings) = report.get("introduced").and_then(|value| value.as_array()) {
+        for finding in findings {
+            let Some(finding) = finding.as_object() else {
+                continue;
+            };
+            if gate.is_some_and(|gate| {
+                annotation_receipt_diff_finding_matches_gate_blocker(finding, gate)
+            }) {
+                continue;
+            }
+            render_markdown_finding(
+                &mut introduced_lines,
+                finding
+                    .get("severity")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("warn"),
+                finding
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("next")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("provenance")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
+            );
+        }
+    }
+    if !introduced_lines.is_empty() {
+        lines.push(String::new());
+        lines.push(String::from("### Introduced"));
+        lines.extend(introduced_lines);
+    }
+
+    let mut resolved_lines = Vec::new();
+    if let Some(findings) = report.get("resolved").and_then(|value| value.as_array()) {
+        for finding in findings {
+            let Some(finding) = finding.as_object() else {
+                continue;
+            };
+            render_markdown_finding(
+                &mut resolved_lines,
+                finding
+                    .get("severity")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("warn"),
+                finding
+                    .get("summary")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("next")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or(""),
+                finding
+                    .get("provenance")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
+            );
+        }
+    }
+    if !resolved_lines.is_empty() {
+        lines.push(String::new());
+        lines.push(String::from("### Resolved"));
+        lines.extend(resolved_lines);
+    }
+
+    lines.join("\n")
+}
+
 fn render_annotation_finding(
     format: AnnotationFormat,
     severity: &str,
@@ -13690,6 +14381,7 @@ fn render_annotation_finding(
             };
             format!("{severity}: {heading}: {message}")
         }
+        AnnotationFormat::Markdown => unreachable!("markdown handled earlier"),
     }
 }
 
@@ -13715,6 +14407,7 @@ fn render_annotation_primary_blocker(
                 annotation_plain_severity(severity)
             )
         }
+        AnnotationFormat::Markdown => unreachable!("markdown handled earlier"),
     }
 }
 
