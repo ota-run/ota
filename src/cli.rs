@@ -15897,6 +15897,155 @@ project:
     }
 
     #[test]
+    fn validate_rejects_org_policy_pack_target_with_wrong_target_message() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        let policy_path = fixture.path().join(".ota").join("org-policy.yaml");
+        fs::write(&policy_path, "policies: {}\n").unwrap();
+
+        let output = run_with(["ota", "validate", policy_path.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Wrong validation target"));
+        assert!(stdout.contains("is an org policy pack, not a repo contract"));
+        assert!(stdout.contains("`ota validate` validates repo contracts such as `ota.yaml`"));
+        assert!(stdout.contains("ota policy"));
+        assert!(stdout.contains("ota validate"));
+        assert!(!stdout.contains("Operation failed"));
+        assert!(!stdout.contains("INVALID ota.yaml"));
+        assert!(!stdout.contains("ota init"));
+    }
+
+    #[test]
+    fn doctor_rejects_org_policy_pack_target_with_wrong_target_message() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        let policy_path = fixture.path().join(".ota").join("org-policy.yaml");
+        fs::write(&policy_path, "policies: {}\n").unwrap();
+
+        let output = run_with(["ota", "doctor", policy_path.to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Wrong diagnosis target"));
+        assert!(stdout.contains("is an org policy pack, not a repo contract"));
+        assert!(stdout.contains(
+            "`ota doctor` diagnoses repo readiness from a repo contract such as `ota.yaml`"
+        ));
+        assert!(stdout.contains("ota policy"));
+        assert!(stdout.contains("ota doctor"));
+        assert!(!stdout.contains("Operation failed"));
+        assert!(!stdout.contains("INVALID ota.yaml"));
+        assert!(!stdout.contains("ota init"));
+    }
+
+    #[test]
+    fn validate_renders_structured_invalid_contract_for_repo_local_policy_pack_fields() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+      approved_versions:
+        - "4"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "validate", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Invalid contract"));
+        assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
+        assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
+        assert!(stdout.contains("repo contracts must not declare `policies.adapter_bootstrap`"));
+        assert!(stdout.contains("rerun `ota validate"));
+        assert!(!stdout.contains("Operation failed"));
+        assert!(!stdout.contains("INVALID ota.yaml"));
+        assert!(!stdout.contains("ota init"));
+    }
+
+    #[test]
+    fn doctor_renders_structured_invalid_contract_for_repo_local_policy_pack_fields() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+      approved_versions:
+        - "4"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "doctor", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Invalid contract"));
+        assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
+        assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
+        assert!(stdout.contains("repo contracts must not declare `policies.adapter_bootstrap`"));
+        assert!(stdout.contains("rerun `ota validate"));
+        assert!(stdout.contains("rerun `ota doctor"));
+        assert!(!stdout.contains("Operation failed"));
+        assert!(!stdout.contains("INVALID ota.yaml"));
+        assert!(!stdout.contains("ota init"));
+    }
+
+    #[test]
     fn policy_init_refuses_to_overwrite_existing_policy_pack() {
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();

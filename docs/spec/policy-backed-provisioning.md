@@ -30,6 +30,10 @@ This document explains how ota chooses approved sources for declared runtimes an
 
 For the adapter families and rollout order, see [`docs/spec/adapters.md`](adapters.md).
 
+Repo contracts must not declare `policies.version_policy`, `policies.provisioning`, or
+`policies.adapter_bootstrap` in `ota.yaml`; those fields are only honored from the org policy pack
+at `.ota/org-policy.yaml`.
+
 This is not the current shipped `env` resolver. The shipped contract treats `policies.env.values`
 as the approved-value map in the org policy pack. This page covers the provisioning source selection layer that
 decides where an approved runtime or tool comes from when a repo asks for one.

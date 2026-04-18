@@ -648,6 +648,27 @@ pub fn validate(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "VALIDATE",
+                &resolved_path,
+                "Wrong validation target",
+                &[
+                    String::from("`ota validate` validates repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_validate(&resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(_contract) => match validate_declared_monorepo_members(&resolved_path) {
@@ -664,38 +685,25 @@ pub fn validate(
                         summary: Some(ValidateSummary { error_count: 0 }),
                     })),
                 },
-                Err(errors) => match format {
-                    OutputFormat::Text => {
-                        let mut stderr = String::from("INVALID ota.yaml");
-                        for error in errors {
-                            stderr.push_str("\n- ");
-                            stderr.push_str(&error);
-                        }
-                        CommandOutput::failure(stderr)
-                    }
-                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                        ok: false,
-                        path: &path_display,
-                        summary: Some(ValidateSummary {
-                            error_count: errors.len(),
-                        }),
-                        errors,
-                        error: None,
-                    })),
-                },
+                Err(errors) => invalid_repo_contract_output(
+                    "VALIDATE",
+                    &resolved_path,
+                    &errors,
+                    validate_invalid_contract_next_steps(&resolved_path),
+                    format,
+                ),
             },
-            Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    ok: false,
-                    path: &path_display,
-                    summary: Some(ValidateSummary {
-                        error_count: errors.errors().len(),
-                    }),
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                })),
-            },
+            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
+                "VALIDATE",
+                &resolved_path,
+                &errors
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                validate_invalid_contract_next_steps(&resolved_path),
+                format,
+            ),
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
@@ -710,6 +718,22 @@ pub fn validate(
         debug,
         debug_lines,
     )
+}
+
+fn validate_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "repair {}",
+            paint_code(&format!("`{}`", compact_contract_path(contract_path)))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_contract("ota validate", contract_path)
+            ))
+        ),
+    ]
 }
 
 fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> String {
@@ -2008,6 +2032,29 @@ pub fn services(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "DOCTOR",
+                &resolved_path,
+                "Wrong diagnosis target",
+                &[
+                    String::from(
+                        "`ota doctor` diagnoses repo readiness from a repo contract such as `ota.yaml`",
+                    ),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_doctor(&resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
@@ -2881,6 +2928,193 @@ fn compact_policy_path_relative_to_contract(contract_path: &Path, policy_path: &
     absolute.display().to_string()
 }
 
+fn is_org_policy_pack_path(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_FILE))
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_POLICY_DIR))
+}
+
+fn repo_root_for_policy_pack(path: &Path) -> Option<&Path> {
+    is_org_policy_pack_path(path)
+        .then(|| path.parent().and_then(Path::parent))
+        .flatten()
+}
+
+fn wrong_target_next_steps_for_validate(policy_path: &Path) -> Vec<String> {
+    let Some(repo_root) = repo_root_for_policy_pack(policy_path) else {
+        return vec![format!(
+            "run {} to inspect the active policy pack",
+            paint_code("`ota policy .`")
+        )];
+    };
+    let repo_contract = repo_root.join(DEFAULT_CONTRACT_FILE);
+    vec![
+        format!(
+            "run {} to inspect the active policy pack",
+            paint_code(&format!("`{}`", command_for_repo("ota policy", repo_root)))
+        ),
+        format!(
+            "use {} to validate the repo contract",
+            paint_code(&format!(
+                "`{}`",
+                command_for_contract("ota validate", &repo_contract)
+            ))
+        ),
+    ]
+}
+
+fn wrong_target_next_steps_for_doctor(policy_path: &Path) -> Vec<String> {
+    let Some(repo_root) = repo_root_for_policy_pack(policy_path) else {
+        return vec![format!(
+            "run {} to inspect the active policy pack",
+            paint_code("`ota policy .`")
+        )];
+    };
+    let repo_contract = repo_root.join(DEFAULT_CONTRACT_FILE);
+    vec![
+        format!(
+            "run {} to inspect the active policy pack",
+            paint_code(&format!("`{}`", command_for_repo("ota policy", repo_root)))
+        ),
+        format!(
+            "run {} to diagnose repo readiness",
+            paint_code(&format!(
+                "`{}`",
+                command_for_contract("ota doctor", &repo_contract)
+            ))
+        ),
+    ]
+}
+
+fn doctor_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "repair {}",
+            paint_code(&format!("`{}`", compact_contract_path(contract_path)))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_contract("ota validate", contract_path)
+            ))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_contract("ota doctor", contract_path)
+            ))
+        ),
+    ]
+}
+
+fn wrong_repo_contract_target_output(
+    command: &str,
+    target_path: &Path,
+    summary: &str,
+    why_lines: &[String],
+    next_steps: Vec<String>,
+    format: OutputFormat,
+) -> CommandOutput {
+    let compact_target = compact_path(target_path, DEFAULT_POLICY_FILE);
+    let path_display = target_path.display().to_string();
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header(command, &compact_target);
+            stdout.push_str(&format!(
+                "\n\n{}  {}",
+                render_severity(FindingSeverity::Error),
+                paint(summary, "1;37")
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Where:"),
+                paint_code(&compact_target)
+            ));
+            stdout.push_str(&format!("\n{}", paint_why_key()));
+            for line in why_lines {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    finding_detail_bullet(FindingSeverity::Error),
+                    line
+                ));
+            }
+            stdout.push_str(&format_error_next_timeline(&next_steps));
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: 1,
+            }
+        }
+        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+            ok: false,
+            path: &path_display,
+            summary: Some(ValidateSummary { error_count: 1 }),
+            errors: why_lines
+                .iter()
+                .map(|line| compact_backticked_paths(line))
+                .collect(),
+            error: Some(summary.to_string()),
+        })),
+    }
+}
+
+fn invalid_repo_contract_output(
+    command: &str,
+    target_path: &Path,
+    why_lines: &[String],
+    next_steps: Vec<String>,
+    format: OutputFormat,
+) -> CommandOutput {
+    let compact_target = compact_contract_path(target_path);
+    let path_display = target_path.display().to_string();
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header(command, &compact_target);
+            stdout.push_str(&format!(
+                "\n\n{}  {}",
+                render_severity(FindingSeverity::Error),
+                paint("Invalid contract", "1;37")
+            ));
+            stdout.push_str(&format!(
+                "\n{} {}",
+                paint_key("Where:"),
+                paint_code(&compact_target)
+            ));
+            stdout.push_str(&format!("\n{}", paint_why_key()));
+            for line in why_lines {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    finding_detail_bullet(FindingSeverity::Error),
+                    line
+                ));
+            }
+            stdout.push_str(&format_error_next_timeline(&next_steps));
+            CommandOutput {
+                stdout,
+                stderr: None,
+                exit_code: 1,
+            }
+        }
+        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+            ok: false,
+            path: &path_display,
+            summary: Some(ValidateSummary {
+                error_count: why_lines.len(),
+            }),
+            errors: why_lines
+                .iter()
+                .map(|line| compact_backticked_paths(line))
+                .collect(),
+            error: Some(String::from("Invalid contract")),
+        })),
+    }
+}
+
 fn render_policy_text(
     policy_path: &Path,
     source: &str,
@@ -3407,6 +3641,29 @@ pub fn doctor(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "DOCTOR",
+                &resolved_path,
+                "Wrong diagnosis target",
+                &[
+                    String::from(
+                        "`ota doctor` diagnoses repo readiness from a repo contract such as `ota.yaml`",
+                    ),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_doctor(&resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
@@ -3453,24 +3710,17 @@ pub fn doctor(
                                     Ok(target) => target,
                                     Err(ContractProblem::Validation(errors)) => {
                                         return finalize_debug(
-                                            match format {
-                                                OutputFormat::Text => {
-                                                    CommandOutput::failure(errors.to_string())
-                                                }
-                                                OutputFormat::Json => CommandOutput::failure(
-                                                    to_json(&ValidateFailure {
-                                                        summary: None,
-                                                        ok: false,
-                                                        path: &path_display,
-                                                        errors: errors
-                                                            .errors()
-                                                            .iter()
-                                                            .map(ToString::to_string)
-                                                            .collect(),
-                                                        error: None,
-                                                    }),
-                                                ),
-                                            },
+                                            invalid_repo_contract_output(
+                                                "DOCTOR",
+                                                &resolved_path,
+                                                &errors
+                                                    .errors()
+                                                    .iter()
+                                                    .map(ToString::to_string)
+                                                    .collect::<Vec<_>>(),
+                                                doctor_invalid_contract_next_steps(&resolved_path),
+                                                format,
+                                            ),
                                             debug,
                                             debug_lines,
                                         );
@@ -3722,20 +3972,17 @@ pub fn doctor(
                     },
                 }
             }
-            Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput {
-                    stdout: to_json(&ValidateFailure {
-                        summary: None,
-                        ok: false,
-                        path: &path_display,
-                        errors: errors.errors().iter().map(ToString::to_string).collect(),
-                        error: None,
-                    }),
-                    stderr: None,
-                    exit_code: 1,
-                },
-            },
+            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
+                "DOCTOR",
+                &resolved_path,
+                &errors
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                doctor_invalid_contract_next_steps(&resolved_path),
+                format,
+            ),
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(error.to_string()),
                 OutputFormat::Json => CommandOutput {

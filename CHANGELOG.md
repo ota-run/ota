@@ -29,6 +29,9 @@
 - fixed a Windows PowerShell installer interpolation bug in `scripts/bootstrap.ps1` so replacement failures now report the destination path cleanly instead of aborting on `${drive}:` parser handling
 - taught detector-led `ota init` to carry existing repo-root dotenv sources such as `.env.local` and `.env` into `env.sources`, while keeping explicit `ota init --pack ...` starters on their conventional no-inference boundary.
 - kept task inputs like `mode` and `jobs` valid in contracts while tightening `ota run` / `ota workspace run` parsing so pre-task ota flags still work, post-task overlapping inputs can be disambiguated cleanly, and generated env-only starters stay lean and accurately counted.
+- validator now rejects repo-local `policies.version_policy`, `policies.provisioning`, and `policies.adapter_bootstrap` in `ota.yaml`, so provisioning authority can no longer be declared inertly in the repo contract instead of the real `.ota/org-policy.yaml` policy pack.
+- taught `ota validate` and `ota doctor` to reject `.ota/org-policy.yaml` as the wrong target with a dedicated, structured message instead of falling through the generic repo-contract failure wrapper.
+- taught `ota validate` and `ota doctor` to render repo-contract validation failures as structured `Invalid contract` output instead of the generic `Operation failed / INVALID ota.yaml / ota init` wrapper.
 
 ## 1.5.0
 
