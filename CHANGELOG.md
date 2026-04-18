@@ -26,11 +26,14 @@
 
 ## Unreleased
 
+## 1.5.0
+
 - improved `ota run` so a missing non-path token like `ota run version:bump patch` can be reinterpreted as a single declared task input instead of a fake repo path, while still preserving explicit path-like tokens such as `./repo` or `foo/ota.yaml`.
+- extended that single-input shorthand to monorepo member runs, so `ota run version:bump --member api patch` now resolves `patch` as the declared task input instead of a missing repo path.
 - prevalidated requested-task inputs before dependency execution in `ota run`, so invalid top-level task input flags or values now fail before any `depends_on` work can mutate repo state.
 - clarified run receipt step details for hook reruns so follow-up executions now explain when a task reran via `after_success` / `after_failure` / `after_always` and when a dependency reran as part of that fresh hook subtree.
 - clarified `ota run --help` and `ota workspace run --help` so the operator rule is explicit: put Ota command flags before task inputs, with concrete examples for input-bearing task syntax.
-- tightened task input validation so contracts can no longer declare input names that collide with reserved ota CLI flags such as `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`, preventing ambiguous `ota run` / `ota workspace run` syntax at authoring time.
+- breaking change: task input validation now rejects names that collide with reserved `ota run` / `ota workspace run` flags and aliases such as `backend`, `jobs`, `json`, `lifecycle`, `member`, `mode`, `receipt`, or `stream`; existing contracts must rename those inputs to task-specific names such as `suite_mode`, `output_json`, `target_member`, or `execution_backend` before upgrading.
 - fixed task outcome hooks so `after_success`, `after_failure`, and `after_always` can rerun a task together with its dependency subtree even when that work already ran earlier in the same top-level invocation through `depends_on`, which fixes flows like `version:bump` followed by a post-bump `build` that must rerun `setup`.
 - dogfooded task outcome hooks in the `ota` repo and the public examples repo so `after_success`, `after_failure`, and `after_always` now appear in real shipped contracts instead of docs-only examples
 - added first-class task outcome hooks with `after_success`, `after_failure`, and `after_always`, made the runner treat hook failures as part of the parent task result, and updated workspace task inventory plus contract docs so the new execution edges are visible in both runtime and machine-readable surfaces
