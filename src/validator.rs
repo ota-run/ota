@@ -119,6 +119,21 @@ fn validate_policies(contract: &Contract, errors: &mut Vec<ValidationError>) {
             "repo contracts must not declare `policies.env`; move approved env values to `.ota/org-policy.yaml` under `policies.env.values`",
         ));
     }
+    if contract.policies.contains_key("version_policy") {
+        errors.push(ValidationError::new(
+            "repo contracts must not declare `policies.version_policy`; move approved runtime and tool versions to `.ota/org-policy.yaml` under `policies.version_policy`",
+        ));
+    }
+    if contract.policies.contains_key("provisioning") {
+        errors.push(ValidationError::new(
+            "repo contracts must not declare `policies.provisioning`; move approved provisioning sources to `.ota/org-policy.yaml` under `policies.provisioning`",
+        ));
+    }
+    if contract.policies.contains_key("adapter_bootstrap") {
+        errors.push(ValidationError::new(
+            "repo contracts must not declare `policies.adapter_bootstrap`; move approved adapter bootstrap sources to `.ota/org-policy.yaml` under `policies.adapter_bootstrap`",
+        ));
+    }
 }
 
 fn validate_repo_workspace(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -1939,5 +1954,56 @@ policies:
             errors.errors()[0].to_string(),
             "repo contracts must not declare `policies.env`; move approved env values to `.ota/org-policy.yaml` under `policies.env.values`"
         );
+    }
+
+    #[test]
+    fn rejects_repo_local_policy_pack_provisioning_sections() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22"
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+      approved_versions:
+        - "4"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let rendered = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(rendered.iter().any(|error| {
+            error.contains(
+                "repo contracts must not declare `policies.version_policy`; move approved runtime and tool versions to `.ota/org-policy.yaml` under `policies.version_policy`",
+            )
+        }));
+        assert!(rendered.iter().any(|error| {
+            error.contains(
+                "repo contracts must not declare `policies.provisioning`; move approved provisioning sources to `.ota/org-policy.yaml` under `policies.provisioning`",
+            )
+        }));
+        assert!(rendered.iter().any(|error| {
+            error.contains(
+                "repo contracts must not declare `policies.adapter_bootstrap`; move approved adapter bootstrap sources to `.ota/org-policy.yaml` under `policies.adapter_bootstrap`",
+            )
+        }));
     }
 }

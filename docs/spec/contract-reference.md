@@ -228,8 +228,8 @@ Current guidance:
 - `exports` should describe export preferences or downstream artifact intent
 - `policies` should describe repo-local policy overlays and guardrails
 - repo contracts must not declare `policies.env`; approved env values now live in the org policy pack under `policies.env.values`
+- repo contracts must not declare `policies.version_policy`, `policies.provisioning`, or `policies.adapter_bootstrap`; approved version and provisioning authority now live in `.ota/org-policy.yaml`
 - `policies.env.values` is the shipped approved-value map for environment variables in the org policy pack
-- `policies.provisioning` is the next policy extension point for approved runtime and tool sources
 - neither section should replace core readiness fields such as `tasks`, `services`, or `checks`
 - newer spec drafts discuss additional policy and readiness-gate behavior; those are not part of
   the current shipped parser unless the implementation explicitly accepts them
