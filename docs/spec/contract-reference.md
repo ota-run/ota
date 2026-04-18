@@ -779,6 +779,24 @@ Variant fields:
 - `when.os`: required for each current variant entry; supported values are `linux`, `macos`, and `windows`
 - exactly one of `run` or `script`
 
+Hook fields:
+
+- `after_success`: optional ordered list of task names to run only after the task body exits successfully
+- `after_failure`: optional ordered list of task names to run only after the task body exits with a failure
+- `after_always`: optional ordered list of task names to run after either success or failure, but only when the task body was actually attempted
+
+Example post-outcome hooks:
+
+```yaml
+tasks:
+  build:
+    run: pnpm build
+    depends_on: [setup]
+    after_success: [verify-dist]
+    after_failure: [collect-build-diagnostics]
+    after_always: [cleanup-temp]
+```
+
 Rules:
 
 - task names must not be empty
@@ -792,7 +810,9 @@ Rules:
 - variant entries must declare exactly one of `run` or `script`
 - duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
+- hook references must resolve to known tasks
 - task dependency cycles are rejected
+- hook edges participate in the same task cycle detection as `depends_on`
 - `depends_on` is the canonical way to reuse task steps instead of calling `ota run` from inside another task script
 
 Current execution model:
@@ -800,6 +820,12 @@ Current execution model:
 - `run` and `script` are shell-compatible execution forms
 - task `env` values are applied when ota runs the task and override repo-level env with the same name
 - when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
+- `depends_on` runs before the task body
+- `after_success` runs only when the task body exits `0`
+- `after_failure` runs only when the task body exits non-zero
+- `after_always` runs after either branch, but only when the task body actually ran
+- hook tasks run in declared order
+- hook failures affect the final task result for the parent task
 - richer non-shell executors are intentionally out of V1 scope
 - future direction is tracked in the product spec
 - use task names to describe intent: `setup`, `dev`, `dev_clean`, `test`, `lint`

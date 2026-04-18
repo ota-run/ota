@@ -684,15 +684,69 @@ fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<Validatio
         }
 
         for dependency in &task.depends_on {
-            if !tasks.contains_key(dependency) {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` depends on unknown task `{dependency}`"
-                )));
-            }
+            validate_task_dependency_reference(
+                tasks,
+                name,
+                "depends_on",
+                "depends on",
+                dependency,
+                errors,
+            );
+        }
+        for dependency in &task.after_success {
+            validate_task_dependency_reference(
+                tasks,
+                name,
+                "after_success",
+                "after_success references",
+                dependency,
+                errors,
+            );
+        }
+        for dependency in &task.after_failure {
+            validate_task_dependency_reference(
+                tasks,
+                name,
+                "after_failure",
+                "after_failure references",
+                dependency,
+                errors,
+            );
+        }
+        for dependency in &task.after_always {
+            validate_task_dependency_reference(
+                tasks,
+                name,
+                "after_always",
+                "after_always references",
+                dependency,
+                errors,
+            );
         }
     }
 
     detect_task_cycles(tasks, errors);
+}
+
+fn validate_task_dependency_reference(
+    tasks: &BTreeMap<String, TaskSpec>,
+    task_name: &str,
+    field: &str,
+    verb: &str,
+    dependency: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !tasks.contains_key(dependency) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {verb} unknown task `{dependency}`"
+        )));
+    }
+
+    if dependency.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must not declare an empty `{field}` task reference"
+        )));
+    }
 }
 
 fn is_task_input_name(name: &str) -> bool {
@@ -820,7 +874,7 @@ fn visit_task(
 
     active.push(name.to_string());
 
-    for dependency in &task.depends_on {
+    for dependency in task_edges(task) {
         if tasks.contains_key(dependency) {
             visit_task(dependency, tasks, visited, active, cycle_roots, errors);
         }
@@ -828,6 +882,14 @@ fn visit_task(
 
     active.pop();
     visited.insert(name.to_string());
+}
+
+fn task_edges(task: &TaskSpec) -> impl Iterator<Item = &String> {
+    task.depends_on
+        .iter()
+        .chain(task.after_success.iter())
+        .chain(task.after_failure.iter())
+        .chain(task.after_always.iter())
 }
 
 fn visit_service(

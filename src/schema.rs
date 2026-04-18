@@ -447,6 +447,12 @@ pub struct TaskSpec {
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
+    pub after_success: Vec<String>,
+    #[serde(default)]
+    pub after_failure: Vec<String>,
+    #[serde(default)]
+    pub after_always: Vec<String>,
+    #[serde(default)]
     pub safe_for_agent: bool,
     #[serde(default)]
     pub variants: Vec<TaskVariantSpec>,

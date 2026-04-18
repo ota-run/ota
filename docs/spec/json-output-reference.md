@@ -1055,7 +1055,10 @@ provisioning signals without mutating anything.
           "description": "Install repo dependencies.",
           "kind": "run",
           "run": "pnpm install",
-          "depends_on": []
+          "depends_on": [],
+          "after_success": ["verify-lockfile"],
+          "after_failure": [],
+          "after_always": ["cleanup-temp"]
         }
       ]
     }
@@ -1063,7 +1066,9 @@ provisioning signals without mutating anything.
 }
 ```
 
-Non-acquired repos keep `acquired: false` and `tasks: []`.
+Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can also carry
+`after_success`, `after_failure`, and `after_always` so automation can see the same post-outcome
+task graph that `ota run` executes.
 
 ## `ota workspace list --json`
 

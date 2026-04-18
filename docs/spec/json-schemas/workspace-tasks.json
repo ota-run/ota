@@ -57,6 +57,24 @@
                 "depends_on": {
                   "type": "array",
                   "items": { "type": "string" }
+                },
+                "after_success": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "after_failure": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "after_always": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }

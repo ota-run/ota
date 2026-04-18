@@ -624,6 +624,10 @@ ota run version:bump --version major
 ```
 
 - resolves task dependencies before execution
+- if the task body exits successfully, runs `after_success` hooks in declared order
+- if the task body exits with a failure, runs `after_failure` hooks in declared order
+- runs `after_always` hooks after either outcome when the task body was actually attempted
+- hook task failures affect the final `ota run` exit code for the parent task
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
 - when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the first available configured container engine CLI, falling back to `docker` when no engines are listed
@@ -1709,7 +1713,7 @@ Current behavior:
 - resolves `ota.workspace.yaml` using `--file`, `OTA_FILE`, or an explicit directory boundary
 - validates workspace shape and present repo contracts
 - preserves workspace dependency order in output
-- lists task declarations for each acquired repo contract, including task descriptions when the repo contract declares them
+- lists task declarations for each acquired repo contract, including task descriptions and declared `after_success`, `after_failure`, and `after_always` hook relationships when the repo contract declares them
 - reports non-acquired repos with `acquired: false` and empty task lists
 - does not execute tasks
 
@@ -1725,6 +1729,7 @@ JSON output:
 - `summary` with `repo_count`, `acquired_count`, and `task_count`
 - `repos`
 - each repo includes: `name`, `path`, `contract_path`, `required`, `acquired`, `depends_on`, `tasks`
+- each task includes: `name`, `kind`, optional `description`, one execution body field (`run` or `script`), `depends_on`, `after_success`, `after_failure`, `after_always`
 
 ## `ota workspace list`
 
