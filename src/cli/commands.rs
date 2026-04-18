@@ -2441,15 +2441,12 @@ fn maybe_reinterpret_missing_repo_run_path(
     task_inputs: &[String],
 ) -> Option<(PathBuf, Vec<String>)> {
     let shorthand_value = path?;
-    if !members.is_empty()
-        || !task_inputs.is_empty()
-        || !can_reinterpret_missing_repo_run_path(shorthand_value)
-    {
+    if !task_inputs.is_empty() || !can_reinterpret_missing_repo_run_path(shorthand_value) {
         return None;
     }
 
     let resolved_path = resolve_contract_path(None, file_override).ok()?;
-    let contract = load_contract(&resolved_path).ok()?;
+    let contract = load_repo_run_shorthand_contract(&resolved_path, members)?;
     let task = contract.tasks.get(task_name)?;
     if task.inputs.len() != 1 {
         return None;
@@ -2459,6 +2456,16 @@ fn maybe_reinterpret_missing_repo_run_path(
         resolved_path,
         vec![shorthand_value.as_os_str().to_string_lossy().to_string()],
     ))
+}
+
+fn load_repo_run_shorthand_contract(path: &Path, members: &[String]) -> Option<Contract> {
+    match members {
+        [] => load_contract(path).ok(),
+        [member] => load_contract_for_member(path, member)
+            .ok()
+            .map(|(contract, _)| contract),
+        _ => None,
+    }
 }
 
 fn can_reinterpret_missing_repo_run_path(path: &Path) -> bool {

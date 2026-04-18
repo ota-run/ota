@@ -15681,6 +15681,47 @@ tasks:
     }
 
     #[test]
+    fn run_executes_single_task_input_shorthand_for_monorepo_member() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        fixture.write(
+            "api/ota.yaml",
+            r#"
+project:
+  name: api
+tasks:
+  version:bump:
+    inputs:
+      version:
+        required: true
+    script: |
+      printf '%s' "$OTA_INPUT_VERSION" > version.txt
+"#,
+        );
+
+        let _guard = cwd_mutex_lock();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let output = run_with(["ota", "run", "version:bump", "--member", "api", "patch"]);
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("api").join("version.txt")).unwrap(),
+            "patch"
+        );
+    }
+
+    #[test]
     fn run_preserves_missing_explicit_path_for_path_like_tokens() {
         let fixture = ContractFixture::new(
             r#"
