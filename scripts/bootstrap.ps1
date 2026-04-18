@@ -447,7 +447,7 @@ function Install-ReleaseBinary {
             return "installed"
         } catch [System.IO.IOException] {
             if ($IsWindows) {
-                Write-OtaError "error: could not replace $destination: $($_.Exception.Message)"
+                Write-OtaError "error: could not replace ${destination}: $($_.Exception.Message)"
                 if (Test-Path $staged) {
                 Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
                 }
