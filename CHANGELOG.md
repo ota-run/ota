@@ -26,8 +26,12 @@
 
 ## Unreleased
 
+- polished `ota annotations` for CI and PR consumption by suppressing duplicate primary-blocker finding lines and labeling additive `Provenance:` plus `Next:` segments when those fields exist in the input JSON.
 - refined explicit `ota init --pack ...` advisories so the text output now compares both sides of the mismatch more clearly with suggested signals, selected-pack incidental signals, and an explicit score gap while keeping the pack choice authoritative.
 - extended `pack_advisory` in `ota init --json` with additive comparison fields such as `score_gap` and `selected_signal_details`, making the advisory easier to explain in automation without scraping human text.
+- clarified the env-resolution docs so root contract env is explained as a repo-wide execution contract, not just a validation surface, including the injected-process boundary for `ota run` / `ota up` and when ota can functionally replace in-app dotenv loading.
+- made the env docs more explicit about what `required`, `allowed`, `secret`, and `default` mean in practice, including a concrete `DISCORD_TOKEN` plus `RELEASE_CHANNEL` example.
+- added stronger env docs for authoring and operations, including valid-versus-invalid `env.vars` examples, the remote-secret execution caveat, a workspace env precedence example, and a realistic `ota env` text/JSON example.
 
 ## 1.4.19
 

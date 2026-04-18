@@ -496,6 +496,9 @@ Fields:
 - `vars`: env-variable requirements keyed by env name
 - `sources`: ordered declared env sources
 
+This is not only a validation surface. Root `env` is the repo-wide execution contract ota uses to
+resolve values before `ota run` and `ota up` start a process.
+
 `env.vars.<NAME>` fields:
 
 - `required`: optional boolean
@@ -612,7 +615,8 @@ Current behavior:
 
 - `run` prefers approved org-policy env values, then process environment, then declared env sources in
   order, then `default`
-- declared env values are injected into backend execution after resolution, so container and remote backends see the same chosen value
+- declared env values are injected into backend execution after resolution, so the spawned task
+  process sees the same chosen value across native, container, and remote backends
 - `run` rejects disallowed values
 - `doctor` reports missing required vars, invalid values, and missing or invalid declared env
   sources
@@ -621,6 +625,8 @@ Current behavior:
 - remote task execution rejects secret env values instead of inlining them into remote shell
   command strings
 - `PATH` can be composed from `prepend` entries, the resolved base value, and `append` entries
+- ota does not permanently mutate the user's shell session; resolved env values apply to the
+  process ota starts
 
 Resolution and provenance:
 

@@ -46,6 +46,41 @@ Repo contracts do not declare `policies.env`; approved shared values live in `.o
 `PATH` is still the special env key that supports `prepend` and `append`. Ordinary env vars such as
 `JAVA_HOME` should stay as single explicit values.
 
+## Why Root `env` Exists
+
+Root `env` is not only a validation surface. It is the repo-wide environment contract ota uses for
+real execution.
+
+- it tells ota which env names belong to repo readiness
+- it lets ota resolve those names from task env, policy env, the shell, declared sources, and
+  defaults in one deterministic order
+- it lets ota enforce `required`, `allowed`, `secret`, and `PATH` composition before the task starts
+- it gives `doctor`, `ota env`, receipts, and JSON output one honest source of truth
+
+Without root `env`, ota still inherits whatever the shell already has, but ota does not know that
+those values are part of repo truth. That means no repo-level provenance, no allowed-value checks,
+no declared dotenv support, no policy-supplied shared values, and no secret-aware output.
+
+## What ota Injects
+
+When ota starts a process through `ota run` or `ota up`, it resolves declared root env values and
+passes the winning values into the spawned process environment.
+
+- this is how Node sees values in `process.env`
+- the same applies to Python, Go, Java, Rust, shell scripts, and other stacks launched by ota
+- `PATH` is the one special env name that ota can compose with `prepend` and `append`
+
+This is process-scoped execution injection, not machine-wide mutation.
+
+- ota does not rewrite your source code
+- ota does not create a `.env` file for you
+- ota does not permanently change your shell session
+- values are applied to the process ota starts, not to unrelated processes outside ota
+
+If a repo standardizes on `ota run` or `ota up`, ota can functionally replace in-app dotenv loading
+for many projects. If developers still start the app directly outside ota, then shell exports or the
+app's own dotenv loader may still matter.
+
 ## Fields
 
 ### `env.vars.<NAME>`
@@ -56,6 +91,56 @@ Repo contracts do not declare `policies.env`; approved shared values live in `.o
 - `allowed`: fixed allowed values
 - `prepend`: `PATH`-only entries to place before the resolved base value
 - `append`: `PATH`-only entries to place after the resolved base value
+
+What these mean in practice:
+
+- `required`: the env var must resolve or ota fails readiness or execution
+- `secret`: ota should treat the value as sensitive and redact it in output and receipts
+- `default`: use this fallback only when no higher-precedence layer wins
+- `allowed`: the winning value must be one of the declared values
+
+`env.vars` is a requirement map, not a raw assigned-value map.
+
+Valid:
+
+```yaml
+env:
+  vars:
+    DISCORD_CHANNEL:
+      default: general
+```
+
+Invalid intent:
+
+```yaml
+env:
+  vars:
+    DISCORD_CHANNEL: general
+```
+
+Use `default` when the contract itself provides a fallback. Use `tasks.<name>.env`,
+`policies.env.values`, the shell, or `env.sources` when another layer should supply the value.
+
+Example:
+
+```yaml
+env:
+  vars:
+    DISCORD_TOKEN:
+      required: true
+      secret: true
+    RELEASE_CHANNEL:
+      default: stable
+      allowed:
+        - stable
+        - canary
+```
+
+This means:
+
+- `DISCORD_TOKEN` must resolve and should not be shown in plain text
+- `RELEASE_CHANNEL` falls back to `stable`
+- `RELEASE_CHANNEL=beta` is rejected even if it came from policy, the shell, or a declared dotenv file
 
 ### `env.sources[]`
 
@@ -115,6 +200,12 @@ If a declared dotenv source is present but invalid, ota fails instead of silentl
 If a declared source has `must_exist: true` and is missing, ota reports that as a readiness failure
 even if another layer provides the env value.
 
+Remote execution caveat:
+
+- ota redacts `secret: true` values in output and receipts
+- ota rejects secret env values for remote shell execution instead of inlining them into remote
+  command strings
+
 ## What To Put Where
 
 - use `env.vars` in `ota.yaml` to say which values the repo needs
@@ -125,6 +216,9 @@ even if another layer provides the env value.
 - use `tasks.<name>.env` when one task needs a fixed override
 - use `policies.env.values` when the organization wants an approved shared value
 - use `prepend` and `append` only on `PATH`
+
+Use root `env` when the repo needs env values to stay visible and enforceable at execution time,
+not just when you want validation.
 
 ## Examples
 
@@ -195,6 +289,38 @@ policies:
 In `ota.workspace.yaml`, that shape supplies workspace-wide shared values that outrank the org policy
 pack during `ota workspace ...` commands.
 
+```yaml
+# ota.workspace.yaml
+policies:
+  env:
+    values:
+      RELEASE_CHANNEL: canary
+      DOCS_SITE_BASE_URL: https://workspace.internal.example
+```
+
+```yaml
+# repo ota.yaml
+env:
+  vars:
+    DOCS_SITE_BASE_URL:
+      required: true
+    RELEASE_CHANNEL:
+      default: stable
+      allowed:
+        - stable
+        - canary
+  sources:
+    - kind: dotenv
+      path: .env.local
+```
+
+This means:
+
+- `ota workspace ...` prefers the workspace policy values first
+- the org policy pack is still consulted after the workspace policy layer
+- the repo contract still defines which env names are real readiness requirements
+- the shell, declared dotenv files, and contract defaults remain lower-precedence fallbacks
+
 If the process `PATH` is:
 
 ```text
@@ -221,9 +347,67 @@ then the final `PATH` is:
 
 - `doctor` diagnoses missing or invalid env values and reports missing or broken declared sources
 - `ota env` shows both declared source status and the winning source for each env var
-- `run` and `up` consume env values during execution
+- `run` and `up` inject the resolved env into the spawned task process during execution
 - receipts show which value won
 - `explain` should turn env failures into a fix plan
+
+Example `ota env` JSON shape:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "summary": {
+    "contract_count": 3,
+    "source_count": 2,
+    "source_issue_count": 0,
+    "task_count": 1,
+    "resolved_count": 3,
+    "missing_count": 0,
+    "invalid_count": 0
+  },
+  "sources": [
+    {
+      "kind": "dotenv",
+      "path": ".env.local",
+      "must_exist": false,
+      "status": "loaded"
+    },
+    {
+      "kind": "dotenv",
+      "path": ".env",
+      "must_exist": true,
+      "status": "loaded"
+    }
+  ],
+  "env": [
+    {
+      "name": "DISCORD_TOKEN",
+      "kind": "contract",
+      "required": true,
+      "value": "***",
+      "source": "dotenv:.env",
+      "status": "resolved"
+    },
+    {
+      "name": "DOCS_SITE_BASE_URL",
+      "kind": "contract",
+      "required": true,
+      "value": "https://docs.internal.example",
+      "source": "org policy",
+      "status": "resolved"
+    },
+    {
+      "name": "CI",
+      "kind": "task",
+      "required": false,
+      "value": "true",
+      "source": "task",
+      "status": "task"
+    }
+  ]
+}
+```
 
 ## What Policy Is Not
 
