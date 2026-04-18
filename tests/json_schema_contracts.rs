@@ -554,6 +554,9 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("kind").is_some());
     assert!(task.get("description").is_some());
     assert!(task.get("depends_on").is_some());
+    assert!(task.get("after_success").is_some());
+    assert!(task.get("after_failure").is_some());
+    assert!(task.get("after_always").is_some());
 }
 
 #[test]

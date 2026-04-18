@@ -325,7 +325,7 @@ Current behavior:
 
 - `ota validate` parses and semantically validates `ota.yaml`
 - `ota tasks` lists validated tasks and their execution form
-- `ota run <task>` resolves dependencies and executes `run` or `script` tasks deterministically
+- `ota run <task>` resolves dependencies, executes the requested task deterministically, and honors declared `after_success`, `after_failure`, and `after_always` hooks as part of the task's final result
 - `ota diff` compares two contracts semantically and reports added, missing, and changed fields in deterministic order
 - `ota explain` turns readiness findings into an ordered remediation plan
 - `ota doctor` reports readiness findings for env, runtimes, tools, services, and checks with severity, explanation, and next action, still gives a useful repo/host diagnosis when no `ota.yaml` exists yet, leads with the highest-priority blocker first, and supports `ota doctor --mode container` for container-targeted readiness
@@ -340,7 +340,7 @@ Current behavior:
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
 - there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run` and trust/readiness drift stays on `ota doctor`
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
-- `ota workspace tasks` lists workspace repo tasks in dependency order without executing them
+- `ota workspace tasks` lists workspace repo tasks in dependency order without executing them, including declared post-outcome hook relationships when repo contracts define them
 - `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting
 - `ota workspace explain` turns workspace readiness findings into ordered remediation steps
 - `ota workspace check` runs configured checks across workspace repos with deterministic reporting

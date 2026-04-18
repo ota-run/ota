@@ -404,9 +404,26 @@ pub struct RunPlan {
     pub tasks: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskExecutionRelation {
+    Requested,
+    DependsOn { parent: String },
+    AfterSuccess { parent: String },
+    AfterFailure { parent: String },
+    AfterAlways { parent: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutedTaskStep {
+    pub name: String,
+    pub exit_code: i32,
+    pub relation: TaskExecutionRelation,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RunOutcome {
     pub executed_tasks: Vec<String>,
+    pub task_steps: Vec<ExecutedTaskStep>,
     pub exit_code: i32,
     pub target: Option<String>,
 }
@@ -414,6 +431,7 @@ pub struct RunOutcome {
 #[derive(Debug, PartialEq, Eq)]
 pub struct CapturedRunOutcome {
     pub executed_tasks: Vec<String>,
+    pub task_steps: Vec<ExecutedTaskStep>,
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
@@ -950,6 +968,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
 
     Ok(RunOutcome {
         executed_tasks: outcome.executed_tasks,
+        task_steps: outcome.task_steps,
         exit_code: outcome.exit_code,
         target: outcome.target,
     })
@@ -1200,6 +1219,15 @@ struct TaskCommandOutput {
     target: Option<String>,
 }
 
+#[derive(Debug, Default)]
+struct TaskRunState {
+    completed: BTreeMap<String, i32>,
+    task_steps: Vec<ExecutedTaskStep>,
+    stdout: String,
+    stderr: String,
+    target: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum ResolvedExecutionBackend {
     Native,
@@ -1230,109 +1258,233 @@ fn run_task_internal(
     policy_env: Option<&BTreeMap<String, String>>,
     mode: TaskExecutionMode,
 ) -> Result<CapturedRunOutcome, RunError> {
-    let plan = plan_task_execution(contract, task_name)?;
+    if !contract.tasks.contains_key(task_name) {
+        return Err(RunError::UnknownTask {
+            task: task_name.to_string(),
+        });
+    }
     let working_dir = contract_working_dir(contract_path);
     let backend = resolve_execution_backend(contract, task_name, overrides)?;
-    let requested_task_name = task_name.to_string();
-    let mut executed_tasks = Vec::new();
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    let mut target = None;
     let current_os = current_os();
+    let mut state = TaskRunState::default();
+    let exit_code = execute_task_with_hooks(
+        contract,
+        contract_path,
+        task_name,
+        input_args,
+        policy_env,
+        &backend,
+        mode,
+        working_dir,
+        current_os,
+        TaskExecutionRelation::Requested,
+        &mut state,
+    )?;
 
-    for task_name in &plan.tasks {
-        let task = contract
-            .tasks
-            .get(task_name)
-            .expect("validated task plan should only reference known tasks");
-        let execution = if let Some(execution) = task.resolved_execution(current_os) {
-            execution
-        } else if task.variants.is_empty() {
-            return Err(RunError::InvalidTaskExecution {
-                task: task_name.clone(),
-            });
-        } else {
-            return Err(RunError::NoMatchingTaskVariant {
-                task: task_name.clone(),
-                os: current_os.to_string(),
-            });
-        };
-        let env_details = resolve_task_env_details_with_policy(
+    let executed_tasks = state
+        .task_steps
+        .iter()
+        .map(|step| step.name.clone())
+        .collect();
+    Ok(CapturedRunOutcome {
+        executed_tasks,
+        task_steps: state.task_steps,
+        exit_code,
+        stdout: state.stdout,
+        stderr: state.stderr,
+        target: state.target,
+    })
+}
+
+fn execute_task_with_hooks(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    input_args: &[String],
+    policy_env: Option<&BTreeMap<String, String>>,
+    backend: &ResolvedExecutionBackend,
+    mode: TaskExecutionMode,
+    working_dir: &Path,
+    current_os: &str,
+    relation: TaskExecutionRelation,
+    state: &mut TaskRunState,
+) -> Result<i32, RunError> {
+    if let Some(exit_code) = state.completed.get(task_name) {
+        return Ok(*exit_code);
+    }
+
+    let task = contract
+        .tasks
+        .get(task_name)
+        .expect("validated task execution should only reference known tasks");
+
+    for dependency in &task.depends_on {
+        let dependency_exit = execute_task_with_hooks(
             contract,
             contract_path,
-            Some(&task.env),
+            dependency,
+            &[],
             policy_env,
-        )?;
-        let secret_env_names: BTreeSet<String> = env_details
-            .iter()
-            .filter(|(_, value)| value.secret)
-            .map(|(name, _)| name.clone())
-            .collect();
-        if matches!(backend, ResolvedExecutionBackend::Remote { .. })
-            && !secret_env_names.is_empty()
-        {
-            return Err(RunError::SecretEnvNotSupportedForRemote {
-                task: task_name.clone(),
-                names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
-            });
-        }
-        let env_overrides =
-            resolve_task_env_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
-        let path_export = match backend {
-            ResolvedExecutionBackend::Container { .. } => env_details
-                .get("PATH")
-                .map(|resolved| resolved.value.clone()),
-            _ => None,
-        };
-        let mut env_overrides = env_overrides;
-        if path_export.is_some() {
-            env_overrides.remove("PATH");
-        }
-        let input_overrides = if task_name == &requested_task_name {
-            resolve_task_inputs(task_name, task, input_args)?
-        } else {
-            BTreeMap::new()
-        };
-        let mut combined_env = env_overrides;
-        combined_env.extend(input_overrides);
-        let command = execution.body;
-
-        let command_output = execute_task_command(
-            task_name,
-            command,
-            working_dir,
-            &combined_env,
-            path_export.as_deref(),
-            &secret_env_names,
-            &backend,
+            backend,
             mode,
+            working_dir,
+            current_os,
+            TaskExecutionRelation::DependsOn {
+                parent: task_name.to_string(),
+            },
+            state,
         )?;
-        stdout.push_str(&command_output.stdout);
-        stderr.push_str(&command_output.stderr);
-        if target.is_none() {
-            target = command_output.target;
-        }
-
-        executed_tasks.push(task_name.clone());
-
-        if command_output.exit_code != 0 {
-            return Ok(CapturedRunOutcome {
-                executed_tasks,
-                exit_code: command_output.exit_code,
-                stdout,
-                stderr,
-                target,
-            });
+        if dependency_exit != 0 {
+            return Ok(dependency_exit);
         }
     }
 
-    Ok(CapturedRunOutcome {
-        executed_tasks,
-        exit_code: 0,
-        stdout,
-        stderr,
-        target,
-    })
+    let execution = if let Some(execution) = task.resolved_execution(current_os) {
+        execution
+    } else if task.variants.is_empty() {
+        return Err(RunError::InvalidTaskExecution {
+            task: task_name.to_string(),
+        });
+    } else {
+        return Err(RunError::NoMatchingTaskVariant {
+            task: task_name.to_string(),
+            os: current_os.to_string(),
+        });
+    };
+    let env_details =
+        resolve_task_env_details_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
+    let secret_env_names: BTreeSet<String> = env_details
+        .iter()
+        .filter(|(_, value)| value.secret)
+        .map(|(name, _)| name.clone())
+        .collect();
+    if matches!(backend, ResolvedExecutionBackend::Remote { .. }) && !secret_env_names.is_empty() {
+        return Err(RunError::SecretEnvNotSupportedForRemote {
+            task: task_name.to_string(),
+            names: secret_env_names.into_iter().collect::<Vec<_>>().join(", "),
+        });
+    }
+    let env_overrides =
+        resolve_task_env_with_policy(contract, contract_path, Some(&task.env), policy_env)?;
+    let path_export = match backend {
+        ResolvedExecutionBackend::Container { .. } => env_details
+            .get("PATH")
+            .map(|resolved| resolved.value.clone()),
+        _ => None,
+    };
+    let mut env_overrides = env_overrides;
+    if path_export.is_some() {
+        env_overrides.remove("PATH");
+    }
+    let input_overrides = if matches!(relation, TaskExecutionRelation::Requested) {
+        resolve_task_inputs(task_name, task, input_args)?
+    } else {
+        BTreeMap::new()
+    };
+    let mut combined_env = env_overrides;
+    combined_env.extend(input_overrides);
+    let command_output = execute_task_command(
+        task_name,
+        execution.body,
+        working_dir,
+        &combined_env,
+        path_export.as_deref(),
+        &secret_env_names,
+        backend,
+        mode,
+    )?;
+
+    state.stdout.push_str(&command_output.stdout);
+    state.stderr.push_str(&command_output.stderr);
+    if state.target.is_none() {
+        state.target = command_output.target;
+    }
+    state.task_steps.push(ExecutedTaskStep {
+        name: task_name.to_string(),
+        exit_code: command_output.exit_code,
+        relation,
+    });
+
+    let hook_exit_code = execute_post_hooks(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        policy_env,
+        backend,
+        mode,
+        working_dir,
+        current_os,
+        command_output.exit_code,
+        state,
+    )?;
+
+    let final_exit_code = if command_output.exit_code != 0 {
+        command_output.exit_code
+    } else if hook_exit_code != 0 {
+        hook_exit_code
+    } else {
+        0
+    };
+    state
+        .completed
+        .insert(task_name.to_string(), final_exit_code);
+    Ok(final_exit_code)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_post_hooks(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task: &TaskSpec,
+    policy_env: Option<&BTreeMap<String, String>>,
+    backend: &ResolvedExecutionBackend,
+    mode: TaskExecutionMode,
+    working_dir: &Path,
+    current_os: &str,
+    task_exit_code: i32,
+    state: &mut TaskRunState,
+) -> Result<i32, RunError> {
+    let mut hook_failure = None;
+
+    let mut run_hooks =
+        |hooks: &[String], relation: fn(String) -> TaskExecutionRelation| -> Result<(), RunError> {
+            for hook in hooks {
+                let exit_code = execute_task_with_hooks(
+                    contract,
+                    contract_path,
+                    hook,
+                    &[],
+                    policy_env,
+                    backend,
+                    mode,
+                    working_dir,
+                    current_os,
+                    relation(task_name.to_string()),
+                    state,
+                )?;
+                if exit_code != 0 && hook_failure.is_none() {
+                    hook_failure = Some(exit_code);
+                }
+            }
+            Ok(())
+        };
+
+    if task_exit_code == 0 {
+        run_hooks(&task.after_success, |parent| {
+            TaskExecutionRelation::AfterSuccess { parent }
+        })?;
+    } else {
+        run_hooks(&task.after_failure, |parent| {
+            TaskExecutionRelation::AfterFailure { parent }
+        })?;
+    }
+    run_hooks(&task.after_always, |parent| {
+        TaskExecutionRelation::AfterAlways { parent }
+    })?;
+
+    Ok(hook_failure.unwrap_or(0))
 }
 
 fn execute_task_command(
@@ -2704,8 +2856,10 @@ mod tests {
     use crate::test_support::env_mutex_lock;
 
     use super::{
-        CapturedRunOutcome, EnvResolutionSource, ExecutionOverrides, RunError, clean_execution,
-        persistent_container_name, plan_task_execution, resolve_task_env, resolve_task_env_details,
+        CapturedRunOutcome, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, RunError,
+        TaskExecutionMode, TaskExecutionRelation, TaskRunState, clean_execution,
+        contract_working_dir, current_os, execute_task_with_hooks, persistent_container_name,
+        plan_task_execution, resolve_execution_backend, resolve_task_env, resolve_task_env_details,
         run_task, run_task_captured, run_task_with_args, run_task_with_overrides,
         run_task_with_progress,
     };
@@ -3525,12 +3679,76 @@ tasks:
             outcome,
             CapturedRunOutcome {
                 executed_tasks: vec![String::from("setup")],
+                task_steps: vec![ExecutedTaskStep {
+                    name: String::from("setup"),
+                    exit_code: 0,
+                    relation: TaskExecutionRelation::Requested,
+                }],
                 exit_code: 0,
                 stdout: String::from("hello"),
                 stderr: String::from("error"),
                 target: None,
             }
         );
+    }
+
+    #[test]
+    fn execute_task_with_hooks_caches_final_exit_after_hook_failures() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+    after_success: [verify]
+  verify:
+    run: exit 42
+"#,
+        );
+
+        let backend =
+            resolve_execution_backend(&fixture.contract, "build", ExecutionOverrides::default())
+                .unwrap();
+        let mut state = TaskRunState::default();
+        let working_dir = contract_working_dir(fixture.file_path());
+        let current_os = current_os();
+
+        let first_exit = execute_task_with_hooks(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            None,
+            &backend,
+            TaskExecutionMode::Capture,
+            working_dir,
+            current_os,
+            TaskExecutionRelation::Requested,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(first_exit, 42);
+        assert_eq!(state.completed.get("build"), Some(&42));
+
+        let step_count = state.task_steps.len();
+        let second_exit = execute_task_with_hooks(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            None,
+            &backend,
+            TaskExecutionMode::Capture,
+            working_dir,
+            current_os,
+            TaskExecutionRelation::Requested,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(second_exit, 42);
+        assert_eq!(state.task_steps.len(), step_count);
     }
 
     #[test]

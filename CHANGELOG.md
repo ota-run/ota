@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added first-class task outcome hooks with `after_success`, `after_failure`, and `after_always`, made the runner treat hook failures as part of the parent task result, and updated workspace task inventory plus contract docs so the new execution edges are visible in both runtime and machine-readable surfaces
 - CI wrapper scripts `scripts/emit-ota-findings.sh` and `scripts/emit-ota-findings.ps1` now
   delegate directly to `ota annotations`, including markdown summaries and `receipt-diff`, so
   wrapper paths reuse the canonical CLI renderers instead of maintaining duplicate formatting;

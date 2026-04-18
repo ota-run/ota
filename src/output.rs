@@ -597,6 +597,9 @@ pub struct WorkspaceTaskSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
     pub depends_on: Vec<String>,
+    pub after_success: Vec<String>,
+    pub after_failure: Vec<String>,
+    pub after_always: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1677,6 +1680,9 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_variant_os: Option<&'a str>,
     pub depends_on: &'a [String],
+    pub after_success: &'a [String],
+    pub after_failure: &'a [String],
+    pub after_always: &'a [String],
     pub safe_for_agent: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub variants: Vec<TaskVariantView<'a>>,
@@ -1699,6 +1705,9 @@ impl<'a> TaskSummary<'a> {
             script: (execution.kind == "script").then_some(execution.body),
             selected_variant_os: execution.os,
             depends_on: &task.depends_on,
+            after_success: &task.after_success,
+            after_failure: &task.after_failure,
+            after_always: &task.after_always,
             safe_for_agent: task.safe_for_agent,
             variants: task
                 .variants

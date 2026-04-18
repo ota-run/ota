@@ -93,13 +93,14 @@ use crate::provisioning::{
     ProvisioningOutputMode, apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, EnvResolutionSource, ExecutionOverrides, ResolvedEnvValue,
-    ResolvedExecutionBackend, RunError, StaleContainerOwnership, clean_execution,
-    clean_stale_execution, effective_execution, env_resolution_source_label,
-    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value,
-    resolve_execution_backend, resolve_task_env_details, resolve_task_env_details_with_policy,
-    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
-    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
+    DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
+    ResolvedEnvValue, ResolvedExecutionBackend, RunError, StaleContainerOwnership,
+    TaskExecutionRelation, clean_execution, clean_stale_execution, effective_execution,
+    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
+    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
+    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
+    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
+    run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskSpec};
 use crate::update;
@@ -7393,6 +7394,9 @@ pub fn workspace_tasks(
                                 script: (execution.kind == "script")
                                     .then(|| execution.body.to_string()),
                                 depends_on: task.depends_on.clone(),
+                                after_success: task.after_success.clone(),
+                                after_failure: task.after_failure.clone(),
+                                after_always: task.after_always.clone(),
                             }
                         })
                         .collect();
@@ -13400,6 +13404,21 @@ fn render_tasks_text(
         ));
         output.push_str(&format!(
             "\n  {} {}",
+            paint_key("After Success:"),
+            render_task_relationships(task.after_success)
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("After Failure:"),
+            render_task_relationships(task.after_failure)
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("After Always:"),
+            render_task_relationships(task.after_always)
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
@@ -13447,6 +13466,14 @@ fn render_tasks_text(
     }
 
     output
+}
+
+fn render_task_relationships(values: &[String]) -> String {
+    if values.is_empty() {
+        String::from("-")
+    } else {
+        values.join(",")
+    }
 }
 
 fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
@@ -17168,7 +17195,7 @@ mod tests {
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningTargetKind,
     };
     use crate::provisioning::apply_provisioning_request;
-    use crate::runner::ExecutionOverrides;
+    use crate::runner::{ExecutedTaskStep, ExecutionOverrides, TaskExecutionRelation};
     use crate::schema::Backend;
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
@@ -18075,7 +18102,11 @@ tasks:
             ExecutionOverrides::default(),
             "build",
             None,
-            &["build".to_string()],
+            &[ExecutedTaskStep {
+                name: String::from("build"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+            }],
             0,
             true,
             Some(String::from("container")),
@@ -19303,7 +19334,11 @@ tasks:
             ExecutionOverrides::default(),
             "test",
             None,
-            &["test".to_string()],
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+            }],
             0,
             true,
             None,
@@ -19350,7 +19385,11 @@ tasks:
             ExecutionOverrides::default(),
             "fail",
             None,
-            &["fail".to_string()],
+            &[ExecutedTaskStep {
+                name: String::from("fail"),
+                exit_code: 127,
+                relation: TaskExecutionRelation::Requested,
+            }],
             127,
             false,
             Some(String::from("container")),
@@ -21072,7 +21111,7 @@ fn run_single_contract_target_streaming(
                 overrides,
                 task_name,
                 member,
-                &outcome.executed_tasks,
+                &outcome.task_steps,
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -21111,7 +21150,7 @@ fn run_single_contract_target_streaming(
                     overrides,
                     task_name,
                     member,
-                    &outcome.executed_tasks,
+                    &outcome.task_steps,
                     outcome.exit_code,
                     false,
                     outcome.target.clone(),
@@ -21134,7 +21173,7 @@ fn run_single_contract_target_streaming(
                     overrides,
                     task_name,
                     member,
-                    &outcome.executed_tasks,
+                    &outcome.task_steps,
                     outcome.exit_code,
                     false,
                     outcome.target.clone(),
@@ -21217,7 +21256,7 @@ fn run_single_contract_target_captured(
                 overrides,
                 task_name,
                 member,
-                &outcome.executed_tasks,
+                &outcome.task_steps,
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
@@ -21251,7 +21290,7 @@ fn run_single_contract_target_captured(
                 overrides,
                 task_name,
                 member,
-                &outcome.executed_tasks,
+                &outcome.task_steps,
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
@@ -21563,8 +21602,8 @@ fn run_execution_receipt(
     overrides: ExecutionOverrides,
     task_name: &str,
     _member: Option<&str>,
-    executed_tasks: &[String],
-    exit_code: i32,
+    executed_steps: &[ExecutedTaskStep],
+    _exit_code: i32,
     ok: bool,
     target: Option<String>,
     next: Option<String>,
@@ -21575,26 +21614,24 @@ fn run_execution_receipt(
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
     let env_details =
         resolve_task_env_details(contract, contract_path, task_env).unwrap_or_default();
-    let step_detail = if executed_tasks.is_empty() {
-        None
-    } else {
-        Some(format!("executed tasks: {}", executed_tasks.join(", ")))
-    };
-    let steps = if executed_tasks.is_empty() {
-        Vec::new()
-    } else {
-        vec![execution_receipt_step(
-            1,
-            task_name.to_string(),
-            if ok {
-                "READY".to_string()
-            } else {
-                "FAILED".to_string()
-            },
-            step_detail,
-            Some(exit_code),
-        )]
-    };
+    let steps = executed_steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| {
+            execution_receipt_step(
+                index + 1,
+                step.name.clone(),
+                if step.exit_code == 0 {
+                    "READY".to_string()
+                } else {
+                    "FAILED".to_string()
+                },
+                execution_receipt_step_detail(step, task_name),
+                Some(step.exit_code),
+            )
+        })
+        .collect::<Vec<_>>();
+    let step_count = steps.len();
 
     ExecutionReceipt {
         ok,
@@ -21627,12 +21664,34 @@ fn run_execution_receipt(
             error_count: if ok { 0 } else { 1 },
             warn_count: 0,
             info_count: 0,
-            step_count: if executed_tasks.is_empty() { 0 } else { 1 },
+            step_count,
             repo_count: None,
             ready_count: None,
             not_ready_count: None,
         },
         next,
+    }
+}
+
+fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) -> Option<String> {
+    match &step.relation {
+        TaskExecutionRelation::Requested => {
+            if step.name == requested_task {
+                Some(String::from("requested task"))
+            } else {
+                None
+            }
+        }
+        TaskExecutionRelation::DependsOn { parent } => Some(format!("depends_on for `{parent}`")),
+        TaskExecutionRelation::AfterSuccess { parent } => {
+            Some(format!("after_success for `{parent}`"))
+        }
+        TaskExecutionRelation::AfterFailure { parent } => {
+            Some(format!("after_failure for `{parent}`"))
+        }
+        TaskExecutionRelation::AfterAlways { parent } => {
+            Some(format!("after_always for `{parent}`"))
+        }
     }
 }
 
@@ -22527,6 +22586,15 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
+            if !task.after_success.is_empty() {
+                stdout.push_str(&format!(" after_success={}", task.after_success.join(",")));
+            }
+            if !task.after_failure.is_empty() {
+                stdout.push_str(&format!(" after_failure={}", task.after_failure.join(",")));
+            }
+            if !task.after_always.is_empty() {
+                stdout.push_str(&format!(" after_always={}", task.after_always.join(",")));
+            }
             if let Some(description) = task.description.as_deref() {
                 stdout.push_str(&format!(
                     "\n  {} {}",
@@ -22583,6 +22651,27 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 } else {
                     task.depends_on.join(",")
                 },
+                [
+                    if task.after_success.is_empty() {
+                        None
+                    } else {
+                        Some(format!("success={}", task.after_success.join(",")))
+                    },
+                    if task.after_failure.is_empty() {
+                        None
+                    } else {
+                        Some(format!("failure={}", task.after_failure.join(",")))
+                    },
+                    if task.after_always.is_empty() {
+                        None
+                    } else {
+                        Some(format!("always={}", task.after_always.join(",")))
+                    },
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" "),
                 task.run
                     .clone()
                     .or(task.script.clone())
@@ -22598,7 +22687,15 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
     append_markdown_table(
         &mut stdout,
         "Tasks",
-        &["Repo", "Task", "Kind", "Depends On", "Command", "Use"],
+        &[
+            "Repo",
+            "Task",
+            "Kind",
+            "Depends On",
+            "Hooks",
+            "Command",
+            "Use",
+        ],
         task_rows,
     );
 
