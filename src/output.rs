@@ -922,9 +922,26 @@ pub struct ReceiptDiffCounts {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReceiptDiffComparison {
+    pub baseline_identity_label: String,
+    pub current_identity_label: String,
+    pub identity_changed: bool,
+    pub readiness_change: ReceiptDiffReadinessChange,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffReadinessChange {
+    Unchanged,
+    Improved,
+    Regressed,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReceiptDiffSummary {
     pub baseline_ok: bool,
     pub current_ok: bool,
+    pub comparison: ReceiptDiffComparison,
     pub introduced: ReceiptDiffCounts,
     pub resolved: ReceiptDiffCounts,
     pub unchanged: ReceiptDiffCounts,
@@ -935,6 +952,14 @@ pub struct ReceiptDiffGate {
     pub rule: String,
     pub passed: bool,
     pub new_blocker_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_next: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_provenance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_provenance_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

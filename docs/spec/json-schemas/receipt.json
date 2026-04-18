@@ -249,10 +249,45 @@
         "summary": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["baseline_ok", "current_ok", "introduced", "resolved", "unchanged"],
+          "required": [
+            "baseline_ok",
+            "current_ok",
+            "comparison",
+            "introduced",
+            "resolved",
+            "unchanged"
+          ],
           "properties": {
             "baseline_ok": { "type": "boolean" },
             "current_ok": { "type": "boolean" },
+            "comparison": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "baseline_identity_label",
+                "current_identity_label",
+                "identity_changed",
+                "readiness_change"
+              ],
+              "properties": {
+                "baseline_identity_label": {
+                  "type": "string"
+                },
+                "current_identity_label": {
+                  "type": "string"
+                },
+                "identity_changed": {
+                  "type": "boolean"
+                },
+                "readiness_change": {
+                  "enum": [
+                    "unchanged",
+                    "improved",
+                    "regressed"
+                  ]
+                }
+              }
+            },
             "introduced": {
               "type": "object",
               "additionalProperties": false,
@@ -295,7 +330,22 @@
           "properties": {
             "rule": { "const": "fail_on_new_blockers" },
             "passed": { "type": "boolean" },
-            "new_blocker_count": { "type": "integer", "minimum": 0 }
+            "new_blocker_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blocking_summary": {
+              "type": "string"
+            },
+            "blocking_next": {
+              "type": "string"
+            },
+            "blocking_provenance": {
+              "type": "string"
+            },
+            "blocking_provenance_key": {
+              "type": "string"
+            }
           }
         },
         "introduced": {

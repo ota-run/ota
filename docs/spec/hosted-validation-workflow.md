@@ -293,8 +293,9 @@ editor integrations.
 Portable adapter:
 
 `ota annotations` is the canonical JSON-to-CI adapter. It turns ota JSON into either plain CI log
-lines or GitHub Actions annotations. Use `--format plain` when you want a provider-neutral output
-stream, or `--format github` when the CI platform understands annotation syntax.
+lines, GitHub Actions annotations, or compact markdown summaries. Use `--format plain` when you
+want a provider-neutral output stream, `--format github` when the CI platform understands
+annotation syntax, or `--format markdown` when you need a step summary or pull-request comment.
 
 For repo-local usage, the canonical entrypoint is `ota run doctor-annotations`, which now shells
 out to `ota annotations` under the hood with the `--render-format` input set to `plain` or
@@ -309,7 +310,15 @@ set -euo pipefail
 ota doctor --json | ota annotations --mode doctor --format github --input -
 
 ota workspace doctor --json | ota annotations --mode workspace-doctor --format github --input -
+
+ota doctor --json | ota annotations --mode doctor --format markdown --input - >> "$GITHUB_STEP_SUMMARY"
+
+ota receipt --json --baseline .ota/receipts/latest.json . \
+  | ota annotations --mode receipt-diff --format markdown --input - >> "$GITHUB_STEP_SUMMARY"
 ```
+
+Any GitHub-specific wrapper should reuse those same `ota annotations` entrypoints instead of
+rebuilding summary or comment text from raw JSON fields.
 
 ## Editor and hosted validation overlap
 

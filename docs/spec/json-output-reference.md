@@ -1808,6 +1808,12 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
   "summary": {
     "baseline_ok": false,
     "current_ok": false,
+    "comparison": {
+      "baseline_identity_label": "ota.yaml",
+      "current_identity_label": "ota.yaml",
+      "identity_changed": false,
+      "readiness_change": "unchanged"
+    },
     "introduced": {
       "count": 1,
       "error_count": 1,
@@ -1830,7 +1836,11 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
   "gate": {
     "rule": "fail_on_new_blockers",
     "passed": false,
-    "new_blocker_count": 1
+    "new_blocker_count": 1,
+    "blocking_summary": "Missing environment variable: OTA_BASELINE_REQUIRED",
+    "blocking_next": "set `OTA_BASELINE_REQUIRED`, then rerun `ota doctor`",
+    "blocking_provenance": "repo contract",
+    "blocking_provenance_key": "repo_contract"
   },
   "introduced": [
     {
@@ -1874,10 +1884,12 @@ Current receipt diff JSON fields:
 - `current.summary`
 - `summary.baseline_ok`
 - `summary.current_ok`
+- additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed` and `readiness_change` drift signals
 - `summary.introduced`
 - `summary.resolved`
 - `summary.unchanged`
 - `gate.rule`, `gate.passed`, and `gate.new_blocker_count` when `--fail-on-new-blockers` is active
+- additive `gate.blocking_summary`, `gate.blocking_next`, and provenance fields when the gate is blocked by at least one newly introduced error
 - `introduced[]`
 - `resolved[]`
 - `unchanged[]`

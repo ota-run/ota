@@ -28,13 +28,15 @@ format="plain"
 mode=""
 title=""
 input=""
+ota_bin="${OTA_BIN:-}"
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
 usage() {
   cat <<'EOF'
-usage: emit-ota-findings.sh --mode doctor|workspace-doctor [--format plain|github] [--title TEXT] --input FILE
+usage: emit-ota-findings.sh --mode doctor|workspace-doctor|receipt-diff [--format plain|github|markdown] [--title TEXT] [--ota-bin PATH] --input FILE
 
-Reads ota doctor JSON and emits portable finding lines. Use --format github for GitHub Actions
-annotations, or --format plain for CI-agnostic log output.
+Delegates to `ota annotations` so wrapper paths reuse the canonical CI and markdown renderers.
 EOF
 }
 
@@ -54,6 +56,10 @@ while [ $# -gt 0 ]; do
       ;;
     --input)
       input="${2:-}"
+      shift 2
+      ;;
+    --ota-bin)
+      ota_bin="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -84,6 +90,7 @@ if [ -z "$title" ]; then
   case "$mode" in
     doctor) title='ota doctor' ;;
     workspace-doctor) title='ota workspace doctor' ;;
+    receipt-diff) title='ota receipt diff' ;;
     *)
       printf 'error: unsupported mode: %s\n' "$mode" >&2
       exit 2
@@ -91,90 +98,29 @@ if [ -z "$title" ]; then
   esac
 fi
 
-emit_line() {
-  printf '%s\n' "$1"
-}
-
-emit_finding() {
-  severity="$1"
-  heading="$2"
-  body="$3"
-  next="$4"
-
-  case "$format" in
-    github)
-      if [ "$severity" = "error" ]; then
-        emit_line "::error title=${heading}::${body} | ${next}"
-      else
-        emit_line "::warning title=${heading}::${body} | ${next}"
-      fi
-      ;;
-    plain)
-      if [ "$severity" = "error" ]; then
-        emit_line "ERROR: ${heading}: ${body} | ${next}"
-      else
-        emit_line "WARNING: ${heading}: ${body} | ${next}"
-      fi
-      ;;
-    *)
-      printf 'error: unsupported format: %s\n' "$format" >&2
-      exit 2
-      ;;
-  esac
-}
-
-emit_primary_blocker() {
-  blocker_title="$1"
-  blocker_body="$2"
-  blocker_next="$3"
-
-  case "$format" in
-    github)
-      emit_line "::notice title=${blocker_title}::${blocker_body} | ${blocker_next}"
-      ;;
-    plain)
-      emit_line "NOTICE: ${blocker_title}: ${blocker_body} | ${blocker_next}"
-      ;;
-    *)
-      printf 'error: unsupported format: %s\n' "$format" >&2
-      exit 2
-      ;;
-  esac
-}
-
-case "$mode" in
-  doctor)
-    primary_blocker="$(jq -r '.summary.primary_blocker? | select(. != null) | [.summary, .next] | @tsv' "$input" | head -n 1 || true)"
-    if [ -n "$primary_blocker" ]; then
-      IFS="$(printf '\t')" read -r blocker_summary blocker_next <<EOF
-$primary_blocker
-EOF
-      emit_primary_blocker "${title} primary blocker" "$blocker_summary" "$blocker_next"
+if [ -z "$ota_bin" ]; then
+  for candidate in \
+    "$repo_root/target/debug/ota" \
+    "$repo_root/target/release/ota"
+  do
+    if [ -x "$candidate" ]; then
+      ota_bin="$candidate"
+      break
     fi
+  done
+fi
 
-    jq -r '.findings[] | [.severity, .summary, .next] | @tsv' "$input" \
-      | while IFS="$(printf '\t')" read -r severity summary next; do
-          [ -n "$severity" ] || continue
-          emit_finding "$severity" "${title} finding" "$summary" "$next"
-        done
-    ;;
-  workspace-doctor)
-    primary_blocker="$(jq -r '.summary.primary_blocker? | select(. != null) | [.repo, .summary, .next] | @tsv' "$input" | head -n 1 || true)"
-    if [ -n "$primary_blocker" ]; then
-      IFS="$(printf '\t')" read -r blocker_repo blocker_summary blocker_next <<EOF
-$primary_blocker
-EOF
-      emit_primary_blocker "${title} primary blocker [${blocker_repo}]" "$blocker_summary" "$blocker_next"
-    fi
+if [ -z "$ota_bin" ] && [ -f "$repo_root/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+  exec cargo run --quiet --manifest-path "$repo_root/Cargo.toml" -- annotations --mode "$mode" --format "$format" --title "$title" --input "$input"
+fi
 
-    jq -r '.repos[] | .name as $name | .path as $path | .findings[]? | [$name, $path, .severity, .summary, .next] | @tsv' "$input" \
-      | while IFS="$(printf '\t')" read -r repo path severity summary next; do
-          [ -n "$severity" ] || continue
-          emit_finding "$severity" "${title} finding [${repo}]" "${path}: ${summary}" "$next"
-        done
-    ;;
-  *)
-    printf 'error: unsupported mode: %s\n' "$mode" >&2
-    exit 2
-    ;;
-esac
+if [ -z "$ota_bin" ] && command -v ota >/dev/null 2>&1; then
+  ota_bin="ota"
+fi
+
+if [ -z "$ota_bin" ]; then
+  printf 'error: could not resolve an ota binary; set OTA_BIN, pass --ota-bin, build the checkout, or install ota on PATH\n' >&2
+  exit 2
+fi
+
+exec "$ota_bin" annotations --mode "$mode" --format "$format" --title "$title" --input "$input"

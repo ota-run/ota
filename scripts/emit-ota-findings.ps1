@@ -24,110 +24,81 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("doctor", "workspace-doctor")]
+    [ValidateSet("doctor", "workspace-doctor", "receipt-diff")]
     [string]$Mode,
 
     [Parameter(Mandatory = $true)]
-    [ValidateSet("plain", "github")]
+    [ValidateSet("plain", "github", "markdown")]
     [string]$Format,
 
     [Alias("Input")]
     [Parameter(Mandatory = $true)]
     [string]$JsonPath,
 
-    [string]$Title
+    [string]$Title,
+
+    [string]$OtaBin = $env:OTA_BIN
 )
 
 $ErrorActionPreference = "Stop"
 
-function Escape-GhaValue {
-    param([string]$Value)
-    if ($null -eq $Value) {
-        return ""
-    }
-    return $Value.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
-}
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-function Write-FindingLine {
-    param(
-        [string]$Severity,
-        [string]$Heading,
-        [string]$Body,
-        [string]$Next
-    )
-
-    $safeHeading = Escape-GhaValue $Heading
-    $safeBody = Escape-GhaValue $Body
-    $safeNext = Escape-GhaValue $Next
-
-    switch ($Format) {
-        "github" {
-            if ($Severity -eq "error") {
-                Write-Host "::error title=$safeHeading::$safeBody | $safeNext"
-            } else {
-                Write-Host "::warning title=$safeHeading::$safeBody | $safeNext"
-            }
-        }
-        "plain" {
-            if ($Severity -eq "error") {
-                Write-Host "ERROR: ${Heading}: ${Body} | ${Next}"
-            } else {
-                Write-Host "WARNING: ${Heading}: ${Body} | ${Next}"
-            }
+if ([string]::IsNullOrWhiteSpace($OtaBin)) {
+    foreach ($candidate in @(
+        (Join-Path $repoRoot "target/debug/ota.exe"),
+        (Join-Path $repoRoot "target/debug/ota"),
+        (Join-Path $repoRoot "target/release/ota.exe"),
+        (Join-Path $repoRoot "target/release/ota")
+    )) {
+        if (Test-Path $candidate) {
+            $OtaBin = $candidate
+            break
         }
     }
 }
 
-function Write-PrimaryBlockerLine {
-    param(
-        [string]$Heading,
-        [string]$Body,
-        [string]$Next
-    )
-
-    $safeHeading = Escape-GhaValue $Heading
-    $safeBody = Escape-GhaValue $Body
-    $safeNext = Escape-GhaValue $Next
-
-    switch ($Format) {
-        "github" {
-            Write-Host "::notice title=$safeHeading::$safeBody | $safeNext"
-        }
-        "plain" {
-            Write-Host "NOTICE: ${Heading}: ${Body} | ${Next}"
-        }
+$cargoBin = $null
+if ([string]::IsNullOrWhiteSpace($OtaBin) -and (Test-Path (Join-Path $repoRoot "Cargo.toml"))) {
+    $cargo = Get-Command cargo -ErrorAction SilentlyContinue
+    if ($cargo) {
+        $cargoBin = $cargo.Source
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($OtaBin) -and -not $cargoBin) {
+    $ota = Get-Command ota -ErrorAction SilentlyContinue
+    if ($ota) {
+        $OtaBin = $ota.Source
+    }
+}
+
+if ([string]::IsNullOrWhiteSpace($OtaBin) -and -not $cargoBin) {
+    throw "could not resolve an ota binary; set OTA_BIN, pass -OtaBin, build the checkout, or install ota on PATH"
 }
 
 if ([string]::IsNullOrWhiteSpace($Title)) {
-    $Title = if ($Mode -eq "doctor") { "ota doctor" } else { "ota workspace doctor" }
+    switch ($Mode)
+    {
+        "doctor" {
+            $Title = "ota doctor"
+        }
+        "workspace-doctor" {
+            $Title = "ota workspace doctor"
+        }
+        "receipt-diff" {
+            $Title = "ota receipt diff"
+        }
+    }
 }
 
-$json = Get-Content -Raw -LiteralPath $JsonPath | ConvertFrom-Json
+if ($cargoBin) {
+    & $cargoBin run --quiet --manifest-path (Join-Path $repoRoot "Cargo.toml") -- annotations --mode $Mode --format $Format --title $Title --input $JsonPath
+} else {
+    & $OtaBin annotations --mode $Mode --format $Format --title $Title --input $JsonPath
+}
 
-switch ($Mode) {
-    "doctor" {
-        if ($json.summary.primary_blocker) {
-            Write-PrimaryBlockerLine -Heading "$Title primary blocker" -Body $json.summary.primary_blocker.summary -Next $json.summary.primary_blocker.next
-        }
-
-        foreach ($finding in @($json.findings)) {
-            if ($null -eq $finding) { continue }
-            Write-FindingLine -Severity $finding.severity -Heading "$Title finding" -Body $finding.summary -Next $finding.next
-        }
-    }
-    "workspace-doctor" {
-        if ($json.summary.primary_blocker) {
-            $repo = $json.summary.primary_blocker.repo
-            Write-PrimaryBlockerLine -Heading "$Title primary blocker [$repo]" -Body $json.summary.primary_blocker.summary -Next $json.summary.primary_blocker.next
-        }
-
-        foreach ($repo in @($json.repos)) {
-            if ($null -eq $repo) { continue }
-            foreach ($finding in @($repo.findings)) {
-                if ($null -eq $finding) { continue }
-                Write-FindingLine -Severity $finding.severity -Heading "$Title finding [$($repo.name)]" -Body "$($repo.path): $($finding.summary)" -Next $finding.next
-            }
-        }
-    }
+if ($LASTEXITCODE -ne 0)
+{
+    exit $LASTEXITCODE
 }

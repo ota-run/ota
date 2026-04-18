@@ -36,8 +36,8 @@ The GitHub Action keeps the boundary thin and honest:
 
 - ota still owns diagnosis and receipt truth
 - GitHub Actions still owns workflow scheduling and permissions
-- the action only translates ota JSON into step summaries, annotations, pull-request comments,
-  and uploaded artifacts
+- the action should reuse `ota annotations --format markdown` for summaries/comments,
+  `ota annotations --format github` for line annotations, and upload the captured ota artifacts
 
 It is not a second diagnosis engine.
 
@@ -94,10 +94,27 @@ Current `v1` behavior:
 
 - runs `ota receipt --json --archive` or `ota doctor --json`
 - auto-installs ota by default when the runner does not already have it
-- writes a GitHub step summary
-- emits GitHub annotations from findings
+- writes a GitHub step summary through `ota annotations --format markdown`
+- emits GitHub annotations through `ota annotations --format github`
 - optionally creates or updates a sticky pull-request comment
 - uploads the captured JSON output and any archived receipt file as workflow artifacts
+
+## Canonical renderer reuse
+
+The GitHub wrapper should not maintain its own summary or annotation phrasing. Reuse the CLI
+adapters directly:
+
+- `ota annotations --mode doctor --format markdown` for repo doctor step summaries and PR comments
+- `ota annotations --mode workspace-doctor --format markdown` for workspace doctor summaries and
+  PR comments
+- `ota annotations --mode receipt-diff --format markdown` for receipt baseline gate summaries and
+  PR comments
+- `ota annotations --mode doctor --format github` or
+  `ota annotations --mode workspace-doctor --format github` for line annotations
+
+That keeps local CLI output, CI summaries, and pull-request comments on one canonical rendering
+path instead of re-assembling headline, blocker, provenance, and next-step text inside the
+wrapper.
 
 ## Choose the command
 
