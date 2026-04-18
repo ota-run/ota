@@ -703,6 +703,7 @@ Task input semantics:
 - task inputs override repo-level env only for the task they belong to
 - task dependencies do not inherit the parent task’s declared inputs
 - if every declared input has a default, the task can be run with no input flags
+- task input names must not collide with reserved ota CLI flags such as `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
 
 Example:
 
@@ -717,7 +718,7 @@ tasks:
       base_url:
         description: API base URL for the live suite
         default: http://localhost:8080
-      mode:
+      suite_mode:
         description: Run mode for the API suite
         default: standard
         allowed:
@@ -740,7 +741,7 @@ Run it as:
 
 ```bash
 ota run api-automation-tests
-ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run api-automation-tests --base-url http://localhost:8080 --suite-mode contract-drift
 ota run version:bump --version minor
 ota run version:bump --version 0.2.0
 ota run version:bump --version major
@@ -757,6 +758,7 @@ Input fields:
 Input rules:
 
 - input names must use lowercase snake_case
+- input names must not collide with reserved ota CLI flags such as `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
 - `default` must be non-empty when present
 - `allowed` values must be non-empty
 - when `allowed` is declared, `default` must be one of the allowed values

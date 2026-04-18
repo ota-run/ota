@@ -418,6 +418,7 @@ pub struct ExecutedTaskStep {
     pub name: String,
     pub exit_code: i32,
     pub relation: TaskExecutionRelation,
+    pub generation: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1222,6 +1223,8 @@ struct TaskCommandOutput {
 #[derive(Debug, Default)]
 struct TaskRunState {
     completed: BTreeMap<String, i32>,
+    completed_by_generation: BTreeMap<(String, usize), i32>,
+    next_generation: usize,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -1278,6 +1281,7 @@ fn run_task_internal(
         working_dir,
         current_os,
         TaskExecutionRelation::Requested,
+        0,
         &mut state,
     )?;
 
@@ -1307,9 +1311,13 @@ fn execute_task_with_hooks(
     working_dir: &Path,
     current_os: &str,
     relation: TaskExecutionRelation,
+    generation: usize,
     state: &mut TaskRunState,
 ) -> Result<i32, RunError> {
-    if let Some(exit_code) = state.completed.get(task_name) {
+    if let Some(exit_code) = state
+        .completed_by_generation
+        .get(&(task_name.to_string(), generation))
+    {
         return Ok(*exit_code);
     }
 
@@ -1317,6 +1325,11 @@ fn execute_task_with_hooks(
         .tasks
         .get(task_name)
         .expect("validated task execution should only reference known tasks");
+    let input_overrides = if matches!(relation, TaskExecutionRelation::Requested) {
+        resolve_task_inputs(task_name, task, input_args)?
+    } else {
+        BTreeMap::new()
+    };
 
     for dependency in &task.depends_on {
         let dependency_exit = execute_task_with_hooks(
@@ -1332,6 +1345,7 @@ fn execute_task_with_hooks(
             TaskExecutionRelation::DependsOn {
                 parent: task_name.to_string(),
             },
+            generation,
             state,
         )?;
         if dependency_exit != 0 {
@@ -1376,11 +1390,6 @@ fn execute_task_with_hooks(
     if path_export.is_some() {
         env_overrides.remove("PATH");
     }
-    let input_overrides = if matches!(relation, TaskExecutionRelation::Requested) {
-        resolve_task_inputs(task_name, task, input_args)?
-    } else {
-        BTreeMap::new()
-    };
     let mut combined_env = env_overrides;
     combined_env.extend(input_overrides);
     let command_output = execute_task_command(
@@ -1403,6 +1412,7 @@ fn execute_task_with_hooks(
         name: task_name.to_string(),
         exit_code: command_output.exit_code,
         relation,
+        generation,
     });
 
     let hook_exit_code = execute_post_hooks(
@@ -1415,6 +1425,7 @@ fn execute_task_with_hooks(
         mode,
         working_dir,
         current_os,
+        generation,
         command_output.exit_code,
         state,
     )?;
@@ -1429,6 +1440,9 @@ fn execute_task_with_hooks(
     state
         .completed
         .insert(task_name.to_string(), final_exit_code);
+    state
+        .completed_by_generation
+        .insert((task_name.to_string(), generation), final_exit_code);
     Ok(final_exit_code)
 }
 
@@ -1443,48 +1457,117 @@ fn execute_post_hooks(
     mode: TaskExecutionMode,
     working_dir: &Path,
     current_os: &str,
+    generation: usize,
     task_exit_code: i32,
     state: &mut TaskRunState,
 ) -> Result<i32, RunError> {
     let mut hook_failure = None;
 
-    let mut run_hooks =
-        |hooks: &[String], relation: fn(String) -> TaskExecutionRelation| -> Result<(), RunError> {
-            for hook in hooks {
-                let exit_code = execute_task_with_hooks(
-                    contract,
-                    contract_path,
-                    hook,
-                    &[],
-                    policy_env,
-                    backend,
-                    mode,
-                    working_dir,
-                    current_os,
-                    relation(task_name.to_string()),
-                    state,
-                )?;
-                if exit_code != 0 && hook_failure.is_none() {
-                    hook_failure = Some(exit_code);
-                }
-            }
-            Ok(())
-        };
-
     if task_exit_code == 0 {
-        run_hooks(&task.after_success, |parent| {
-            TaskExecutionRelation::AfterSuccess { parent }
-        })?;
+        run_hook_tasks(
+            contract,
+            contract_path,
+            &task.after_success,
+            task_name,
+            policy_env,
+            backend,
+            mode,
+            working_dir,
+            current_os,
+            generation,
+            |parent| TaskExecutionRelation::AfterSuccess { parent },
+            state,
+            &mut hook_failure,
+        )?;
     } else {
-        run_hooks(&task.after_failure, |parent| {
-            TaskExecutionRelation::AfterFailure { parent }
-        })?;
+        run_hook_tasks(
+            contract,
+            contract_path,
+            &task.after_failure,
+            task_name,
+            policy_env,
+            backend,
+            mode,
+            working_dir,
+            current_os,
+            generation,
+            |parent| TaskExecutionRelation::AfterFailure { parent },
+            state,
+            &mut hook_failure,
+        )?;
     }
-    run_hooks(&task.after_always, |parent| {
-        TaskExecutionRelation::AfterAlways { parent }
-    })?;
+    run_hook_tasks(
+        contract,
+        contract_path,
+        &task.after_always,
+        task_name,
+        policy_env,
+        backend,
+        mode,
+        working_dir,
+        current_os,
+        generation,
+        |parent| TaskExecutionRelation::AfterAlways { parent },
+        state,
+        &mut hook_failure,
+    )?;
 
     Ok(hook_failure.unwrap_or(0))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_hook_tasks(
+    contract: &Contract,
+    contract_path: &Path,
+    hooks: &[String],
+    task_name: &str,
+    policy_env: Option<&BTreeMap<String, String>>,
+    backend: &ResolvedExecutionBackend,
+    mode: TaskExecutionMode,
+    working_dir: &Path,
+    current_os: &str,
+    generation: usize,
+    relation: fn(String) -> TaskExecutionRelation,
+    state: &mut TaskRunState,
+    hook_failure: &mut Option<i32>,
+) -> Result<(), RunError> {
+    for hook in hooks {
+        let hook_generation = hook_generation_for_task(hook, generation, state);
+        let exit_code = execute_task_with_hooks(
+            contract,
+            contract_path,
+            hook,
+            &[],
+            policy_env,
+            backend,
+            mode,
+            working_dir,
+            current_os,
+            relation(task_name.to_string()),
+            hook_generation,
+            state,
+        )?;
+        if exit_code != 0 && hook_failure.is_none() {
+            *hook_failure = Some(exit_code);
+        }
+    }
+    Ok(())
+}
+
+fn hook_generation_for_task(
+    task_name: &str,
+    current_generation: usize,
+    state: &mut TaskRunState,
+) -> usize {
+    if state
+        .completed_by_generation
+        .contains_key(&(task_name.to_string(), current_generation))
+    {
+        state.next_generation += 1;
+        state.next_generation
+    } else {
+        current_generation
+    }
 }
 
 fn execute_task_command(
@@ -1605,76 +1688,74 @@ fn resolve_task_inputs(
     input_args: &[String],
 ) -> Result<BTreeMap<String, String>, RunError> {
     let mut provided = BTreeMap::new();
-    let mut index = 0;
+    if let Some(input_name) = single_task_input_name(task)
+        && let Some(value) = single_task_input_shorthand_value(input_args)
+    {
+        insert_task_input_value(
+            task_name,
+            task,
+            &mut provided,
+            input_name.to_string(),
+            value,
+        )?;
+    } else {
+        let mut index = 0;
 
-    while index < input_args.len() {
-        let token = &input_args[index];
-        if token == "--" {
-            index += 1;
-            continue;
-        }
-        if !token.starts_with("--") || token.len() <= 2 {
-            return Err(RunError::InvalidTaskInputSyntax {
-                task: task_name.to_string(),
-                input: token.trim_start_matches('-').to_string(),
-                flag: token.clone(),
-            });
-        }
-
-        let remainder = &token[2..];
-        let (flag, inline_value) = if let Some((flag, value)) = remainder.split_once('=') {
-            (flag, Some(value.to_string()))
-        } else {
-            (remainder, None)
-        };
-
-        if flag.is_empty() {
-            return Err(RunError::InvalidTaskInputSyntax {
-                task: task_name.to_string(),
-                input: String::new(),
-                flag: token.clone(),
-            });
-        }
-
-        let input_name = flag.replace('-', "_");
-        let Some(spec) = task.inputs.get(&input_name) else {
-            return Err(RunError::UnknownTaskInput {
-                task: task_name.to_string(),
-                input: input_name,
-            });
-        };
-
-        let value = match inline_value {
-            Some(value) => value,
-            None => {
+        while index < input_args.len() {
+            let token = &input_args[index];
+            if token == "--" {
                 index += 1;
-                let Some(next) = input_args.get(index) else {
-                    return Err(RunError::MissingTaskInputValue {
-                        task: task_name.to_string(),
-                        input: input_name,
-                    });
-                };
-                next.clone()
+                continue;
             }
-        };
+            if !token.starts_with("--") || token.len() <= 2 {
+                return Err(RunError::InvalidTaskInputSyntax {
+                    task: task_name.to_string(),
+                    input: token.trim_start_matches('-').to_string(),
+                    flag: token.clone(),
+                });
+            }
 
-        if !spec.allowed.is_empty() && !spec.allowed.iter().any(|allowed| allowed == &value) {
-            return Err(RunError::InvalidTaskInputValue {
-                task: task_name.to_string(),
-                input: input_name,
-                value,
-                allowed: spec.allowed.join(", "),
-            });
+            let remainder = &token[2..];
+            let (flag, inline_value) = if let Some((flag, value)) = remainder.split_once('=') {
+                (flag, Some(value.to_string()))
+            } else {
+                (remainder, None)
+            };
+
+            if flag.is_empty() {
+                return Err(RunError::InvalidTaskInputSyntax {
+                    task: task_name.to_string(),
+                    input: String::new(),
+                    flag: token.clone(),
+                });
+            }
+
+            let input_name = flag.replace('-', "_");
+            let Some(_spec) = task.inputs.get(&input_name) else {
+                return Err(RunError::UnknownTaskInput {
+                    task: task_name.to_string(),
+                    input: input_name,
+                });
+            };
+
+            let value = match inline_value {
+                Some(value) => value,
+                None => {
+                    index += 1;
+                    let Some(next) = input_args.get(index) else {
+                        return Err(RunError::MissingTaskInputValue {
+                            task: task_name.to_string(),
+                            input: input_name,
+                        });
+                    };
+                    next.clone()
+                }
+            };
+
+            insert_task_input_value(task_name, task, &mut provided, input_name, value)?;
+
+            index += 1;
         }
-
-        if provided.insert(input_name.clone(), value).is_some() {
-            return Err(RunError::DuplicateTaskInput {
-                task: task_name.to_string(),
-                input: input_name,
-            });
-        }
-
-        index += 1;
     }
 
     for (name, spec) in &task.inputs {
@@ -1703,6 +1784,54 @@ fn resolve_task_inputs(
         .into_iter()
         .map(|(name, value)| (task_input_env_name(&name), value))
         .collect())
+}
+
+fn single_task_input_name(task: &TaskSpec) -> Option<&str> {
+    (task.inputs.len() == 1)
+        .then(|| task.inputs.keys().next().map(String::as_str))
+        .flatten()
+}
+
+fn single_task_input_shorthand_value(input_args: &[String]) -> Option<String> {
+    let bare_values = input_args
+        .iter()
+        .filter(|token| token.as_str() != "--")
+        .collect::<Vec<_>>();
+    match bare_values.as_slice() {
+        [value] if !value.starts_with("--") && !value.is_empty() => Some((**value).clone()),
+        _ => None,
+    }
+}
+
+fn insert_task_input_value(
+    task_name: &str,
+    task: &TaskSpec,
+    provided: &mut BTreeMap<String, String>,
+    input_name: String,
+    value: String,
+) -> Result<(), RunError> {
+    let spec = task
+        .inputs
+        .get(&input_name)
+        .expect("validated input insertion should only reference declared task inputs");
+
+    if !spec.allowed.is_empty() && !spec.allowed.iter().any(|allowed| allowed == &value) {
+        return Err(RunError::InvalidTaskInputValue {
+            task: task_name.to_string(),
+            input: input_name,
+            value,
+            allowed: spec.allowed.join(", "),
+        });
+    }
+
+    if provided.insert(input_name.clone(), value).is_some() {
+        return Err(RunError::DuplicateTaskInput {
+            task: task_name.to_string(),
+            input: input_name,
+        });
+    }
+
+    Ok(())
 }
 
 fn task_input_env_name(name: &str) -> String {
@@ -3683,6 +3812,7 @@ tasks:
                     name: String::from("setup"),
                     exit_code: 0,
                     relation: TaskExecutionRelation::Requested,
+                    generation: 0,
                 }],
                 exit_code: 0,
                 stdout: String::from("hello"),
@@ -3726,6 +3856,7 @@ tasks:
             working_dir,
             current_os,
             TaskExecutionRelation::Requested,
+            0,
             &mut state,
         )
         .unwrap();
@@ -3744,11 +3875,144 @@ tasks:
             working_dir,
             current_os,
             TaskExecutionRelation::Requested,
+            0,
             &mut state,
         )
         .unwrap();
         assert_eq!(second_exit, 42);
         assert_eq!(state.task_steps.len(), step_count);
+    }
+
+    #[test]
+    fn reruns_after_success_tasks_even_if_completed_as_dependencies() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-site
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+  build:
+    depends_on:
+      - setup
+    after_success:
+      - discoverability:check
+    script: |
+      echo build >> run.log
+  typecheck:
+    depends_on:
+      - setup
+    script: |
+      echo typecheck >> run.log
+  deadcode:
+    depends_on:
+      - setup
+    script: |
+      echo deadcode >> run.log
+  discoverability:check:
+    depends_on:
+      - setup
+    script: |
+      echo discoverability >> run.log
+  ci:
+    depends_on:
+      - build
+      - typecheck
+      - deadcode
+      - discoverability:check
+    script: |
+      echo ci >> run.log
+  version:bump:
+    inputs:
+      version:
+        default: patch
+    run: echo version-bump >> run.log
+    depends_on: [ ci, deadcode ]
+    after_success:
+      - build
+"#,
+        );
+
+        let outcome = run_task_with_args(
+            &fixture.contract,
+            fixture.file_path(),
+            "version:bump",
+            &[String::from("--version"), String::from("patch")],
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec![
+                "setup",
+                "build",
+                "discoverability",
+                "typecheck",
+                "deadcode",
+                "ci",
+                "version-bump",
+                "setup",
+                "build",
+                "discoverability",
+            ]
+        );
+        assert_eq!(
+            outcome.executed_tasks,
+            vec![
+                String::from("setup"),
+                String::from("build"),
+                String::from("discoverability:check"),
+                String::from("typecheck"),
+                String::from("deadcode"),
+                String::from("ci"),
+                String::from("version:bump"),
+                String::from("setup"),
+                String::from("build"),
+                String::from("discoverability:check"),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_requested_task_inputs_before_running_dependencies() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: echo setup >> run.log
+  version:bump:
+    depends_on:
+      - setup
+    inputs:
+      version:
+        required: true
+    run: echo version-bump >> run.log
+"#,
+        );
+
+        let error = run_task_with_args(
+            &fixture.contract,
+            fixture.file_path(),
+            "version:bump",
+            &[String::from("--channel"), String::from("patch")],
+        )
+        .expect_err("invalid requested-task inputs should fail before dependencies run");
+
+        assert!(matches!(
+            error,
+            RunError::UnknownTaskInput { ref task, ref input }
+            if task == "version:bump" && input == "channel"
+        ));
+        assert!(!fixture.dir.path().join("run.log").exists());
     }
 
     #[test]

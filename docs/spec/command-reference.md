@@ -582,6 +582,7 @@ Current behavior:
 - repeated `--member` values run the task across those members in the provided order
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
+- task input names must not reuse ota CLI flag names like `stream`, `receipt`, `mode`, `member`, `json`, or `jobs`
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
 - `default` values are applied when the caller omits an input
 - `required: true` makes an input mandatory unless a default exists
@@ -604,7 +605,7 @@ tasks:
     inputs:
       base_url:
         default: http://localhost:8080
-      mode:
+      suite_mode:
         default: standard
         allowed:
           - standard
@@ -617,7 +618,7 @@ tasks:
 
 ```bash
 ota run api-automation-tests
-ota run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota run api-automation-tests --base-url http://localhost:8080 --suite-mode contract-drift
 ota run version:bump --version minor
 ota run version:bump --version 0.2.0
 ota run version:bump --version major
@@ -1856,7 +1857,7 @@ tasks:
     inputs:
       base_url:
         default: http://localhost:8080
-      mode:
+      suite_mode:
         default: standard
         allowed:
           - standard
@@ -1869,7 +1870,7 @@ tasks:
 
 ```bash
 ota workspace run api-automation-tests
-ota workspace run api-automation-tests --base-url http://localhost:8080 --mode contract-drift
+ota workspace run api-automation-tests --base-url http://localhost:8080 --suite-mode contract-drift
 ota workspace run version:bump --version 0.2.0
 ```
 
