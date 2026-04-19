@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+No unreleased entries yet.
+
+## 1.5.1
+
 - fixed a Windows PowerShell installer interpolation bug in `scripts/bootstrap.ps1` so replacement failures now report the destination path cleanly instead of aborting on `${drive}:` parser handling
 - taught detector-led `ota init` to carry existing repo-root dotenv sources such as `.env.local` and `.env` into `env.sources`, while keeping explicit `ota init --pack ...` starters on their conventional no-inference boundary.
 - kept task inputs like `mode` and `jobs` valid in contracts while tightening `ota run` / `ota workspace run` parsing so pre-task ota flags still work, post-task overlapping inputs can be disambiguated cleanly, and generated env-only starters stay lean and accurately counted.
