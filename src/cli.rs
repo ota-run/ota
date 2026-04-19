@@ -4371,13 +4371,12 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         },
     };
 
-    let next_header = commands::paint_next_label();
     let next_value = if suggestion.contains('`') {
         suggestion.to_string()
     } else {
         format!("`{suggestion}`")
     };
-    let next_step = commands::format_next_step_text(&next_value);
+    let next_section = commands::format_error_next_timeline(&[next_value]);
 
     if let Some(summary_title) = trailing_summary_title(&stderr) {
         let trimmed = stderr.trim_end_matches('\n');
@@ -4385,13 +4384,13 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             let (before_summary, summary_block) = trimmed.split_at(idx);
             let before_summary = before_summary.trim_end();
             return tighten_guidance_spacing(commands::stylize_inline_text(&format!(
-                "{before_summary}\n{next_header}{next_step}\n\n{summary_block}"
+                "{before_summary}{next_section}\n\n{summary_block}"
             )));
         }
     }
 
     tighten_guidance_spacing(commands::stylize_inline_text(&format!(
-        "{stderr}\n\n{next_header}{next_step}"
+        "{stderr}{next_section}"
     )))
 }
 
@@ -10565,6 +10564,36 @@ tasks:
         assert!(stderr.contains("run `ota tasks --use` to inspect runnable task usage"));
         assert!(stderr.contains("RUN SUMMARY"));
         assert!(!stderr.contains("Task output:"));
+    }
+
+    #[test]
+    fn run_stream_failure_keeps_single_why_and_next_inline() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  fail:
+    script: |
+      printf 'sh: 1: mvn: not found\n' >&2
+      exit 127
+"#,
+        );
+
+        let output = run_with(["ota", "run", "fail", "--stream", fixture.path()]);
+
+        assert_eq!(output.exit_code, 127);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task Failed"));
+        assert!(stderr.contains("`fail` exited with code 127"));
+        assert!(stderr.contains(
+            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage"
+        ));
+        assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
+        assert!(
+            !stderr.contains("Next:\n  » run `ota tasks --use` to inspect runnable task usage")
+        );
     }
 
     #[test]
