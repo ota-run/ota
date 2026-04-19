@@ -24243,7 +24243,7 @@ fn run_single_contract_target(
     show_receipt: bool,
     stream_output: bool,
 ) -> Result<String, RunCommandFailure> {
-    let details_footer = task_use_details_footer(member);
+    let details_footer = task_use_details_footer(Some(&target.contract_path), member);
     if stream_output {
         return run_single_contract_target_streaming(
             task_name,
@@ -24477,6 +24477,7 @@ fn run_single_contract_target_captured(
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_captured_failure_text(
+                    &target.contract_path,
                     &display_contract_target(&compact_contract_path(&target.contract_path), member),
                     task_name,
                     member,
@@ -24531,6 +24532,7 @@ fn run_single_contract_target_captured(
 }
 
 fn render_run_captured_failure_text(
+    contract_path: &Path,
     where_value: &str,
     task_name: &str,
     member: Option<&str>,
@@ -24547,7 +24549,7 @@ fn render_run_captured_failure_text(
             repo_run_stream_command(task_name, member)
         ));
     }
-    next_steps.push(task_use_details_step(member));
+    next_steps.push(task_use_details_step(Some(contract_path), member));
     render_task_exit_failure_text(
         where_value,
         task_name,
@@ -24657,19 +24659,21 @@ fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
     }
 }
 
-fn task_use_details_step(member: Option<&str>) -> String {
-    match member {
-        Some(member) => {
-            format!("run `ota tasks --member {member} --use` to inspect runnable task usage")
-        }
-        None => String::from("run `ota tasks --use` to inspect runnable task usage"),
-    }
+fn task_use_details_step(contract_path: Option<&Path>, member: Option<&str>) -> String {
+    let command = match member {
+        Some(member) => format!("ota tasks --member {member} --use"),
+        None => String::from("ota tasks --use"),
+    };
+    let command = contract_path
+        .map(|path| command_for_repo_contract_target(&command, path))
+        .unwrap_or(command);
+    format!("run `{command}` to inspect runnable task usage")
 }
 
-fn task_use_details_footer(member: Option<&str>) -> String {
+fn task_use_details_footer(contract_path: Option<&Path>, member: Option<&str>) -> String {
     format!(
         "\nNext: {}",
-        stylize_inline_text(&task_use_details_step(member))
+        stylize_inline_text(&task_use_details_step(contract_path, member))
     )
 }
 
@@ -24711,26 +24715,26 @@ fn render_run_structured_error_text(
         RunError::UnknownTask { task } => (
             String::from("Unknown task"),
             vec![format!("task `{task}` is not declared in this contract")],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::UnknownTaskInput { task, input } => (
             String::from("Unknown task input"),
             vec![format!("task `{task}` does not declare input `{input}`")],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::MissingRequiredTaskInput { task, input } => (
             String::from("Required task input is missing"),
             vec![format!(
                 "task `{task}` requires input `{input}` before it can run"
             )],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::MissingTaskInputValue { task, input } => (
             String::from("Task input value is missing"),
             vec![format!(
                 "task `{task}` input `{input}` is missing its value"
             )],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::InvalidTaskInputValue {
             task,
@@ -24742,14 +24746,14 @@ fn render_run_structured_error_text(
             vec![format!(
                 "task `{task}` input `{input}` resolved to `{value}`, but the allowed values are: {allowed}"
             )],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::InvalidTaskInputSyntax { task, input, flag } => (
             String::from("Task input syntax is invalid"),
             vec![format!(
                 "task `{task}` input `{input}` must be provided as `--{flag} <value>` or `--{flag}=<value>`"
             )],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
         RunError::MissingContainerImage { .. } => (
             String::from("Container run is not configured"),
@@ -24883,7 +24887,7 @@ fn render_run_structured_error_text(
         _ => (
             String::from("Task run failed"),
             vec![error.to_string()],
-            vec![task_use_details_step(member)],
+            vec![task_use_details_step(Some(contract_path), member)],
         ),
     };
 
@@ -24910,7 +24914,7 @@ fn render_run_structured_error_text(
     ) && let Some(fallback) = run_default_fallback_step(task_name, overrides)
     {
         next_steps.push(fallback);
-        next_steps.push(task_use_details_step(member));
+        next_steps.push(task_use_details_step(Some(contract_path), member));
     }
 
     let mut output =
@@ -25161,7 +25165,7 @@ fn render_run_preferred_backend_validation_text(
                         None => format!("ota run {task_name} --mode native"),
                     }
                 ),
-                task_use_details_step(member),
+                task_use_details_step(Some(resolved_path), member),
             ],
         )
     } else if error == "`execution.preferred: container` requires an explicit `execution.lifecycle`"
@@ -25186,7 +25190,7 @@ fn render_run_preferred_backend_validation_text(
                         None => format!("ota run {task_name} --mode native"),
                     }
                 ),
-                task_use_details_step(member),
+                task_use_details_step(Some(resolved_path), member),
             ],
         )
     } else if error == "`execution.preferred: remote` requires `execution.backends.remote.provider`"
@@ -25211,7 +25215,7 @@ fn render_run_preferred_backend_validation_text(
                         None => format!("ota run {task_name} --mode native"),
                     }
                 ),
-                task_use_details_step(member),
+                task_use_details_step(Some(resolved_path), member),
             ],
         )
     } else {
@@ -25257,7 +25261,7 @@ fn render_run_contract_problem_failure(
                                     command_for_repo_contract_target("ota validate", resolved_path)
                                 ))
                             ),
-                            task_use_details_step(member),
+                            task_use_details_step(Some(resolved_path), member),
                             format!(
                                 "rerun {}",
                                 paint_code(&format!(

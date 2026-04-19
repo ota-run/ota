@@ -10652,6 +10652,268 @@ tasks:
     }
 
     #[test]
+    fn run_success_followup_command_keeps_repo_target_for_default_contracts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    depends_on:
+      - setup
+    run: echo ci
+"#,
+        );
+
+        let output = run_with(["ota", "run", "ci", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(stderr.contains(&format!(
+            "Next: run `ota tasks --use {repo_path}` to inspect runnable task usage"
+        )));
+        assert!(!stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+    }
+
+    #[test]
+    fn repo_adoption_loop_stays_repo_oriented_for_default_contracts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: loop-demo
+execution:
+  preferred: native
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    depends_on:
+      - setup
+    run: echo ci
+agent:
+  entrypoint: setup
+  default_task: ci
+  safe_tasks:
+    - setup
+    - ci
+  verify_after_changes:
+    - ci
+  writable_paths:
+    - src
+  protected_paths:
+    - ota.yaml
+"#,
+        );
+
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+
+        let validate = run_with(["ota", "validate", fixture.path()]);
+        assert_eq!(validate.exit_code, 0);
+        let validate_stdout = strip_ansi(&validate.stdout);
+        assert!(validate_stdout.contains(&format!("ota doctor {repo_path}")));
+        assert!(validate_stdout.contains(&format!("ota tasks --use {repo_path}")));
+        assert!(!validate_stdout.contains(&format!("ota doctor {repo_path}/ota.yaml")));
+        assert!(!validate_stdout.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+
+        let doctor = run_with(["ota", "doctor", "--concise", fixture.path()]);
+        assert_eq!(doctor.exit_code, 0);
+        let doctor_stdout = strip_ansi(&doctor.stdout);
+        assert!(doctor_stdout.contains(&format!("ota up {repo_path}")));
+        assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
+        assert!(!doctor_stdout.contains(&format!("ota up {repo_path}/ota.yaml")));
+        assert!(!doctor_stdout.contains(&format!("ota run ci {repo_path}/ota.yaml")));
+
+        let check = run_with(["ota", "check", "--concise", fixture.path()]);
+        assert_eq!(check.exit_code, 0);
+        let check_stdout = strip_ansi(&check.stdout);
+        assert!(check_stdout.contains(&format!("ota up {repo_path}")));
+        assert!(check_stdout.contains(&format!("ota tasks --use {repo_path}")));
+        assert!(!check_stdout.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+
+        let up = run_with(["ota", "up", "--dry-run", "--concise", fixture.path()]);
+        assert_eq!(up.exit_code, 0);
+        let up_stdout = strip_ansi(&up.stdout);
+        assert!(up_stdout.contains("UP PREVIEW"));
+        assert!(up_stdout.contains("Task: `setup`"));
+
+        let run = run_with(["ota", "run", "ci", fixture.path()]);
+        assert_eq!(run.exit_code, 0);
+        let run_stderr = strip_ansi(run.stderr.as_deref().unwrap_or_default());
+        assert!(run_stderr.contains("RUN SUMMARY"));
+        assert!(run_stderr.contains(&format!(
+            "Next: run `ota tasks --use {repo_path}` to inspect runnable task usage"
+        )));
+        assert!(!run_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+    }
+
+    #[test]
+    fn container_repo_adoption_loop_stays_repo_oriented_for_default_contracts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: container-loop
+execution:
+  preferred: container
+  lifecycle: persistent
+  supported:
+    - native
+    - container
+  backends:
+    container:
+      image: alpine:3.20
+      engines:
+        - docker
+        - podman
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    depends_on:
+      - setup
+    run: echo ci
+agent:
+  entrypoint: setup
+  default_task: ci
+  safe_tasks:
+    - setup
+    - ci
+"#,
+        );
+
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+
+        let validate = run_with(["ota", "validate", fixture.path()]);
+        assert_eq!(validate.exit_code, 0);
+        let validate_stdout = strip_ansi(&validate.stdout);
+        assert!(validate_stdout.contains(&format!("ota doctor {repo_path}")));
+        assert!(validate_stdout.contains(&format!("ota tasks --use {repo_path}")));
+
+        let doctor = run_with([
+            "ota",
+            "doctor",
+            "--mode",
+            "container",
+            "--concise",
+            fixture.path(),
+        ]);
+        assert_eq!(doctor.exit_code, 0);
+        let doctor_stdout = strip_ansi(&doctor.stdout);
+        assert!(doctor_stdout.contains("Mode: `container`"));
+        assert!(doctor_stdout.contains("Container: `alpine:3.20`"));
+        assert!(doctor_stdout.contains(&format!("ota up {repo_path}")));
+        assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
+
+        let up = run_with([
+            "ota",
+            "up",
+            "--dry-run",
+            "--mode",
+            "container",
+            "--concise",
+            fixture.path(),
+        ]);
+        assert_eq!(up.exit_code, 0);
+        let up_stdout = strip_ansi(&up.stdout);
+        assert!(up_stdout.contains("UP PREVIEW"));
+        assert!(up_stdout.contains("Backend: container"));
+        assert!(up_stdout.contains("Image: `alpine:3.20`"));
+
+        let execution = run_with([
+            "ota",
+            "execution",
+            "plan",
+            "--mode",
+            "container",
+            fixture.path(),
+        ]);
+        assert_eq!(execution.exit_code, 0);
+        let execution_stdout = strip_ansi(&execution.stdout);
+        assert!(execution_stdout.contains("RESOLVED"));
+        assert!(execution_stdout.contains("Backend: `container`"));
+        assert!(execution_stdout.contains("Image: `alpine:3.20`"));
+    }
+
+    #[test]
+    fn core_extension_json_contracts_expose_stable_top_level_fields() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: json-demo
+execution:
+  preferred: native
+env:
+  vars:
+    FOO:
+      required: true
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    depends_on:
+      - setup
+    run: echo ci
+agent:
+  entrypoint: setup
+  default_task: ci
+"#,
+        );
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 1);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(doctor_json["ok"], false);
+        assert_eq!(doctor_json["mode"], "native");
+        assert!(doctor_json.get("summary").is_some());
+        assert!(doctor_json.get("findings").is_some());
+        assert!(doctor_json.get("finding_groups").is_some());
+        assert!(doctor_json.get("execution").is_some());
+
+        let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 0);
+        let tasks_json: Value = serde_json::from_str(&tasks.stdout).unwrap();
+        assert_eq!(tasks_json["ok"], true);
+        assert!(tasks_json.get("agent").is_some());
+        assert!(tasks_json["tasks"].is_array());
+        assert_eq!(tasks_json["tasks"].as_array().unwrap().len(), 2);
+
+        let env = run_with(["ota", "env", "--json", "--task", "ci", fixture.path()]);
+        assert_eq!(env.exit_code, 1);
+        let env_json: Value = serde_json::from_str(&env.stdout).unwrap();
+        assert_eq!(env_json["ok"], false);
+        assert_eq!(env_json["task"], "ci");
+        assert!(env_json.get("summary").is_some());
+        assert!(env_json.get("sources").is_some());
+        assert!(env_json.get("env").is_some());
+
+        let receipt = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(receipt.exit_code, 1);
+        let receipt_json: Value = serde_json::from_str(&receipt.stdout).unwrap();
+        assert_eq!(receipt_json["ok"], false);
+        assert_eq!(receipt_json["mode"], "receipt");
+        assert!(receipt_json.get("summary").is_some());
+        assert!(receipt_json.get("receipt").is_some());
+        assert!(receipt_json.get("findings").is_some());
+    }
+
+    #[test]
     fn collapse_blank_lines_reduces_consecutive_empty_lines() {
         let input = "a\n\n\nb\n\n\n\nc\n";
         let output = collapse_blank_lines(input.to_string());
