@@ -24294,7 +24294,8 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
         assert!(!repo_dir.join("ota.yaml").exists());
-        assert!(body.contains("already exists; refusing to"));
+        assert!(body.contains("already exists"));
+        assert!(body.contains("overwrite"));
         assert!(body.contains("existing workspace contract"));
         assert!(body.contains("use `ota workspace detect --merge"));
         assert!(body.contains("use `ota workspace detect --rewrite --yes"));
@@ -24682,7 +24683,7 @@ repos:
         assert!(body.contains("Workspace contract already exists"));
         assert!(body.contains("Where:"));
         assert!(body.contains("already exists"));
-        assert!(body.contains("refusing to"));
+        assert!(body.contains("overwrite"));
         assert!(body.contains("existing workspace contract"));
         assert!(body.contains("ota workspace detect --merge"));
         assert!(body.contains("ota workspace detect --rewrite --yes"));
