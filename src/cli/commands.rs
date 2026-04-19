@@ -810,7 +810,7 @@ fn validate_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
             "rerun {}",
             paint_code(&format!(
                 "`{}`",
-                command_for_contract("ota validate", contract_path)
+                command_for_repo_contract_target("ota validate", contract_path)
             ))
         ),
     ]
@@ -820,21 +820,27 @@ fn render_validate_ready_next(contract_path: &Path, member: Option<&str>) -> Str
     let doctor = match member {
         Some(member) => format!(
             "run `{}` to inspect readiness",
-            command_for_contract(&format!("ota doctor --member {member}"), contract_path)
+            command_for_repo_contract_target(
+                &format!("ota doctor --member {member}"),
+                contract_path
+            )
         ),
         None => format!(
             "run `{}` to inspect readiness",
-            command_for_contract("ota doctor", contract_path)
+            command_for_repo_contract_target("ota doctor", contract_path)
         ),
     };
     let tasks = match member {
         Some(member) => format!(
             "run `{}` to inspect runnable task usage",
-            command_for_contract(&format!("ota tasks --member {member} --use"), contract_path)
+            command_for_repo_contract_target(
+                &format!("ota tasks --member {member} --use"),
+                contract_path
+            )
         ),
         None => format!(
             "run `{}` to inspect runnable task usage",
-            command_for_contract("ota tasks --use", contract_path)
+            command_for_repo_contract_target("ota tasks --use", contract_path)
         ),
     };
 
@@ -959,14 +965,17 @@ pub fn execution_plan(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota execution plan", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota execution plan",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -995,14 +1004,17 @@ pub fn execution_plan(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota execution plan", &resolved_path)
+                                command_for_repo_contract_target(
+                                    "ota execution plan",
+                                    &resolved_path
+                                )
                             ))
                         ),
                     ],
@@ -1462,7 +1474,7 @@ pub fn env(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota env", &resolved_path)
+                                command_for_repo_contract_target("ota env", &resolved_path)
                             ))
                         ),
                     ],
@@ -1490,7 +1502,7 @@ pub fn env(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota env", &resolved_path)
+                                command_for_repo_contract_target("ota env", &resolved_path)
                             ))
                         ),
                     ],
@@ -2375,7 +2387,7 @@ pub fn tasks(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota tasks", &resolved_path)
+                                command_for_repo_contract_target("ota tasks", &resolved_path)
                             ))
                         ),
                     ],
@@ -2403,7 +2415,7 @@ pub fn tasks(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota tasks", &resolved_path)
+                                command_for_repo_contract_target("ota tasks", &resolved_path)
                             ))
                         ),
                     ],
@@ -2690,7 +2702,7 @@ pub fn services(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota services", &resolved_path)
+                                command_for_repo_contract_target("ota services", &resolved_path)
                             ))
                         ),
                     ],
@@ -2718,7 +2730,7 @@ pub fn services(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota services", &resolved_path)
+                                command_for_repo_contract_target("ota services", &resolved_path)
                             ))
                         ),
                     ],
@@ -3450,7 +3462,7 @@ fn wrong_target_next_steps_for_validate(policy_path: &Path) -> Vec<String> {
             "use {} to validate the repo contract",
             paint_code(&format!(
                 "`{}`",
-                command_for_contract("ota validate", &repo_contract)
+                command_for_repo_contract_target("ota validate", &repo_contract)
             ))
         ),
     ]
@@ -3473,7 +3485,7 @@ fn wrong_target_next_steps_for_doctor(policy_path: &Path) -> Vec<String> {
             "run {} to diagnose repo readiness",
             paint_code(&format!(
                 "`{}`",
-                command_for_contract("ota doctor", &repo_contract)
+                command_for_repo_contract_target("ota doctor", &repo_contract)
             ))
         ),
     ]
@@ -3489,14 +3501,14 @@ fn doctor_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
             "rerun {}",
             paint_code(&format!(
                 "`{}`",
-                command_for_contract("ota validate", contract_path)
+                command_for_repo_contract_target("ota validate", contract_path)
             ))
         ),
         format!(
             "rerun {}",
             paint_code(&format!(
                 "`{}`",
-                command_for_contract("ota doctor", contract_path)
+                command_for_repo_contract_target("ota doctor", contract_path)
             ))
         ),
     ]
@@ -3875,14 +3887,17 @@ pub fn policy_review(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &contract_path)
+                                command_for_repo_contract_target("ota validate", &contract_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota policy review", &contract_path)
+                                command_for_repo_contract_target(
+                                    "ota policy review",
+                                    &contract_path
+                                )
                             ))
                         ),
                     ],
@@ -3907,14 +3922,14 @@ pub fn policy_review(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota validate", &contract_path)
+                            command_for_repo_contract_target("ota validate", &contract_path)
                         ))
                     ),
                     format!(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota policy review", &contract_path)
+                            command_for_repo_contract_target("ota policy review", &contract_path)
                         ))
                     ),
                 ],
@@ -4899,14 +4914,14 @@ pub fn explain(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota explain", &resolved_path)
+                                command_for_repo_contract_target("ota explain", &resolved_path)
                             ))
                         ),
                     ],
@@ -4936,14 +4951,14 @@ pub fn explain(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota explain", &resolved_path)
+                                command_for_repo_contract_target("ota explain", &resolved_path)
                             ))
                         ),
                     ],
@@ -5457,14 +5472,14 @@ pub fn check(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota check", &resolved_path)
+                                command_for_repo_contract_target("ota check", &resolved_path)
                             ))
                         ),
                     ],
@@ -5497,14 +5512,14 @@ pub fn check(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota check", &resolved_path)
+                                command_for_repo_contract_target("ota check", &resolved_path)
                             ))
                         ),
                     ],
@@ -5749,14 +5764,14 @@ pub fn receipt(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota receipt", &resolved_path)
+                                command_for_repo_contract_target("ota receipt", &resolved_path)
                             ))
                         ),
                     ],
@@ -5789,14 +5804,14 @@ pub fn receipt(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota receipt", &resolved_path)
+                                command_for_repo_contract_target("ota receipt", &resolved_path)
                             ))
                         ),
                     ],
@@ -6296,14 +6311,14 @@ pub fn extensions(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota validate", &resolved_path)
+                            command_for_repo_contract_target("ota validate", &resolved_path)
                         ))
                     ),
                     format!(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota extensions", &resolved_path)
+                            command_for_repo_contract_target("ota extensions", &resolved_path)
                         ))
                     ),
                 ],
@@ -6324,14 +6339,14 @@ pub fn extensions(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota extensions", &resolved_path)
+                                command_for_repo_contract_target("ota extensions", &resolved_path)
                             ))
                         ),
                     ],
@@ -6786,14 +6801,17 @@ pub fn agents(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_contract("ota validate", &resolved_path)
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
                                 ))
                             ),
                             format!(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_contract("ota agents", &resolved_path)
+                                    command_for_repo_contract_target("ota agents", &resolved_path)
                                 ))
                             ),
                         ],
@@ -6828,14 +6846,17 @@ pub fn agents(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_contract("ota validate", &resolved_path)
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
                                 ))
                             ),
                             format!(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_contract("ota agents", &resolved_path)
+                                    command_for_repo_contract_target("ota agents", &resolved_path)
                                 ))
                             ),
                         ],
@@ -7412,14 +7433,14 @@ pub fn up(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota up", &resolved_path)
+                                command_for_repo_contract_target("ota up", &resolved_path)
                             ))
                         ),
                     ],
@@ -7448,14 +7469,14 @@ pub fn up(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota up", &resolved_path)
+                                command_for_repo_contract_target("ota up", &resolved_path)
                             ))
                         ),
                     ],
@@ -7933,14 +7954,14 @@ pub fn clean(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota validate", &resolved_path)
+                            command_for_repo_contract_target("ota validate", &resolved_path)
                         ))
                     ),
                     format!(
                         "rerun {}",
                         paint_code(&format!(
                             "`{}`",
-                            command_for_contract("ota clean", &resolved_path)
+                            command_for_repo_contract_target("ota clean", &resolved_path)
                         ))
                     ),
                 ],
@@ -7961,14 +7982,14 @@ pub fn clean(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota validate", &resolved_path)
+                                command_for_repo_contract_target("ota validate", &resolved_path)
                             ))
                         ),
                         format!(
                             "rerun {}",
                             paint_code(&format!(
                                 "`{}`",
-                                command_for_contract("ota clean", &resolved_path)
+                                command_for_repo_contract_target("ota clean", &resolved_path)
                             ))
                         ),
                     ],
@@ -8567,7 +8588,7 @@ fn workspace_repo_contract_invalid_text(
                 "fix the failing repo contract with {}",
                 paint_code(&format!(
                     "`{}`",
-                    command_for_contract("ota validate", repo_contract_path)
+                    command_for_repo_contract_target("ota validate", repo_contract_path)
                 ))
             ),
             format!(
@@ -8601,7 +8622,7 @@ fn workspace_repo_contract_load_text(
                 "rerun {}",
                 paint_code(&format!(
                     "`{}`",
-                    command_for_contract("ota validate", repo_contract_path)
+                    command_for_repo_contract_target("ota validate", repo_contract_path)
                 ))
             ),
             format!(
@@ -8623,7 +8644,7 @@ fn workspace_repo_validate_then_rerun_next(
         "run {} to fix the failing repo contract, then rerun {}",
         paint_code(&format!(
             "`{}`",
-            command_for_contract("ota validate", repo_contract_path)
+            command_for_repo_contract_target("ota validate", repo_contract_path)
         )),
         paint_code(&format!("`{rerun_command}`"))
     )
@@ -11461,10 +11482,14 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         Ok(()) => match format {
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&compact_path_display);
-                let highlighted_validate =
-                    paint_code(&command_for_contract("ota validate", &contract_path));
-                let highlighted_doctor =
-                    paint_code(&command_for_contract("ota doctor", &contract_path));
+                let highlighted_validate = paint_code(&command_for_repo_contract_target(
+                    "ota validate",
+                    &contract_path,
+                ));
+                let highlighted_doctor = paint_code(&command_for_repo_contract_target(
+                    "ota doctor",
+                    &contract_path,
+                ));
                 let mut stdout = format!(
                     "{}\n\n{}\nPolicy: only high-confidence fields are written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
@@ -13601,10 +13626,14 @@ fn render_init(
             Ok(()) => match format {
                 OutputFormat::Text => {
                     let highlighted_written = paint_code(&compact_path_display);
-                    let highlighted_validate =
-                        paint_code(&command_for_contract("ota validate", &contract_path));
-                    let highlighted_doctor =
-                        paint_code(&command_for_contract("ota doctor", &contract_path));
+                    let highlighted_validate = paint_code(&command_for_repo_contract_target(
+                        "ota validate",
+                        &contract_path,
+                    ));
+                    let highlighted_doctor = paint_code(&command_for_repo_contract_target(
+                        "ota doctor",
+                        &contract_path,
+                    ));
                     let mut stdout = format!(
                         "{}\n\n{}\n\n{}",
                         format_command_header("INIT WRITE", &compact_root_display),
@@ -17968,7 +17997,7 @@ fn render_doctor_ready_next(
     contract_path: Option<&Path>,
 ) -> String {
     let up_command = contract_path
-        .map(|path| command_for_contract("ota up", path))
+        .map(|path| command_for_repo_contract_target("ota up", path))
         .unwrap_or_else(|| String::from("ota up"));
     let mut items = vec![format!("run `{up_command}` to prepare the repo end to end")];
     if let Some(task) = agent
@@ -17976,14 +18005,14 @@ fn render_doctor_ready_next(
         .filter(|task| !task.trim().is_empty())
     {
         let run_command = contract_path
-            .map(|path| command_for_contract(&format!("ota run {task}"), path))
+            .map(|path| command_for_repo_contract_target(&format!("ota run {task}"), path))
             .unwrap_or_else(|| format!("ota run {task}"));
         items.push(format!(
             "run `{run_command}` to execute the default repo task"
         ));
     } else {
         let tasks_command = contract_path
-            .map(|path| command_for_contract("ota tasks --use", path))
+            .map(|path| command_for_repo_contract_target("ota tasks --use", path))
             .unwrap_or_else(|| String::from("ota tasks --use"));
         items.push(format!(
             "run `{tasks_command}` to inspect runnable task usage"
@@ -17995,10 +18024,10 @@ fn render_doctor_ready_next(
 
 fn render_check_ready_next(contract_path: Option<&Path>) -> String {
     let up_command = contract_path
-        .map(|path| command_for_contract("ota up", path))
+        .map(|path| command_for_repo_contract_target("ota up", path))
         .unwrap_or_else(|| String::from("ota up"));
     let tasks_command = contract_path
-        .map(|path| command_for_contract("ota tasks --use", path))
+        .map(|path| command_for_repo_contract_target("ota tasks --use", path))
         .unwrap_or_else(|| String::from("ota tasks --use"));
     format_next_timeline(&[
         format!("run `{up_command}` to prepare the repo end to end"),
@@ -23433,6 +23462,20 @@ fn command_for_contract(command: &str, contract_path: &Path) -> String {
     }
 }
 
+fn command_for_repo_contract_target(command: &str, contract_path: &Path) -> String {
+    if contract_path
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(DEFAULT_CONTRACT_FILE))
+    {
+        return command_for_repo(
+            command,
+            contract_path.parent().unwrap_or_else(|| Path::new(".")),
+        );
+    }
+
+    command_for_contract(command, contract_path)
+}
+
 fn command_for_repo(command: &str, repo_path: &Path) -> String {
     if std::env::current_dir().ok().is_some_and(|current_dir| {
         let target = if repo_path.is_absolute() {
@@ -25211,7 +25254,7 @@ fn render_run_contract_problem_failure(
                                 "rerun {}",
                                 paint_code(&format!(
                                     "`{}`",
-                                    command_for_contract("ota validate", resolved_path)
+                                    command_for_repo_contract_target("ota validate", resolved_path)
                                 ))
                             ),
                             task_use_details_step(member),
@@ -25247,7 +25290,7 @@ fn render_run_contract_problem_failure(
                     "rerun {}",
                     paint_code(&format!(
                         "`{}`",
-                        command_for_contract("ota validate", resolved_path)
+                        command_for_repo_contract_target("ota validate", resolved_path)
                     ))
                 ),
                 format!(

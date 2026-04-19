@@ -3,5 +3,5 @@
 ✓ VALID
 
 Next:
-  » run `ota doctor <TMP>/ota.yaml` to inspect readiness
-  » run `ota tasks --use <TMP>/ota.yaml` to inspect runnable task usage
+  » run `ota doctor <TMP>` to inspect readiness
+  » run `ota tasks --use <TMP>` to inspect runnable task usage
