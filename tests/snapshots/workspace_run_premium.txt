@@ -1,6 +1,6 @@
 🦦 WORKSPACE RUN setup ./ota.workspace.yaml
 
-➤ READY
+✓ READY
 
 ✦ web [required] (READY)
 Path: ./apps/web
@@ -9,13 +9,13 @@ Task: setup
 Command: python3 -c "from pathlib import Path; Path('ready.txt').write_text('ok')"
 
 
-🦦  WORKSPACE RUN SUMMARY
+🦦 WORKSPACE RUN SUMMARY
 
-Scope:      workspace
-Path:       ./ota.workspace.yaml
-Contract:   ./ota.workspace.yaml
-Workspace:  premium-workspace
-Mode:       native
-Task:       setup
-Status:     success
-Note:       running on the host environment
+Scope:     workspace
+Path:      ./ota.workspace.yaml
+Contract:  ./ota.workspace.yaml
+Workspace: premium-workspace
+Mode:      native
+Task:      setup
+Status:    success
+Note:      running on the host environment

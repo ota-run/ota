@@ -258,11 +258,21 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
 
     if let Some(missing) = detect_missing_contract_context(&body_message) {
         render_missing_contract_guidance(&mut out, where_label, &body_message, missing);
-        append_summary_block(&mut out, summary_block.as_ref());
+        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
         return out;
     }
 
     if let Some((why, next_steps)) = split_embedded_next_block(&body_message) {
+        if let Some((task_name, exit_code)) = parse_task_exit_failure_line(&why) {
+            return render_task_exit_failure_text(
+                &where_value,
+                &task_name,
+                exit_code,
+                &next_steps,
+                summary_block.as_ref().map(|value| value.as_str()),
+                None,
+            );
+        }
         if why.is_empty() {
             out.push_str(&format!(
                 "\n{} command failed with no additional details",
@@ -306,11 +316,21 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 }
             }
         }
-        append_summary_block(&mut out, summary_block.as_ref());
+        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
         return out;
     }
 
     if lines.len() == 1 {
+        if let Some((task_name, exit_code)) = parse_task_exit_failure_line(lines[0]) {
+            return render_task_exit_failure_text(
+                &where_value,
+                &task_name,
+                exit_code,
+                &[],
+                summary_block.as_ref().map(|value| value.as_str()),
+                None,
+            );
+        }
         append_wrapped_labeled_text(
             &mut out,
             "Why:",
@@ -321,7 +341,7 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
             error_key,
             stylize_inline_text,
         );
-        append_summary_block(&mut out, summary_block.as_ref());
+        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
         return out;
     }
 
@@ -335,7 +355,55 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         error_key,
         stylize_inline_text,
     );
-    append_summary_block(&mut out, summary_block.as_ref());
+    append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
+    out
+}
+
+fn parse_task_exit_failure_line(line: &str) -> Option<(String, i32)> {
+    let trimmed = line.trim();
+    let remainder = trimmed.strip_prefix("task `")?;
+    let (task_name, exit_code) = remainder.split_once("` failed with exit code ")?;
+    let exit_code = exit_code.trim().parse().ok()?;
+    Some((task_name.to_string(), exit_code))
+}
+
+fn render_task_exit_failure_text(
+    where_value: &str,
+    task_name: &str,
+    exit_code: i32,
+    next_steps: &[String],
+    summary_block: Option<&str>,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Task Failed", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{}",
+        stylize_inline_text(&format!("`{task_name}` exited with code {exit_code}"))
+    ));
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    append_error_detail_section(
+        &mut out,
+        "Why:",
+        &[format!("task `{task_name}` returned a non-zero exit code")],
+        None,
+    );
+    if !next_steps.is_empty() {
+        append_error_detail_section(&mut out, "Next:", next_steps, None);
+    }
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push_str(receipt_text);
+    }
+    append_summary_block(&mut out, summary_block);
     out
 }
 
@@ -387,7 +455,7 @@ fn split_summary_block(message: &str) -> (Option<String>, String) {
     (Some(summary_lines.join("\n")), remainder_lines.join("\n"))
 }
 
-fn append_summary_block(out: &mut String, summary_block: Option<&String>) {
+fn append_summary_block(out: &mut String, summary_block: Option<&str>) {
     if let Some(summary_block) = summary_block {
         let trailing_newlines = out.chars().rev().take_while(|ch| *ch == '\n').count();
         for _ in trailing_newlines..2 {
@@ -407,6 +475,7 @@ fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
             .filter(|line| !line.is_empty())
             .map(|line| {
                 line.trim_start_matches('▸')
+                    .trim_start_matches('»')
                     .trim_start_matches('-')
                     .trim_start_matches('*')
                     .trim()
@@ -442,6 +511,7 @@ fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
         }
         let item = trimmed
             .trim_start_matches('▸')
+            .trim_start_matches('»')
             .trim_start_matches('-')
             .trim_start_matches('*')
             .trim();
@@ -493,7 +563,17 @@ fn detect_missing_contract_context(message: &str) -> Option<MissingContractConte
     if message.contains("no `ota.workspace.yaml` found") && message.contains(" upward") {
         return Some(MissingContractContext::Workspace);
     }
+    if message.contains("explicit workspace path does not contain `ota.workspace.yaml`")
+        || message.contains("workspace path does not exist:")
+    {
+        return Some(MissingContractContext::Workspace);
+    }
     if message.contains("no `ota.yaml` found") && message.contains(" upward") {
+        return Some(MissingContractContext::Repo);
+    }
+    if message.contains("explicit repo path does not contain `ota.yaml`")
+        || message.contains("contract path does not exist:")
+    {
         return Some(MissingContractContext::Repo);
     }
     None
@@ -2673,11 +2753,7 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
         return output;
     }
 
-    for (index, service) in services.iter().enumerate() {
-        if index > 0 {
-            output.push('\n');
-        }
-
+    for service in services {
         output.push_str(&format!(
             "\n{} {} [{}]",
             list_bullet(),
@@ -3098,7 +3174,16 @@ pub fn policy_init(
                 .unwrap_or_else(|| String::from("."));
             return finalize_debug(
                 match format {
-                    OutputFormat::Text => CommandOutput::failure_with_code(error, 2),
+                    OutputFormat::Text => CommandOutput::failure_with_code(
+                        command_message_failure_text(
+                            "POLICY INIT",
+                            "ota policy init",
+                            "Policy pack target is invalid",
+                            &error,
+                            &[],
+                        ),
+                        2,
+                    ),
                     OutputFormat::Json => CommandOutput {
                         stdout: to_json(&PolicyInitFailure {
                             ok: false,
@@ -3148,7 +3233,13 @@ pub fn policy_init(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error_text),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "POLICY INIT",
+                    &compact_path_display,
+                    "Policy pack already exists",
+                    &error_text,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
                     ok: false,
                     path: &path_display,
@@ -3205,7 +3296,13 @@ pub fn policy_init(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error.clone()),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "POLICY INIT",
+                    &compact_path_display,
+                    "Policy pack directory could not be created",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
                     ok: false,
                     path: &path_display,
@@ -3256,7 +3353,13 @@ pub fn policy_init(
             Err(error) => {
                 let error = format!("failed to write `{}`: {error}", compact_path_display);
                 match format {
-                    OutputFormat::Text => CommandOutput::failure(error.clone()),
+                    OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                        "POLICY INIT",
+                        &compact_path_display,
+                        "Policy pack could not be written",
+                        &error,
+                        &[],
+                    )),
                     OutputFormat::Json => CommandOutput::failure(to_json(&PolicyInitFailure {
                         ok: false,
                         path: &path_display,
@@ -3422,15 +3525,8 @@ fn wrong_repo_contract_target_output(
                 paint_key("Where:"),
                 paint_code(&compact_target)
             ));
-            stdout.push_str(&format!("\n{}", paint_why_key()));
-            for line in why_lines {
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    finding_detail_bullet(FindingSeverity::Error),
-                    line
-                ));
-            }
-            stdout.push_str(&format_error_next_timeline(&next_steps));
+            append_error_detail_section(&mut stdout, "Why:", why_lines, Some(target_path));
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, Some(target_path));
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -3468,16 +3564,49 @@ fn structured_error_text(
         paint_key("Where:"),
         paint_code(where_value)
     ));
-    stdout.push_str(&format!("\n{}", paint_why_key()));
-    for line in why_lines {
-        stdout.push_str(&format!(
-            "\n  {} {}",
-            finding_detail_bullet(FindingSeverity::Error),
-            line
-        ));
-    }
-    stdout.push_str(&format_error_next_timeline(next_steps));
+    append_error_detail_section(&mut stdout, "Why:", why_lines, None);
+    append_error_detail_section(&mut stdout, "Next:", next_steps, None);
     stdout
+}
+
+fn command_message_failure_text(
+    command: &str,
+    default_where: &str,
+    summary: &str,
+    message: &str,
+    fallback_next_steps: &[String],
+) -> String {
+    let compact_message = compact_backticked_paths(message);
+    let where_value = infer_failure_where(default_where, &compact_message);
+
+    if let Some(missing) = detect_missing_contract_context(&compact_message) {
+        let mut stdout = format_command_header(command, &where_value);
+        stdout.push_str(&format!(
+            "\n\n{}  {}",
+            render_severity(FindingSeverity::Error),
+            paint(summary, "1;37")
+        ));
+        render_missing_contract_guidance(&mut stdout, &where_value, &compact_message, missing);
+        return stdout;
+    }
+
+    if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
+        let why_lines = why
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        return structured_error_text(command, &where_value, summary, &why_lines, &next_steps);
+    }
+
+    structured_error_text(
+        command,
+        &where_value,
+        summary,
+        &[compact_message],
+        fallback_next_steps,
+    )
 }
 
 fn invalid_repo_contract_output(
@@ -3502,15 +3631,8 @@ fn invalid_repo_contract_output(
                 paint_key("Where:"),
                 paint_code(&compact_target)
             ));
-            stdout.push_str(&format!("\n{}", paint_why_key()));
-            for line in why_lines {
-                stdout.push_str(&format!(
-                    "\n  {} {}",
-                    finding_detail_bullet(FindingSeverity::Error),
-                    line
-                ));
-            }
-            stdout.push_str(&format_error_next_timeline(&next_steps));
+            append_error_detail_section(&mut stdout, "Why:", why_lines, Some(target_path));
+            append_error_detail_section(&mut stdout, "Next:", &next_steps, Some(target_path));
             CommandOutput {
                 stdout,
                 stderr: None,
@@ -3675,7 +3797,15 @@ pub fn policy(
         Err(error) => {
             let message = format!("{error}");
             let output = match format {
-                OutputFormat::Text => CommandOutput::failure(message.clone()),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "POLICY",
+                    &compact_contract_path(&policy_path),
+                    "Policy pack could not be loaded",
+                    &message,
+                    &[String::from(
+                        "repair the active policy pack, or run `ota policy init --dry-run` to review a starter policy pack",
+                    )],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                     "ok": false,
                     "path": compact_contract_path(&policy_path),
@@ -3719,7 +3849,13 @@ pub fn policy_review(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                CommandOutput::failure(command_message_failure_text(
+                    "POLICY REVIEW",
+                    "ota policy review",
+                    "Contract target could not be resolved",
+                    &error.to_string(),
+                    &[],
+                )),
                 debug,
                 vec![String::from("DEBUG command=policy.review")],
             );
@@ -3729,7 +3865,28 @@ pub fn policy_review(
         Ok(contract) => contract,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                CommandOutput::failure(repo_contract_load_text(
+                    "POLICY REVIEW",
+                    &contract_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &contract_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota policy review", &contract_path)
+                            ))
+                        ),
+                    ],
+                )),
                 debug,
                 vec![String::from("DEBUG command=policy.review")],
             );
@@ -3737,7 +3894,32 @@ pub fn policy_review(
     };
     if let Err(error) = validate_contract(&contract) {
         return finalize_debug(
-            CommandOutput::failure(error.to_string()),
+            invalid_repo_contract_output(
+                "POLICY REVIEW",
+                &contract_path,
+                &error
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec![
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota validate", &contract_path)
+                        ))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota policy review", &contract_path)
+                        ))
+                    ),
+                ],
+                format,
+            ),
             debug,
             vec![String::from("DEBUG command=policy.review")],
         );
@@ -6226,7 +6408,13 @@ pub fn init(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(text_error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "INIT",
+                    &compact_path_display,
+                    "Contract already exists",
+                    &text_error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
                     ok: false,
                     path: &path_display,
@@ -6268,7 +6456,16 @@ pub fn init(
             Err(error) => {
                 let error = error.to_string();
                 match format {
-                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                        "INIT",
+                        &compact_path_display,
+                        "Starter contract could not be inferred",
+                        &error,
+                        &[format!(
+                            "inspect repo signals, then rerun `{}`",
+                            command_for_repo("ota init --dry-run", &root)
+                        )],
+                    )),
                     OutputFormat::Json => CommandOutput::failure(to_json(&InitFailure {
                         ok: false,
                         path: &path_display,
@@ -6514,7 +6711,13 @@ pub fn agents(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                CommandOutput::failure(command_message_failure_text(
+                    "AGENTS",
+                    "ota agents",
+                    "Contract target could not be resolved",
+                    &error.to_string(),
+                    &[],
+                )),
                 debug,
                 vec![String::from("DEBUG command=agents")],
             );
@@ -6765,7 +6968,15 @@ pub fn agents(
                         let error =
                             format!("failed to write `{}`: {error}", compact_output_display);
                         match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    "AGENTS",
+                                    &compact_output_display,
+                                    "Agent guidance could not be written",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
                                 ok: false,
                                 path: &path_display,
@@ -6797,7 +7008,13 @@ pub fn agents(
                 Err(error) => {
                     let error = format!("failed to write `{}`: {error}", compact_output_display);
                     match format {
-                        OutputFormat::Text => CommandOutput::failure(error),
+                        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                            "AGENTS",
+                            &compact_output_display,
+                            "Agent guidance could not be written",
+                            &error,
+                            &[],
+                        )),
                         OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
                             ok: false,
                             path: &path_display,
@@ -7332,7 +7549,13 @@ pub fn clean(
                             }))),
                         }
                     }
-                    Err(error) => CommandOutput::failure(error.to_string()),
+                    Err(error) => CommandOutput::failure(command_message_failure_text(
+                        "CLEAN",
+                        "ota clean --stale",
+                        "Stale cleanup failed",
+                        &error.to_string(),
+                        &[],
+                    )),
                 }
             },
             debug,
@@ -7355,7 +7578,13 @@ pub fn clean(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                CommandOutput::failure(command_message_failure_text(
+                    "CLEAN",
+                    "ota clean",
+                    "Contract target could not be resolved",
+                    &error.to_string(),
+                    &[],
+                )),
                 debug,
                 vec![String::from("DEBUG command=clean")],
             );
@@ -7545,7 +7774,13 @@ pub fn clean(
                         clean_execution(&target.contract, &target.contract_path),
                     ) {
                         Ok(text) => CommandOutput::success(text),
-                        Err(error) => CommandOutput::failure(error),
+                        Err(error) => CommandOutput::failure(command_message_failure_text(
+                            "CLEAN",
+                            &text_path_display,
+                            "Cleanup failed",
+                            &error,
+                            &[],
+                        )),
                     }
                 }
             }
@@ -7662,7 +7897,16 @@ pub fn clean(
                         Ok(section) => sections.push(section),
                         Err(error) => {
                             return finalize_debug(
-                                CommandOutput::failure(error),
+                                CommandOutput::failure(command_message_failure_text(
+                                    "CLEAN",
+                                    &display_contract_target(
+                                        &compact_path_display,
+                                        Some(member.as_str()),
+                                    ),
+                                    "Cleanup failed",
+                                    &error,
+                                    &[],
+                                )),
                                 debug,
                                 debug_lines,
                             );
@@ -7842,7 +8086,13 @@ pub fn detect(
         };
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "DETECT",
+                    "ota detect --merge",
+                    "Existing contract is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
@@ -7879,7 +8129,13 @@ pub fn detect(
         };
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "DETECT",
+                    "ota detect --rewrite",
+                    "Existing contract is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
@@ -7902,7 +8158,13 @@ pub fn detect(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    "DETECT",
+                    "ota detect --rewrite",
+                    "Rewrite confirmation is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                     ok: false,
                     path: &path_display,
@@ -8002,7 +8264,16 @@ pub fn detect(
             Err(error) => {
                 let error = error.to_string();
                 match format {
-                    OutputFormat::Text => CommandOutput::failure(error),
+                    OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                        "DETECT",
+                        &compact_repo_path(&root),
+                        "Repo could not be detected",
+                        &error,
+                        &[format!(
+                            "inspect repo signals, then rerun `{}`",
+                            command_for_repo("ota detect --dry-run", &root)
+                        )],
+                    )),
                     OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
                         ok: false,
                         path: &path_display,
@@ -8031,7 +8302,16 @@ fn render_detect_contract_preview(
         .map_err(|error| error.to_string())
         .and_then(|contract| validate_contract(&contract).map_err(|error| error.to_string()))
     {
-        return CommandOutput::failure(error);
+        return CommandOutput::failure(command_message_failure_text(
+            "DETECT CONTRACT PREVIEW",
+            &compact_root_display,
+            "Starter contract preview is invalid",
+            &error,
+            &[format!(
+                "review detected fields with `{}`",
+                command_for_repo("ota detect --dry-run", &report.root)
+            )],
+        ));
     }
 
     let mut stdout = format_command_header("DETECT CONTRACT PREVIEW", &compact_root_display);
@@ -8052,7 +8332,14 @@ pub fn workspace_validate(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE VALIDATE",
+                        "ota workspace validate",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.validate")],
             );
@@ -8176,6 +8463,48 @@ fn workspace_contract_load_text(
     )
 }
 
+fn workspace_target_resolution_text(command: &str, rerun_command: &str, error: &str) -> String {
+    let compact_error = compact_backticked_paths(error);
+    let where_value = infer_failure_where(rerun_command, &compact_error);
+
+    if let Some(missing) = detect_missing_contract_context(&compact_error) {
+        let mut stdout = format_command_header(command, &where_value);
+        stdout.push_str(&format!(
+            "\n\n{}  {}",
+            render_severity(FindingSeverity::Error),
+            paint("Workspace target could not be resolved", "1;37")
+        ));
+        render_missing_contract_guidance(&mut stdout, &where_value, &compact_error, missing);
+        return stdout;
+    }
+
+    if let Some((why, next_steps)) = split_embedded_next_block(&compact_error) {
+        let why_lines = why
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        return structured_error_text(
+            command,
+            &where_value,
+            "Workspace target could not be resolved",
+            &why_lines,
+            &next_steps,
+        );
+    }
+
+    structured_error_text(
+        command,
+        &where_value,
+        "Workspace target could not be resolved",
+        &[compact_error],
+        &[format!(
+            "ensure the workspace path points to `{DEFAULT_WORKSPACE_FILE}`, then rerun `{rerun_command}`"
+        )],
+    )
+}
+
 fn workspace_invalid_contract_next_steps(command: &str, workspace_path: &Path) -> Vec<String> {
     vec![
         format!(
@@ -8283,6 +8612,20 @@ fn workspace_repo_contract_load_text(
                 ))
             ),
         ],
+    )
+}
+
+fn workspace_repo_validate_then_rerun_next(
+    repo_contract_path: &Path,
+    rerun_command: &str,
+) -> String {
+    format!(
+        "run {} to fix the failing repo contract, then rerun {}",
+        paint_code(&format!(
+            "`{}`",
+            command_for_contract("ota validate", repo_contract_path)
+        )),
+        paint_code(&format!("`{rerun_command}`"))
     )
 }
 
@@ -8483,11 +8826,36 @@ pub fn workspace_init(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let workspace_command_name = match surface {
+        WorkspaceScaffoldSurface::Init => "ota workspace init",
+        WorkspaceScaffoldSurface::Detect => "ota workspace detect",
+    };
+    let workspace_command_label = match surface {
+        WorkspaceScaffoldSurface::Init => "WORKSPACE INIT",
+        WorkspaceScaffoldSurface::Detect => "WORKSPACE DETECT",
+    };
     let (workspace_root, workspace_path) = match resolve_workspace_init_target(path) {
         Ok(target) => target,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                        workspace_command_label,
+                        workspace_command_name,
+                        "Workspace target could not be resolved",
+                        &error,
+                        &[format!(
+                            "ensure the workspace path is a directory or `ota.workspace.yaml` target, then rerun `{workspace_command_name}`"
+                        )],
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
+                        "ok": false,
+                        "path": serde_json::Value::Null,
+                        "written": false,
+                        "mode": "scaffold",
+                        "error": error,
+                    }))),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.init")],
             );
@@ -8507,10 +8875,7 @@ pub fn workspace_init(
         format!("DEBUG rewrite={rewrite}"),
         format!("DEBUG yes={yes}"),
     ];
-    let command_name = match surface {
-        WorkspaceScaffoldSurface::Init => "ota workspace init",
-        WorkspaceScaffoldSurface::Detect => "ota workspace detect",
-    };
+    let command_name = workspace_command_name;
     let command_label = match surface {
         WorkspaceScaffoldSurface::Init => "INIT",
         WorkspaceScaffoldSurface::Detect => "DETECT",
@@ -8543,7 +8908,13 @@ pub fn workspace_init(
         };
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    &format!("WORKSPACE {command_label}"),
+                    command_name,
+                    "Existing workspace contract is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                     "ok": false,
                     "path": path_display,
@@ -8584,7 +8955,13 @@ pub fn workspace_init(
         };
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    &format!("WORKSPACE {command_label}"),
+                    command_name,
+                    "Existing workspace contract is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                     "ok": false,
                     "path": path_display,
@@ -8608,7 +8985,13 @@ pub fn workspace_init(
         );
         return finalize_debug(
             match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    &format!("WORKSPACE {command_label}"),
+                    command_name,
+                    "Rewrite confirmation is required",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                     "ok": false,
                     "path": path_display,
@@ -8630,9 +9013,15 @@ pub fn workspace_init(
                     let yaml = match serde_yaml::to_string(&draft.contract) {
                         Ok(yaml) => yaml,
                         Err(error) => {
-                            return CommandOutput::failure(format!(
-                                "failed to serialize workspace contract for `{}`: {error}",
-                                compact_path_display
+                            return CommandOutput::failure(command_message_failure_text(
+                                &format!("WORKSPACE {command_label}"),
+                                &compact_path_display,
+                                "Workspace contract could not be serialized",
+                                &format!(
+                                    "failed to serialize workspace contract for `{}`: {error}",
+                                    compact_path_display
+                                ),
+                                &[],
                             ));
                         }
                     };
@@ -8674,16 +9063,30 @@ pub fn workspace_init(
                 if !rewrite_result.rewritten.is_empty() {
                     draft = match build_workspace_init_draft(&workspace_root) {
                         Ok(updated) => updated,
-                        Err(error) => return CommandOutput::failure(error),
+                        Err(error) => {
+                            return CommandOutput::failure(command_message_failure_text(
+                                &format!("WORKSPACE {command_label}"),
+                                &compact_root_display,
+                                "Workspace contract could not be inferred",
+                                &error,
+                                &[],
+                            ));
+                        }
                     };
                 }
 
                 let yaml = match serde_yaml::to_string(&draft.contract) {
                     Ok(yaml) => yaml,
                     Err(error) => {
-                        return CommandOutput::failure(format!(
-                            "failed to serialize workspace contract for `{}`: {error}",
-                            compact_path_display
+                        return CommandOutput::failure(command_message_failure_text(
+                            &format!("WORKSPACE {command_label}"),
+                            &compact_path_display,
+                            "Workspace contract could not be serialized",
+                            &format!(
+                                "failed to serialize workspace contract for `{}`: {error}",
+                                compact_path_display
+                            ),
+                            &[],
                         ));
                     }
                 };
@@ -8691,7 +9094,15 @@ pub fn workspace_init(
                     .map_err(|error| error.to_string())
                 {
                     return match format {
-                        OutputFormat::Text => CommandOutput::failure(error.clone()),
+                        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                            &format!("WORKSPACE {command_label}"),
+                            &compact_path_display,
+                            "Workspace contract is invalid",
+                            &error,
+                            &[format!(
+                                "repair the generated workspace contract, then rerun `{command_name}`"
+                            )],
+                        )),
                         OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                             "ok": false,
                             "path": path_display,
@@ -8705,7 +9116,15 @@ pub fn workspace_init(
                     Ok(path) => path,
                     Err(error) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_path_display,
+                                    "Workspace contract could not be written",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                                 "ok": false,
                                 "path": path_display,
@@ -8718,10 +9137,16 @@ pub fn workspace_init(
                 };
                 if let Err(error) = fs::write(&workspace_path, yaml) {
                     return match format {
-                        OutputFormat::Text => CommandOutput::failure(format!(
-                            "failed to write `{}`: {}",
-                            compact_workspace_path(&workspace_path),
-                            error
+                        OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                            &format!("WORKSPACE {command_label}"),
+                            &compact_path_display,
+                            "Workspace contract could not be written",
+                            &format!(
+                                "failed to write `{}`: {}",
+                                compact_workspace_path(&workspace_path),
+                                error
+                            ),
+                            &[],
                         )),
                         OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                             "ok": false,
@@ -8778,7 +9203,15 @@ pub fn workspace_init(
                     Ok(state) => state,
                     Err(error) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_path_display,
+                                    "Workspace merge preview could not be prepared",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                                 "ok": false,
                                 "path": path_display,
@@ -8843,7 +9276,15 @@ pub fn workspace_init(
                     if !auto_provision.provisioned.is_empty() {
                         draft = match build_workspace_init_draft(&workspace_root) {
                             Ok(updated) => updated,
-                            Err(error) => return CommandOutput::failure(error),
+                            Err(error) => {
+                                return CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_root_display,
+                                    "Workspace contract could not be inferred",
+                                    &error,
+                                    &[],
+                                ));
+                            }
                         };
                     }
                 }
@@ -8852,7 +9293,15 @@ pub fn workspace_init(
                     Ok(state) => state,
                     Err(error) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_path_display,
+                                    "Workspace contract could not be merged",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                                 "ok": false,
                                 "path": path_display,
@@ -8973,7 +9422,13 @@ pub fn workspace_init(
                     }
                 };
                 match format {
-                    OutputFormat::Text => CommandOutput::failure(error.trim_end().to_string()),
+                    OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                        &format!("WORKSPACE {command_label}"),
+                        &compact_path_display,
+                        "Workspace contract already exists",
+                        error.trim_end(),
+                        &[],
+                    )),
                     OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                         "ok": false,
                         "path": path_display,
@@ -9004,7 +9459,15 @@ pub fn workspace_init(
                             Err(error) => {
                                 return finalize_debug(
                                     match format {
-                                        OutputFormat::Text => CommandOutput::failure(error),
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(command_message_failure_text(
+                                                &format!("WORKSPACE {command_label}"),
+                                                &compact_root_display,
+                                                "Workspace contract could not be inferred",
+                                                &error,
+                                                &[],
+                                            ))
+                                        }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json_value(json!({
                                                 "ok": false,
@@ -9064,7 +9527,15 @@ pub fn workspace_init(
                     };
                     return finalize_debug(
                         match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_root_display,
+                                    "No repo contracts were available",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                                 "ok": false,
                                 "path": path_display,
@@ -9087,7 +9558,15 @@ pub fn workspace_init(
                         );
                         return finalize_debug(
                             match format {
-                                OutputFormat::Text => CommandOutput::failure(error),
+                                OutputFormat::Text => {
+                                    CommandOutput::failure(command_message_failure_text(
+                                        &format!("WORKSPACE {command_label}"),
+                                        &compact_path_display,
+                                        "Workspace contract could not be serialized",
+                                        &error,
+                                        &[],
+                                    ))
+                                }
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json_value(json!({
                                         "ok": false,
@@ -9111,7 +9590,15 @@ pub fn workspace_init(
                     );
                     return finalize_debug(
                         match format {
-                            OutputFormat::Text => CommandOutput::failure(error),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(command_message_failure_text(
+                                    &format!("WORKSPACE {command_label}"),
+                                    &compact_path_display,
+                                    "Workspace contract could not be written",
+                                    &error,
+                                    &[],
+                                ))
+                            }
                             OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                                 "ok": false,
                                 "path": path_display,
@@ -9178,9 +9665,15 @@ pub fn workspace_init(
                     let yaml = match serde_yaml::to_string(&draft.contract) {
                         Ok(yaml) => yaml,
                         Err(error) => {
-                            return CommandOutput::failure(format!(
-                                "failed to serialize workspace contract for `{}`: {error}",
-                                compact_path_display
+                            return CommandOutput::failure(command_message_failure_text(
+                                &format!("WORKSPACE {command_label}"),
+                                &compact_path_display,
+                                "Workspace contract could not be serialized",
+                                &format!(
+                                    "failed to serialize workspace contract for `{}`: {error}",
+                                    compact_path_display
+                                ),
+                                &[],
                             ));
                         }
                     };
@@ -9227,7 +9720,13 @@ pub fn workspace_init(
                 }))),
             },
             Err(error) => match format {
-                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Text => CommandOutput::failure(command_message_failure_text(
+                    &format!("WORKSPACE {command_label}"),
+                    &compact_root_display,
+                    "Workspace contract could not be inferred",
+                    &error,
+                    &[],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json_value(json!({
                     "ok": false,
                     "path": path_display,
@@ -9252,7 +9751,14 @@ pub fn workspace_tasks(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE TASKS",
+                        "ota workspace tasks",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.tasks")],
             );
@@ -9462,7 +9968,14 @@ pub fn workspace_list(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE LIST",
+                        "ota workspace list",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.list")],
             );
@@ -9545,30 +10058,49 @@ pub fn workspace_list(
                         None => true,
                     })
                     .filter_map(|repo| {
-                        let contract = repo
-                            .present
-                            .then_some(())
-                            .filter(|_| repo.contract_path.is_file())
-                            .and_then(|_| load_contract(&repo.contract_path).ok());
-                        let ready = contract
-                            .as_ref()
-                            .map(|contract| {
-                                diagnose_preconditions(contract, &repo.contract_path).ok
-                            })
-                            .unwrap_or(false);
+                        let (status, execution) = if !repo.present {
+                            (String::from("NOT READY"), None)
+                        } else if !repo.contract_path.is_file() {
+                            (String::from("MISSING CONTRACT"), None)
+                        } else {
+                            match load_contract(&repo.contract_path) {
+                                Ok(contract) => {
+                                    if validate_contract(&contract).is_err() {
+                                        (String::from("INVALID CONTRACT"), None)
+                                    } else {
+                                        let ready =
+                                            diagnose_preconditions(&contract, &repo.contract_path)
+                                                .ok;
+                                        (
+                                            if ready {
+                                                String::from("READY")
+                                            } else {
+                                                String::from("NOT READY")
+                                            },
+                                            WorkspaceExecutionSummary::from_contract_with_policy(
+                                                &contract,
+                                                &repo.contract_path,
+                                                Some(&repo.policy_env),
+                                            ),
+                                        )
+                                    }
+                                }
+                                Err(_) => (String::from("UNREADABLE CONTRACT"), None),
+                            }
+                        };
 
                         match status_filter {
-                            Some(WorkspaceDoctorStatusFilter::Ready) if !ready => return None,
-                            Some(WorkspaceDoctorStatusFilter::NotReady) if ready => return None,
+                            Some(WorkspaceDoctorStatusFilter::Ready) if status != "READY" => {
+                                return None;
+                            }
+                            Some(WorkspaceDoctorStatusFilter::NotReady) if status == "READY" => {
+                                return None;
+                            }
                             _ => {}
                         }
 
                         Some(WorkspaceRepoListReport {
-                            status: if ready {
-                                String::from("READY")
-                            } else {
-                                String::from("NOT READY")
-                            },
+                            status,
                             name: repo.name,
                             path: repo.path.display().to_string(),
                             contract_path: repo.contract_path.display().to_string(),
@@ -9576,13 +10108,7 @@ pub fn workspace_list(
                             required: repo.required,
                             acquired: repo.present,
                             depends_on: repo.depends_on,
-                            execution: contract.as_ref().and_then(|contract| {
-                                WorkspaceExecutionSummary::from_contract_with_policy(
-                                    contract,
-                                    &repo.contract_path,
-                                    Some(&repo.policy_env),
-                                )
-                            }),
+                            execution,
                         })
                     })
                     .collect::<Vec<_>>();
@@ -9631,7 +10157,14 @@ pub fn workspace_execution_plan(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE EXECUTION PLAN",
+                        "ota workspace execution plan",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.execution.plan")],
             );
@@ -9727,7 +10260,7 @@ pub fn workspace_execution_plan(
                         Some(target) => repo.name == target,
                         None => true,
                     })
-                    .map(|repo| run_workspace_repo_execution_plan(repo, overrides))
+                    .map(|repo| run_workspace_repo_execution_plan(repo, overrides, &resolved_path))
                     .collect::<Vec<_>>();
 
                 render_workspace_execution_plan(
@@ -9786,7 +10319,14 @@ pub fn workspace_doctor(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE DOCTOR",
+                        "ota workspace doctor",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.doctor")],
             );
@@ -9948,7 +10488,14 @@ pub fn workspace_explain(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE EXPLAIN",
+                        "ota workspace explain",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.explain")],
             );
@@ -10055,7 +10602,14 @@ pub fn workspace_check(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE CHECK",
+                        "ota workspace check",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.check")],
             );
@@ -10182,7 +10736,14 @@ pub fn workspace_up(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE UP",
+                        "ota workspace up",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.up")],
             );
@@ -10304,7 +10865,14 @@ pub fn workspace_refresh(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE REFRESH",
+                        "ota workspace refresh",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.refresh")],
             );
@@ -10404,7 +10972,14 @@ pub fn workspace_diff(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE DIFF",
+                        "ota workspace diff",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.diff")],
             );
@@ -10485,7 +11060,14 @@ pub fn workspace_status(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE STATUS",
+                        "ota workspace status",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.status")],
             );
@@ -10567,7 +11149,14 @@ pub fn workspace_receipt(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE RECEIPT",
+                        "ota workspace receipt",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.receipt")],
             );
@@ -10714,7 +11303,14 @@ pub fn workspace_run(
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
-                CommandOutput::failure(error.to_string()),
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(workspace_target_resolution_text(
+                        "WORKSPACE RUN",
+                        "ota workspace run",
+                        &error.to_string(),
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                },
                 debug,
                 vec![String::from("DEBUG command=workspace.run")],
             );
@@ -14432,20 +15028,6 @@ fn strip_container_image_from_next(value: &str) -> (String, Option<String>) {
     (stripped, Some(image))
 }
 
-fn append_container_image_detail(
-    output: &mut String,
-    image: &str,
-    indent: &str,
-    severity: FindingSeverity,
-) {
-    output.push_str(&format!(
-        "\n{indent}  {} {} {}",
-        finding_detail_bullet(severity),
-        paint_key("Image:"),
-        paint_backticked_code(image)
-    ));
-}
-
 fn append_wrapped_detail<F>(
     output: &mut String,
     label: &str,
@@ -15588,8 +16170,7 @@ fn render_tasks_text(
         return output;
     }
 
-    for (index, task) in tasks.iter().enumerate() {
-        output.push('\n');
+    for task in tasks {
         let command_preview = task
             .run
             .map(str::to_string)
@@ -15600,7 +16181,43 @@ fn render_tasks_text(
             .unwrap_or_else(|| String::from("-"));
 
         output.push_str(&format!("\n{} {}", list_bullet(), paint(task.name, "1")));
+        if let Some(description) = task.description {
+            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
+        }
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Use:"),
+            paint_code(&format!("ota run {}", task.name))
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Command Preview:"),
+            command_preview
+        ));
+        if !task.inputs.is_empty() {
+            let inputs = task
+                .inputs
+                .iter()
+                .map(|(name, spec)| render_task_input_summary(name, spec))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("\n  {} {}", paint_key("Inputs:"), inputs));
+        }
+        if !task.env.is_empty() {
+            let env = task
+                .env
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
+        }
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Safe For Agent:"),
+            if task.safe_for_agent { "true" } else { "false" }
+        ));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Selected OS:"),
@@ -15630,51 +16247,12 @@ fn render_tasks_text(
             paint_key("After Always:"),
             render_task_relationships(task.after_always)
         ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Safe For Agent:"),
-            if task.safe_for_agent { "true" } else { "false" }
-        ));
-        if !task.env.is_empty() {
-            let env = task
-                .env
-                .iter()
-                .map(|(key, value)| format!("{key}={value}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
-        }
-        if !task.inputs.is_empty() {
-            let inputs = task
-                .inputs
-                .iter()
-                .map(|(name, spec)| render_task_input_summary(name, spec))
-                .collect::<Vec<_>>()
-                .join(", ");
-            output.push_str(&format!("\n  {} {}", paint_key("Inputs:"), inputs));
-        }
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Command Preview:"),
-            command_preview
-        ));
-        output.push_str(&format!(
-            "\n  {} `{}`",
-            paint_key("Use:"),
-            paint_code(&format!("ota run {}", task.name))
-        ));
-        if let Some(description) = task.description {
-            output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
-        }
         if let Some(notes) = task.notes {
             output.push_str(&format!(
                 "\n  {} {}",
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
-        }
-        if index + 1 < tasks.len() {
-            output.push('\n');
         }
     }
 
@@ -15697,12 +16275,12 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         return output;
     }
 
-    for (index, task) in tasks.iter().enumerate() {
+    for task in tasks {
         let usage = render_task_use_command(task);
+        output.push_str(&format!("\n{} {}", info_bullet(), paint(task.name, "1")));
         output.push_str(&format!(
-            "\n{} {} `{}`",
-            info_bullet(),
-            paint(task.name, "1"),
+            "\n  {} `{}`",
+            paint_key("Command:"),
             paint_code(&usage)
         ));
         if let Some(description) = task.description {
@@ -15714,9 +16292,6 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
-        }
-        if index + 1 < tasks.len() {
-            output.push('\n');
         }
     }
     output
@@ -17246,7 +17821,9 @@ fn render_report_section(
         stdout.push_str("\n\n");
     }
 
-    let skip_primary_finding = summary.and_then(|summary| summary.primary_blocker.as_ref());
+    let skip_primary_finding = summary
+        .and_then(|summary| summary.primary_blocker.as_ref())
+        .filter(|finding| finding.severity == FindingSeverity::Error);
     if let Some(primary_blocker) = skip_primary_finding {
         if !stdout.ends_with("\n\n") {
             stdout.push_str("\n\n");
@@ -17304,6 +17881,12 @@ fn render_report_section(
             let finding = group.findings[0];
             let (display_why, display_next, container_image) =
                 render_container_image_finding_text(&finding.why, &finding.next, doctor_mode);
+            let diagnosis =
+                finding_diagnosis_text(&finding.summary, &display_why, container_image.as_deref());
+            let why_lines =
+                finding_why_lines(&finding.summary, &display_why, container_image.as_deref());
+            let next_steps =
+                finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -17328,39 +17911,30 @@ fn render_report_section(
                 stdout.push_str(&format!(
                     "{}  {}{}{}",
                     render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
+                    paint(&diagnosis, "1"),
                     source_block,
                     provenance_block,
                 ));
-                if let Some(image) = container_image.as_deref() {
-                    append_container_image_detail(&mut stdout, image, "", finding.severity);
-                }
-                append_wrapped_labeled_text(
+                append_finding_section(
                     &mut stdout,
                     "Next:",
-                    &rewrite_doctor_mode_command(&display_next, doctor_mode),
-                    "",
-                    DOCTOR_DETAIL_WRAP_WIDTH,
-                    true,
-                    |key| finding_detail_key(finding.severity, key),
-                    |value| render_backticked_text(value, contract_path),
+                    &next_steps,
+                    finding.severity,
+                    contract_path,
                 );
             } else {
                 stdout.push_str("\n\n");
                 stdout.push_str(&format!(
                     "{}  {}",
                     render_severity(finding.severity),
-                    render_finding_summary(finding.severity, &finding.summary),
+                    paint(&diagnosis, "1"),
                 ));
-                append_wrapped_labeled_text(
+                append_finding_section(
                     &mut stdout,
                     "Why:",
-                    &display_why,
-                    "",
-                    DOCTOR_DETAIL_WRAP_WIDTH,
-                    false,
-                    |key| finding_detail_key(finding.severity, key),
-                    |value| render_backticked_text(value, contract_path),
+                    &why_lines,
+                    finding.severity,
+                    contract_path,
                 );
                 if let Some(source_line) = source_line.as_deref() {
                     stdout.push('\n');
@@ -17369,18 +17943,12 @@ fn render_report_section(
                 if let Some(provenance_line) = provenance_line.as_deref() {
                     stdout.push_str(provenance_line);
                 }
-                if let Some(image) = container_image.as_deref() {
-                    append_container_image_detail(&mut stdout, image, "", finding.severity);
-                }
-                append_wrapped_labeled_text(
+                append_finding_section(
                     &mut stdout,
                     "Next:",
-                    &rewrite_doctor_mode_command(&display_next, doctor_mode),
-                    "",
-                    DOCTOR_DETAIL_WRAP_WIDTH,
-                    true,
-                    |key| finding_detail_key(finding.severity, key),
-                    |value| render_backticked_text(value, contract_path),
+                    &next_steps,
+                    finding.severity,
+                    contract_path,
                 );
             }
             continue;
@@ -17439,6 +18007,274 @@ fn render_check_ready_next(contract_path: Option<&Path>) -> String {
     ])
 }
 
+fn title_case_word(value: &str) -> String {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+fn formatted_version_policy_item(item: &str) -> String {
+    if let Some((subject, versions)) = item.split_once(" (versions ")
+        && let Some((kind, name)) = subject.split_once(' ')
+    {
+        return format!(
+            "{kind} `{name}` (versions `{}`)",
+            versions.trim_end_matches(')')
+        );
+    }
+    item.to_string()
+}
+
+fn container_provisioning_backend_and_name(summary: &str) -> Option<(&str, &str)> {
+    if let Some(rest) = summary.strip_prefix("Container ")
+        && let Some((backend, name)) = rest.split_once(" cannot install pinned version: ")
+    {
+        return Some((backend, name));
+    }
+    if let Some(rest) = summary.strip_prefix("Container ")
+        && let Some((backend, name)) = rest.split_once(" cannot install requested prerequisite: ")
+    {
+        return Some((backend, name));
+    }
+    if let Some(rest) = summary.strip_prefix("Container ")
+        && let Some((backend, name)) = rest.split_once(" cannot install pinned package version: ")
+    {
+        return Some((backend, name));
+    }
+    None
+}
+
+fn container_provisioning_why_lines(why: &str, backend: &str) -> Option<Vec<String>> {
+    let request_prefix = "the Linux/container target requests ";
+    let request_and_rest = why.strip_prefix(request_prefix)?;
+    let (request_part, failure_part) = request_and_rest
+        .split_once(", but ")
+        .or_else(|| request_and_rest.split_once(" but "))?;
+
+    let mut lines = Vec::new();
+    if let Some((request, resolution)) = request_part.split_once("; ") {
+        lines.push(format!("{request_prefix}{request}"));
+        lines.push(resolution.to_string());
+    } else {
+        lines.push(format!("{request_prefix}{request_part}"));
+    }
+
+    if let Some((head, _)) = failure_part.split_once(" inside container image `") {
+        lines.push(format!(
+            "{} in the configured container environment",
+            head.trim_end()
+        ));
+    } else {
+        lines.push(
+            failure_part
+                .replace(
+                    "inside container image",
+                    "in the configured container environment",
+                )
+                .replace(
+                    "configured apt sources",
+                    "configured `apt` provisioning path",
+                ),
+        );
+    }
+
+    if let Some(last) = lines.last_mut() {
+        *last = last
+            .replace("does not provide that version", "could not satisfy it")
+            .replace(
+                "configured apt sources",
+                "configured `apt` provisioning path",
+            );
+        if !last.contains(&format!("`{backend}`")) && backend != "apt" {
+            *last = last.replace(
+                "the configured provisioning path",
+                &format!("the configured `{backend}` provisioning path"),
+            );
+        }
+    }
+
+    Some(lines)
+}
+
+fn finding_diagnosis_text(summary: &str, why: &str, container_image: Option<&str>) -> String {
+    if summary == "Adapter bootstrap sources are declared" {
+        return String::from("Approved adapter bootstrap is configured");
+    }
+    if summary == "Policy-backed version rules are declared" {
+        return String::from("Approved version policy is configured");
+    }
+    if summary == "Policy-backed provisioning sources are declared" {
+        return String::from("Approved provisioning sources are configured");
+    }
+    if let Some((backend, name)) = container_provisioning_backend_and_name(summary) {
+        return format!(
+            "{} cannot be provisioned through `{backend}` in container mode",
+            title_case_word(name)
+        );
+    }
+    if let Some(tool) = summary.strip_prefix("Missing tool: ")
+        && container_image.is_some()
+        && why.contains("not available inside the configured")
+    {
+        return format!(
+            "{} is missing from the configured container image",
+            title_case_word(tool)
+        );
+    }
+    if let Some(runtime) = summary.strip_prefix("Missing runtime: ")
+        && container_image.is_some()
+        && why.contains("not available inside the configured")
+    {
+        return format!(
+            "{} is missing from the configured container image",
+            title_case_word(runtime)
+        );
+    }
+    summary.to_string()
+}
+
+fn policy_surface_bullets(why: &str, lead: &str) -> Option<Vec<String>> {
+    let (_, declared) = why.split_once(": ")?;
+    let mut lines = vec![lead.to_string()];
+    lines.extend(declared.split(", ").map(|item| {
+        if let Some((subject, adapter)) = item.split_once(" via ") {
+            format!("{subject} via `{adapter}`")
+        } else {
+            item.to_string()
+        }
+    }));
+    Some(lines)
+}
+
+fn finding_why_lines(summary: &str, why: &str, container_image: Option<&str>) -> Vec<String> {
+    if summary == "Adapter bootstrap sources are declared" {
+        return policy_surface_bullets(
+            why,
+            "`.ota/org-policy.yaml` approves bootstrap for missing adapter binaries",
+        )
+        .unwrap_or_else(|| vec![why.to_string()]);
+    }
+    if summary == "Policy-backed version rules are declared" {
+        return policy_surface_bullets(why, "`.ota/org-policy.yaml` approves repo version rules")
+            .map(|lines| {
+                let mut rendered = Vec::with_capacity(lines.len());
+                if let Some((first, rest)) = lines.split_first() {
+                    rendered.push(first.clone());
+                    rendered.extend(rest.iter().map(|item| formatted_version_policy_item(item)));
+                }
+                rendered
+            })
+            .unwrap_or_else(|| vec![why.to_string()]);
+    }
+    if summary == "Policy-backed provisioning sources are declared" {
+        return policy_surface_bullets(
+            why,
+            "`.ota/org-policy.yaml` approves provisioning for declared repo prerequisites",
+        )
+        .unwrap_or_else(|| vec![why.to_string()]);
+    }
+    if let Some((backend, _)) = container_provisioning_backend_and_name(summary)
+        && let Some(lines) = container_provisioning_why_lines(why, backend)
+    {
+        return lines;
+    }
+    if let Some(tool) = summary.strip_prefix("Missing tool: ")
+        && container_image.is_some()
+        && why.contains("not available inside the configured")
+    {
+        return vec![
+            format!("`{tool}` is declared in the contract"),
+            String::from("it is not available in the configured container image"),
+            format!(
+                "`execution.backends.container.image = {}`",
+                container_image.unwrap_or_default()
+            ),
+        ];
+    }
+    if let Some(runtime) = summary.strip_prefix("Missing runtime: ")
+        && container_image.is_some()
+        && why.contains("not available inside the configured")
+    {
+        return vec![
+            format!("`{runtime}` is declared in the contract"),
+            String::from("it is not available in the configured container image"),
+            format!(
+                "`execution.backends.container.image = {}`",
+                container_image.unwrap_or_default()
+            ),
+        ];
+    }
+    vec![why.to_string()]
+}
+
+fn finding_next_steps(next: &str) -> Vec<String> {
+    if let Some((first, rerun)) = next.split_once(", then rerun ") {
+        return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
+    }
+    vec![next.to_string()]
+}
+
+fn append_error_detail_section(
+    output: &mut String,
+    label: &str,
+    items: &[String],
+    contract_path: Option<&Path>,
+) {
+    if items.len() == 1 {
+        append_wrapped_labeled_text(
+            output,
+            label,
+            &items[0],
+            "",
+            DOCTOR_DETAIL_WRAP_WIDTH,
+            label == "Next:",
+            error_key,
+            |value| render_backticked_text(value, contract_path),
+        );
+        return;
+    }
+    output.push_str(&format!("\n{}", error_key(label)));
+    for item in items {
+        output.push_str(&format!(
+            "\n  {} {}",
+            finding_detail_bullet(FindingSeverity::Error),
+            render_backticked_text(item, contract_path),
+        ));
+    }
+}
+
+fn append_finding_section(
+    output: &mut String,
+    label: &str,
+    items: &[String],
+    severity: FindingSeverity,
+    contract_path: Option<&Path>,
+) {
+    if items.len() == 1 {
+        append_wrapped_labeled_text(
+            output,
+            label,
+            &items[0],
+            "",
+            DOCTOR_DETAIL_WRAP_WIDTH,
+            label == "Next:",
+            |key| finding_detail_key(severity, key),
+            |value| render_backticked_text(value, contract_path),
+        );
+        return;
+    }
+    output.push_str(&format!("\n{}", finding_detail_key(severity, label)));
+    for item in items {
+        output.push_str(&format!(
+            "\n  {} {}",
+            finding_detail_bullet(severity),
+            render_backticked_text(item, contract_path),
+        ));
+    }
+}
+
 fn render_primary_finding_text_with_next_rewriter(
     severity: FindingSeverity,
     summary: &str,
@@ -17452,6 +18288,9 @@ fn render_primary_finding_text_with_next_rewriter(
     let mut stdout = String::new();
     let (display_why, display_next, container_image) =
         render_container_image_finding_text(why, next, doctor_mode);
+    let diagnosis = finding_diagnosis_text(summary, &display_why, container_image.as_deref());
+    let why_lines = finding_why_lines(summary, &display_why, container_image.as_deref());
+    let next_steps = finding_next_steps(&rewrite_next(&display_next, doctor_mode));
     let (marker, title_color, title) = match severity {
         FindingSeverity::Error => (
             primary_error_marker(),
@@ -17469,20 +18308,21 @@ fn render_primary_finding_text_with_next_rewriter(
             "Primary Finding",
         ),
     };
-    stdout.push_str(&format!("{} {}", marker, paint(title, title_color)));
-    stdout.push('\n');
-    stdout.push_str(&paint(summary, "1"));
+    stdout.push_str(&format!(
+        "{} {} {}",
+        marker,
+        paint(
+            match severity {
+                FindingSeverity::Error => title,
+                FindingSeverity::Warn => "WARN",
+                FindingSeverity::Info => "INFO",
+            },
+            title_color
+        ),
+        paint(&diagnosis, "1")
+    ));
     if !concise_mode() {
-        append_wrapped_labeled_text(
-            &mut stdout,
-            "Why:",
-            &display_why,
-            "",
-            DOCTOR_DETAIL_WRAP_WIDTH,
-            false,
-            paint_key,
-            |value| render_backticked_text(value, contract_path),
-        );
+        append_finding_section(&mut stdout, "Why:", &why_lines, severity, contract_path);
     }
     if let Some(provenance) = provenance.as_deref() {
         append_wrapped_labeled_text(
@@ -17496,19 +18336,7 @@ fn render_primary_finding_text_with_next_rewriter(
             |value| render_backticked_text(value, contract_path),
         );
     }
-    if let Some(image) = container_image.as_deref() {
-        append_container_image_detail(&mut stdout, image, "", severity);
-    }
-    append_wrapped_labeled_text(
-        &mut stdout,
-        "Next:",
-        &rewrite_next(&display_next, doctor_mode),
-        "",
-        DOCTOR_DETAIL_WRAP_WIDTH,
-        true,
-        paint_key,
-        |value| render_backticked_text(value, contract_path),
-    );
+    append_finding_section(&mut stdout, "Next:", &next_steps, severity, contract_path);
     stdout
 }
 
@@ -20168,6 +20996,15 @@ mod tests {
         let provenance = text.find("Provenance:").expect("provenance");
         let next = text.find("Next:").expect("next");
 
+        assert!(text.contains("◉ INFO  Approved adapter bootstrap is configured"));
+        assert!(text.contains(
+            "Why:\n  » `.ota/org-policy.yaml` approves bootstrap for missing adapter binaries"
+        ));
+        assert!(text.contains("  » brew via `brew-bootstrap`"));
+        assert!(text.contains("  » sdkman via `sdkman-bootstrap`"));
+        assert!(text.contains(
+            "Next: use this policy surface when adapter bootstrap needs to be approved or audited"
+        ));
         assert!(why < provenance);
         assert!(provenance < next);
     }
@@ -20824,7 +21661,7 @@ policies:
             Some(&summary),
         ));
 
-        assert!(text.contains("Primary Blocker"));
+        assert!(text.contains("➤ Primary Blocker Version mismatch for runtime: node"));
         assert!(text.contains("Fix version mismatches (2)"));
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
@@ -21379,15 +22216,18 @@ policies:
             Some(&summary),
         ));
 
-        assert!(text.contains(
-            "Why: java is declared in the contract but is not available inside the configured"
-        ));
-        assert!(text.contains("  » Image: `jdxcode/mise:latest`"));
+        assert!(
+            text.contains("➤ Primary Blocker Java is missing from the configured container image")
+        );
+        assert!(text.contains("Why:\n  » `java` is declared in the contract"));
+        assert!(text.contains("  » it is not available in the configured container image"));
+        assert!(text.contains("  » `execution.backends.container.image = jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
         assert!(text.contains(
-            "Next: update `execution.backends.container.image` so `java` is available, then rerun"
+            "Next:\n  » update `execution.backends.container.image` so `java` is available"
         ));
+        assert!(text.contains("  » rerun `ota doctor --mode container`"));
     }
 
     #[test]
@@ -21428,15 +22268,16 @@ policies:
             Some(&summary),
         ));
 
-        assert!(text.contains(
-            "Why: java is declared in the contract but is not available inside the configured"
-        ));
-        assert!(text.contains("  » Image: `jdxcode/mise:latest`"));
+        assert!(text.contains("◉ ERROR  Java is missing from the configured container image"));
+        assert!(text.contains("Why:\n  » `java` is declared in the contract"));
+        assert!(text.contains("  » it is not available in the configured container image"));
+        assert!(text.contains("  » `execution.backends.container.image = jdxcode/mise:latest`"));
         assert!(!text.contains("inside container image `jdxcode/mise:latest`"));
         assert!(!text.contains("(currently `jdxcode/mise:latest`)"));
         assert!(text.contains(
-            "Next: update `execution.backends.container.image` so `java` is available, then rerun"
+            "Next:\n  » update `execution.backends.container.image` so `java` is available"
         ));
+        assert!(text.contains("  » rerun `ota doctor --mode container`"));
     }
 
     #[test]
@@ -21616,11 +22457,13 @@ tasks:
 
         let rendered = strip_ansi_codes(&stylize_text_failure("ota run", &message));
 
+        assert!(rendered.contains("Task Failed"));
+        assert!(rendered.contains("`fail` exited with code 127"));
         assert!(rendered.contains("RUN SUMMARY"));
-        assert!(rendered.contains("Status:     failed"));
-        assert!(rendered.contains("Why: task `fail` failed with exit code 127"));
-        assert!(!rendered.contains("Why: 🦦  RUN SUMMARY"));
-        assert!(rendered.contains("\n\n🦦  RUN SUMMARY\n\nScope:"));
+        assert!(rendered.contains("Status:    failed"));
+        assert!(rendered.contains("Why:\n  » task `fail` returned a non-zero exit code"));
+        assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
+        assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nScope:"));
     }
 
     #[test]
@@ -21726,7 +22569,7 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Status:     blocked"));
+        assert!(rendered.contains("Status:    blocked"));
     }
 
     #[test]
@@ -21764,7 +22607,7 @@ tasks:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Status:     failed"));
+        assert!(rendered.contains("Status:    failed"));
     }
 
     #[test]
@@ -21820,9 +22663,9 @@ execution:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Mode:       container"));
-        assert!(rendered.contains("Image:      ghcr.io/ota/dev:latest"));
-        assert!(rendered.contains("Target:     ota-ephemeral-"));
+        assert!(rendered.contains("Mode:      container"));
+        assert!(rendered.contains("Image:     ghcr.io/ota/dev:latest"));
+        assert!(rendered.contains("Target:    ota-ephemeral-"));
     }
 
     #[test]
@@ -21862,7 +22705,7 @@ execution:
             "UP SUMMARY",
         ));
 
-        assert!(rendered.contains("Mode:       native"));
+        assert!(rendered.contains("Mode:      native"));
         assert!(!rendered.contains("Image:"));
         assert!(!rendered.contains("Target:"));
     }
@@ -21929,11 +22772,10 @@ execution:
             "task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage",
         ));
 
-        assert!(rendered.contains("Why: task `install-from-source` failed with exit code 101"));
-        assert!(rendered.contains("\nNext: run `ota tasks --use` to inspect runnable task usage"));
-        assert!(
-            !rendered.contains("\n\nNext: run `ota tasks --use` to inspect runnable task usage")
-        );
+        assert!(rendered.contains("Task Failed"));
+        assert!(rendered.contains("`install-from-source` exited with code 101"));
+        assert!(rendered.contains("Why: task `install-from-source` returned a non-zero exit code"));
+        assert!(rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
     }
 
     #[test]
@@ -21944,10 +22786,10 @@ execution:
         );
 
         assert!(rendered.contains(&format!(
-            "Next: rerun `{}`",
+            "Next:\n  » rerun `{}`",
             super::paint_code("ota up --mode container")
         )));
-        assert!(strip_ansi_codes(&rendered).contains("Next: rerun `ota up --mode container`"));
+        assert!(strip_ansi_codes(&rendered).contains("Next:\n  » rerun `ota up --mode container`"));
     }
 
     #[test]
@@ -23653,15 +24495,6 @@ fn render_run_captured_failure_text(
     receipt_text: Option<&str>,
     summary: &str,
 ) -> String {
-    let mut output = format!(
-        "{}  {}\n{} {}\n{} task `{task_name}` failed with exit code {exit_code}",
-        render_severity(FindingSeverity::Error),
-        paint("Operation failed", "1;37"),
-        paint_key("Where:"),
-        paint_code(where_value),
-        error_key("Why:")
-    );
-
     let mut next_steps = Vec::new();
     if run_output_excerpt(stdout, stderr, 20).is_some() {
         next_steps.push(format!(
@@ -23670,20 +24503,14 @@ fn render_run_captured_failure_text(
         ));
     }
     next_steps.push(task_use_details_step(member));
-    if next_steps.len() == 1 {
-        output.push_str(&format!("\n{} {}", error_next_key("Next:"), next_steps[0]));
-    } else {
-        output.push_str(&format_error_next_timeline(&next_steps));
-    }
-
-    if let Some(receipt_text) = receipt_text
-        && !receipt_text.trim().is_empty()
-    {
-        output.push_str(receipt_text);
-    }
-    output.push('\n');
-    output.push_str(summary);
-    output
+    render_task_exit_failure_text(
+        where_value,
+        task_name,
+        exit_code,
+        &next_steps,
+        Some(summary),
+        receipt_text,
+    )
 }
 
 struct OutputExcerpt {
@@ -25139,9 +25966,9 @@ fn render_execution_receipt_summary_block(
     let title = if plain_mode() {
         title.to_string()
     } else if title.starts_with("WORKSPACE ") {
-        paint(&format!("🦦  {title}"), "1;37")
+        paint(&format!("🦦 {title}"), "1;37")
     } else {
-        paint(&format!("🦦  {title}"), "1")
+        paint(&format!("🦦 {title}"), "1")
     };
     let mut lines = vec![String::new(), title, String::new()];
     let path_display = if receipt.scope == "repo" {
@@ -25206,7 +26033,7 @@ fn render_execution_receipt_summary_block(
 }
 
 fn summary_detail_line(label: &str, value: &str) -> String {
-    format!("{label:<11} {value}")
+    format!("{label:<10} {value}")
 }
 
 fn render_execution_receipt_status(status: &str) -> String {
@@ -25470,7 +26297,7 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
             }
             stdout.push_str(&format!("\n\n{line}"));
             stdout.push_str(&format!(
-                "\n{} {}",
+                "\n  {} {}",
                 paint_key("Status:"),
                 render_status_word(&repo.status)
             ));
@@ -25493,6 +26320,11 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
             } else {
                 paint("NOT ACQUIRED", "1;93")
             }
+        ));
+        stdout.push_str(&format!(
+            "\n{} {}",
+            paint_key("Status:"),
+            render_status_word(&repo.status)
         ));
         stdout.push_str(&format!(
             "\n{} {}",
@@ -25525,11 +26357,6 @@ fn render_workspace_list_text(path: &str, repos: &[WorkspaceRepoListReport]) -> 
                 repo.depends_on.join(", ")
             ));
         }
-        stdout.push_str(&format!(
-            "\n{} {}",
-            paint_key("Status:"),
-            render_status_word(&repo.status)
-        ));
         if let Some(execution) = repo.execution.as_ref() {
             stdout.push_str(&render_workspace_execution_text(execution));
         }
@@ -25781,27 +26608,19 @@ fn render_resolved_status() -> String {
     }
 }
 
+fn render_named_status(status: &str, marker: String, color: &str) -> String {
+    if plain_mode() {
+        status.to_string()
+    } else {
+        format!("{marker} {}", paint(status, color))
+    }
+}
+
 fn render_readiness_status(ready: bool) -> String {
     if ready {
-        if plain_mode() {
-            String::from("READY")
-        } else {
-            format!(
-                "{} {}",
-                primary_success_marker(),
-                paint("READY", "1;38;2;0;255;120")
-            )
-        }
+        render_named_status("READY", primary_success_marker(), "1;38;2;0;255;120")
     } else {
-        if plain_mode() {
-            String::from("NOT READY")
-        } else {
-            format!(
-                "{} {}",
-                primary_warn_marker(),
-                paint("NOT READY", "1;38;2;255;235;59")
-            )
-        }
+        render_named_status("NOT READY", primary_warn_marker(), "1;38;2;255;235;59")
     }
 }
 
@@ -25810,6 +26629,13 @@ fn render_status_line(status: &str) -> String {
         "READY" => render_readiness_status(true),
         "NOT READY" => render_readiness_status(false),
         "VALID" => render_valid_status(),
+        "RESOLVED" => render_resolved_status(),
+        "BLOCKED" | "UNRESOLVED" | "WARN" => {
+            render_named_status(status.trim(), primary_warn_marker(), "1;38;2;255;235;59")
+        }
+        value if value.contains("INVALID") || value.contains("UNREADABLE") => {
+            render_named_status(value, primary_error_marker(), "1;38;2;255;122;122")
+        }
         value if value.contains("FAILED") => render_failed_status_label(value),
         other => other.to_string(),
     }
@@ -25824,6 +26650,11 @@ fn render_status_word(status: &str) -> String {
         "READY" => paint("READY", "1;38;2;0;255;120"),
         "NOT READY" => paint("NOT READY", "1;38;2;255;235;59"),
         "VALID" => paint("VALID", "1;38;2;0;255;120"),
+        "RESOLVED" => paint("RESOLVED", "1;38;2;0;255;120"),
+        "BLOCKED" | "UNRESOLVED" | "WARN" => paint(trimmed, "1;38;2;255;235;59"),
+        "INVALID CONTRACT" | "UNREADABLE CONTRACT" | "MISSING CONTRACT" => {
+            paint(trimmed, "1;38;2;255;122;122")
+        }
         value if value.contains("FAILED") => render_failed_status_label(value),
         other => other.to_string(),
     }
@@ -26079,7 +26910,7 @@ fn next_bullet() -> String {
     if plain_mode() {
         return String::from("-");
     }
-    paint("▸", "38;2;214;161;95")
+    paint("»", "38;2;164;176;190")
 }
 
 const NEXT_TIMELINE_INDENT: &str = "  ";
@@ -26124,28 +26955,28 @@ fn verdict_bullet() -> String {
     }
 }
 
-fn primary_marker_with_color(color: &str) -> String {
+fn primary_marker_with_color(glyph: &str, color: &str) -> String {
     if plain_mode() {
         String::from("->")
     } else {
-        paint("➤", color)
+        paint(glyph, color)
     }
 }
 
 fn primary_success_marker() -> String {
-    primary_marker_with_color("1;38;2;0;255;120")
+    primary_marker_with_color("✓", "1;38;2;0;255;120")
 }
 
 fn primary_warn_marker() -> String {
-    primary_marker_with_color("1;38;2;255;214;95")
+    primary_marker_with_color("➤", "1;38;2;255;214;95")
 }
 
 fn primary_error_marker() -> String {
-    primary_marker_with_color("1;38;2;255;122;122")
+    primary_marker_with_color("➤", "1;38;2;255;122;122")
 }
 
 fn primary_info_marker() -> String {
-    primary_marker_with_color("1;38;2;102;245;255")
+    primary_marker_with_color("➤", "1;38;2;102;245;255")
 }
 
 fn paint_next_header() -> String {
@@ -26156,12 +26987,16 @@ pub fn paint_next_label() -> String {
     error_next_key("Next:")
 }
 
+pub fn format_next_step_text(item: &str) -> String {
+    format_next_timeline_step(&stylize_inline_text(item))
+}
+
 fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }
 
 fn result_icon() -> &'static str {
-    if plain_mode() { "-" } else { "★" }
+    if plain_mode() { "-" } else { "✓" }
 }
 
 fn mode_icon() -> &'static str {
@@ -26196,6 +27031,20 @@ fn format_next_timeline(items: &[String]) -> String {
 fn format_error_next_timeline(items: &[String]) -> String {
     if items.is_empty() {
         return String::new();
+    }
+    if items.len() == 1 {
+        let mut output = String::new();
+        append_wrapped_labeled_text(
+            &mut output,
+            "Next:",
+            &items[0],
+            "",
+            DOCTOR_DETAIL_WRAP_WIDTH,
+            true,
+            error_key,
+            stylize_inline_text,
+        );
+        return output;
     }
 
     let mut output = format!("\n\n{}", error_next_key("Next:"));
@@ -28630,8 +29479,10 @@ fn load_and_run_workspace_up(
                     emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 let tx = tx.clone();
+                let workspace_path = path.to_path_buf();
                 thread::spawn(move || {
-                    let report = run_workspace_repo_up(repo, RepoExecutionMode::Capture);
+                    let report =
+                        run_workspace_repo_up(repo, RepoExecutionMode::Capture, &workspace_path);
                     let _ = tx.send((order, report));
                 })
             })
@@ -28754,8 +29605,9 @@ fn load_workspace_status_report(
             .map(|pending_index| {
                 let (order, repo) = pending.remove(pending_index);
                 let tx = tx.clone();
+                let workspace_path = path.to_path_buf();
                 thread::spawn(move || {
-                    let report = run_workspace_repo_status(repo);
+                    let report = run_workspace_repo_status(repo, &workspace_path);
                     let _ = tx.send((order, report));
                 })
             })
@@ -29086,12 +29938,14 @@ fn load_and_run_workspace_task(
                 let tx = tx.clone();
                 let task = task_name.clone();
                 let task_args = task_args.clone();
+                let workspace_path = path.to_path_buf();
                 thread::spawn(move || {
                     let report = run_workspace_repo_task(
                         repo,
                         &task,
                         &task_args,
                         RepoExecutionMode::Capture,
+                        &workspace_path,
                     );
                     let _ = tx.send((order, report));
                 })
@@ -29241,8 +30095,13 @@ fn run_workspace_task_streaming(
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
                     emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
                 }
-                let report =
-                    run_workspace_repo_task(repo, task, task_args, RepoExecutionMode::Stream);
+                let report = run_workspace_repo_task(
+                    repo,
+                    task,
+                    task_args,
+                    RepoExecutionMode::Stream,
+                    workspace_path,
+                );
                 if emit_progress {
                     emit_workspace_progress_line(
                         workspace_name,
@@ -29308,7 +30167,7 @@ fn run_workspace_up_streaming(
                 if emit_progress {
                     emit_workspace_progress_line(workspace_name, "RUN", &repo.name, None);
                 }
-                let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream);
+                let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream, workspace_path);
                 if emit_progress {
                     emit_workspace_progress_line(
                         workspace_name,
@@ -29422,7 +30281,11 @@ fn emit_workspace_progress_line(
     );
 }
 
-fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> WorkspaceRepoUpReport {
+fn run_workspace_repo_up(
+    repo: WorkspaceRepoRef,
+    mode: RepoExecutionMode,
+    workspace_path: &Path,
+) -> WorkspaceRepoUpReport {
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
@@ -29596,9 +30459,9 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                         },
                         summary: format!("Repo up failed: {}", repo_name),
                         why: error,
-                        next: format!(
-                            "repair `{}` and re-run `ota workspace up`",
-                            compact_contract_path(&repo.contract_path)
+                        next: workspace_repo_validate_then_rerun_next(
+                            &repo.contract_path,
+                            &command_for_workspace("ota workspace up", workspace_path),
                         ),
                     }],
                     service: None,
@@ -29630,9 +30493,9 @@ fn run_workspace_repo_up(repo: WorkspaceRepoRef, mode: RepoExecutionMode) -> Wor
                 },
                 summary: format!("Repo contract failed validation: {}", repo_name),
                 why: render_contract_problem(&error),
-                next: format!(
-                    "repair `{}` and re-run `ota workspace up`",
-                    compact_contract_path(&repo.contract_path)
+                next: workspace_repo_validate_then_rerun_next(
+                    &repo.contract_path,
+                    &command_for_workspace("ota workspace up", workspace_path),
                 ),
             }],
             service: None,
@@ -29976,9 +30839,12 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
     }
 }
 
-fn run_workspace_repo_status(repo: WorkspaceRepoRef) -> WorkspaceRepoStatusReport {
+fn run_workspace_repo_status(
+    repo: WorkspaceRepoRef,
+    workspace_path: &Path,
+) -> WorkspaceRepoStatusReport {
     let diff = run_workspace_repo_diff(repo.clone());
-    let doctor = diagnose_workspace_repo(repo.clone());
+    let doctor = diagnose_workspace_repo(repo.clone(), workspace_path);
     let readiness_status = if !repo.present {
         String::from("NOT ACQUIRED")
     } else if doctor.ok {
@@ -30016,6 +30882,7 @@ fn run_workspace_repo_status(repo: WorkspaceRepoRef) -> WorkspaceRepoStatusRepor
 fn run_workspace_repo_execution_plan(
     repo: WorkspaceRepoRef,
     overrides: ExecutionOverrides,
+    workspace_path: &Path,
 ) -> WorkspaceRepoExecutionPlanReport {
     let path_display = repo.path.display().to_string();
     let contract_path_display = repo.contract_path.display().to_string();
@@ -30102,9 +30969,9 @@ fn run_workspace_repo_execution_plan(
                         "repo contract `{}` is invalid: {}",
                         contract_path_display, error
                     )),
-                    next: Some(format!(
-                        "fix `{}` and rerun `ota workspace execution plan`",
-                        contract_path_display
+                    next: Some(workspace_repo_validate_then_rerun_next(
+                        &repo.contract_path,
+                        &command_for_workspace("ota workspace execution plan", workspace_path),
                     )),
                 };
             }
@@ -30155,9 +31022,9 @@ fn run_workspace_repo_execution_plan(
                 "workspace repo contract `{}` could not be loaded: {}",
                 contract_path_display, error
             )),
-            next: Some(format!(
-                "repair `{}` and rerun `ota workspace execution plan`",
-                contract_path_display
+            next: Some(workspace_repo_validate_then_rerun_next(
+                &repo.contract_path,
+                &command_for_workspace("ota workspace execution plan", workspace_path),
             )),
         },
     }
@@ -30567,6 +31434,7 @@ fn run_workspace_repo_task(
     task: &str,
     task_args: &[String],
     mode: RepoExecutionMode,
+    workspace_path: &Path,
 ) -> WorkspaceRepoRunReport {
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
@@ -30692,9 +31560,12 @@ fn run_workspace_repo_task(
                                 "repo contract `{}` is invalid: {}",
                                 contract_path_display, validation_error
                             ),
-                            next: format!(
-                                "fix `{}` and re-run `ota workspace run {task}`",
-                                contract_path_display
+                            next: workspace_repo_validate_then_rerun_next(
+                                &repo.contract_path,
+                                &command_for_workspace(
+                                    &format!("ota workspace run {task}"),
+                                    workspace_path,
+                                ),
                             ),
                         })
                         .collect(),
@@ -30878,9 +31749,9 @@ fn run_workspace_repo_task(
                     "workspace repo `{}` contract `{}` could not be loaded: {}",
                     repo_name, contract_path_display, error
                 ),
-                next: format!(
-                    "repair `{}` and re-run `ota workspace run {}`",
-                    contract_path_display, task
+                next: workspace_repo_validate_then_rerun_next(
+                    &repo.contract_path,
+                    &command_for_workspace(&format!("ota workspace run {task}"), workspace_path),
                 ),
             }],
             source_url: repo.source_url.clone(),
@@ -30948,8 +31819,9 @@ fn load_and_check_workspace(
             .into_iter()
             .map(|(order, repo)| {
                 let tx = tx.clone();
+                let workspace_path = path.to_path_buf();
                 thread::spawn(move || {
-                    let report = check_workspace_repo(repo);
+                    let report = check_workspace_repo(repo, &workspace_path);
                     let _ = tx.send((order, report));
                 })
             })
@@ -30980,7 +31852,10 @@ fn load_and_check_workspace(
     })
 }
 
-fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRepoDoctorReport {
+fn check_workspace_repo(
+    repo: WorkspaceRepoRef,
+    workspace_path: &Path,
+) -> crate::workspace::WorkspaceRepoDoctorReport {
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
 
@@ -31058,9 +31933,9 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                                 "repo contract `{}` is invalid: {}",
                                 contract_path_display, validation_error
                             ),
-                            next: format!(
-                                "fix `{}` and re-run `ota workspace check`",
-                                contract_path_display
+                            next: workspace_repo_validate_then_rerun_next(
+                                &repo.contract_path,
+                                &command_for_workspace("ota workspace check", workspace_path),
                             ),
                         })
                         .collect(),
@@ -31112,9 +31987,9 @@ fn check_workspace_repo(repo: WorkspaceRepoRef) -> crate::workspace::WorkspaceRe
                     "workspace repo `{}` contract `{}` could not be loaded: {}",
                     repo_name, contract_path_display, error
                 ),
-                next: format!(
-                    "repair `{}` and re-run `ota workspace check`",
-                    contract_path_display
+                next: workspace_repo_validate_then_rerun_next(
+                    &repo.contract_path,
+                    &command_for_workspace("ota workspace check", workspace_path),
                 ),
             }],
         },
@@ -31390,8 +32265,9 @@ fn load_and_diagnose_workspace_streaming(
         for pending_index in ready.into_iter().rev() {
             let (order, repo) = pending.remove(pending_index);
             let tx = tx.clone();
+            let workspace_path = path.to_path_buf();
             handles.push(thread::spawn(move || {
-                let report = crate::workspace::diagnose_workspace_repo(repo);
+                let report = crate::workspace::diagnose_workspace_repo(repo, &workspace_path);
                 let _ = tx.send((order, report));
             }));
         }
@@ -31517,7 +32393,7 @@ enum ResolveContractError {
     #[error("explicit repo path does not contain `ota.yaml`: `{path}`")]
     MissingExplicitDirectory { path: String },
     #[error(
-        "contract path does not exist: `{path}`\n\nNext:\n▸ run `ota init` to create a starter contract\n▸ run `ota detect --dry-run` to preview inferred fields\n▸ run `ota detect --write` to write a detected contract"
+        "contract path does not exist: `{path}`\n\nNext:\n  » run `ota init` to create a starter contract\n  » run `ota detect --dry-run` to preview inferred fields\n  » run `ota detect --write` to write a detected contract"
     )]
     MissingExplicitPath { path: String },
 }
@@ -31533,7 +32409,7 @@ enum ResolveWorkspaceError {
     #[error("explicit workspace path does not contain `ota.workspace.yaml`: `{path}`")]
     MissingExplicitDirectory { path: String },
     #[error(
-        "workspace path does not exist: `{path}`\n\nNext:\n▸ run `ota workspace init` to create a starter workspace"
+        "workspace path does not exist: `{path}`\n\nNext:\n  » run `ota workspace init` to create a starter workspace"
     )]
     MissingExplicitPath { path: String },
 }

@@ -770,7 +770,7 @@ fn up_provisions_inside_container_with_path_composition_on_real_command_path() {
         output.status.success(),
         "stdout:\n{stdout}\n\nstderr: {stderr}"
     );
-    assert!(stdout.contains("➤ READY"));
+    assert!(stdout.contains("✓ READY"));
     assert!(stdout.contains("Backend: container"));
     assert!(stdout.contains("Mode:       container"));
     assert_eq!(
@@ -975,7 +975,7 @@ fn validate_discovers_contract_from_current_directory_real_fixture() {
 
     assert!(output.status.success());
     assert!(stdout.contains("VALIDATE"));
-    assert!(stdout.contains("➤ VALID"));
+    assert!(stdout.contains("✓ VALID"));
 }
 
 #[test]
@@ -992,7 +992,7 @@ fn validate_uses_ota_file_override_real_fixture() {
 
     assert!(output.status.success());
     assert!(stdout.contains("VALIDATE"));
-    assert!(stdout.contains("➤ VALID"));
+    assert!(stdout.contains("✓ VALID"));
 }
 
 #[test]

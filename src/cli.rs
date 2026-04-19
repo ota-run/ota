@@ -2248,7 +2248,7 @@ where
                     .unwrap_or(false)
             {
                 stderr.push_str(
-                    "\n\nNext:\n▸ use `ota services` to list repo services\n▸ use `ota workspace doctor` to review workspace readiness",
+                    "\n\nNext:\n  » use `ota services` to list repo services\n  » use `ota workspace doctor` to review workspace readiness",
                 );
             }
 
@@ -4371,6 +4371,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
     } else {
         format!("`{suggestion}`")
     };
+    let next_step = commands::format_next_step_text(&next_value);
 
     if let Some(summary_title) = trailing_summary_title(&stderr) {
         let trimmed = stderr.trim_end_matches('\n');
@@ -4378,21 +4379,21 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
             let (before_summary, summary_block) = trimmed.split_at(idx);
             let before_summary = before_summary.trim_end();
             return tighten_guidance_spacing(commands::stylize_inline_text(&format!(
-                "{before_summary}\n{next_header} {next_value}\n\n{summary_block}"
+                "{before_summary}\n{next_header}{next_step}\n\n{summary_block}"
             )));
         }
     }
 
     tighten_guidance_spacing(commands::stylize_inline_text(&format!(
-        "{stderr}\n\n{next_header} {next_value}"
+        "{stderr}\n\n{next_header}{next_step}"
     )))
 }
 
 fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
-    if stderr.rfind("🦦  RUN SUMMARY").is_some() {
-        Some("🦦  RUN SUMMARY")
-    } else if stderr.rfind("🦦  UP SUMMARY").is_some() {
-        Some("🦦  UP SUMMARY")
+    if stderr.rfind("🦦 RUN SUMMARY").is_some() {
+        Some("🦦 RUN SUMMARY")
+    } else if stderr.rfind("🦦 UP SUMMARY").is_some() {
+        Some("🦦 UP SUMMARY")
     } else {
         None
     }
@@ -8438,6 +8439,41 @@ repos:
     }
 
     #[test]
+    fn workspace_execution_plan_invalid_repo_contract_recommends_validate() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "execution", "plan", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("UNREADABLE CONTRACT"));
+        assert!(stdout.contains("workspace repo contract `"));
+        assert!(stdout.contains("run `ota validate "));
+        assert!(stdout.contains("rerun `ota workspace execution plan "));
+    }
+
+    #[test]
     fn workspace_execution_plan_text_fails_for_unresolved_selected_optional_repo() {
         let dir = TempDir::new().unwrap();
         let repo_dir = dir.path().join("apps").join("web");
@@ -10453,12 +10489,14 @@ tasks:
 
         assert_eq!(output.exit_code, 7);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Why: task `fail` failed with exit code 7"));
+        assert!(stderr.contains("Task Failed"));
+        assert!(stderr.contains("`fail` exited with code 7"));
+        assert!(stderr.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
         assert!(stderr.contains(
-            "Why: task `fail` failed with exit code 7\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
-        assert!(!stderr.contains("Why: task `fail` failed with exit code 7\n\nNext:"));
+        assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
         assert!(!stderr.contains(
             "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
         ));
@@ -10466,7 +10504,7 @@ tasks:
 
     #[test]
     fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
-        let stderr = "◉ ERROR  Operation failed\nWhere: ./ota.yaml\nWhy: task `install-from-source` failed with exit code 101\n\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦  RUN SUMMARY\n\nScope:      repo";
+        let stderr = "◉ ERROR  Task Failed\n`install-from-source` exited with code 101\nWhere: ./ota.yaml\nWhy: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦 RUN SUMMARY\n\nScope:     repo";
         let rendered = strip_ansi(&append_try_footer(
             stderr.to_string(),
             &Commands::Run {
@@ -10483,11 +10521,11 @@ tasks:
         ));
 
         assert!(rendered.contains(
-            "Why: task `install-from-source` failed with exit code 101\nNext: run `ota tasks --use` to inspect runnable task usage"
+            "Why: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage"
         ));
         assert!(
             !rendered
-                .contains("Why: task `install-from-source` failed with exit code 101\n\nNext:")
+                .contains("Why: task `install-from-source` returned a non-zero exit code\n\nNext:")
         );
     }
 
@@ -11112,19 +11150,21 @@ tasks:
         let lines: Vec<&str> = stdout.lines().collect();
         let build_idx = lines
             .iter()
-            .position(|line| line.contains("build `ota run build`"))
+            .position(|line| line.trim() == "✦ build")
             .expect("build task present");
         let ci_idx = lines
             .iter()
-            .position(|line| line.contains("ci `ota run ci`"))
+            .position(|line| line.trim() == "✦ ci")
             .expect("ci task present");
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("build `ota run build`"));
-        assert_eq!(ci_idx, build_idx + 3);
-        assert!(lines[build_idx + 1].starts_with("  Description: Build the site for production"));
-        assert!(lines[build_idx + 2].is_empty());
-        assert!(lines[ci_idx + 1].starts_with("  Description: Canonical local verification"));
+        assert!(stdout.contains("Command: `ota run build`"));
+        assert_eq!(ci_idx, build_idx + 4);
+        assert!(lines[build_idx + 1].starts_with("  Command: `ota run build`"));
+        assert!(lines[build_idx + 2].starts_with("  Description: Build the site for production"));
+        assert!(lines[build_idx + 3].is_empty());
+        assert!(lines[ci_idx + 1].starts_with("  Command: `ota run ci`"));
+        assert!(lines[ci_idx + 2].starts_with("  Description: Canonical local verification"));
     }
 
     #[test]
@@ -11215,11 +11255,15 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("TASKS "));
-        assert!(stdout.contains("dev `ota run dev`"));
+        assert!(stdout.contains("✦ dev"));
+        assert!(stdout.contains("Command: `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
         assert!(stdout.contains("Notes:"));
-        assert!(stdout.contains("start `ota run start`"));
-        assert!(stdout.contains("typecheck `ota run typecheck`"));
+        assert!(stdout.contains("✦ start"));
+        assert!(stdout.contains("Command: `ota run start`"));
+        assert!(stdout.contains("✦ typecheck"));
+        assert!(stdout.contains("Command: `ota run typecheck`"));
+        assert!(!stdout.contains("verification.\n\n\n"));
         assert!(!stdout.contains("Command Preview:"));
     }
 
@@ -16051,12 +16095,14 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Contract already exists"));
+        assert!(stderr.contains("Where:"));
         assert!(stderr.contains("refusing to overwrite the existing contract"));
         assert!(
             stderr.contains("review the existing contract with `ota validate` or `ota doctor`")
         );
         assert!(stderr.contains("update the existing contract with `ota detect --merge"));
-        assert!(stderr.contains("Next:\n  ▸ review the existing contract"));
+        assert!(stderr.contains("Next:"));
     }
 
     #[test]
@@ -16666,8 +16712,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Policy pack already exists"));
         assert!(stderr.contains("refusing to overwrite the existing policy pack"));
-        assert!(stderr.contains("Next:\n  ▸ review the existing policy pack"));
+        assert!(stderr.contains("Next:"));
     }
 
     #[test]
@@ -17235,7 +17282,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("DOCTOR "));
         assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("Primary Blocker"));
+        assert!(stdout.contains("➤ Primary Blocker No tasks defined in contract"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
     }
@@ -17560,7 +17607,9 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("Primary Finding"));
+        assert!(stdout.contains("◉ WARN  Ephemeral lifecycle is advisory in native mode"));
+        assert!(!stdout.contains("Primary Finding"));
+        assert!(!stdout.contains("➤ WARN"));
         assert!(stdout.contains("Ephemeral lifecycle is advisory in native mode"));
     }
 
@@ -17595,7 +17644,7 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        let error_index = stdout.find("Primary Blocker").unwrap();
+        let error_index = stdout.find("➤ Primary Blocker").unwrap();
         let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
@@ -17788,7 +17837,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: provisioning"));
-        assert!(stdout.contains("Status:     blocked"));
+        assert!(stdout.contains("Status:    blocked"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
@@ -17876,7 +17925,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("NOT READY"));
         assert!(stdout.contains("Phase: services"));
-        assert!(stdout.contains("Status:     failed"));
+        assert!(stdout.contains("Status:    failed"));
         assert!(stdout.contains("ERROR  Service healthcheck failed: postgres"));
         assert!(fixture.dir.path().join("service.txt").exists());
         assert!(!fixture.dir.path().join("prepared.txt").exists());
@@ -18082,18 +18131,19 @@ tools:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("➤ Primary Blocker"));
+        assert!(
+            stdout
+                .contains("➤ Primary Blocker Cargo is missing from the configured container image")
+        );
         assert!(!stdout.contains("Blocked by"));
-        assert!(stdout.contains("Image: `rust:1.94-bookworm`"));
         assert!(stdout.contains("Contract"));
         assert!(stdout.contains("Project: ota"));
         assert!(stdout.contains(
             "Execution: preferred=container, lifecycle=ephemeral, image=rust:1.94-bookworm"
         ));
-        assert!(stdout.contains(
-            "Why: cargo is declared in the contract but is not available inside the configured"
-        ));
-        assert!(!stdout.contains("container image"));
+        assert!(stdout.contains("Why:\n  » `cargo` is declared in the contract"));
+        assert!(stdout.contains("  » it is not available in the configured container image"));
+        assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(normalized.contains("rerun `ota up --dry-run --mode container`"));
         assert!(!stdout.contains("rerun `ota doctor --mode container`"));
@@ -18949,9 +18999,10 @@ project:
 
         let output = run_with(["ota", "detect", "--rewrite", fixture.path()]);
         assert_eq!(output.exit_code, 1);
-        assert!(
-            strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("requires `--yes`")
-        );
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Rewrite confirmation is required"));
+        assert!(stderr.contains("Where:"));
+        assert!(stderr.contains("requires `--yes`"));
     }
 
     #[test]
@@ -19382,7 +19433,7 @@ project:
         assert!(stderr.contains("ota detect --merge --dry-run"));
         assert!(!stderr.contains("| Next: |"));
         assert!(
-            !stderr.contains("\n   ▸ review detected changes with `ota detect --merge --dry-run")
+            !stderr.contains("\n   » review detected changes with `ota detect --merge --dry-run")
         );
     }
 
@@ -21712,13 +21763,12 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container apt cannot install pinned package version: curl"));
         assert!(text.contains(
-            "Why: the Linux/container target requests `curl 8.13.0`; policy approves it using rule `8.13.0`, but the configured apt sources do not provide that version"
+            "Primary Blocker Curl cannot be provisioned through `apt` in container mode"
         ));
-        assert!(text.contains("\n  » Image: `premium/test:latest`"));
-        assert!(!text.contains("configured apt sources do\n  not provide"));
-        assert!(text.contains("`premium/test:latest`"));
+        assert!(text.contains("» the Linux/container target requests `curl 8.13.0`"));
+        assert!(text.contains("» policy approves it using rule `8.13.0`"));
+        assert!(text.contains("configured `apt` provisioning path"));
         assert!(text.contains("relax the Linux/container version pin for `curl`"));
         assert!(!text.contains("Missing tool: curl"));
     }
@@ -21774,7 +21824,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container brew cannot install pinned version: node"));
+        assert!(text.contains(
+            "Primary Blocker Node cannot be provisioned through `brew` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -21831,7 +21883,11 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container dnf cannot install pinned version: jq"));
+        assert!(
+            text.contains(
+                "Primary Blocker Jq cannot be provisioned through `dnf` in container mode"
+            )
+        );
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: jq"));
     }
@@ -21946,7 +22002,7 @@ policies:
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
         assert!(text.contains(
-            "Container winget cannot install pinned version: Microsoft.VisualStudioCode"
+            "Primary Blocker Microsoft.VisualStudioCode cannot be provisioned through `winget` in container mode"
         ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: Microsoft.VisualStudioCode"));
@@ -22004,7 +22060,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container choco cannot install pinned version: git"));
+        assert!(text.contains(
+            "Primary Blocker Git cannot be provisioned through `choco` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: git"));
     }
@@ -22061,7 +22119,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container scoop cannot install pinned version: neovim"));
+        assert!(text.contains(
+            "Primary Blocker Neovim cannot be provisioned through `scoop` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing tool: neovim"));
     }
@@ -22117,7 +22177,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container mise cannot install pinned version: node"));
+        assert!(text.contains(
+            "Primary Blocker Node cannot be provisioned through `mise` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -22173,7 +22235,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container asdf cannot install pinned version: node"));
+        assert!(text.contains(
+            "Primary Blocker Node cannot be provisioned through `asdf` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: node"));
     }
@@ -22229,7 +22293,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container sdkman cannot install pinned version: java"));
+        assert!(text.contains(
+            "Primary Blocker Java cannot be provisioned through `sdkman` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: java"));
     }
@@ -22285,7 +22351,9 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Container uv cannot install pinned version: python"));
+        assert!(text.contains(
+            "Primary Blocker Python cannot be provisioned through `uv` in container mode"
+        ));
         assert!(text.contains("ota doctor --mode container"));
         assert!(!text.contains("Missing runtime: python"));
     }
@@ -23377,7 +23445,7 @@ project:
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(&format!("DOCTOR {}", compact_contract(fixture.file_path()))));
         assert!(stdout.contains("NOT READY"));
-        assert!(stdout.contains("Primary Blocker"));
+        assert!(stdout.contains("➤ Primary Blocker No tasks defined in contract"));
         assert!(stdout.contains("No tasks defined in contract"));
         assert!(!stdout.contains("\n---\n"));
     }
@@ -24441,6 +24509,41 @@ repos: [
     }
 
     #[test]
+    fn workspace_run_invalid_repo_contract_recommends_validate() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "run", "setup", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Unreadable repo contract: web"));
+        assert!(stdout.contains("run `ota validate "));
+        assert!(stdout.contains("rerun `ota workspace run setup "));
+        assert!(!stdout.contains("Operation failed"));
+    }
+
+    #[test]
     fn workspace_init_merge_alias_routes_to_detect_merge() {
         let fixture = TempDir::new().unwrap();
         let web_dir = fixture.path().join("apps").join("web");
@@ -24523,6 +24626,8 @@ repos:
         );
 
         assert_eq!(output.exit_code, 1);
+        assert!(body.contains("Workspace contract already exists"));
+        assert!(body.contains("Where:"));
         assert!(
             body.contains("already exists; refusing to overwrite an existing workspace contract")
         );
@@ -25333,6 +25438,21 @@ repos:
     }
 
     #[test]
+    fn workspace_status_text_surfaces_status_and_drift_as_first_detail_lines() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+
+        let output = run_with(["ota", "workspace", "status", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("WORKSPACE STATUS"));
+        assert!(body.contains("db [required]"));
+        assert!(body.contains("Status: READY"));
+        assert!(body.contains("Drift:"));
+        assert!(!body.contains("db [required] ("));
+    }
+
+    #[test]
     fn workspace_list_repo_filter_rejects_unknown_repo() {
         let fixture = WorkspaceFixture::new_multi_repo();
 
@@ -25374,9 +25494,43 @@ repos:
         assert_eq!(output.exit_code, 0);
         let body = strip_ansi(&output.stdout);
         assert!(body.contains("api [required] (ACQUIRED)"));
-        assert!(body.contains("Status: NOT READY"));
+        assert!(body.contains("Status: MISSING CONTRACT"));
         assert!(body.contains("Contract: missing (run"));
         assert!(body.contains("ota init"));
+    }
+
+    #[test]
+    fn workspace_list_marks_unreadable_contract_explicitly() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+project:
+  name: api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: demo
+repos:
+  api:
+    path: api
+    required: true
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "list", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 0);
+        let body = strip_ansi(&output.stdout);
+        assert!(body.contains("api [required] (ACQUIRED)"));
+        assert!(body.contains("Status: UNREADABLE CONTRACT"));
     }
 
     #[test]
@@ -25416,7 +25570,7 @@ repos:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Primary Blocker"));
+        assert!(stdout.contains("➤ Primary Blocker"));
         assert!(stdout.contains("Why:"));
         assert!(stdout.contains("ota.yaml"));
         assert!(stdout.contains("Next:"));
@@ -25442,6 +25596,46 @@ repos:
         assert_eq!(stderr.matches("Next:").count(), 1);
         assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
         assert!(!stderr.contains("Next: `ota workspace doctor`"));
+    }
+
+    #[test]
+    fn workspace_status_not_found_uses_single_workspace_next() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "status",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("WORKSPACE STATUS"));
+        assert!(stderr.contains("Workspace target could not be resolved"));
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
+        assert_eq!(stderr.matches("Next:").count(), 1);
+        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
+    }
+
+    #[test]
+    fn workspace_receipt_not_found_uses_single_workspace_next() {
+        let fixture = TempDir::new().unwrap();
+
+        let output = run_with([
+            "ota",
+            "workspace",
+            "receipt",
+            fixture.path().to_str().unwrap(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("WORKSPACE RECEIPT"));
+        assert!(stderr.contains("Workspace target could not be resolved"));
+        assert!(stderr.contains("explicit workspace path does not contain `ota.workspace.yaml`"));
+        assert_eq!(stderr.matches("Next:").count(), 1);
+        assert!(stderr.contains("run `ota workspace init` to create a starter workspace"));
     }
 
     #[test]
@@ -26045,6 +26239,41 @@ checks:
     }
 
     #[test]
+    fn workspace_check_invalid_repo_contract_recommends_validate() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "check", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Unreadable repo contract: web"));
+        assert!(stdout.contains("run `ota validate "));
+        assert!(stdout.contains("rerun `ota workspace check "));
+        assert!(!stdout.contains("Operation failed"));
+    }
+
+    #[test]
     fn workspace_doctor_stream_emits_progress_updates() {
         let fixture = WorkspaceFixture::new();
         fs::write(
@@ -26067,6 +26296,41 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("WORKSPACE DOCTOR"));
         assert!(stdout.contains("NOT READY"));
+    }
+
+    #[test]
+    fn workspace_doctor_invalid_repo_contract_recommends_validate() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Unreadable repo contract: web"));
+        assert!(stdout.contains("run `ota validate "));
+        assert!(stdout.contains("rerun `ota workspace doctor "));
+        assert!(!stdout.contains("Operation failed"));
     }
 
     #[cfg(unix)]
@@ -27268,6 +27532,41 @@ tasks:
         assert!(stdout.contains("Exit code: 7"));
         assert!(stdout.contains("Steps:"));
         assert!(stdout.contains("Summary"));
+    }
+
+    #[test]
+    fn workspace_up_invalid_repo_contract_recommends_validate() {
+        let fixture = WorkspaceFixture::new();
+        fs::write(
+            fixture.dir.path().join("ota.workspace.yaml"),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.dir.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "workspace", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Repo contract failed validation: web"));
+        assert!(stdout.contains("run `ota validate "));
+        assert!(stdout.contains("rerun `ota workspace up "));
+        assert!(!stdout.contains("Operation failed"));
     }
 
     #[test]
