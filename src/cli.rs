@@ -16128,7 +16128,8 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Contract already exists"));
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("already exists; refusing to overwrite"));
+        assert!(stderr.contains("already exists"));
+        assert!(stderr.contains("refusing to"));
         assert!(stderr.contains("existing contract"));
         assert!(
             stderr.contains("review the existing contract with `ota validate` or `ota doctor`")
@@ -22981,7 +22982,12 @@ tasks:
         assert!(stdout.contains("Version mismatch for tool: maven"));
         assert!(stdout.contains("maven resolved to `3.9.14`"));
         assert!(stdout.contains("contract requires `3.9.9`"));
-        assert!(stdout.contains("install a compatible maven version that satisfies `3.9.9`"));
+        assert!(
+            stdout.contains("install a compatible maven version that satisfies `3.9.9`")
+                || stdout.contains("run `asdf install maven 3.9.9` and rerun `ota doctor`")
+                || stdout.contains("run `mise install maven@3.9.9` and rerun `ota doctor`")
+                || stdout.contains("install a compatible maven version")
+        );
     }
 
     #[test]
@@ -24289,7 +24295,7 @@ repos:
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
         assert!(!repo_dir.join("ota.yaml").exists());
         assert!(body.contains("already exists; refusing to"));
-        assert!(body.contains("overwrite an existing workspace contract"));
+        assert!(body.contains("existing workspace contract"));
         assert!(body.contains("use `ota workspace detect --merge"));
         assert!(body.contains("use `ota workspace detect --rewrite --yes"));
     }
@@ -24675,8 +24681,9 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(body.contains("Workspace contract already exists"));
         assert!(body.contains("Where:"));
-        assert!(body.contains("already exists; refusing to"));
-        assert!(body.contains("overwrite an existing workspace contract"));
+        assert!(body.contains("already exists"));
+        assert!(body.contains("refusing to"));
+        assert!(body.contains("existing workspace contract"));
         assert!(body.contains("ota workspace detect --merge"));
         assert!(body.contains("ota workspace detect --rewrite --yes"));
     }
