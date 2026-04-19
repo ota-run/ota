@@ -5250,12 +5250,12 @@ tasks:
             output.stderr.as_deref().unwrap_or_default()
         );
         let stdout = strip_ansi(&output.stdout);
-        let contract_path = fs::canonicalize(fixture.file_path())
+        let repo_path = fs::canonicalize(fixture.path())
             .unwrap()
             .display()
             .to_string();
-        assert!(stdout.contains(&format!("ota doctor {contract_path}")));
-        assert!(stdout.contains(&format!("ota tasks --use {contract_path}")));
+        assert!(stdout.contains(&format!("ota doctor {repo_path}")));
+        assert!(stdout.contains(&format!("ota tasks --use {repo_path}")));
     }
 
     #[test]
@@ -5282,6 +5282,35 @@ project:
             &strip_ansi(&output.stdout),
             fixture.dir.path(),
         );
+    }
+
+    #[test]
+    fn doctor_ready_next_steps_keep_repo_target_for_default_contracts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  ci:
+    run: echo ci
+agent:
+  default_task: ci
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(stdout.contains(&format!("ota up {repo_path}")));
+        assert!(stdout.contains(&format!("ota run ci {repo_path}")));
+        assert!(!stdout.contains(&format!("ota up {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota run ci {repo_path}/ota.yaml")));
     }
 
     #[test]
@@ -14667,6 +14696,31 @@ policies:
     }
 
     #[test]
+    fn init_write_followup_commands_keep_repo_target_for_default_contracts() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": { "dev": "vite" }
+}"#,
+        );
+
+        let output = run_with(["ota", "init", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(stdout.contains(&format!("run `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("run `ota doctor {repo_path}`")));
+        assert!(!stdout.contains(&format!("ota validate {repo_path}/ota.yaml")));
+        assert!(!stdout.contains(&format!("ota doctor {repo_path}/ota.yaml")));
+    }
+
+    #[test]
     fn init_writes_agent_block_for_setup_and_test_repos() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -16661,12 +16715,16 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
         assert!(stdout.contains("repo contracts must not declare `policies.adapter_bootstrap`"));
-        assert!(stdout.contains("rerun `ota validate"));
-        assert!(stdout.contains("rerun `ota check"));
+        assert!(stdout.contains(&format!("rerun `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("rerun `ota check {repo_path}`")));
         assert!(!stdout.contains("Operation failed"));
         assert!(!stdout.contains("INVALID ota.yaml"));
         assert!(!stdout.contains("ota init"));
@@ -16705,12 +16763,16 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
         assert!(stdout.contains("repo contracts must not declare `policies.adapter_bootstrap`"));
-        assert!(stdout.contains("rerun `ota validate"));
-        assert!(stdout.contains("rerun `ota explain"));
+        assert!(stdout.contains(&format!("rerun `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("rerun `ota explain {repo_path}`")));
         assert!(!stdout.contains("Operation failed"));
         assert!(!stdout.contains("INVALID ota.yaml"));
         assert!(!stdout.contains("ota init"));
@@ -16749,15 +16811,50 @@ policies:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
         assert!(stdout.contains("Invalid contract"));
         assert!(stdout.contains("repo contracts must not declare `policies.version_policy`"));
         assert!(stdout.contains("repo contracts must not declare `policies.provisioning`"));
         assert!(stdout.contains("repo contracts must not declare `policies.adapter_bootstrap`"));
-        assert!(stdout.contains("rerun `ota validate"));
-        assert!(stdout.contains("rerun `ota receipt"));
+        assert!(stdout.contains(&format!("rerun `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("rerun `ota receipt {repo_path}`")));
         assert!(!stdout.contains("Operation failed"));
         assert!(!stdout.contains("INVALID ota.yaml"));
         assert!(!stdout.contains("ota init"));
+    }
+
+    #[test]
+    fn up_renders_repo_target_followup_commands_for_invalid_default_contracts() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+policies:
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "22"
+"#,
+        )
+        .unwrap();
+
+        let output = run_with(["ota", "up", fixture.path().to_str().unwrap()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        let repo_path = fs::canonicalize(fixture.path())
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(stdout.contains(&format!("rerun `ota validate {repo_path}`")));
+        assert!(stdout.contains(&format!("rerun `ota up {repo_path}`")));
     }
 
     #[test]
