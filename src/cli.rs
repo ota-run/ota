@@ -10851,7 +10851,7 @@ agent:
     }
 
     #[test]
-    fn core_extension_json_contracts_expose_stable_top_level_fields() {
+    fn core_extension_json_contracts_expose_stable_nested_semantics() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -10885,6 +10885,26 @@ agent:
         assert!(doctor_json.get("findings").is_some());
         assert!(doctor_json.get("finding_groups").is_some());
         assert!(doctor_json.get("execution").is_some());
+        assert_eq!(doctor_json["summary"]["verdict"], "not_ready");
+        assert_eq!(doctor_json["summary"]["agent_verdict"], "risky");
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["summary"],
+            "Missing environment variable: FOO"
+        );
+        assert_eq!(
+            doctor_json["finding_groups"][0]["action_key"],
+            "environment-missing"
+        );
+        assert_eq!(doctor_json["execution"]["preferred"], "native");
+        assert_eq!(doctor_json["execution"]["env"][0]["name"], "FOO");
+        assert_eq!(doctor_json["execution"]["env"][0]["required"], true);
+        assert_eq!(doctor_json["execution"]["env"][0]["source"], "missing");
+        assert_eq!(doctor_json["findings"][0]["code"], "OTA_ENV_MISSING");
+        assert_eq!(doctor_json["findings"][0]["severity"], "error");
+        assert_eq!(
+            doctor_json["findings"][0]["provenance_key"],
+            "repo_contract"
+        );
 
         let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 0);
@@ -10893,6 +10913,13 @@ agent:
         assert!(tasks_json.get("agent").is_some());
         assert!(tasks_json["tasks"].is_array());
         assert_eq!(tasks_json["tasks"].as_array().unwrap().len(), 2);
+        assert_eq!(tasks_json["agent"]["entrypoint"], "setup");
+        assert_eq!(tasks_json["agent"]["default_task"], "ci");
+        assert_eq!(tasks_json["tasks"][0]["name"], "ci");
+        assert_eq!(tasks_json["tasks"][0]["depends_on"][0], "setup");
+        assert_eq!(tasks_json["tasks"][0]["run"], "echo ci");
+        assert_eq!(tasks_json["tasks"][1]["name"], "setup");
+        assert_eq!(tasks_json["tasks"][1]["run"], "echo setup");
 
         let env = run_with(["ota", "env", "--json", "--task", "ci", fixture.path()]);
         assert_eq!(env.exit_code, 1);
@@ -10902,6 +10929,14 @@ agent:
         assert!(env_json.get("summary").is_some());
         assert!(env_json.get("sources").is_some());
         assert!(env_json.get("env").is_some());
+        assert_eq!(env_json["summary"]["contract_count"], 1);
+        assert_eq!(env_json["summary"]["missing_count"], 1);
+        assert_eq!(env_json["sources"], json!([]));
+        assert_eq!(env_json["env"][0]["name"], "FOO");
+        assert_eq!(env_json["env"][0]["kind"], "contract");
+        assert_eq!(env_json["env"][0]["required"], true);
+        assert_eq!(env_json["env"][0]["source"], "missing");
+        assert_eq!(env_json["env"][0]["status"], "missing");
 
         let receipt = run_with(["ota", "receipt", "--json", fixture.path()]);
         assert_eq!(receipt.exit_code, 1);
@@ -10911,6 +10946,26 @@ agent:
         assert!(receipt_json.get("summary").is_some());
         assert!(receipt_json.get("receipt").is_some());
         assert!(receipt_json.get("findings").is_some());
+        assert_eq!(receipt_json["summary"]["error_count"], 1);
+        assert_eq!(receipt_json["summary"]["step_count"], 1);
+        assert_eq!(receipt_json["receipt"]["scope"], "repo");
+        assert_eq!(receipt_json["receipt"]["backend"], "native");
+        assert_eq!(
+            receipt_json["receipt"]["contract_identity"]["project"]["name"],
+            "json-demo"
+        );
+        assert_eq!(
+            receipt_json["receipt"]["contract_identity"]["counts"]["tasks"],
+            2
+        );
+        assert_eq!(receipt_json["receipt"]["steps"][0]["label"], "readiness");
+        assert_eq!(receipt_json["receipt"]["steps"][0]["status"], "NOT READY");
+        assert_eq!(
+            receipt_json["receipt"]["blocked"][0],
+            "Missing environment variable: FOO"
+        );
+        assert_eq!(receipt_json["receipt"]["summary"]["error_count"], 1);
+        assert_eq!(receipt_json["findings"][0]["code"], "OTA_ENV_MISSING");
     }
 
     #[test]
