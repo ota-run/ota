@@ -840,7 +840,15 @@ pub fn execution_plan(
                         }
                     }
                     Err(error) => match format {
-                        OutputFormat::Text => CommandOutput::failure(execution_plan_error(&error)),
+                        OutputFormat::Text => {
+                            CommandOutput::failure(render_execution_plan_structured_error(
+                                &target.contract,
+                                &target.contract_path,
+                                member,
+                                overrides,
+                                &error,
+                            ))
+                        }
                         OutputFormat::Json => {
                             CommandOutput::failure(to_json(&ExecutionPlanFailure {
                                 ok: false,
@@ -854,7 +862,36 @@ pub fn execution_plan(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "EXECUTION PLAN",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota execution plan", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionPlanFailure {
                     ok: false,
                     path: &path_display,
@@ -864,7 +901,32 @@ pub fn execution_plan(
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "EXECUTION PLAN",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota execution plan", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ExecutionPlanFailure {
                     ok: false,
                     path: &path_display,
@@ -928,6 +990,171 @@ fn execution_plan_error(error: &RunError) -> String {
         ),
         other => other.to_string(),
     }
+}
+
+fn execution_backend_resolution_lines(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    task_name: Option<&str>,
+    backend: Backend,
+) -> Vec<String> {
+    let backend_label = format_backend(backend);
+    let backend_flag = format!("--mode {backend_label}");
+    if overrides.backend == Some(backend) {
+        let subject = task_name
+            .map(|task| format!("task `{task}`"))
+            .unwrap_or_else(|| String::from("execution inspection"));
+        return vec![format!("{subject} was requested with `{backend_flag}`")];
+    }
+
+    if contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.preferred)
+        == Some(backend)
+    {
+        let subject = task_name
+            .map(|task| format!("task `{task}`"))
+            .unwrap_or_else(|| String::from("execution inspection"));
+        return vec![
+            format!("{subject} resolves to {backend_label} execution by default"),
+            format!("this contract sets `execution.preferred: {backend_label}`"),
+        ];
+    }
+
+    let subject = task_name
+        .map(|task| format!("task `{task}`"))
+        .unwrap_or_else(|| String::from("execution inspection"));
+    vec![format!("{subject} resolved to {backend_label} execution")]
+}
+
+fn render_execution_plan_structured_error(
+    contract: &Contract,
+    contract_path: &Path,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    error: &RunError,
+) -> String {
+    let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let (summary, mut why_lines, next_steps) = match error {
+        RunError::MissingContainerImage { .. } => (
+            "Container execution is not configured",
+            execution_backend_resolution_lines(contract, overrides, None, Backend::Container),
+            vec![
+                String::from("add `execution.backends.container.image` to the repo contract"),
+                String::from(
+                    "or rerun without container mode if this inspection should stay on the host",
+                ),
+            ],
+        ),
+        RunError::MissingContainerLifecycle { .. } => (
+            "Container execution lifecycle is not configured",
+            execution_backend_resolution_lines(contract, overrides, None, Backend::Container),
+            vec![
+                String::from("add `execution.lifecycle` to the repo contract"),
+                String::from(
+                    "or rerun without container mode if this inspection should stay on the host",
+                ),
+            ],
+        ),
+        RunError::MissingContainerBackendCli { engines, .. } => (
+            "Missing container execution backend CLI",
+            execution_backend_resolution_lines(contract, overrides, None, Backend::Container),
+            vec![
+                format!("install one of the supported container engines: `{engines}`"),
+                String::from(
+                    "or rerun without container mode if this inspection should stay on the host",
+                ),
+            ],
+        ),
+        RunError::MissingRemoteProvider { .. } => (
+            "Remote execution is not configured",
+            execution_backend_resolution_lines(contract, overrides, None, Backend::Remote),
+            vec![
+                String::from("add `execution.backends.remote.provider` to the repo contract"),
+                String::from("or rerun without remote mode if this inspection should stay local"),
+            ],
+        ),
+        RunError::MissingRemoteTarget {
+            provider,
+            example_target,
+            ..
+        } => (
+            "Remote execution target is not configured",
+            execution_backend_resolution_lines(contract, overrides, None, Backend::Remote),
+            vec![
+                format!(
+                    "add `execution.backends.remote.target` for provider `{provider}` (for example `{example_target}`)"
+                ),
+                String::from("or rerun without remote mode if this inspection should stay local"),
+            ],
+        ),
+        RunError::MissingBackendProvider { provider, .. } => (
+            "Backend provider is not configured",
+            vec![format!(
+                "execution inspection requested backend provider `{provider}`, but the repo does not declare it"
+            )],
+            vec![format!(
+                "declare backend provider `{provider}` in the repo contract or rerun with a supported built-in backend"
+            )],
+        ),
+        RunError::UnsupportedBackendProviderVersion {
+            provider,
+            api_version,
+            ..
+        } => (
+            "Backend provider version is unsupported",
+            vec![format!(
+                "backend provider `{provider}` declares unsupported `api_version` `{api_version}`; expected `1`"
+            )],
+            vec![String::from(
+                "update the backend provider declaration to `api_version: 1`, then rerun `ota execution plan`",
+            )],
+        ),
+        _ => (
+            "Execution plan could not be resolved",
+            vec![execution_plan_error(error)],
+            vec![String::from(
+                "repair the declared execution settings, then rerun `ota execution plan`",
+            )],
+        ),
+    };
+
+    if matches!(
+        error,
+        RunError::MissingContainerImage { .. }
+            | RunError::MissingContainerLifecycle { .. }
+            | RunError::MissingContainerBackendCli { .. }
+    ) {
+        why_lines.push(match error {
+            RunError::MissingContainerImage { .. } => {
+                String::from("this contract does not declare `execution.backends.container.image`")
+            }
+            RunError::MissingContainerLifecycle { .. } => {
+                String::from("this contract does not declare `execution.lifecycle`")
+            }
+            RunError::MissingContainerBackendCli { engines, .. } => {
+                format!("no supported container engine is available on PATH: {engines}")
+            }
+            _ => unreachable!(),
+        });
+    } else if matches!(error, RunError::MissingRemoteProvider { .. }) {
+        why_lines.push(String::from(
+            "this contract does not declare `execution.backends.remote.provider`",
+        ));
+    } else if matches!(error, RunError::MissingRemoteTarget { .. }) {
+        why_lines.push(String::from(
+            "this contract does not declare `execution.backends.remote.target`",
+        ));
+    }
+
+    structured_error_text(
+        "EXECUTION PLAN",
+        &text_path_display,
+        summary,
+        &why_lines,
+        &next_steps,
+    )
 }
 
 fn resolve_execution_plan(
@@ -1084,6 +1311,27 @@ pub fn env(
         debug_lines.push(format!("DEBUG task={task}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "ENV",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota env` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota env", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => match build_env_report(&target.contract, &target.contract_path, task) {
@@ -1117,7 +1365,29 @@ pub fn env(
                 },
             },
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "ENV",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota env", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
                     ok: false,
                     path: &path_display,
@@ -1126,7 +1396,25 @@ pub fn env(
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "ENV",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota env", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
                     ok: false,
                     path: &path_display,
@@ -1749,6 +2037,27 @@ pub fn tasks(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "TASKS",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota tasks` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota tasks", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
@@ -1969,7 +2278,29 @@ pub fn tasks(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "TASKS",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota tasks", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
                     ok: false,
                     path: &path_display,
@@ -1978,7 +2309,25 @@ pub fn tasks(
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "TASKS",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota tasks", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&TasksFailure {
                     ok: false,
                     path: &path_display,
@@ -2035,19 +2384,17 @@ pub fn services(
     if is_org_policy_pack_path(&resolved_path) {
         return finalize_debug(
             wrong_repo_contract_target_output(
-                "DOCTOR",
+                "SERVICES",
                 &resolved_path,
-                "Wrong diagnosis target",
+                "Wrong command target",
                 &[
-                    String::from(
-                        "`ota doctor` diagnoses repo readiness from a repo contract such as `ota.yaml`",
-                    ),
+                    String::from("`ota services` reads repo contracts such as `ota.yaml`"),
                     format!(
                         "{} is an org policy pack, not a repo contract",
                         paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
                     ),
                 ],
-                wrong_target_next_steps_for_doctor(&resolved_path),
+                wrong_target_next_steps_for_repo_command("ota services", &resolved_path),
                 format,
             ),
             debug,
@@ -2246,7 +2593,29 @@ pub fn services(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "SERVICES",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota services", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ServicesFailure {
                     ok: false,
                     path: &path_display,
@@ -2255,7 +2624,25 @@ pub fn services(
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "SERVICES",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota services", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ServicesFailure {
                     ok: false,
                     path: &path_display,
@@ -3063,6 +3450,36 @@ fn wrong_repo_contract_target_output(
     }
 }
 
+fn structured_error_text(
+    command: &str,
+    where_value: &str,
+    summary: &str,
+    why_lines: &[String],
+    next_steps: &[String],
+) -> String {
+    let mut stdout = format_command_header(command, where_value);
+    stdout.push_str(&format!(
+        "\n\n{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint(summary, "1;37")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    stdout.push_str(&format!("\n{}", paint_why_key()));
+    for line in why_lines {
+        stdout.push_str(&format!(
+            "\n  {} {}",
+            finding_detail_bullet(FindingSeverity::Error),
+            line
+        ));
+    }
+    stdout.push_str(&format_error_next_timeline(next_steps));
+    stdout
+}
+
 fn invalid_repo_contract_output(
     command: &str,
     target_path: &Path,
@@ -3113,6 +3530,37 @@ fn invalid_repo_contract_output(
             error: Some(String::from("Invalid contract")),
         })),
     }
+}
+
+fn repo_contract_load_text(
+    command: &str,
+    target_path: &Path,
+    summary: &str,
+    error: &str,
+    next_steps: &[String],
+) -> String {
+    structured_error_text(
+        command,
+        &compact_contract_path(target_path),
+        summary,
+        &[compact_backticked_paths(error)],
+        next_steps,
+    )
+}
+
+fn wrong_target_next_steps_for_repo_command(command: &str, policy_path: &Path) -> Vec<String> {
+    let mut steps = vec![format!(
+        "run {} to inspect the active policy pack",
+        paint_code("`ota policy .`")
+    )];
+    if let Some(repo_root) = repo_root_for_policy_pack(policy_path) {
+        let rerun = command_for_repo(command, repo_root);
+        steps.push(format!(
+            "use {} for the repo contract instead",
+            paint_code(&format!("`{rerun}`"))
+        ));
+    }
+    steps
 }
 
 fn render_policy_text(
@@ -4195,6 +4643,27 @@ pub fn explain(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "EXPLAIN",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota explain` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota explain", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) => {
@@ -4231,7 +4700,36 @@ pub fn explain(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "EXPLAIN",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota explain", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => {
                     let error = errors.to_string();
                     CommandOutput::failure(to_json(&ExplainFailure {
@@ -4242,7 +4740,32 @@ pub fn explain(
                 }
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "EXPLAIN",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota explain", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => {
                     let error = error.to_string();
                     CommandOutput::failure(to_json(&ExplainFailure {
@@ -4298,6 +4821,27 @@ pub fn check(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "CHECK",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota check` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota check", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
@@ -4335,9 +4879,47 @@ pub fn check(
                                     Err(ContractProblem::Validation(errors)) => {
                                         return finalize_debug(
                                             match format {
-                                                OutputFormat::Text => {
-                                                    CommandOutput::failure(errors.to_string())
-                                                }
+                                                OutputFormat::Text => invalid_repo_contract_output(
+                                                    "CHECK",
+                                                    &resolved_path,
+                                                    &errors
+                                                        .errors()
+                                                        .iter()
+                                                        .map(ToString::to_string)
+                                                        .collect::<Vec<_>>(),
+                                                    vec![
+                                                        format!(
+                                                            "repair {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                compact_contract_path(
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota validate",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota check",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                    ],
+                                                    format,
+                                                ),
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
                                                         summary: None,
@@ -4360,7 +4942,43 @@ pub fn check(
                                         return finalize_debug(
                                             match format {
                                                 OutputFormat::Text => {
-                                                    CommandOutput::failure(error.to_string())
+                                                    CommandOutput::failure(repo_contract_load_text(
+                                                        "CHECK",
+                                                        &resolved_path,
+                                                        "Contract could not be loaded",
+                                                        &error.to_string(),
+                                                        &[
+                                                            format!(
+                                                                "repair {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    compact_contract_path(
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                            format!(
+                                                                "rerun {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    command_for_contract(
+                                                                        "ota validate",
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                            format!(
+                                                                "rerun {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    command_for_contract(
+                                                                        "ota check",
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                        ],
+                                                    ))
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
@@ -4486,9 +5104,45 @@ pub fn check(
                             Err(ContractProblem::Validation(errors)) => {
                                 return finalize_debug(
                                     match format {
-                                        OutputFormat::Text => {
-                                            CommandOutput::failure(errors.to_string())
-                                        }
+                                        OutputFormat::Text => invalid_repo_contract_output(
+                                            "CHECK",
+                                            &resolved_path,
+                                            &errors
+                                                .errors()
+                                                .iter()
+                                                .map(ToString::to_string)
+                                                .collect::<Vec<_>>(),
+                                            vec![
+                                                format!(
+                                                    "repair {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        compact_contract_path(&resolved_path)
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota validate",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota check",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                            ],
+                                            format,
+                                        ),
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
                                                 summary: None,
@@ -4511,7 +5165,41 @@ pub fn check(
                                 return finalize_debug(
                                     match format {
                                         OutputFormat::Text => {
-                                            CommandOutput::failure(error.to_string())
+                                            CommandOutput::failure(repo_contract_load_text(
+                                                "CHECK",
+                                                &resolved_path,
+                                                "Contract could not be loaded",
+                                                &error.to_string(),
+                                                &[
+                                                    format!(
+                                                        "repair {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            compact_contract_path(&resolved_path)
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota validate",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota check",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                ],
+                                            ))
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
@@ -4570,7 +5258,36 @@ pub fn check(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "CHECK",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota check", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -4584,7 +5301,32 @@ pub fn check(
                 },
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "CHECK",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota check", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -4697,6 +5439,27 @@ pub fn receipt(
         format!("DEBUG mode={}", mode.as_str()),
     ];
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "RECEIPT",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota receipt` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota receipt", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
@@ -4787,7 +5550,36 @@ pub fn receipt(
                 )
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "RECEIPT",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota receipt", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -4801,7 +5593,32 @@ pub fn receipt(
                 },
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "RECEIPT",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota receipt", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput {
                     stdout: to_json(&ValidateFailure {
                         summary: None,
@@ -4860,6 +5677,32 @@ pub fn extensions(
     ];
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
+    }
+
+    if is_org_policy_pack_path(&resolved_path) {
+        let why_lines = vec![
+            format!(
+                "{} reads repo contracts such as {}",
+                paint_code("`ota extensions`"),
+                paint_code("`ota.yaml`")
+            ),
+            format!(
+                "{} is an org policy pack, not a repo contract",
+                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+            ),
+        ];
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "EXTENSIONS",
+                &resolved_path,
+                "Wrong command target",
+                &why_lines,
+                wrong_target_next_steps_for_repo_command("ota extensions", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
     }
 
     if (run_name.is_some() || publish_name.is_some()) && members.len() > 1 {
@@ -4927,21 +5770,87 @@ pub fn extensions(
                                     Err(ContractProblem::Validation(errors)) => {
                                         return finalize_debug(
                                             match format {
-                                                OutputFormat::Text => {
-                                                    CommandOutput::failure(errors.to_string())
-                                                }
-                                                OutputFormat::Json => CommandOutput::failure(
-                                                    to_json(&ValidateFailure {
-                                                        summary: None,
-                                                        ok: false,
-                                                        path: &path_display,
-                                                        errors: errors
-                                                            .errors()
-                                                            .iter()
-                                                            .map(ToString::to_string)
-                                                            .collect(),
-                                                        error: None,
-                                                    }),
+                                                OutputFormat::Text => invalid_repo_contract_output(
+                                                    "EXTENSIONS",
+                                                    &resolved_path,
+                                                    &errors
+                                                        .errors()
+                                                        .iter()
+                                                        .map(ToString::to_string)
+                                                        .collect::<Vec<_>>(),
+                                                    vec![
+                                                        format!(
+                                                            "repair {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                compact_contract_path(
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota validate",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota extensions",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                    ],
+                                                    format,
+                                                ),
+                                                OutputFormat::Json => invalid_repo_contract_output(
+                                                    "EXTENSIONS",
+                                                    &resolved_path,
+                                                    &errors
+                                                        .errors()
+                                                        .iter()
+                                                        .map(ToString::to_string)
+                                                        .collect::<Vec<_>>(),
+                                                    vec![
+                                                        format!(
+                                                            "repair {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                compact_contract_path(
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota validate",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota extensions",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                    ],
+                                                    format,
                                                 ),
                                             },
                                             debug,
@@ -4952,7 +5861,43 @@ pub fn extensions(
                                         return finalize_debug(
                                             match format {
                                                 OutputFormat::Text => {
-                                                    CommandOutput::failure(error.to_string())
+                                                    CommandOutput::failure(repo_contract_load_text(
+                                                        "EXTENSIONS",
+                                                        &resolved_path,
+                                                        "Contract could not be loaded",
+                                                        &error.to_string(),
+                                                        &[
+                                                            format!(
+                                                                "inspect {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    compact_contract_path(
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                            format!(
+                                                                "rerun {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    command_for_contract(
+                                                                        "ota validate",
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                            format!(
+                                                                "rerun {}",
+                                                                paint_code(&format!(
+                                                                    "`{}`",
+                                                                    command_for_contract(
+                                                                        "ota extensions",
+                                                                        &resolved_path
+                                                                    )
+                                                                ))
+                                                            ),
+                                                        ],
+                                                    ))
                                                 }
                                                 OutputFormat::Json => CommandOutput::failure(
                                                     to_json(&ValidateFailure {
@@ -5032,21 +5977,46 @@ pub fn extensions(
                             Err(ContractProblem::Validation(errors)) => {
                                 return finalize_debug(
                                     match format {
-                                        OutputFormat::Text => {
-                                            CommandOutput::failure(errors.to_string())
-                                        }
-                                        OutputFormat::Json => {
-                                            CommandOutput::failure(to_json(&ValidateFailure {
-                                                summary: None,
-                                                ok: false,
-                                                path: &path_display,
-                                                errors: errors
+                                        OutputFormat::Text | OutputFormat::Json => {
+                                            invalid_repo_contract_output(
+                                                "EXTENSIONS",
+                                                &resolved_path,
+                                                &errors
                                                     .errors()
                                                     .iter()
                                                     .map(ToString::to_string)
-                                                    .collect(),
-                                                error: None,
-                                            }))
+                                                    .collect::<Vec<_>>(),
+                                                vec![
+                                                    format!(
+                                                        "repair {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            compact_contract_path(&resolved_path)
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota validate",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota extensions",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                ],
+                                                format,
+                                            )
                                         }
                                     },
                                     debug,
@@ -5057,7 +6027,41 @@ pub fn extensions(
                                 return finalize_debug(
                                     match format {
                                         OutputFormat::Text => {
-                                            CommandOutput::failure(error.to_string())
+                                            CommandOutput::failure(repo_contract_load_text(
+                                                "EXTENSIONS",
+                                                &resolved_path,
+                                                "Contract could not be loaded",
+                                                &error.to_string(),
+                                                &[
+                                                    format!(
+                                                        "inspect {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            compact_contract_path(&resolved_path)
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota validate",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota extensions",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                ],
+                                            ))
                                         }
                                         OutputFormat::Json => {
                                             CommandOutput::failure(to_json(&ValidateFailure {
@@ -5093,18 +6097,63 @@ pub fn extensions(
                     }))),
                 }
             }
-            Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                })),
-            },
+            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
+                "EXTENSIONS",
+                &resolved_path,
+                &errors
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec![
+                    format!(
+                        "repair {}",
+                        paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota validate", &resolved_path)
+                        ))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota extensions", &resolved_path)
+                        ))
+                    ),
+                ],
+                format,
+            ),
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "EXTENSIONS",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "inspect {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota extensions", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -5461,7 +6510,7 @@ pub fn agents(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
-    let contract_path = match resolve_contract_path(path, file_override) {
+    let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
             return finalize_debug(
@@ -5471,27 +6520,138 @@ pub fn agents(
             );
         }
     };
-    let path_display = contract_path.display().to_string();
-    let contract = match load_contract(&contract_path) {
-        Ok(contract) => contract,
-        Err(error) => {
-            let error = error.to_string();
+    let path_display = resolved_path.display().to_string();
+    let debug_lines = vec![
+        String::from("DEBUG command=agents"),
+        format!("DEBUG contract_path={path_display}"),
+        format!(
+            "DEBUG output_path={}",
+            output
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| {
+                    resolved_path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join("AGENTS.md")
+                        .display()
+                        .to_string()
+                })
+        ),
+        format!("DEBUG write={write}"),
+    ];
+
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "AGENTS",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota agents` reads repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota agents", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
+    let target = match load_and_validate_target(&resolved_path, None) {
+        Ok(target) => target,
+        Err(ContractProblem::Validation(errors)) => {
             return finalize_debug(
                 match format {
-                    OutputFormat::Text => CommandOutput::failure(error.clone()),
-                    OutputFormat::Json => CommandOutput::failure(to_json(&AgentsFailure {
+                    OutputFormat::Text => invalid_repo_contract_output(
+                        "AGENTS",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_contract("ota validate", &resolved_path)
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_contract("ota agents", &resolved_path)
+                                ))
+                            ),
+                        ],
+                        format,
+                    ),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        summary: None,
                         ok: false,
                         path: &path_display,
-                        written: false,
-                        error: &error,
-                        next: None,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
                     })),
                 },
                 debug,
-                vec![String::from("DEBUG command=agents")],
+                debug_lines,
+            );
+        }
+        Err(ContractProblem::Load(error)) => {
+            return finalize_debug(
+                match format {
+                    OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                        "AGENTS",
+                        &resolved_path,
+                        "Contract could not be loaded",
+                        &error.to_string(),
+                        &[
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_contract("ota validate", &resolved_path)
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_contract("ota agents", &resolved_path)
+                                ))
+                            ),
+                        ],
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                    })),
+                },
+                debug,
+                debug_lines,
             );
         }
     };
+    let contract_path = target.contract_path;
+    let contract = target.contract;
     let agent = contract.agent.as_ref().and_then(AgentSummary::from_config);
     let contract_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
     let repo_local_contract_display = compact_contract_file_path_relative_to(
@@ -5508,12 +6668,6 @@ pub fn agents(
     });
     let output_path_display = output_path.display().to_string();
     let compact_output_display = compact_path(&normalized_display_path(&output_path), "AGENTS.md");
-    let debug_lines = vec![
-        String::from("DEBUG command=agents"),
-        format!("DEBUG contract_path={path_display}"),
-        format!("DEBUG output_path={output_path_display}"),
-        format!("DEBUG write={write}"),
-    ];
 
     let content = render_agents_markdown(&contract, agent.as_ref(), &repo_local_contract_display);
     let write_command = format!(
@@ -5783,6 +6937,27 @@ pub fn up(
         RepoExecutionMode::Capture
     };
 
+    if is_org_policy_pack_path(&resolved_path) {
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "UP",
+                &resolved_path,
+                "Wrong command target",
+                &[
+                    String::from("`ota up` prepares repo contracts such as `ota.yaml`"),
+                    format!(
+                        "{} is an org policy pack, not a repo contract",
+                        paint_code(&compact_path(&resolved_path, DEFAULT_POLICY_FILE))
+                    ),
+                ],
+                wrong_target_next_steps_for_repo_command("ota up", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
@@ -6003,7 +7178,36 @@ pub fn up(
                 }
             }
             Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_repo_contract_output(
+                    "UP",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    vec![
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota up", &resolved_path)
+                            ))
+                        ),
+                    ],
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -6013,7 +7217,32 @@ pub fn up(
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "UP",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "repair {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota up", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -6144,6 +7373,32 @@ pub fn clean(
         debug_lines.push(format!("DEBUG member={member}"));
     }
 
+    if is_org_policy_pack_path(&resolved_path) {
+        let why_lines = vec![
+            format!(
+                "{} reads repo contracts such as {}",
+                paint_code("`ota clean`"),
+                paint_code("`ota.yaml`")
+            ),
+            format!(
+                "{} is an org policy pack, not a repo contract",
+                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+            ),
+        ];
+        return finalize_debug(
+            wrong_repo_contract_target_output(
+                "CLEAN",
+                &resolved_path,
+                "Wrong command target",
+                &why_lines,
+                wrong_target_next_steps_for_repo_command("ota clean", &resolved_path),
+                format,
+            ),
+            debug,
+            debug_lines,
+        );
+    }
+
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() => {
@@ -6168,14 +7423,101 @@ pub fn clean(
                                 Ok(target) => target,
                                 Err(ContractProblem::Validation(errors)) => {
                                     return finalize_debug(
-                                        CommandOutput::failure(errors.to_string()),
+                                        invalid_repo_contract_output(
+                                            "CLEAN",
+                                            &resolved_path,
+                                            &errors
+                                                .errors()
+                                                .iter()
+                                                .map(ToString::to_string)
+                                                .collect::<Vec<_>>(),
+                                            vec![
+                                                format!(
+                                                    "repair {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        compact_contract_path(&resolved_path)
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota validate",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota clean",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                            ],
+                                            format,
+                                        ),
                                         debug,
                                         debug_lines,
                                     );
                                 }
                                 Err(ContractProblem::Load(error)) => {
                                     return finalize_debug(
-                                        CommandOutput::failure(error.to_string()),
+                                        match format {
+                                            OutputFormat::Text => {
+                                                CommandOutput::failure(repo_contract_load_text(
+                                                    "CLEAN",
+                                                    &resolved_path,
+                                                    "Contract could not be loaded",
+                                                    &error.to_string(),
+                                                    &[
+                                                        format!(
+                                                            "inspect {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                compact_contract_path(
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota validate",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                        format!(
+                                                            "rerun {}",
+                                                            paint_code(&format!(
+                                                                "`{}`",
+                                                                command_for_contract(
+                                                                    "ota clean",
+                                                                    &resolved_path
+                                                                )
+                                                            ))
+                                                        ),
+                                                    ],
+                                                ))
+                                            }
+                                            OutputFormat::Json => {
+                                                CommandOutput::failure(to_json(&ValidateFailure {
+                                                    summary: None,
+                                                    ok: false,
+                                                    path: &path_display,
+                                                    errors: Vec::new(),
+                                                    error: Some(error.to_string()),
+                                                }))
+                                            }
+                                        },
                                         debug,
                                         debug_lines,
                                     );
@@ -6215,14 +7557,99 @@ pub fn clean(
                             Ok(target) => target,
                             Err(ContractProblem::Validation(errors)) => {
                                 return finalize_debug(
-                                    CommandOutput::failure(errors.to_string()),
+                                    invalid_repo_contract_output(
+                                        "CLEAN",
+                                        &resolved_path,
+                                        &errors
+                                            .errors()
+                                            .iter()
+                                            .map(ToString::to_string)
+                                            .collect::<Vec<_>>(),
+                                        vec![
+                                            format!(
+                                                "repair {}",
+                                                paint_code(&format!(
+                                                    "`{}`",
+                                                    compact_contract_path(&resolved_path)
+                                                ))
+                                            ),
+                                            format!(
+                                                "rerun {}",
+                                                paint_code(&format!(
+                                                    "`{}`",
+                                                    command_for_contract(
+                                                        "ota validate",
+                                                        &resolved_path
+                                                    )
+                                                ))
+                                            ),
+                                            format!(
+                                                "rerun {}",
+                                                paint_code(&format!(
+                                                    "`{}`",
+                                                    command_for_contract(
+                                                        "ota clean",
+                                                        &resolved_path
+                                                    )
+                                                ))
+                                            ),
+                                        ],
+                                        format,
+                                    ),
                                     debug,
                                     debug_lines,
                                 );
                             }
                             Err(ContractProblem::Load(error)) => {
                                 return finalize_debug(
-                                    CommandOutput::failure(error.to_string()),
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(repo_contract_load_text(
+                                                "CLEAN",
+                                                &resolved_path,
+                                                "Contract could not be loaded",
+                                                &error.to_string(),
+                                                &[
+                                                    format!(
+                                                        "inspect {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            compact_contract_path(&resolved_path)
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota validate",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota clean",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                ],
+                                            ))
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: Vec::new(),
+                                                error: Some(error.to_string()),
+                                            }))
+                                        }
+                                    },
                                     debug,
                                     debug_lines,
                                 );
@@ -6245,8 +7672,71 @@ pub fn clean(
 
                 CommandOutput::success(sections.join("\n\n"))
             }
-            Err(ContractProblem::Validation(errors)) => CommandOutput::failure(errors.to_string()),
-            Err(ContractProblem::Load(error)) => CommandOutput::failure(error.to_string()),
+            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
+                "CLEAN",
+                &resolved_path,
+                &errors
+                    .errors()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec![
+                    format!(
+                        "repair {}",
+                        paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota validate", &resolved_path)
+                        ))
+                    ),
+                    format!(
+                        "rerun {}",
+                        paint_code(&format!(
+                            "`{}`",
+                            command_for_contract("ota clean", &resolved_path)
+                        ))
+                    ),
+                ],
+                format,
+            ),
+            Err(ContractProblem::Load(error)) => match format {
+                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                    "CLEAN",
+                    &resolved_path,
+                    "Contract could not be loaded",
+                    &error.to_string(),
+                    &[
+                        format!(
+                            "inspect {}",
+                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota validate", &resolved_path)
+                            ))
+                        ),
+                        format!(
+                            "rerun {}",
+                            paint_code(&format!(
+                                "`{}`",
+                                command_for_contract("ota clean", &resolved_path)
+                            ))
+                        ),
+                    ],
+                )),
+                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                    summary: None,
+                    ok: false,
+                    path: &path_display,
+                    errors: Vec::new(),
+                    error: Some(error.to_string()),
+                })),
+            },
         },
         debug,
         debug_lines,
@@ -6636,6 +8126,164 @@ fn render_workspace_validate_ready_next() -> String {
         String::from("run `ota workspace up` to prepare the workspace end to end"),
         String::from("run `ota workspace tasks` to inspect runnable task usage"),
     ])
+}
+
+fn invalid_workspace_contract_output(
+    command: &str,
+    workspace_path: &Path,
+    why_lines: &[String],
+    next_steps: Vec<String>,
+    format: OutputFormat,
+) -> CommandOutput {
+    let compact_target = compact_workspace_path(workspace_path);
+    let path_display = workspace_path.display().to_string();
+    match format {
+        OutputFormat::Text => CommandOutput::failure(structured_error_text(
+            command,
+            &compact_target,
+            "Invalid workspace contract",
+            why_lines,
+            &next_steps,
+        )),
+        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+            ok: false,
+            path: &path_display,
+            summary: Some(ValidateSummary {
+                error_count: why_lines.len(),
+            }),
+            errors: why_lines
+                .iter()
+                .map(|line| compact_backticked_paths(line))
+                .collect(),
+            error: Some(String::from("Invalid workspace contract")),
+        })),
+    }
+}
+
+fn workspace_contract_load_text(
+    command: &str,
+    workspace_path: &Path,
+    summary: &str,
+    error: &str,
+    next_steps: &[String],
+) -> String {
+    structured_error_text(
+        command,
+        &compact_workspace_path(workspace_path),
+        summary,
+        &[compact_backticked_paths(error)],
+        next_steps,
+    )
+}
+
+fn workspace_invalid_contract_next_steps(command: &str, workspace_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "repair {}",
+            paint_code(&format!("`{}`", compact_workspace_path(workspace_path)))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_workspace("ota workspace validate", workspace_path)
+            ))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_workspace(command, workspace_path)
+            ))
+        ),
+    ]
+}
+
+fn workspace_contract_load_next_steps(command: &str, workspace_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "inspect {}",
+            paint_code(&format!("`{}`", compact_workspace_path(workspace_path)))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_workspace("ota workspace validate", workspace_path)
+            ))
+        ),
+        format!(
+            "rerun {}",
+            paint_code(&format!(
+                "`{}`",
+                command_for_workspace(command, workspace_path)
+            ))
+        ),
+    ]
+}
+
+fn workspace_repo_contract_invalid_text(
+    command: &str,
+    workspace_path: &Path,
+    repo_contract_path: &Path,
+    why_lines: &[String],
+) -> String {
+    structured_error_text(
+        command,
+        &compact_contract_path(repo_contract_path),
+        "Invalid repo contract",
+        why_lines,
+        &[
+            format!(
+                "fix the failing repo contract with {}",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_contract("ota validate", repo_contract_path)
+                ))
+            ),
+            format!(
+                "rerun {}",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_workspace("ota workspace tasks", workspace_path)
+                ))
+            ),
+        ],
+    )
+}
+
+fn workspace_repo_contract_load_text(
+    command: &str,
+    workspace_path: &Path,
+    repo_contract_path: &Path,
+    error: &str,
+) -> String {
+    structured_error_text(
+        command,
+        &compact_contract_path(repo_contract_path),
+        "Repo contract could not be loaded",
+        &[compact_backticked_paths(error)],
+        &[
+            format!(
+                "repair {}",
+                paint_code(&format!("`{}`", compact_contract_path(repo_contract_path)))
+            ),
+            format!(
+                "rerun {}",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_contract("ota validate", repo_contract_path)
+                ))
+            ),
+            format!(
+                "rerun {}",
+                paint_code(&format!(
+                    "`{}`",
+                    command_for_workspace("ota workspace tasks", workspace_path)
+                ))
+            ),
+        ],
+    )
 }
 
 fn render_workspace_validate_failure(
@@ -7622,14 +9270,22 @@ pub fn workspace_tasks(
             Ok(workspace) => {
                 if let Err(errors) = validate_workspace_contract(&resolved_path, &workspace) {
                     return match format {
-                        OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                        OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                            summary: None,
-                            ok: false,
-                            path: &path_display,
-                            errors: errors.errors().iter().map(ToString::to_string).collect(),
-                            error: None,
-                        })),
+                        OutputFormat::Text | OutputFormat::Json => {
+                            invalid_workspace_contract_output(
+                                "WORKSPACE TASKS",
+                                &resolved_path,
+                                &errors
+                                    .errors()
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>(),
+                                workspace_invalid_contract_next_steps(
+                                    "ota workspace tasks",
+                                    &resolved_path,
+                                ),
+                                format,
+                            )
+                        }
                     };
                 }
 
@@ -7637,19 +9293,21 @@ pub fn workspace_tasks(
                     Ok(repo_refs) => repo_refs,
                     Err(errors) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                            OutputFormat::Json => {
-                                CommandOutput::failure(to_json(&ValidateFailure {
-                                    summary: None,
-                                    ok: false,
-                                    path: &path_display,
-                                    errors: errors
+                            OutputFormat::Text | OutputFormat::Json => {
+                                invalid_workspace_contract_output(
+                                    "WORKSPACE TASKS",
+                                    &resolved_path,
+                                    &errors
                                         .errors()
                                         .iter()
                                         .map(ToString::to_string)
-                                        .collect(),
-                                    error: None,
-                                }))
+                                        .collect::<Vec<_>>(),
+                                    workspace_invalid_contract_next_steps(
+                                        "ota workspace tasks",
+                                        &resolved_path,
+                                    ),
+                                    format,
+                                )
                             }
                         };
                     }
@@ -7674,7 +9332,14 @@ pub fn workspace_tasks(
                         Ok(contract) => contract,
                         Err(error) => {
                             return match format {
-                                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                                OutputFormat::Text => {
+                                    CommandOutput::failure(workspace_repo_contract_load_text(
+                                        "WORKSPACE TASKS",
+                                        &resolved_path,
+                                        &repo.contract_path,
+                                        &error.to_string(),
+                                    ))
+                                }
                                 OutputFormat::Json => {
                                     CommandOutput::failure(to_json(&ValidateFailure {
                                         summary: None,
@@ -7690,7 +9355,18 @@ pub fn workspace_tasks(
 
                     if let Err(errors) = validate_contract(&contract) {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                            OutputFormat::Text => {
+                                CommandOutput::failure(workspace_repo_contract_invalid_text(
+                                    "WORKSPACE TASKS",
+                                    &resolved_path,
+                                    &repo.contract_path,
+                                    &errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect::<Vec<_>>(),
+                                ))
+                            }
                             OutputFormat::Json => {
                                 CommandOutput::failure(to_json(&ValidateFailure {
                                     summary: None,
@@ -7753,7 +9429,13 @@ pub fn workspace_tasks(
                 }
             }
             Err(error) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE TASKS",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace tasks", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -7801,19 +9483,21 @@ pub fn workspace_list(
                     Ok(repo_refs) => repo_refs,
                     Err(errors) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                            OutputFormat::Json => {
-                                CommandOutput::failure(to_json(&ValidateFailure {
-                                    summary: None,
-                                    ok: false,
-                                    path: &path_display,
-                                    errors: errors
+                            OutputFormat::Text | OutputFormat::Json => {
+                                invalid_workspace_contract_output(
+                                    "WORKSPACE LIST",
+                                    &resolved_path,
+                                    &errors
                                         .errors()
                                         .iter()
                                         .map(ToString::to_string)
-                                        .collect(),
-                                    error: None,
-                                }))
+                                        .collect::<Vec<_>>(),
+                                    workspace_invalid_contract_next_steps(
+                                        "ota workspace list",
+                                        &resolved_path,
+                                    ),
+                                    format,
+                                )
                             }
                         };
                     }
@@ -7914,7 +9598,13 @@ pub fn workspace_list(
                 }
             }
             Err(error) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE LIST",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace list", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -7973,19 +9663,21 @@ pub fn workspace_execution_plan(
                     Ok(repo_refs) => repo_refs,
                     Err(errors) => {
                         return match format {
-                            OutputFormat::Text => CommandOutput::failure(errors.to_string()),
-                            OutputFormat::Json => {
-                                CommandOutput::failure(to_json(&ValidateFailure {
-                                    summary: None,
-                                    ok: false,
-                                    path: &path_display,
-                                    errors: errors
+                            OutputFormat::Text | OutputFormat::Json => {
+                                invalid_workspace_contract_output(
+                                    "WORKSPACE EXECUTION PLAN",
+                                    &resolved_path,
+                                    &errors
                                         .errors()
                                         .iter()
                                         .map(ToString::to_string)
-                                        .collect(),
-                                    error: None,
-                                }))
+                                        .collect::<Vec<_>>(),
+                                    workspace_invalid_contract_next_steps(
+                                        "ota workspace execution plan",
+                                        &resolved_path,
+                                    ),
+                                    format,
+                                )
                             }
                         };
                     }
@@ -8046,7 +9738,16 @@ pub fn workspace_execution_plan(
                 )
             }
             Err(error) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE EXECUTION PLAN",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps(
+                        "ota workspace execution plan",
+                        &resolved_path,
+                    ),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8183,7 +9884,17 @@ pub fn workspace_doctor(
                 }
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE DOCTOR",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace doctor", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8193,7 +9904,13 @@ pub fn workspace_doctor(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE DOCTOR",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace doctor", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8275,7 +9992,17 @@ pub fn workspace_explain(
                 }
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE EXPLAIN",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace explain", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8285,7 +10012,13 @@ pub fn workspace_explain(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE EXPLAIN",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace explain", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8356,7 +10089,17 @@ pub fn workspace_check(
                 },
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE CHECK",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace check", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8366,7 +10109,13 @@ pub fn workspace_check(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE CHECK",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace check", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8458,7 +10207,17 @@ pub fn workspace_up(
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE UP",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace up", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8468,7 +10227,13 @@ pub fn workspace_up(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE UP",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace up", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8576,7 +10341,17 @@ pub fn workspace_refresh(
                 render_workspace_refresh(&compact_path_display, &report, format, show_receipt)
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE REFRESH",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace refresh", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8586,7 +10361,13 @@ pub fn workspace_refresh(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE REFRESH",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace refresh", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8641,7 +10422,17 @@ pub fn workspace_diff(
         match load_and_run_workspace_diff(&resolved_path, jobs) {
             Ok(report) => render_workspace_diff(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE DIFF",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace diff", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8651,7 +10442,13 @@ pub fn workspace_diff(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE DIFF",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace diff", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8706,7 +10503,17 @@ pub fn workspace_status(
         match load_and_run_workspace_status(&resolved_path, jobs) {
             Ok(report) => render_workspace_status(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE STATUS",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace status", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8716,7 +10523,13 @@ pub fn workspace_status(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE STATUS",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace status", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8807,7 +10620,17 @@ pub fn workspace_receipt(
                 render_workspace_receipt(&compact_path_display, &report, format)
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE RECEIPT",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace receipt", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8817,7 +10640,13 @@ pub fn workspace_receipt(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE RECEIPT",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace receipt", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8914,7 +10743,17 @@ pub fn workspace_run(
                 render_workspace_run(task, &compact_path_display, &report, format, show_receipt)
             }
             Err(WorkspaceProblem::Validation(errors)) => match format {
-                OutputFormat::Text => CommandOutput::failure(errors.to_string()),
+                OutputFormat::Text => invalid_workspace_contract_output(
+                    "WORKSPACE RUN",
+                    &resolved_path,
+                    &errors
+                        .errors()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                    workspace_invalid_contract_next_steps("ota workspace run", &resolved_path),
+                    format,
+                ),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -8924,7 +10763,13 @@ pub fn workspace_run(
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(error.to_string()),
+                OutputFormat::Text => CommandOutput::failure(workspace_contract_load_text(
+                    "WORKSPACE RUN",
+                    &resolved_path,
+                    "Workspace contract could not be loaded",
+                    &error.to_string(),
+                    &workspace_contract_load_next_steps("ota workspace run", &resolved_path),
+                )),
                 OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
                     summary: None,
                     ok: false,
@@ -21463,8 +23308,9 @@ fn run_contract_targets(
     stream_output: bool,
 ) -> Result<String, RunCommandFailure> {
     if members.is_empty() {
-        let target = load_and_validate_target(resolved_path, None)
-            .map_err(render_contract_problem_failure)?;
+        let target = load_and_validate_target(resolved_path, None).map_err(|error| {
+            render_run_contract_problem_failure(resolved_path, None, task_name, error)
+        })?;
         return run_single_contract_target(
             task_name,
             overrides,
@@ -21478,8 +23324,15 @@ fn run_contract_targets(
 
     let mut stderr_sections = Vec::new();
     for member in members {
-        let target = load_and_validate_target(resolved_path, Some(member.as_str()))
-            .map_err(render_contract_problem_failure)?;
+        let target =
+            load_and_validate_target(resolved_path, Some(member.as_str())).map_err(|error| {
+                render_run_contract_problem_failure(
+                    resolved_path,
+                    Some(member.as_str()),
+                    task_name,
+                    error,
+                )
+            })?;
         stderr_sections.push(run_single_contract_target(
             task_name,
             overrides,
@@ -21626,48 +23479,42 @@ fn run_single_contract_target_streaming(
                 ))
             }),
         }),
-        Err(error) => Err(RunCommandFailure {
-            message: render_run_error(error),
-            summary: Some(render_execution_receipt_summary_block(
-                &run_execution_receipt(
+        Err(error) => {
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &[],
+                1,
+                false,
+                None,
+                Some(format!(
+                    "{}; {}",
+                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                    details_footer
+                )),
+            );
+            let summary =
+                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
+            Err(RunCommandFailure {
+                message: render_run_structured_error_text(
                     &target.contract,
                     &target.contract_path,
-                    overrides,
                     task_name,
                     member,
-                    &[],
-                    1,
-                    false,
-                    None,
-                    Some(format!(
-                        "{}; {}",
-                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                        details_footer
-                    )),
+                    overrides,
+                    &error,
+                    &summary,
+                    receipt_text.as_deref(),
                 ),
-                Some(task_name),
-                "RUN SUMMARY",
-            )),
-            exit_code: 1,
-            receipt: show_receipt.then(|| {
-                render_execution_receipt_text(&run_execution_receipt(
-                    &target.contract,
-                    &target.contract_path,
-                    overrides,
-                    task_name,
-                    member,
-                    &[],
-                    1,
-                    false,
-                    None,
-                    Some(format!(
-                        "{}; {}",
-                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                        details_footer
-                    )),
-                ))
-            }),
-        }),
+                summary: None,
+                exit_code: 1,
+                receipt: None,
+            })
+        }
     }
 }
 
@@ -21757,48 +23604,42 @@ fn run_single_contract_target_captured(
                 receipt: None,
             })
         }
-        Err(error) => Err(RunCommandFailure {
-            message: render_run_error(error),
-            summary: Some(render_execution_receipt_summary_block(
-                &run_execution_receipt(
+        Err(error) => {
+            let receipt = run_execution_receipt(
+                &target.contract,
+                &target.contract_path,
+                overrides,
+                task_name,
+                member,
+                &[],
+                1,
+                false,
+                None,
+                Some(format!(
+                    "{}; {}",
+                    format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
+                    details_footer
+                )),
+            );
+            let summary =
+                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
+            Err(RunCommandFailure {
+                message: render_run_structured_error_text(
                     &target.contract,
                     &target.contract_path,
-                    overrides,
                     task_name,
                     member,
-                    &[],
-                    1,
-                    false,
-                    None,
-                    Some(format!(
-                        "{}; {}",
-                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                        details_footer
-                    )),
+                    overrides,
+                    &error,
+                    &summary,
+                    receipt_text.as_deref(),
                 ),
-                Some(task_name),
-                "RUN SUMMARY",
-            )),
-            exit_code: 1,
-            receipt: show_receipt.then(|| {
-                render_execution_receipt_text(&run_execution_receipt(
-                    &target.contract,
-                    &target.contract_path,
-                    overrides,
-                    task_name,
-                    member,
-                    &[],
-                    1,
-                    false,
-                    None,
-                    Some(format!(
-                        "{}; {}",
-                        format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
-                        details_footer
-                    )),
-                ))
-            }),
-        }),
+                summary: None,
+                exit_code: 1,
+                receipt: None,
+            })
+        }
     }
 }
 
@@ -21939,7 +23780,7 @@ fn output_excerpt_notice(excerpt: &OutputExcerpt) -> String {
 
 fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
     match member {
-        Some(member) => format!("ota run {task_name} --member {member} --stream"),
+        Some(member) => format!("ota run --member {member} {task_name} --stream"),
         None => format!("ota run {task_name} --stream"),
     }
 }
@@ -21958,6 +23799,259 @@ fn task_use_details_footer(member: Option<&str>) -> String {
         "\nNext: {}",
         stylize_inline_text(&task_use_details_step(member))
     )
+}
+
+fn run_execution_backend_why_lines(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    task_name: &str,
+    backend: Backend,
+) -> Vec<String> {
+    execution_backend_resolution_lines(contract, overrides, Some(task_name), backend)
+}
+
+fn run_default_fallback_step(task_name: &str, overrides: ExecutionOverrides) -> Option<String> {
+    if overrides.backend.is_some() {
+        Some(format!(
+            "or rerun without the explicit backend override: `{}`",
+            paint_code(&format!("ota run {task_name}"))
+        ))
+    } else {
+        Some(format!(
+            "or rerun with a different supported mode if the repo allows it: `{}`",
+            paint_code(&format!("ota run {task_name} --mode native"))
+        ))
+    }
+}
+
+fn render_run_structured_error_text(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    error: &RunError,
+    summary_block: &str,
+    receipt_text: Option<&str>,
+) -> String {
+    let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let (summary, mut why_lines, mut next_steps) = match error {
+        RunError::UnknownTask { task } => (
+            String::from("Unknown task"),
+            vec![format!("task `{task}` is not declared in this contract")],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::UnknownTaskInput { task, input } => (
+            String::from("Unknown task input"),
+            vec![format!("task `{task}` does not declare input `{input}`")],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::MissingRequiredTaskInput { task, input } => (
+            String::from("Required task input is missing"),
+            vec![format!(
+                "task `{task}` requires input `{input}` before it can run"
+            )],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::MissingTaskInputValue { task, input } => (
+            String::from("Task input value is missing"),
+            vec![format!(
+                "task `{task}` input `{input}` is missing its value"
+            )],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::InvalidTaskInputValue {
+            task,
+            input,
+            value,
+            allowed,
+        } => (
+            String::from("Task input value is not allowed"),
+            vec![format!(
+                "task `{task}` input `{input}` resolved to `{value}`, but the allowed values are: {allowed}"
+            )],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::InvalidTaskInputSyntax { task, input, flag } => (
+            String::from("Task input syntax is invalid"),
+            vec![format!(
+                "task `{task}` input `{input}` must be provided as `--{flag} <value>` or `--{flag}=<value>`"
+            )],
+            vec![task_use_details_step(member)],
+        ),
+        RunError::MissingContainerImage { .. } => (
+            String::from("Container run is not configured"),
+            run_execution_backend_why_lines(contract, overrides, task_name, Backend::Container),
+            vec![String::from(
+                "add `execution.backends.container.image` to the repo contract",
+            )],
+        ),
+        RunError::MissingContainerLifecycle { .. } => (
+            String::from("Container run lifecycle is not configured"),
+            run_execution_backend_why_lines(contract, overrides, task_name, Backend::Container),
+            vec![String::from(
+                "add `execution.lifecycle` to the repo contract",
+            )],
+        ),
+        RunError::MissingContainerBackendCli { engines, .. } => (
+            String::from("Missing container execution backend CLI"),
+            run_execution_backend_why_lines(contract, overrides, task_name, Backend::Container),
+            vec![format!(
+                "install one of the supported container engines: `{engines}`"
+            )],
+        ),
+        RunError::MissingRemoteProvider { .. } => (
+            String::from("Remote run is not configured"),
+            run_execution_backend_why_lines(contract, overrides, task_name, Backend::Remote),
+            vec![String::from(
+                "add `execution.backends.remote.provider` to the repo contract",
+            )],
+        ),
+        RunError::MissingRemoteTarget {
+            provider,
+            example_target,
+            ..
+        } => (
+            String::from("Remote run target is not configured"),
+            run_execution_backend_why_lines(contract, overrides, task_name, Backend::Remote),
+            vec![format!(
+                "add `execution.backends.remote.target` for provider `{provider}` (for example `{example_target}`)"
+            )],
+        ),
+        RunError::MissingBackendProvider { provider, .. } => (
+            String::from("Backend provider is not configured"),
+            vec![format!(
+                "task `{task_name}` requested backend provider `{provider}`, but the repo does not declare it"
+            )],
+            vec![format!(
+                "declare backend provider `{provider}` in the repo contract or rerun with a supported built-in backend"
+            )],
+        ),
+        RunError::UnsupportedBackendProviderVersion {
+            provider,
+            api_version,
+            ..
+        } => (
+            String::from("Backend provider version is unsupported"),
+            vec![format!(
+                "backend provider `{provider}` declares unsupported `api_version` `{api_version}`; expected `1`"
+            )],
+            vec![String::from(
+                "update the backend provider declaration to `api_version: 1`, then rerun the task",
+            )],
+        ),
+        RunError::MissingRequiredEnv { name } => (
+            String::from("Required environment value is missing"),
+            vec![format!(
+                "task `{task_name}` requires environment variable `{name}`, but it is not set"
+            )],
+            vec![format!(
+                "run {} to inspect env requirements for this task",
+                paint_code(&format!(
+                    "`{}`",
+                    match member {
+                        Some(member) => format!("ota env --member {member} --task {task_name}"),
+                        None => format!("ota env --task {task_name}"),
+                    }
+                ))
+            )],
+        ),
+        RunError::InvalidEnvValue {
+            name,
+            value,
+            allowed,
+        } => (
+            String::from("Environment value is not allowed"),
+            vec![format!(
+                "environment variable `{name}` resolved to `{value}`, but the allowed values are: {allowed}"
+            )],
+            vec![format!(
+                "run {} to inspect env requirements for this task",
+                paint_code(&format!(
+                    "`{}`",
+                    match member {
+                        Some(member) => format!("ota env --member {member} --task {task_name}"),
+                        None => format!("ota env --task {task_name}"),
+                    }
+                ))
+            )],
+        ),
+        RunError::MissingRequiredEnvSource { kind, path } => (
+            String::from("Required environment source is missing"),
+            vec![format!(
+                "task `{task_name}` requires declared environment source `{kind}:{path}`, but it is missing"
+            )],
+            vec![format!(
+                "repair the declared environment sources, then rerun `{}`",
+                paint_code(&repo_run_stream_command(task_name, member).replace(" --stream", ""))
+            )],
+        ),
+        RunError::InvalidEnvSource {
+            kind,
+            path,
+            details,
+        } => (
+            String::from("Declared environment source could not be read"),
+            vec![format!(
+                "task `{task_name}` could not read declared environment source `{kind}:{path}`: {details}"
+            )],
+            vec![format!(
+                "repair the declared environment sources, then rerun `{}`",
+                paint_code(&repo_run_stream_command(task_name, member).replace(" --stream", ""))
+            )],
+        ),
+        RunError::InvalidPolicyPack { details } => (
+            String::from("Invalid org policy pack"),
+            vec![details.clone()],
+            vec![format!(
+                "run {} to inspect the active policy pack",
+                paint_code("`ota policy .`")
+            )],
+        ),
+        _ => (
+            String::from("Task run failed"),
+            vec![error.to_string()],
+            vec![task_use_details_step(member)],
+        ),
+    };
+
+    match error {
+        RunError::MissingContainerImage { .. } => why_lines.push(String::from(
+            "this contract does not declare `execution.backends.container.image`",
+        )),
+        RunError::MissingContainerLifecycle { .. } => why_lines.push(String::from(
+            "this contract does not declare `execution.lifecycle`",
+        )),
+        RunError::MissingContainerBackendCli { engines, .. } => why_lines.push(format!(
+            "no supported container engine is available on PATH: {engines}"
+        )),
+        _ => {}
+    }
+
+    if matches!(
+        error,
+        RunError::MissingContainerImage { .. }
+            | RunError::MissingContainerLifecycle { .. }
+            | RunError::MissingContainerBackendCli { .. }
+            | RunError::MissingRemoteProvider { .. }
+            | RunError::MissingRemoteTarget { .. }
+    ) && let Some(fallback) = run_default_fallback_step(task_name, overrides)
+    {
+        next_steps.push(fallback);
+        next_steps.push(task_use_details_step(member));
+    }
+
+    let mut output =
+        structured_error_text("RUN", &text_path_display, &summary, &why_lines, &next_steps);
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        output.push('\n');
+        output.push_str(receipt_text);
+    }
+    output.push('\n');
+    output.push_str(summary_block);
+    output
 }
 
 fn receipt_env_value(resolved: &ResolvedEnvValue) -> String {
@@ -22159,9 +24253,190 @@ struct RunCommandFailure {
     receipt: Option<String>,
 }
 
-fn render_contract_problem_failure(error: ContractProblem) -> RunCommandFailure {
+fn render_run_preferred_backend_validation_text(
+    resolved_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    errors: &ValidationErrors,
+) -> Option<String> {
+    if errors.errors().len() != 1 {
+        return None;
+    }
+
+    let error = errors.errors()[0].to_string();
+    let text_path_display = display_contract_target(&compact_contract_path(resolved_path), member);
+
+    let (summary, why_lines, next_steps) = if error
+        == "`execution.preferred: container` requires `execution.backends.container.image`"
+    {
+        (
+            "Container run is not configured",
+            vec![
+                format!("task `{task_name}` resolves to container execution by default"),
+                String::from("this contract sets `execution.preferred: container`"),
+                String::from("this contract does not declare `execution.backends.container.image`"),
+            ],
+            vec![
+                String::from("add `execution.backends.container.image` to the repo contract"),
+                String::from(
+                    "or change the default execution mode if this repo should not prefer containers",
+                ),
+                format!(
+                    "or rerun with a different supported mode if the repo allows it: `{}`",
+                    match member {
+                        Some(member) =>
+                            format!("ota run --member {member} {task_name} --mode native"),
+                        None => format!("ota run {task_name} --mode native"),
+                    }
+                ),
+                task_use_details_step(member),
+            ],
+        )
+    } else if error == "`execution.preferred: container` requires an explicit `execution.lifecycle`"
+    {
+        (
+            "Container run lifecycle is not configured",
+            vec![
+                format!("task `{task_name}` resolves to container execution by default"),
+                String::from("this contract sets `execution.preferred: container`"),
+                String::from("this contract does not declare `execution.lifecycle`"),
+            ],
+            vec![
+                String::from("add `execution.lifecycle` to the repo contract"),
+                String::from(
+                    "or change the default execution mode if this repo should not prefer containers",
+                ),
+                format!(
+                    "or rerun with a different supported mode if the repo allows it: `{}`",
+                    match member {
+                        Some(member) =>
+                            format!("ota run --member {member} {task_name} --mode native"),
+                        None => format!("ota run {task_name} --mode native"),
+                    }
+                ),
+                task_use_details_step(member),
+            ],
+        )
+    } else if error == "`execution.preferred: remote` requires `execution.backends.remote.provider`"
+    {
+        (
+            "Remote run is not configured",
+            vec![
+                format!("task `{task_name}` resolves to remote execution by default"),
+                String::from("this contract sets `execution.preferred: remote`"),
+                String::from("this contract does not declare `execution.backends.remote.provider`"),
+            ],
+            vec![
+                String::from("add `execution.backends.remote.provider` to the repo contract"),
+                String::from(
+                    "or change the default execution mode if this repo should not prefer remote execution",
+                ),
+                format!(
+                    "or rerun with a different supported mode if the repo allows it: `{}`",
+                    match member {
+                        Some(member) =>
+                            format!("ota run --member {member} {task_name} --mode native"),
+                        None => format!("ota run {task_name} --mode native"),
+                    }
+                ),
+                task_use_details_step(member),
+            ],
+        )
+    } else {
+        return None;
+    };
+
+    Some(structured_error_text(
+        "RUN",
+        &text_path_display,
+        summary,
+        &why_lines,
+        &next_steps,
+    ))
+}
+
+fn render_run_contract_problem_failure(
+    resolved_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    error: ContractProblem,
+) -> RunCommandFailure {
+    let message = match &error {
+        ContractProblem::Validation(errors) => {
+            render_run_preferred_backend_validation_text(resolved_path, member, task_name, errors)
+                .unwrap_or_else(|| {
+                    invalid_repo_contract_output(
+                        "RUN",
+                        resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_contract("ota validate", resolved_path)
+                                ))
+                            ),
+                            task_use_details_step(member),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    match member {
+                                        Some(member) => {
+                                            format!("ota run --member {member} {task_name}")
+                                        }
+                                        None => format!("ota run {task_name}"),
+                                    }
+                                ))
+                            ),
+                        ],
+                        OutputFormat::Text,
+                    )
+                    .stdout
+                })
+        }
+        ContractProblem::Load(load_error) => repo_contract_load_text(
+            "RUN",
+            resolved_path,
+            "Contract could not be loaded",
+            &load_error.to_string(),
+            &[
+                format!(
+                    "repair {}",
+                    paint_code(&format!("`{}`", compact_contract_path(resolved_path)))
+                ),
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        command_for_contract("ota validate", resolved_path)
+                    ))
+                ),
+                format!(
+                    "rerun {}",
+                    paint_code(&format!(
+                        "`{}`",
+                        match member {
+                            Some(member) => format!("ota run --member {member} {task_name}"),
+                            None => format!("ota run {task_name}"),
+                        }
+                    ))
+                ),
+            ],
+        ),
+    };
+
     RunCommandFailure {
-        message: render_contract_problem(&error),
+        message,
         summary: None,
         exit_code: 1,
         receipt: None,
