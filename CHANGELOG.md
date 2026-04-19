@@ -26,7 +26,7 @@
 
 ## Unreleased
 
-No unreleased entries yet.
+- tightened the extension-facing JSON contract lock so `ota doctor --json`, `ota tasks --json`, `ota env --json`, and `ota receipt --json` now have regression coverage for key nested semantics such as verdicts, primary blockers, agent defaults, missing env entries, and repo receipt scope/details instead of only top-level envelope fields.
 
 ## 1.5.1
 

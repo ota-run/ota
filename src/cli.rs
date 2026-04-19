@@ -10892,8 +10892,20 @@ agent:
             "Missing environment variable: FOO"
         );
         assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["next"],
+            "set FOO in policy env, the shell, or a declared env source before running tasks"
+        );
+        assert_eq!(
             doctor_json["finding_groups"][0]["action_key"],
             "environment-missing"
+        );
+        assert_eq!(
+            doctor_json["finding_groups"][0]["action_title"],
+            "Set missing environment variables"
+        );
+        assert_eq!(
+            doctor_json["finding_groups"][0]["action_next"],
+            "set the listed environment variables, then rerun `ota doctor`"
         );
         assert_eq!(doctor_json["execution"]["preferred"], "native");
         assert_eq!(doctor_json["execution"]["env"][0]["name"], "FOO");
@@ -10901,6 +10913,10 @@ agent:
         assert_eq!(doctor_json["execution"]["env"][0]["source"], "missing");
         assert_eq!(doctor_json["findings"][0]["code"], "OTA_ENV_MISSING");
         assert_eq!(doctor_json["findings"][0]["severity"], "error");
+        assert_eq!(
+            doctor_json["findings"][0]["next"],
+            "set FOO in policy env, the shell, or a declared env source before running tasks"
+        );
         assert_eq!(
             doctor_json["findings"][0]["provenance_key"],
             "repo_contract"
@@ -10966,6 +10982,104 @@ agent:
         );
         assert_eq!(receipt_json["receipt"]["summary"]["error_count"], 1);
         assert_eq!(receipt_json["findings"][0]["code"], "OTA_ENV_MISSING");
+        assert_eq!(
+            receipt_json["receipt"]["next"],
+            "set FOO in policy env, the shell, or a declared env source before running tasks"
+        );
+        assert_eq!(
+            receipt_json["findings"][0]["next"],
+            "set FOO in policy env, the shell, or a declared env source before running tasks"
+        );
+    }
+
+    #[test]
+    fn container_doctor_json_exposes_stable_execution_and_info_finding_fields() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-container
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+env:
+  vars:
+    FOO:
+      required: true
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let doctor = run_with([
+            "ota",
+            "doctor",
+            "--mode",
+            "container",
+            "--json",
+            fixture.path(),
+        ]);
+
+        assert_eq!(doctor.exit_code, 0);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(doctor_json["ok"], true);
+        assert_eq!(doctor_json["mode"], "container");
+        assert_eq!(doctor_json["summary"]["verdict"], "ready");
+        assert_eq!(doctor_json["summary"]["agent_verdict"], "not_ready");
+        assert_eq!(doctor_json["summary"]["info_count"], 1);
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["severity"],
+            "info"
+        );
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["summary"],
+            "Host-bound readiness checks are not evaluated in container mode"
+        );
+        assert_eq!(
+            doctor_json["summary"]["primary_blocker"]["next"],
+            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
+        );
+        assert_eq!(doctor_json["execution"]["preferred"], "container");
+        assert_eq!(doctor_json["execution"]["supported"][0], "native");
+        assert_eq!(doctor_json["execution"]["supported"][1], "container");
+        assert_eq!(doctor_json["execution"]["lifecycle"], "persistent");
+        assert_eq!(
+            doctor_json["execution"]["backends"]["container"]["image"],
+            "premium/test:latest"
+        );
+        assert_eq!(doctor_json["execution"]["env"][0]["name"], "FOO");
+        assert_eq!(doctor_json["execution"]["env"][0]["required"], true);
+        assert_eq!(doctor_json["execution"]["env"][0]["source"], "missing");
+        assert_eq!(
+            doctor_json["finding_groups"][0]["action_next"],
+            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
+        );
+        assert_eq!(
+            doctor_json["findings"][0]["summary"],
+            "Host-bound readiness checks are not evaluated in container mode"
+        );
+        assert_eq!(doctor_json["findings"][0]["severity"], "info");
+        assert_eq!(
+            doctor_json["findings"][0]["next"],
+            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness"
+        );
     }
 
     #[test]
