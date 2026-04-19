@@ -854,12 +854,10 @@ fn fetch_release_tag(track: UpdateTrack) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::ffi::OsString;
     use std::fs;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::thread;
     use std::time::Duration;
 
     use crate::test_support::env_mutex_lock;
@@ -874,6 +872,29 @@ mod tests {
     use super::render_up_to_date_output;
     use super::self_update as update_self_update;
 
+    #[cfg(unix)]
+    fn write_fake_command(bin_dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        let path = bin_dir.join(name);
+        fs::write(&path, body).expect("write fake command");
+        let mut permissions = fs::metadata(&path)
+            .expect("fake command metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("make fake command executable");
+        path
+    }
+
+    fn prepend_path(bin_dir: &std::path::Path) -> OsString {
+        let mut value = bin_dir.as_os_str().to_os_string();
+        if let Some(existing) = env::var_os("PATH")
+            && !existing.is_empty()
+        {
+            value.push(":");
+            value.push(existing);
+        }
+        value
+    }
+
     #[test]
     fn normalizes_version_prefixes() {
         assert_eq!(normalize_version("v0.1.2"), "0.1.2");
@@ -884,42 +905,10 @@ mod tests {
     #[test]
     fn reports_update_notice_when_latest_release_is_newer() {
         let _guard = env_mutex_lock();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            let body = r#"{"tag_name":"v9.9.9"}"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-        });
-
-        let original = env::var_os("OTA_UPDATE_CHECK_URL");
-        unsafe {
-            env::set_var(
-                "OTA_UPDATE_CHECK_URL",
-                format!("http://127.0.0.1:{}/latest", addr.port()),
-            );
-        }
-
-        let notice = maybe_update_notice("v1.0.0");
-
-        match original {
-            Some(value) => unsafe {
-                env::set_var("OTA_UPDATE_CHECK_URL", value);
-            },
-            None => unsafe {
-                env::remove_var("OTA_UPDATE_CHECK_URL");
-            },
-        }
-
-        handle.join().unwrap();
+        let temp = tempdir().unwrap();
+        let state_path = temp.path().join("update-notice-at.txt");
+        let notice =
+            maybe_update_notice_with_state("v1.0.0", Ok(String::from("9.9.9")), 100, &state_path);
 
         assert_eq!(notice, Some(super::render_update_available_notice("9.9.9")));
     }
@@ -1142,42 +1131,7 @@ mod tests {
     #[test]
     fn skips_install_when_current_version_matches_latest_release() {
         let _guard = env_mutex_lock();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            let body = format!(r#"{{"tag_name":"v{}"}}"#, env!("CARGO_PKG_VERSION"));
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-        });
-
-        let original = env::var_os("OTA_UPDATE_CHECK_URL");
-        unsafe {
-            env::set_var(
-                "OTA_UPDATE_CHECK_URL",
-                format!("http://127.0.0.1:{}/latest", addr.port()),
-            );
-        }
-
-        let output = update_self_update(None, None);
-
-        match original {
-            Some(value) => unsafe {
-                env::set_var("OTA_UPDATE_CHECK_URL", value);
-            },
-            None => unsafe {
-                env::remove_var("OTA_UPDATE_CHECK_URL");
-            },
-        }
-
-        handle.join().unwrap();
+        let output = update_self_update(Some(env!("CARGO_PKG_VERSION")), None);
 
         assert_eq!(output.exit_code, 0);
         assert_eq!(
@@ -1215,28 +1169,23 @@ mod tests {
     #[test]
     fn resolves_latest_channel_from_release_list() {
         let _guard = env_mutex_lock();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            let body = r#"[{"tag_name":"v9.9.9","draft":false,"prerelease":true},{"tag_name":"v9.9.8","draft":false,"prerelease":false}]"#;
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-        });
+        let temp = tempdir().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "curl",
+            "#!/bin/sh\nprintf '%s' '[{\"tag_name\":\"v9.9.9\",\"draft\":false,\"prerelease\":true},{\"tag_name\":\"v9.9.8\",\"draft\":false,\"prerelease\":false}]'\n",
+        );
 
         let original_latest = env::var_os("OTA_UPDATE_CHECK_URL_LATEST");
+        let original_path = env::var_os("PATH");
         unsafe {
             env::set_var(
                 "OTA_UPDATE_CHECK_URL_LATEST",
-                format!("http://127.0.0.1:{}/releases", addr.port()),
+                "https://example.test/releases",
             );
+            env::set_var("PATH", prepend_path(&bin_dir));
         }
 
         let tag = fetch_release_tag(UpdateTrack::Latest);
@@ -1249,8 +1198,10 @@ mod tests {
                 env::remove_var("OTA_UPDATE_CHECK_URL_LATEST");
             },
         }
-
-        handle.join().unwrap();
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
 
         assert_eq!(tag.as_deref(), Some("9.9.9"));
     }

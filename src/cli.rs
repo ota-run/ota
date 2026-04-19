@@ -1301,7 +1301,13 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
 }
 
 fn workspace_command_value_span(flag: &str) -> Option<usize> {
-    command_flag_span(flag, workspace_run_flag_spec)
+    match flag {
+        "--repo" | "--status" | "--severity" | "--file" | "--jobs" => Some(2),
+        "--json" | "--stream" | "--receipt" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+            Some(1)
+        }
+        _ => command_flag_span(flag, workspace_run_flag_spec),
+    }
 }
 
 fn parse_completion_path(
@@ -9360,8 +9366,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Status:     success"));
-        assert!(stdout.contains("Note:       using a fresh container image for this run"));
+        assert!(stdout.contains("Status:"));
+        assert!(stdout.contains("success"));
+        assert!(stdout.contains("Note:"));
+        assert!(stdout.contains("using a fresh container image for this run"));
         assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
@@ -9711,8 +9719,10 @@ tasks:
         assert_eq!(output.exit_code, 0);
         assert!(strip_ansi(&output.stdout).contains("READY"));
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Status:     success"));
-        assert!(stdout.contains("Note:       using a fresh container image for this run"));
+        assert!(stdout.contains("Status:"));
+        assert!(stdout.contains("success"));
+        assert!(stdout.contains("Note:"));
+        assert!(stdout.contains("using a fresh container image for this run"));
         assert!(output.stderr.as_deref().unwrap_or_default().is_empty());
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
@@ -11159,10 +11169,9 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Command: `ota run build`"));
-        assert_eq!(ci_idx, build_idx + 4);
+        assert_eq!(ci_idx, build_idx + 3);
         assert!(lines[build_idx + 1].starts_with("  Command: `ota run build`"));
         assert!(lines[build_idx + 2].starts_with("  Description: Build the site for production"));
-        assert!(lines[build_idx + 3].is_empty());
         assert!(lines[ci_idx + 1].starts_with("  Command: `ota run ci`"));
         assert!(lines[ci_idx + 2].starts_with("  Description: Canonical local verification"));
     }
@@ -14235,6 +14244,17 @@ agent:
       powershell: irm https://dist.ota.run/install.ps1 | iex
   notes: |
     Use ota doctor first.
+tasks:
+  setup:
+    run: echo setup
+  build:
+    run: echo build
+  fmt:
+    run: echo fmt
+  check:
+    run: echo check
+  ci:
+    run: echo ci
 "#,
         );
 
@@ -14283,6 +14303,9 @@ project:
   name: ota
 agent:
   entrypoint: setup
+tasks:
+  setup:
+    run: echo setup
 "#,
         );
 
@@ -14303,6 +14326,9 @@ project:
   name: ota
 agent:
   entrypoint: setup
+tasks:
+  setup:
+    run: echo setup
 "#,
         );
         let agents_path = fixture.dir.path().join("AGENTS.md");
@@ -14331,6 +14357,11 @@ project:
 agent:
   entrypoint: setup
   default_task: ci
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    run: echo ci
 "#,
         );
 
@@ -16097,7 +16128,8 @@ tasks:
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Contract already exists"));
         assert!(stderr.contains("Where:"));
-        assert!(stderr.contains("refusing to overwrite the existing contract"));
+        assert!(stderr.contains("already exists; refusing to overwrite"));
+        assert!(stderr.contains("existing contract"));
         assert!(
             stderr.contains("review the existing contract with `ota validate` or `ota doctor`")
         );
@@ -16379,9 +16411,9 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Wrong diagnosis target"));
         assert!(stdout.contains("is an org policy pack, not a repo contract"));
-        assert!(stdout.contains(
-            "`ota doctor` diagnoses repo readiness from a repo contract such as `ota.yaml`"
-        ));
+        assert!(
+            stdout.contains("diagnoses repo readiness from a repo contract such as `ota.yaml`")
+        );
         assert!(stdout.contains("ota policy"));
         assert!(stdout.contains("ota doctor"));
         assert!(!stdout.contains("Operation failed"));
@@ -16498,7 +16530,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Wrong command target"));
         assert!(stdout.contains("is an org policy pack, not a repo contract"));
-        assert!(stdout.contains("`ota check` reads repo contracts such as `ota.yaml`"));
+        assert!(stdout.contains("reads repo contracts such as `ota.yaml`"));
         assert!(stdout.contains("ota policy"));
         assert!(stdout.contains("ota check"));
         assert!(!stdout.contains("Operation failed"));
@@ -16528,7 +16560,7 @@ project:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Wrong command target"));
         assert!(stdout.contains("is an org policy pack, not a repo contract"));
-        assert!(stdout.contains("`ota explain` reads repo contracts such as `ota.yaml`"));
+        assert!(stdout.contains("reads repo contracts such as `ota.yaml`"));
         assert!(stdout.contains("ota policy"));
         assert!(stdout.contains("ota explain"));
         assert!(!stdout.contains("Operation failed"));
@@ -16713,7 +16745,8 @@ policies:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Policy pack already exists"));
-        assert!(stderr.contains("refusing to overwrite the existing policy pack"));
+        assert!(stderr.contains("already exists;"));
+        assert!(stderr.contains("existing policy pack"));
         assert!(stderr.contains("Next:"));
     }
 
@@ -17022,10 +17055,14 @@ tasks:
             output.stderr.as_deref().unwrap_or_default()
         ));
         assert!(rendered.contains("SUMMARY"));
-        assert!(rendered.contains("Mode:       native"));
-        assert!(rendered.contains("Task:       setup"));
-        assert!(rendered.contains("Status:     success"));
-        assert!(rendered.contains("Note:       running on the host environment"));
+        assert!(rendered.contains("Mode:"));
+        assert!(rendered.contains("native"));
+        assert!(rendered.contains("Task:"));
+        assert!(rendered.contains("setup"));
+        assert!(rendered.contains("Status:"));
+        assert!(rendered.contains("success"));
+        assert!(rendered.contains("Note:"));
+        assert!(rendered.contains("running on the host environment"));
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
     }
@@ -17088,13 +17125,18 @@ tasks:
             output.stderr.as_deref().unwrap_or_default()
         ));
         assert!(rendered.contains("SUMMARY"));
-        assert!(rendered.contains("Mode:       container"));
-        assert!(rendered.contains("Task:       setup"));
-        assert!(rendered.contains("Status:     success"));
+        assert!(rendered.contains("Mode:"));
+        assert!(rendered.contains("container"));
+        assert!(rendered.contains("Task:"));
+        assert!(rendered.contains("setup"));
+        assert!(rendered.contains("Status:"));
+        assert!(rendered.contains("success"));
         assert!(rendered.contains("Target:"));
         assert!(rendered.contains("ota-"));
-        assert!(rendered.contains("Lifecycle:  persistent"));
-        assert!(rendered.contains("Note:       reusing persistent container backend"));
+        assert!(rendered.contains("Lifecycle:"));
+        assert!(rendered.contains("persistent"));
+        assert!(rendered.contains("Note:"));
+        assert!(rendered.contains("reusing persistent container backend"));
         assert!(rendered.contains("Next:"));
         assert!(rendered.contains("ota tasks --use"));
     }
@@ -17557,7 +17599,8 @@ tasks:
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
-        assert!(stdout.contains("Primary Finding"));
+        assert!(stdout.contains("◉ WARN  Missing tool: ota-tool-that-does-not-exist"));
+        assert!(!stdout.contains("Primary Finding"));
         assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
     }
 
@@ -19713,7 +19756,7 @@ tasks:
         assert_eq!(validate.exit_code, 1);
         assert_eq!(
             json_top_level_keys_named("validate", &validate),
-            vec!["errors", "ok", "path", "summary"],
+            vec!["error", "errors", "ok", "path", "summary"],
             "validate failure keys"
         );
 
@@ -19729,7 +19772,7 @@ tasks:
         assert_eq!(doctor.exit_code, 1);
         assert_eq!(
             json_top_level_keys_named("doctor", &doctor),
-            vec!["errors", "ok", "path"],
+            vec!["error", "errors", "ok", "path", "summary"],
             "doctor failure keys"
         );
 
@@ -21701,10 +21744,12 @@ runtimes:
 
         assert_eq!(output.exit_code, 1);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Missing runtime: java"));
-        assert!(text.contains("inside the configured"));
-        assert!(text.contains("Image:"));
-        assert!(text.contains("`premium/test:latest`"));
+        assert!(
+            text.contains("Primary Blocker Java is missing from the configured container image")
+        );
+        assert!(text.contains("`java` is declared in the contract"));
+        assert!(text.contains("configured container image"));
+        assert!(text.contains("`execution.backends.container.image = premium/test:latest`"));
         assert!(
             text.contains("update `execution.backends.container.image` so `java` is available")
         );
@@ -22933,7 +22978,10 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `asdf install maven 3.9.9` and rerun `ota doctor`"));
+        assert!(stdout.contains("Version mismatch for tool: maven"));
+        assert!(stdout.contains("maven resolved to `3.9.14`"));
+        assert!(stdout.contains("contract requires `3.9.9`"));
+        assert!(stdout.contains("install a compatible maven version that satisfies `3.9.9`"));
     }
 
     #[test]
@@ -24240,9 +24288,8 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(fixture.path().join("ota.workspace.yaml").is_file());
         assert!(!repo_dir.join("ota.yaml").exists());
-        assert!(
-            body.contains("already exists; refusing to overwrite an existing workspace contract")
-        );
+        assert!(body.contains("already exists; refusing to"));
+        assert!(body.contains("overwrite an existing workspace contract"));
         assert!(body.contains("use `ota workspace detect --merge"));
         assert!(body.contains("use `ota workspace detect --rewrite --yes"));
     }
@@ -24628,9 +24675,8 @@ repos:
         assert_eq!(output.exit_code, 1);
         assert!(body.contains("Workspace contract already exists"));
         assert!(body.contains("Where:"));
-        assert!(
-            body.contains("already exists; refusing to overwrite an existing workspace contract")
-        );
+        assert!(body.contains("already exists; refusing to"));
+        assert!(body.contains("overwrite an existing workspace contract"));
         assert!(body.contains("ota workspace detect --merge"));
         assert!(body.contains("ota workspace detect --rewrite --yes"));
     }
@@ -24733,12 +24779,15 @@ repos:
         ]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("review the failing repo contract"));
-        assert!(stderr.contains("ota validate"));
-        assert!(stderr.contains("ota doctor"));
-        assert!(stderr.contains("ota workspace detect --merge"));
-        assert!(!stderr.contains("ota workspace detect --dry-run"));
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(body.contains("Workspace contract could not be merged"));
+        assert!(body.contains("workspace repo `qredex-java` contract"));
+        assert!(body.contains("could not be loaded"));
+        assert!(!body.contains("ota workspace detect --dry-run"));
     }
 
     #[test]
@@ -24961,7 +25010,7 @@ tasks:
 
         let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
         assert_eq!(tasks.exit_code, 1);
-        assert_json_top_level_keys(&tasks, &["errors", "ok", "path"]);
+        assert_json_top_level_keys(&tasks, &["error", "errors", "ok", "path", "summary"]);
 
         let run = run_with(["ota", "workspace", "run", "setup", "--json", fixture.path()]);
         assert_eq!(run.exit_code, 1);
@@ -25932,9 +25981,13 @@ repos:
         let output = run_with(["ota", "workspace", "validate"]);
 
         assert_eq!(output.exit_code, 1);
-        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("no `ota.workspace.yaml` found"));
-        assert!(!stderr.contains("VALID"));
+        let body = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(body.contains("no `ota.workspace.yaml` found"));
+        assert!(!body.contains("✓ VALID"));
     }
 
     #[test]

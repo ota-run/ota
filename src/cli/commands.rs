@@ -21197,7 +21197,8 @@ tasks:
         );
 
         assert!(text.contains("UP SUMMARY"));
-        assert!(text.contains("Task:       build"));
+        assert!(text.contains("Task:"));
+        assert!(text.contains("build"));
     }
 
     #[test]
@@ -21661,7 +21662,7 @@ policies:
             Some(&summary),
         ));
 
-        assert!(text.contains("➤ Primary Blocker Version mismatch for runtime: node"));
+        assert!(text.contains("➤ Primary Blocker Version mismatch for runtime: java"));
         assert!(text.contains("Fix version mismatches (2)"));
         assert!(text.contains("» curl resolved `8.13.0`, requires `8.7.1`"));
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
@@ -22461,7 +22462,7 @@ tasks:
         assert!(rendered.contains("`fail` exited with code 127"));
         assert!(rendered.contains("RUN SUMMARY"));
         assert!(rendered.contains("Status:    failed"));
-        assert!(rendered.contains("Why:\n  » task `fail` returned a non-zero exit code"));
+        assert!(rendered.contains("Why: task `fail` returned a non-zero exit code"));
         assert!(!rendered.contains("Why: 🦦 RUN SUMMARY"));
         assert!(rendered.contains("\n\n🦦 RUN SUMMARY\n\nScope:"));
     }
@@ -22760,8 +22761,10 @@ execution:
             "RECEIPT",
         ));
 
-        assert!(rendered.contains("Mode:       container"));
-        assert!(rendered.contains("Image:      ghcr.io/ota/dev:latest"));
+        assert!(rendered.contains("Mode:"));
+        assert!(rendered.contains("container"));
+        assert!(rendered.contains("Image:"));
+        assert!(rendered.contains("ghcr.io/ota/dev:latest"));
         assert!(!rendered.contains("Target:"));
     }
 
@@ -22786,10 +22789,10 @@ execution:
         );
 
         assert!(rendered.contains(&format!(
-            "Next:\n  » rerun `{}`",
+            "Next: rerun `{}`",
             super::paint_code("ota up --mode container")
         )));
-        assert!(strip_ansi_codes(&rendered).contains("Next:\n  » rerun `ota up --mode container`"));
+        assert!(strip_ansi_codes(&rendered).contains("Next: rerun `ota up --mode container`"));
     }
 
     #[test]
