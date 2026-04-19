@@ -593,26 +593,26 @@ fn render_missing_contract_guidance(
     out.push_str(&format!("\n{} {}", error_key("Why:"), message));
     match context {
         MissingContractContext::Repo => {
-            out.push_str(&format!("\n\n{}", error_next_key("Next:")));
-            out.push_str(&format_next_timeline_step(&format!(
-                "run {} to create a starter contract",
-                paint_code("`ota init`")
-            )));
-            out.push_str(&format_next_timeline_step(&format!(
-                "or run {} to preview inferred fields",
-                paint_code("`ota detect --dry-run`")
-            )));
-            out.push_str(&format_next_timeline_step(&format!(
-                "or run {} to write a detected contract",
-                paint_code("`ota detect --write`")
-            )));
+            out.push_str(&format_error_next_timeline(&[
+                format!(
+                    "run {} to create a starter contract",
+                    paint_code("`ota init`")
+                ),
+                format!(
+                    "or run {} to preview inferred fields",
+                    paint_code("`ota detect --dry-run`")
+                ),
+                format!(
+                    "or run {} to write a detected contract",
+                    paint_code("`ota detect --write`")
+                ),
+            ]));
         }
         MissingContractContext::Workspace => {
-            out.push_str(&format!(
-                "\n{} run {} to create a starter workspace",
-                error_next_key("Next:"),
+            out.push_str(&format_error_next_timeline(&[format!(
+                "run {} to create a starter workspace",
                 paint_code("`ota workspace init`")
-            ));
+            )]));
         }
     }
 }
@@ -8683,11 +8683,10 @@ fn render_workspace_validate_failure(
         }
     }
 
-    out.push_str(&format!(
-        "\n{} repair the listed issue(s), then re-run `{}`",
-        error_next_key("Next:"),
+    out.push_str(&format_error_next_timeline(&[format!(
+        "repair the listed issue(s), then re-run `{}`",
         paint_code("ota workspace validate")
-    ));
+    )]));
     out
 }
 
@@ -26990,10 +26989,6 @@ pub fn paint_next_label() -> String {
     error_next_key("Next:")
 }
 
-pub fn format_next_step_text(item: &str) -> String {
-    format_next_timeline_step(&stylize_inline_text(item))
-}
-
 fn paint_mode_value(value: &str) -> String {
     paint(value, "1;37")
 }
@@ -27031,7 +27026,7 @@ fn format_next_timeline(items: &[String]) -> String {
     output
 }
 
-fn format_error_next_timeline(items: &[String]) -> String {
+pub fn format_error_next_timeline(items: &[String]) -> String {
     if items.is_empty() {
         return String::new();
     }
