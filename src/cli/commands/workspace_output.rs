@@ -616,15 +616,23 @@ pub(crate) fn render_workspace_status(
 
             for repo in &report.repos {
                 stdout.push_str(&format!(
-                    "\n\n{} {} [{}] ({} · {})",
+                    "\n\n{} {} [{}]",
                     list_bullet(),
                     paint(&repo.name, "1"),
                     if repo.required {
                         "required"
                     } else {
                         "optional"
-                    },
-                    workspace_status_word(&repo.readiness_status),
+                    }
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Status:"),
+                    workspace_status_word(&repo.readiness_status)
+                ));
+                stdout.push_str(&format!(
+                    "\n{} {}",
+                    paint_key("Drift:"),
                     workspace_diff_status_word(&repo.drift_status)
                 ));
                 stdout.push_str(&format!(

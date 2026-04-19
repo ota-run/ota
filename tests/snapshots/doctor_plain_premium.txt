@@ -6,8 +6,7 @@ Verdict
  -  Repo: not ready
  -  Agent: ready
 
--> Primary Blocker
-Version mismatch for runtime: node
+-> Primary Blocker Version mismatch for runtime: node
 Why: node resolved to `24.14.1` but the contract requires `22`; ota probed
      `./bin/node` with
      `node --version`

@@ -1,7 +1,7 @@
 🦦 VALIDATE <TMP>/ota.yaml
 
-➤ VALID
+✓ VALID
 
 Next:
-  ▸ run `ota doctor <TMP>/ota.yaml` to inspect readiness
-  ▸ run `ota tasks --use <TMP>/ota.yaml` to inspect runnable task usage
+  » run `ota doctor <TMP>/ota.yaml` to inspect readiness
+  » run `ota tasks --use <TMP>/ota.yaml` to inspect runnable task usage

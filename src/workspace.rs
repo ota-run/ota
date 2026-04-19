@@ -656,7 +656,10 @@ pub fn diagnose_workspace_contract_with_jobs(
 
         let handles = batch
             .into_iter()
-            .map(|repo| thread::spawn(move || diagnose_workspace_repo(repo)))
+            .map(|repo| {
+                let workspace_path = workspace_path.to_path_buf();
+                thread::spawn(move || diagnose_workspace_repo(repo, &workspace_path))
+            })
             .collect::<Vec<_>>();
 
         for handle in handles {
@@ -700,7 +703,21 @@ fn take_ready_workspace_repo_batch(
     batch
 }
 
-pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDoctorReport {
+fn workspace_repo_validate_then_rerun_next(
+    repo_contract_path: &Path,
+    workspace_path: &Path,
+) -> String {
+    format!(
+        "run `ota validate {}` to fix the failing repo contract, then rerun `ota workspace doctor {}`",
+        repo_contract_path.display(),
+        workspace_path.display()
+    )
+}
+
+pub(crate) fn diagnose_workspace_repo(
+    repo: WorkspaceRepoRef,
+    workspace_path: &Path,
+) -> WorkspaceRepoDoctorReport {
     if !repo.present {
         let findings = vec![repo_finding(
             repo.required,
@@ -773,8 +790,11 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
                             validation_error
                         ),
                         format!(
-                            "fix `{}` and re-run `ota workspace doctor`",
-                            repo.contract_path.display()
+                            "{}",
+                            workspace_repo_validate_then_rerun_next(
+                                &repo.contract_path,
+                                workspace_path
+                            )
                         ),
                     )
                 })
@@ -804,8 +824,8 @@ pub(crate) fn diagnose_workspace_repo(repo: WorkspaceRepoRef) -> WorkspaceRepoDo
                 error
             ),
             format!(
-                "repair `{}` and re-run `ota workspace doctor`",
-                repo.contract_path.display()
+                "{}",
+                workspace_repo_validate_then_rerun_next(&repo.contract_path, workspace_path)
             ),
         )],
     };

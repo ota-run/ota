@@ -1,6 +1,6 @@
 🦦 WORKSPACE UP ./ota.workspace.yaml
 
-➤ READY
+✓ READY
 
 ✦ web [required] (READY)
 Path: ./apps/web
@@ -8,13 +8,13 @@ Contract: <TMP>/apps/web/ota.yaml
 Phase: post-setup diagnosis
 
 
-🦦  WORKSPACE UP SUMMARY
+🦦 WORKSPACE UP SUMMARY
 
-Scope:      workspace
-Path:       ./ota.workspace.yaml
-Contract:   ./ota.workspace.yaml
-Workspace:  premium-workspace
-Mode:       native
-Task:       web
-Status:     success
-Note:       running on the host environment
+Scope:     workspace
+Path:      ./ota.workspace.yaml
+Contract:  ./ota.workspace.yaml
+Workspace: premium-workspace
+Mode:      native
+Task:      web
+Status:    success
+Note:      running on the host environment

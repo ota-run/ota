@@ -1,8 +1,8 @@
 🦦 WORKSPACE VALIDATE ./ota.workspace.yaml
 
-➤ VALID
+✓ VALID
 
 Next:
-  ▸ run `ota workspace doctor` to inspect readiness
-  ▸ run `ota workspace up` to prepare the workspace end to end
-  ▸ run `ota workspace tasks` to inspect runnable task usage
+  » run `ota workspace doctor` to inspect readiness
+  » run `ota workspace up` to prepare the workspace end to end
+  » run `ota workspace tasks` to inspect runnable task usage
