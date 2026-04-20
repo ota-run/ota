@@ -18797,7 +18797,7 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
         }
         DoctorFindingGroupKind::EnvironmentValue => String::from("Fix environment values"),
         DoctorFindingGroupKind::ContractDrift => String::from("Review contract drift"),
-        DoctorFindingGroupKind::PolicySurface => String::from("Review approved policy surfaces"),
+        DoctorFindingGroupKind::PolicySurface => String::from("Review active policy surfaces"),
         DoctorFindingGroupKind::ServiceHealth => String::from("Fix service healthchecks"),
         DoctorFindingGroupKind::CheckFailure => String::from("Review checks"),
         DoctorFindingGroupKind::ExecutionBackend => {
@@ -18847,9 +18847,9 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
         DoctorFindingGroupKind::ContractDrift => {
             String::from("repo signals no longer match the declared contract")
         }
-        DoctorFindingGroupKind::PolicySurface => {
-            String::from("approved provisioning or bootstrap sources are declared")
-        }
+        DoctorFindingGroupKind::PolicySurface => String::from(
+            "the active policy exposes approved version, provisioning, or bootstrap surfaces",
+        ),
         DoctorFindingGroupKind::ServiceHealth => {
             String::from("one or more services failed healthchecks")
         }
@@ -18929,10 +18929,10 @@ fn doctor_finding_group_next(
             "run `ota detect --merge --dry-run .` to review the comparison, then `ota detect --merge .`",
         ),
         DoctorFindingGroupKind::PolicySurface if has_provisioning_surface => String::from(
-            "use this policy surface when provisioning or bootstrap needs an approved source",
+            "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path",
         ),
         DoctorFindingGroupKind::PolicySurface => String::from(
-            "use this policy surface when adapter bootstrap needs an approved source or audit trail",
+            "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
         ),
         DoctorFindingGroupKind::ServiceHealth | DoctorFindingGroupKind::CheckFailure => findings
             .first()
@@ -19090,8 +19090,11 @@ fn doctor_finding_group_item_text(
             }
         }
         DoctorFindingGroupKind::ContractDrift => subject.to_string(),
+        DoctorFindingGroupKind::PolicySurface => {
+            let (display_why, container_image) = strip_container_image_from_why(&finding.why);
+            finding_diagnosis_text(&finding.summary, &display_why, container_image.as_deref())
+        }
         DoctorFindingGroupKind::EnvironmentValue
-        | DoctorFindingGroupKind::PolicySurface
         | DoctorFindingGroupKind::ServiceHealth
         | DoctorFindingGroupKind::CheckFailure
         | DoctorFindingGroupKind::ExecutionBackend
@@ -20905,7 +20908,7 @@ mod tests {
         assert!(text.contains("ota detect --merge --dry-run"));
         assert!(text.contains("to review the comparison, then"));
         assert!(text.contains("ota detect --merge"));
-        assert!(text.contains("3. Review approved policy surfaces (1)"));
+        assert!(text.contains("3. Review active policy surfaces (1)"));
         assert!(!text.contains("Code:"));
         assert!(text.contains("Provenance: org policy"));
     }
@@ -20990,23 +20993,21 @@ mod tests {
         ));
 
         assert!(text.contains("Review contract drift (2)"));
-        assert!(text.contains("Review approved policy surfaces (2)"));
+        assert!(text.contains("Review active policy surfaces (2)"));
         assert!(text.contains("» `tools.maven`"));
         assert!(text.contains("» `tools.node`"));
-        assert!(text.contains("» Policy-backed provisioning sources are declared"));
-        assert!(text.contains("» Adapter bootstrap sources are declared"));
+        assert!(text.contains("» Approved provisioning sources are configured"));
+        assert!(text.contains("» Approved adapter bootstrap is configured"));
         assert_eq!(text.matches("Next:").count(), 2);
-        assert!(text.contains(
-            "use this policy surface when provisioning or bootstrap needs an approved source"
-        ));
+        assert!(text.contains("use `ota policy review` to inspect the active policy source"));
 
         let policy_group = &text[text
-            .find("Review approved policy surfaces (2)")
+            .find("Review active policy surfaces (2)")
             .expect("policy group")..];
         let why = policy_group.find("Why:").expect("why");
         let provenance = policy_group.find("Provenance:").expect("provenance");
         let item = policy_group
-            .find("» Policy-backed provisioning sources are declared")
+            .find("» Approved provisioning sources are configured")
             .expect("item");
         let next = policy_group.find("Next:").expect("next");
 
@@ -21188,7 +21189,7 @@ mod tests {
         ));
 
         assert!(text.contains("Review contract drift (2)"));
-        assert!(text.contains("Review approved policy surfaces (2)"));
+        assert!(text.contains("Review active policy surfaces (2)"));
         assert_eq!(text.matches("Next:").count(), 2);
         assert!(text.contains("Task output: sh: 1: sdk: not found"));
     }
@@ -21582,6 +21583,42 @@ policies:
             groups[0].action_next,
             "run the listed version probes directly, fix the resolved executables, then rerun `ota doctor`"
         );
+    }
+
+    #[test]
+    fn doctor_group_summaries_render_policy_surfaces_as_operator_guidance() {
+        let findings = [
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved provisioning sources: node via brew (versions 22)",
+                ),
+                next: String::from(
+                    "use this policy surface when repo prerequisites need an approved source",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Adapter bootstrap sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                ),
+                next: String::from(
+                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                ),
+            },
+        ];
+
+        let groups = super::doctor_finding_group_summaries(findings.iter(), None);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].action_key, "policy-surface");
+        assert_eq!(groups[0].action_title, "Review active policy surfaces");
+        assert_eq!(
+            groups[0].action_next,
+            "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path"
+        );
+        assert_eq!(groups[0].count, 2);
     }
 
     #[test]

@@ -905,7 +905,16 @@ JSON output:
 
 ## `ota receipt`
 
-Capture the current repo readiness scan as a read-only receipt artifact for CI or archival use.
+Capture the current repo readiness scan as a read-only receipt artifact for CI, archival use, or
+baseline comparison.
+
+Use this when you want a stable handoff between local readiness and CI history:
+
+- `ota receipt --json --archive` leaves a durable readiness artifact behind a CI run
+- `ota receipt --json --archive --promote-baseline` marks one known-good receipt as the repo's
+  explicit baseline
+- `ota receipt --json --baseline promoted` compares the current repo state against that reviewed
+  baseline instead of whatever happened to run last
 
 ```bash
 ota receipt [PATH]

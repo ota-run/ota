@@ -645,8 +645,8 @@ or the org policy boundary needs to move.
   "finding_groups": [
     {
       "action_key": "policy-provisioning-declared",
-      "action_title": "Review approved policy surfaces",
-      "action_next": "use this policy surface when provisioning needs an approved source",
+      "action_title": "Review active policy surfaces",
+      "action_next": "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when provisioning or bootstrap needs a governed path",
       "count": 1
     }
   ],
