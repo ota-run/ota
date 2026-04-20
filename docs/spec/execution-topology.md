@@ -1,0 +1,463 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Execution Topology
+
+Status: proposal for the next contract and runtime model. This is not current shipped behavior.
+
+## Core truth
+
+Ota does not have a backend problem. Ota has a topology problem.
+
+Today Ota knows:
+
+- where tasks run
+
+Today Ota does not know:
+
+- where services are controlled from
+- where services are reachable from
+- which tools belong to which execution plane
+- where readiness should be evaluated from
+
+That gap is why mixed host-plus-container repos drift into contradictions:
+
+- `docker compose` is a host control-plane concern
+- `mvn test`, `pnpm dev`, or `uv run pytest` are workload-plane concerns
+- a database may be reachable on a service network from one context and unreachable from another
+- the same repo may honestly need `docker` on the host and not inside the app container
+
+The current single repo-wide execution story is too coarse for that reality.
+
+## Design goal
+
+Model the repo as execution topology, not as one flat backend choice.
+
+The next contract should make five things first-class:
+
+1. execution contexts
+2. typed service managers
+3. context-scoped endpoint projection
+4. context-scoped readiness
+5. context-scoped requirements
+
+## Design principles
+
+- Keep the control plane separate from the workload plane.
+- Never make `localhost` mean the same thing everywhere.
+- Do not run service-manager CLIs inside workload containers by default.
+- Prefer explicit topology over Docker-specific heuristics.
+- Keep `doctor`, `up`, `run`, JSON output, and receipts on one topology truth.
+
+## Proposed contract model
+
+### `execution.contexts`
+
+Execution contexts define where workloads run.
+
+Each context answers:
+
+- which backend it uses
+- which lifecycle it uses when relevant
+- which image or target it uses when relevant
+- which service networks it can attach to
+- which runtimes and tools belong to that context
+
+Proposed direction:
+
+```yaml
+execution:
+  default_context: app
+
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+          lsof: "*"
+
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        compose:
+          - local
+      requirements:
+        runtimes:
+          java: ">=21"
+          node: ">=24.14.1"
+        tools:
+          maven: "*"
+```
+
+This keeps `docker` on the host context instead of pretending the app container should carry it.
+
+### `tasks.<name>.context`
+
+Tasks bind to a context or inherit `execution.default_context`.
+
+```yaml
+tasks:
+  compose:up:
+    context: host
+    run: docker compose up -d
+
+  compose:down:
+    context: host
+    run: docker compose down -v
+
+  stop:
+    context: host
+    run: lsof -ti:8080 | xargs kill -9 || true
+
+  setup:
+    context: app
+    run: mvn -q -DskipTests dependency:go-offline
+
+  build:
+    context: app
+    run: mvn package
+
+  test:
+    context: app
+    run: mvn test
+```
+
+This makes orchestration tasks and workload tasks honest without forcing Docker into the app image.
+
+### `services.<name>.manager`
+
+Services should be managed through typed manager blocks when topology matters.
+
+```yaml
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+```
+
+Typed managers let Ota reason about:
+
+- the control-plane tool it needs
+- the project or cluster identity
+- the network or namespace boundary
+- the real service name, not just a shell snippet
+
+Legacy `provider/start/stop/healthcheck` fields should remain as compatibility mode, but they stay a weaker host-bound model.
+
+### `services.<name>.endpoints`
+
+A service must declare how it is reached from each context that matters.
+
+```yaml
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+      app:
+        address: postgres
+        port: 5432
+```
+
+This makes the communication truth explicit:
+
+- `127.0.0.1:5432` may be valid from the host
+- `postgres:5432` may be valid from the app container
+- they are different truths and Ota should model both
+
+For typed Compose managers, Ota may infer default endpoints when unambiguous, but the contract surface must exist so ambiguity can be expressed explicitly.
+
+### `services.<name>.readiness.from`
+
+Readiness probes must say where they run from.
+
+```yaml
+services:
+  postgres:
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+```
+
+This replaces the current host-bound limitation with a truthful topology model:
+
+- if the workload runs from `app`, readiness should usually be checked from `app`
+- if the workload runs from `host`, readiness should usually be checked from `host`
+
+### Context-scoped requirements
+
+Requirements must stop being one flat repo-wide bucket.
+
+- host-scoped tools such as `docker`, `podman`, `kubectl`, or `lsof` belong to host-like contexts
+- app-scoped runtimes and tools such as `java`, `node`, `maven`, `pnpm`, or `uv` belong to workload contexts
+
+That keeps `doctor` honest and prevents false failures like “docker missing from the app container” when the real requirement is host control-plane availability.
+
+## Runtime semantics
+
+### `ota doctor`
+
+`doctor` should:
+
+- resolve the effective workload context
+- validate requirements for each referenced context
+- validate service-manager availability in the control plane
+- validate endpoint projection for referenced services
+- validate readiness from the declared context
+- fail with topology errors when the contract describes an impossible communication path
+
+Example topology error:
+
+- task context is `app`
+- service endpoint is only declared for `host`
+- readiness is declared from `app`
+- no projection from `app` exists
+
+That should fail explicitly instead of falling back to a guessed host path.
+
+### `ota up`
+
+`up` should:
+
+1. resolve the contexts needed by the setup flow
+2. start required services through their managers in the control plane
+3. ensure workload attachments are valid
+4. run `setup` in the task context
+5. re-check readiness from the declared contexts
+
+### `ota run`
+
+`run` should:
+
+- resolve the task context
+- attach the workload to declared service topology when needed
+- execute inside that context
+- emit receipts that report the resolved context and attached topology
+
+## Container task semantics
+
+For a container workload context attached to Compose:
+
+1. resolve the Compose manager
+2. resolve the Compose project and network identity
+3. ensure required services from that manager are running
+4. run the task container attached to the declared network
+5. let the app talk to `postgres:5432` by service name
+
+That is the correct model.
+
+The correct model is not:
+
+- Docker inside the app image
+- Docker socket hacks
+- `host.docker.internal` as the main model
+- published host ports as the main model
+
+## Example 1: app container reaches Compose-managed Postgres
+
+```yaml
+version: 1
+project:
+  name: qredex-core
+
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        compose:
+          - local
+      requirements:
+        runtimes:
+          java: ">=21"
+          node: ">=24.14.1"
+        tools:
+          maven: "*"
+
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+
+tasks:
+  compose:up:
+    context: host
+    run: docker compose up -d postgres
+  compose:down:
+    context: host
+    run: docker compose down -v
+  setup:
+    context: app
+    run: mvn -q -DskipTests dependency:go-offline
+  test:
+    context: app
+    run: mvn test
+```
+
+In this example:
+
+- Compose is controlled from the host
+- the app workload runs in the container context
+- the app workload attaches to the Compose network
+- Postgres is reached by service name, not through the host
+
+## Example 2: app container reaches host-managed Postgres
+
+```yaml
+version: 1
+project:
+  name: qredex-core
+
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          lsof: "*"
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      requirements:
+        runtimes:
+          java: ">=21"
+        tools:
+          maven: "*"
+
+services:
+  postgres:
+    manager:
+      kind: host
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+      app:
+        address: host.docker.internal
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h host.docker.internal -p 5432
+
+tasks:
+  setup:
+    context: app
+    run: mvn -q -DskipTests dependency:go-offline
+  test:
+    context: app
+    run: mvn test
+```
+
+In this example:
+
+- Postgres is a host-managed service
+- the app still runs in a container
+- the app does not guess `localhost`
+- the app context uses the explicitly projected host endpoint
+
+## What is weaker
+
+These designs are weaker:
+
+1. repo-level backend only
+2. task-level backend override only
+3. auto-guess Compose network and attach implicitly
+4. run `docker compose` inside the app container
+5. use `host.docker.internal` plus published ports as the main model
+
+Each of those avoids modeling topology truth directly.
+
+## Migration path
+
+Keep current fields as compatibility mode:
+
+- `execution.preferred`
+- `execution.supported`
+- `services.provider`
+- `services.start`
+- `services.stop`
+- `services.healthcheck`
+
+Compatibility interpretation:
+
+- legacy contracts use a single-context model
+- legacy service fields remain host-bound unless upgraded to typed topology-aware service blocks
+
+Warn when topology-sensitive container usage mixes with legacy service semantics.
+
+Example warning:
+
+- task context resolves to container
+- service uses legacy host-bound `healthcheck`
+- no endpoint projection exists for that container context
+
+Ota should warn that the contract is ambiguous for container workloads and recommend an explicit topology upgrade.
+
+## Acceptance bar
+
+The design is only done when all of these are true:
+
+- `compose:up` runs on the host
+- `setup`, `build`, `test`, and `ci` run in the container workload context
+- the app container reaches `postgres` by service name on the shared network when Compose manages the service
+- host-managed databases are declared with explicit context-projected endpoints
+- `docker` is required only for the host context
+- `java`, `node`, `maven`, and similar tools are required only for the workload context that uses them
+- `ota doctor`, `ota up`, `ota run`, JSON output, and receipts all report the same topology truth
+- impossible topologies fail explicitly instead of “trying stuff”
