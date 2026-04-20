@@ -35,6 +35,7 @@
 - redesigned `ota policy review` output so policy findings no longer point back to `ota policy review` itself; the command now leads with a `Policy` context block, uses action-shaped summaries like `Approved provisioning and bootstrap surfaces are configured`, and points `Next:` at changing the repo contract, using approved sources, or updating `.ota/org-policy.yaml`.
 - made shared policy-surface findings point into explicit `ota policy review <repo>` follow-ups in receipt JSON, so external-repo adoption flows no longer fall back to generic “use this policy surface” wording for approved provisioning and bootstrap guidance.
 - redesigned blocked `ota up` provisioning output so it now surfaces a single primary `Reason:` and `Next:` path, demotes policy/host notes into `Additional context`, uses `BLOCKED` consistently when setup cannot clear prerequisites, suppresses leaked `setup` command framing on that path, and omits synthetic ephemeral container targets from the human `UP SUMMARY`.
+- added an `Execution Topology` design spec draft that proposes execution contexts, typed service managers, context-scoped endpoints, context-scoped readiness, and context-scoped requirements for mixed host/container service repos.
 
 ## 1.5.2
 
