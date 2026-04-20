@@ -11452,6 +11452,21 @@ tasks:
     }
 
     #[test]
+    fn run_does_not_use_command_spinner() {
+        assert!(!super::command_supports_spinner(&super::Commands::Run {
+            task: String::from("test"),
+            backend: None,
+            lifecycle: None,
+            ephemeral: false,
+            receipt: false,
+            stream: false,
+            member: Vec::new(),
+            path: None,
+            inputs: Vec::new(),
+        }));
+    }
+
+    #[test]
     fn clean_uses_command_spinner() {
         assert!(super::command_supports_spinner(&super::Commands::Clean {
             stale: false,
@@ -24266,7 +24281,7 @@ version: 1
 project:
   name: premium-run
 tasks:
-  install-from-source:
+  install:from:source:
     run: |
       printf 'build log\n'
       printf 'trace line\n' >&2

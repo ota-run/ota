@@ -29,8 +29,8 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -51,13 +51,19 @@ use crate::schema::{
 pub(crate) struct StreamPhaseNotifier {
     saw_output: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
+    output_lock: Arc<Mutex<()>>,
 }
 
 impl StreamPhaseNotifier {
-    fn mark_output_started(&self) {
+    fn begin_output(&self) -> MutexGuard<'_, ()> {
+        let guard = self
+            .output_lock
+            .lock()
+            .expect("stream phase output lock should not be poisoned");
         if !self.saw_output.swap(true, Ordering::Relaxed) && self.shown.load(Ordering::Relaxed) {
             clear_stream_phase_line();
         }
+        guard
     }
 }
 
@@ -65,11 +71,20 @@ pub(crate) struct StreamPhaseLoader {
     stop: Arc<AtomicBool>,
     shown: Arc<AtomicBool>,
     saw_output: Arc<AtomicBool>,
+    output_lock: Arc<Mutex<()>>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl StreamPhaseLoader {
     pub(crate) fn start(label: &str) -> Option<Self> {
+        Self::start_with_delay(label, Duration::from_millis(120))
+    }
+
+    pub(crate) fn start_for_preflight(label: &str) -> Option<Self> {
+        Self::start_with_delay(label, Duration::from_millis(80))
+    }
+
+    fn start_with_delay(label: &str, delay: Duration) -> Option<Self> {
         if !should_show_stream_phase_loader() {
             return None;
         }
@@ -77,12 +92,16 @@ impl StreamPhaseLoader {
         let stop = Arc::new(AtomicBool::new(false));
         let shown = Arc::new(AtomicBool::new(false));
         let saw_output = Arc::new(AtomicBool::new(false));
+        let output_lock = Arc::new(Mutex::new(()));
         let thread_stop = Arc::clone(&stop);
         let thread_shown = Arc::clone(&shown);
         let thread_saw_output = Arc::clone(&saw_output);
+        let thread_output_lock = Arc::clone(&output_lock);
         let label = label.to_string();
         let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(120));
+            if !delay.is_zero() {
+                thread::sleep(delay);
+            }
             if thread_stop.load(Ordering::Relaxed) || thread_saw_output.load(Ordering::Relaxed) {
                 return;
             }
@@ -91,10 +110,20 @@ impl StreamPhaseLoader {
             let mut stderr = io::stderr();
             while !thread_stop.load(Ordering::Relaxed) && !thread_saw_output.load(Ordering::Relaxed)
             {
-                thread_shown.store(true, Ordering::Relaxed);
-                let frame = frames[index % frames.len()];
-                let _ = write!(stderr, "\r🦦 {frame} {label}...");
-                let _ = stderr.flush();
+                {
+                    let _guard = thread_output_lock
+                        .lock()
+                        .expect("stream phase output lock should not be poisoned");
+                    if thread_stop.load(Ordering::Relaxed)
+                        || thread_saw_output.load(Ordering::Relaxed)
+                    {
+                        break;
+                    }
+                    thread_shown.store(true, Ordering::Relaxed);
+                    let frame = frames[index % frames.len()];
+                    let _ = write!(stderr, "\r🦦 {frame} {label}...");
+                    let _ = stderr.flush();
+                }
                 index += 1;
                 thread::sleep(Duration::from_millis(160));
             }
@@ -104,6 +133,7 @@ impl StreamPhaseLoader {
             stop,
             shown,
             saw_output,
+            output_lock,
             handle: Some(handle),
         })
     }
@@ -112,6 +142,7 @@ impl StreamPhaseLoader {
         StreamPhaseNotifier {
             saw_output: Arc::clone(&self.saw_output),
             shown: Arc::clone(&self.shown),
+            output_lock: Arc::clone(&self.output_lock),
         }
     }
 
@@ -121,6 +152,10 @@ impl StreamPhaseLoader {
             let _ = handle.join();
         }
         if self.shown.load(Ordering::Relaxed) {
+            let _guard = self
+                .output_lock
+                .lock()
+                .expect("stream phase output lock should not be poisoned");
             clear_stream_phase_line();
         }
     }
@@ -135,6 +170,50 @@ fn should_show_stream_phase_loader() -> bool {
 fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
     let _ = write!(stderr, "\r\x1b[2K\r");
+    let _ = stderr.flush();
+}
+
+fn backend_loader_suffix_from_backend(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "",
+        Backend::Container => " (container)",
+        Backend::Remote => " (remote)",
+    }
+}
+
+fn backend_loader_suffix(backend: &ResolvedExecutionBackend) -> &'static str {
+    match backend {
+        ResolvedExecutionBackend::Native => "",
+        ResolvedExecutionBackend::Container { .. } => " (container)",
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. } => " (remote)",
+    }
+}
+
+fn preparing_loader_label(task_name: &str, backend: Backend) -> String {
+    format!(
+        "Preparing {task_name}{}",
+        backend_loader_suffix_from_backend(backend)
+    )
+}
+
+fn running_loader_label_for_backend(task_name: &str, backend: Backend) -> String {
+    format!(
+        "Running {task_name}{}",
+        backend_loader_suffix_from_backend(backend)
+    )
+}
+
+fn running_loader_label(task_name: &str, backend: &ResolvedExecutionBackend) -> String {
+    format!("Running {task_name}{}", backend_loader_suffix(backend))
+}
+
+fn emit_stream_phase_header(label: &str) {
+    if !should_show_stream_phase_loader() {
+        return;
+    }
+    let mut stderr = io::stderr();
+    let _ = writeln!(stderr, "🦦 {label}...");
     let _ = stderr.flush();
 }
 
@@ -155,14 +234,23 @@ where
         if read == 0 {
             break;
         }
-        if let Some(notifier) = notifier.as_ref() {
-            notifier.mark_output_started();
+        match notifier.as_ref() {
+            Some(notifier) => {
+                let _guard = notifier.begin_output();
+                if capture {
+                    captured.extend_from_slice(&buffer[..read]);
+                }
+                let _ = sink.write_all(&buffer[..read]);
+                let _ = sink.flush();
+            }
+            None => {
+                if capture {
+                    captured.extend_from_slice(&buffer[..read]);
+                }
+                let _ = sink.write_all(&buffer[..read]);
+                let _ = sink.flush();
+            }
         }
-        if capture {
-            captured.extend_from_slice(&buffer[..read]);
-        }
-        let _ = sink.write_all(&buffer[..read]);
-        let _ = sink.flush();
     }
     Ok(String::from_utf8_lossy(&captured).into_owned())
 }
@@ -1266,10 +1354,34 @@ fn run_task_internal(
             task: task_name.to_string(),
         });
     }
+    let (preferred_backend, _) = effective_execution(contract, overrides);
+    let mut preflight_loader = match mode {
+        TaskExecutionMode::Stream {
+            emit_progress: true,
+        } => StreamPhaseLoader::start_for_preflight(&preparing_loader_label(
+            task_name,
+            preferred_backend,
+        )),
+        TaskExecutionMode::Stream {
+            emit_progress: false,
+        }
+        | TaskExecutionMode::Capture => None,
+    };
     let working_dir = contract_working_dir(contract_path);
-    let backend = resolve_execution_backend(contract, task_name, overrides)?;
+    let backend = match resolve_execution_backend(contract, task_name, overrides) {
+        Ok(backend) => backend,
+        Err(error) => {
+            if let Some(loader) = preflight_loader.take() {
+                loader.stop();
+            }
+            return Err(error);
+        }
+    };
     let current_os = current_os();
     let mut state = TaskRunState::default();
+    if let Some(loader) = preflight_loader.take() {
+        loader.stop();
+    }
     let exit_code = execute_task_with_hooks(
         contract,
         contract_path,
@@ -1586,11 +1698,15 @@ fn execute_task_command(
                 let mut process = shell_command(command);
                 process.current_dir(working_dir).envs(env_overrides.iter());
                 let exit_code = if emit_progress {
-                    run_streaming_command_with_loader(&mut process, &format!("Running {task_name}"))
-                        .map_err(|source| RunError::SpawnFailed {
-                            task: task_name.to_string(),
-                            source,
-                        })?
+                    emit_stream_phase_header(&running_loader_label(task_name, backend));
+                    run_streaming_command_with_loader(
+                        &mut process,
+                        &running_loader_label(task_name, backend),
+                    )
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?
                 } else {
                     process
                         .stdin(Stdio::inherit())
@@ -2005,13 +2121,16 @@ fn execute_remote_task_command(
     match mode {
         TaskExecutionMode::Stream { emit_progress } => {
             if emit_progress {
-                eprintln!("RUN {task_name}");
+                emit_stream_phase_header(&running_loader_label_for_backend(
+                    task_name,
+                    Backend::Remote,
+                ));
             }
 
             let exit_code = if emit_progress {
                 run_streaming_command_with_loader(
                     &mut remote_command,
-                    &format!("Running {task_name}"),
+                    &running_loader_label_for_backend(task_name, Backend::Remote),
                 )
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
@@ -2157,7 +2276,16 @@ fn execute_backend_provider_task_command(
             }
 
             let loader = emit_progress
-                .then(|| StreamPhaseLoader::start(&format!("Running {task_name}")))
+                .then(|| {
+                    emit_stream_phase_header(&running_loader_label_for_backend(
+                        task_name,
+                        Backend::Remote,
+                    ));
+                    StreamPhaseLoader::start(&running_loader_label_for_backend(
+                        task_name,
+                        Backend::Remote,
+                    ))
+                })
                 .flatten();
             let notifier = loader.as_ref().map(|loader| loader.notifier());
             let stdout_notifier = notifier.clone();
@@ -2580,12 +2708,18 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let exit_code =
-                run_streaming_command_with_loader(&mut container, &format!("Running {task_name}"))
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?;
+            emit_stream_phase_header(&running_loader_label_for_backend(
+                task_name,
+                Backend::Container,
+            ));
+            let exit_code = run_streaming_command_with_loader(
+                &mut container,
+                &running_loader_label_for_backend(task_name, Backend::Container),
+            )
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -2831,12 +2965,18 @@ fn exec_persistent_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            let exit_code =
-                run_streaming_command_with_loader(&mut container, &format!("Running {task_name}"))
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?;
+            emit_stream_phase_header(&running_loader_label_for_backend(
+                task_name,
+                Backend::Container,
+            ));
+            let exit_code = run_streaming_command_with_loader(
+                &mut container,
+                &running_loader_label_for_backend(task_name, Backend::Container),
+            )
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -2985,13 +3125,15 @@ mod tests {
     use crate::test_support::env_mutex_lock;
 
     use super::{
-        CapturedRunOutcome, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, RunError,
-        TaskExecutionMode, TaskExecutionRelation, TaskRunState, clean_execution,
-        contract_working_dir, current_os, execute_task_with_hooks, persistent_container_name,
-        plan_task_execution, resolve_execution_backend, resolve_task_env, resolve_task_env_details,
-        run_task, run_task_captured, run_task_with_args, run_task_with_overrides,
-        run_task_with_progress,
+        CapturedRunOutcome, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
+        ResolvedExecutionBackend, RunError, TaskExecutionMode, TaskExecutionRelation, TaskRunState,
+        clean_execution, contract_working_dir, current_os, execute_task_with_hooks,
+        persistent_container_name, plan_task_execution, preparing_loader_label,
+        resolve_execution_backend, resolve_task_env, resolve_task_env_details, run_task,
+        run_task_captured, run_task_with_args, run_task_with_overrides, run_task_with_progress,
+        running_loader_label, running_loader_label_for_backend,
     };
+    use crate::schema::{Backend, Lifecycle};
 
     #[test]
     fn plans_dependencies_once_in_deterministic_order() {
@@ -3819,6 +3961,48 @@ tasks:
                 stderr: String::from("error"),
                 target: None,
             }
+        );
+    }
+
+    #[test]
+    fn loader_labels_include_execution_class_not_runtime_identity() {
+        assert_eq!(
+            preparing_loader_label("test", Backend::Native),
+            "Preparing test"
+        );
+        assert_eq!(
+            preparing_loader_label("test", Backend::Container),
+            "Preparing test (container)"
+        );
+        assert_eq!(
+            preparing_loader_label("test", Backend::Remote),
+            "Preparing test (remote)"
+        );
+        assert_eq!(
+            running_loader_label_for_backend("test", Backend::Container),
+            "Running test (container)"
+        );
+        assert_eq!(
+            running_loader_label(
+                "test",
+                &ResolvedExecutionBackend::Container {
+                    image: String::from("rust:1.94-bookworm"),
+                    engine: String::from("docker"),
+                    lifecycle: Lifecycle::Ephemeral,
+                }
+            ),
+            "Running test (container)"
+        );
+        assert_eq!(
+            running_loader_label(
+                "test",
+                &ResolvedExecutionBackend::Remote {
+                    provider: String::from("ssh"),
+                    target: String::from("user@host"),
+                    cwd: None,
+                }
+            ),
+            "Running test (remote)"
         );
     }
 
