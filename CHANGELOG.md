@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- made grouped policy findings in `ota doctor`, `ota up`, and the shared JSON summaries read like operator guidance instead of policy declarations, using active labels such as `Review active policy surfaces`, normalized item text like `Approved provisioning sources are configured`, and next steps that point into `ota policy review` when users need the active policy boundary.
+
 ## 1.5.2
 
 - made `ota receipt` keep explicit repo-target follow-up commands inside JSON receipt and finding remediation, so non-current-directory adoption flows no longer drop the repo path when they tell you to rerun `ota doctor`.
