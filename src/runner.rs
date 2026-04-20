@@ -208,15 +208,6 @@ fn running_loader_label(task_name: &str, backend: &ResolvedExecutionBackend) -> 
     format!("Running {task_name}{}", backend_loader_suffix(backend))
 }
 
-fn emit_stream_phase_header(label: &str) {
-    if !should_show_stream_phase_loader() {
-        return;
-    }
-    let mut stderr = io::stderr();
-    let _ = writeln!(stderr, "🦦 {label}...");
-    let _ = stderr.flush();
-}
-
 pub(crate) fn stream_reader_to_sink<R, W>(
     mut reader: R,
     mut sink: W,
@@ -1698,7 +1689,6 @@ fn execute_task_command(
                 let mut process = shell_command(command);
                 process.current_dir(working_dir).envs(env_overrides.iter());
                 let exit_code = if emit_progress {
-                    emit_stream_phase_header(&running_loader_label(task_name, backend));
                     run_streaming_command_with_loader(
                         &mut process,
                         &running_loader_label(task_name, backend),
@@ -2120,13 +2110,6 @@ fn execute_remote_task_command(
 
     match mode {
         TaskExecutionMode::Stream { emit_progress } => {
-            if emit_progress {
-                emit_stream_phase_header(&running_loader_label_for_backend(
-                    task_name,
-                    Backend::Remote,
-                ));
-            }
-
             let exit_code = if emit_progress {
                 run_streaming_command_with_loader(
                     &mut remote_command,
@@ -2277,10 +2260,6 @@ fn execute_backend_provider_task_command(
 
             let loader = emit_progress
                 .then(|| {
-                    emit_stream_phase_header(&running_loader_label_for_backend(
-                        task_name,
-                        Backend::Remote,
-                    ));
                     StreamPhaseLoader::start(&running_loader_label_for_backend(
                         task_name,
                         Backend::Remote,
@@ -2708,10 +2687,6 @@ fn execute_ephemeral_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            emit_stream_phase_header(&running_loader_label_for_backend(
-                task_name,
-                Backend::Container,
-            ));
             let exit_code = run_streaming_command_with_loader(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
@@ -2965,10 +2940,6 @@ fn exec_persistent_container_task_command(
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
-            emit_stream_phase_header(&running_loader_label_for_backend(
-                task_name,
-                Backend::Container,
-            ));
             let exit_code = run_streaming_command_with_loader(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),

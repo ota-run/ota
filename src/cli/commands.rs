@@ -24747,55 +24747,58 @@ fn run_single_contract_target_streaming(
             output.push_str(details_footer);
             Ok(output)
         }
-        Ok(outcome) => Err(RunCommandFailure {
-            message: format!(
-                "task `{task_name}` failed with exit code {}",
-                outcome.exit_code,
-            ),
-            summary: Some(render_execution_receipt_summary_block(
-                &run_execution_receipt(
-                    &target.contract,
-                    &target.contract_path,
-                    overrides,
-                    task_name,
-                    member,
-                    &outcome.task_steps,
+        Ok(outcome) => {
+            let failed_task_name = failed_task_name(&outcome.task_steps, task_name);
+            Err(RunCommandFailure {
+                message: format!(
+                    "task `{failed_task_name}` failed with exit code {}",
                     outcome.exit_code,
-                    false,
-                    outcome.target.clone(),
-                    Some(format!(
-                        "{}; {}",
-                        format!(
-                            "inspect task `{task_name}` output and rerun `ota run {task_name}`"
-                        ),
-                        details_footer
-                    )),
                 ),
-                Some(task_name),
-                "RUN SUMMARY",
-            )),
-            exit_code: outcome.exit_code,
-            receipt: show_receipt.then(|| {
-                render_execution_receipt_text(&run_execution_receipt(
-                    &target.contract,
-                    &target.contract_path,
-                    overrides,
-                    task_name,
-                    member,
-                    &outcome.task_steps,
-                    outcome.exit_code,
-                    false,
-                    outcome.target.clone(),
-                    Some(format!(
-                        "{}; {}",
-                        format!(
-                            "inspect task `{task_name}` output and rerun `ota run {task_name}`"
-                        ),
-                        details_footer
-                    )),
-                ))
-            }),
-        }),
+                summary: Some(render_execution_receipt_summary_block(
+                    &run_execution_receipt(
+                        &target.contract,
+                        &target.contract_path,
+                        overrides,
+                        task_name,
+                        member,
+                        &outcome.task_steps,
+                        outcome.exit_code,
+                        false,
+                        outcome.target.clone(),
+                        Some(format!(
+                            "{}; {}",
+                            format!(
+                                "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
+                            ),
+                            details_footer
+                        )),
+                    ),
+                    Some(task_name),
+                    "RUN SUMMARY",
+                )),
+                exit_code: outcome.exit_code,
+                receipt: show_receipt.then(|| {
+                    render_execution_receipt_text(&run_execution_receipt(
+                        &target.contract,
+                        &target.contract_path,
+                        overrides,
+                        task_name,
+                        member,
+                        &outcome.task_steps,
+                        outcome.exit_code,
+                        false,
+                        outcome.target.clone(),
+                        Some(format!(
+                            "{}; {}",
+                            format!(
+                                "inspect task `{failed_task_name}` output and rerun `ota run {failed_task_name}`"
+                            ),
+                            details_footer
+                        )),
+                    ))
+                }),
+            })
+        }
         Err(error) => {
             let receipt = run_execution_receipt(
                 &target.contract,
@@ -24887,6 +24890,7 @@ fn run_single_contract_target_captured(
             Ok(output)
         }
         Ok(outcome) => {
+            let failed_task_name = failed_task_name(&outcome.task_steps, task_name);
             let receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
@@ -24899,7 +24903,7 @@ fn run_single_contract_target_captured(
                 outcome.target.clone(),
                 Some(format!(
                     "inspect the task output excerpt and rerun `{}`",
-                    repo_run_stream_command(task_name, member)
+                    repo_run_stream_command(&failed_task_name, member)
                 )),
             );
             let summary =
@@ -24909,7 +24913,7 @@ fn run_single_contract_target_captured(
                 message: render_run_captured_failure_text(
                     &target.contract_path,
                     &display_contract_target(&compact_contract_path(&target.contract_path), member),
-                    task_name,
+                    &failed_task_name,
                     member,
                     outcome.exit_code,
                     &outcome.stdout,
@@ -24959,6 +24963,15 @@ fn run_single_contract_target_captured(
             })
         }
     }
+}
+
+fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -> String {
+    executed_steps
+        .iter()
+        .rev()
+        .find(|step| step.exit_code != 0)
+        .map(|step| step.name.clone())
+        .unwrap_or_else(|| requested_task.to_string())
 }
 
 fn render_run_captured_failure_text(

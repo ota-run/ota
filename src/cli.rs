@@ -10541,6 +10541,33 @@ tasks:
     }
 
     #[test]
+    fn run_failure_reports_the_actual_failing_dependency_step() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: sh -c 'echo composer missing >&2; exit 127'
+  ci:
+    run: echo ci
+    depends_on:
+      - setup
+"#,
+        );
+
+        let output = run_with(["ota", "run", "ci", fixture.path()]);
+
+        assert_eq!(output.exit_code, 127);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`setup` exited with code 127"));
+        assert!(stderr.contains("Why: task `setup` returned a non-zero exit code"));
+        assert!(!stderr.contains("`ci` exited with code 127"));
+        assert!(!stderr.contains("Why: task `ci` returned a non-zero exit code"));
+    }
+
+    #[test]
     fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
         let stderr = "◉ ERROR  Task Failed\n`install-from-source` exited with code 101\nWhere: ./ota.yaml\nWhy: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦 RUN SUMMARY\n\nScope:     repo";
         let rendered = strip_ansi(&append_try_footer(
