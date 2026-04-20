@@ -10568,6 +10568,35 @@ tasks:
     }
 
     #[test]
+    fn run_failure_keeps_requested_task_when_after_failure_hook_also_fails() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  cleanup:
+    run: sh -c 'echo cleanup >&2; exit 9'
+  build:
+    run: sh -c 'echo build >&2; exit 7'
+    after_failure:
+      - cleanup
+"#,
+        );
+
+        let output = run_with(["ota", "run", "build", fixture.path()]);
+
+        assert_eq!(output.exit_code, 7);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`build` exited with code 7"));
+        assert!(stderr.contains("Why: task `build` returned a non-zero exit code"));
+        assert!(stderr.contains("ota run build --stream"));
+        assert!(!stderr.contains("`cleanup` exited with code 7"));
+        assert!(!stderr.contains("Why: task `cleanup` returned a non-zero exit code"));
+        assert!(!stderr.contains("ota run cleanup --stream"));
+    }
+
+    #[test]
     fn append_try_footer_collapses_existing_next_gap_before_run_summary() {
         let stderr = "◉ ERROR  Task Failed\n`install-from-source` exited with code 101\nWhere: ./ota.yaml\nWhy: task `install-from-source` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage\n\n🦦 RUN SUMMARY\n\nScope:     repo";
         let rendered = strip_ansi(&append_try_footer(
@@ -18692,6 +18721,71 @@ tasks:
         assert!(stdout.contains("Phase: provisioning"));
         assert!(stdout.contains("Status:    blocked"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_applies_policy_backed_provisioning_even_when_doctor_is_ready() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: printf ready > prepared.txt
+runtimes:
+  node: ">=18"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions:
+        - "22.11.0"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let brew_log = fixture.dir.path().join("brew.log");
+        let brew_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho brew %*>>\"{}\"\r\nexit /b 0\r\n",
+                brew_log.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"brew $*\" >> '{}'\nexit 0\n",
+                brew_log.display()
+            )
+        };
+        write_fake_command(&bin_dir, "brew", &brew_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+
+        let doctor = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor.exit_code, 0);
+        let doctor_json: Value = serde_json::from_str(&doctor.stdout).unwrap();
+        assert_eq!(
+            doctor_json["provisioning_request"]["actions"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("READY"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+        assert!(brew_log.exists(), "policy-backed provisioning should run");
     }
 
     #[test]

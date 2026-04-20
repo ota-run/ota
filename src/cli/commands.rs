@@ -24966,9 +24966,26 @@ fn run_single_contract_target_captured(
 }
 
 fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -> String {
+    let requested_step_index = executed_steps.iter().position(|step| {
+        step.name == requested_task && matches!(step.relation, TaskExecutionRelation::Requested)
+    });
+
+    if let Some(index) = requested_step_index {
+        let requested_step = &executed_steps[index];
+        if requested_step.exit_code != 0 {
+            return requested_step.name.clone();
+        }
+
+        return executed_steps
+            .iter()
+            .skip(index + 1)
+            .find(|step| step.exit_code != 0)
+            .map(|step| step.name.clone())
+            .unwrap_or_else(|| requested_task.to_string());
+    }
+
     executed_steps
         .iter()
-        .rev()
         .find(|step| step.exit_code != 0)
         .map(|step| step.name.clone())
         .unwrap_or_else(|| requested_task.to_string())
@@ -29157,227 +29174,127 @@ fn execute_repo_up(
         }
     };
 
-    if !preflight.ok {
-        if let Some(provisioning) = preflight.provisioning.as_ref() {
-            match apply_provisioning_request_with_target(
-                &provisioning.request,
-                execution_dir,
-                &provisioning_target,
-                provisioning_output_mode,
-            ) {
-                Ok(outcome) => {
-                    if capture_phase_output {
-                        stdout.push_str(&outcome.stdout);
-                        stderr.push_str(&outcome.stderr);
-                    }
-                    preflight =
-                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+    if let Some(provisioning) = preflight
+        .provisioning
+        .as_ref()
+        .filter(|provisioning| !provisioning.request.actions.is_empty())
+    {
+        match apply_provisioning_request_with_target(
+            &provisioning.request,
+            execution_dir,
+            &provisioning_target,
+            provisioning_output_mode,
+        ) {
+            Ok(outcome) => {
+                if capture_phase_output {
+                    stdout.push_str(&outcome.stdout);
+                    stderr.push_str(&outcome.stderr);
                 }
-                Err(ProvisioningBackendError::DiagnosedCommandFailed {
-                    stdout: backend_stdout,
-                    stderr: backend_stderr,
-                    exit_code,
-                    diagnosis,
-                    ..
-                }) => {
-                    if capture_phase_output {
-                        stdout.push_str(&backend_stdout);
-                        stderr.push_str(&backend_stderr);
-                    }
-                    let mut report = preflight;
-                    prepend_up_provisioning_failure_finding(
-                        &mut report.findings,
-                        &diagnosis,
-                        &provisioning_target,
+                preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+            }
+            Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                stdout: backend_stdout,
+                stderr: backend_stderr,
+                exit_code,
+                diagnosis,
+                ..
+            }) => {
+                if capture_phase_output {
+                    stdout.push_str(&backend_stdout);
+                    stderr.push_str(&backend_stderr);
+                }
+                let mut report = preflight;
+                prepend_up_provisioning_failure_finding(
+                    &mut report.findings,
+                    &diagnosis,
+                    &provisioning_target,
+                );
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "PROVISION FAILED",
+                    phase: "provisioning",
+                    preview: None,
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        provisioning_phase_execution_context(
+                            contract,
+                            resolved_path,
+                            &provisioning_target,
+                        ),
+                        "PROVISION FAILED",
+                        "provisioning",
+                        None,
+                        None,
+                        &report.findings,
+                        Some(exit_code),
+                        None,
+                    ),
+                    report,
+                    service: None,
+                    service_command: None,
+                    task: None,
+                    task_command: None,
+                    exit_code: Some(exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Err(ProvisioningBackendError::CommandFailed {
+                stdout: backend_stdout,
+                stderr: backend_stderr,
+                exit_code,
+                ..
+            }) => {
+                if capture_phase_output {
+                    stdout.push_str(&backend_stdout);
+                    stderr.push_str(&backend_stderr);
+                }
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "PROVISION FAILED",
+                    phase: "provisioning",
+                    preview: None,
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        provisioning_phase_execution_context(
+                            contract,
+                            resolved_path,
+                            &provisioning_target,
+                        ),
+                        "PROVISION FAILED",
+                        "provisioning",
+                        None,
+                        None,
+                        &preflight.findings,
+                        Some(exit_code),
+                        None,
+                    ),
+                    report: preflight,
+                    service: None,
+                    service_command: None,
+                    task: None,
+                    task_command: None,
+                    exit_code: Some(exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Err(ProvisioningBackendError::MissingCommand { command }) => {
+                let mut bootstrapped = false;
+                if let Ok(Some((policy_pack, _policy_path))) =
+                    load_org_policy_pack_auto(resolved_path)
+                {
+                    let bootstrap_request = adapter_bootstrap_request_for_missing_backend(
+                        &policy_pack,
+                        &provisioning.request,
+                        &command,
                     );
-                    return Ok(RepoUpResult {
-                        ok: false,
-                        status: "PROVISION FAILED",
-                        phase: "provisioning",
-                        preview: None,
-                        receipt: repo_execution_receipt(
-                            resolved_path,
-                            contract,
-                            provisioning_phase_execution_context(
-                                contract,
-                                resolved_path,
-                                &provisioning_target,
-                            ),
-                            "PROVISION FAILED",
-                            "provisioning",
-                            None,
-                            None,
-                            &report.findings,
-                            Some(exit_code),
-                            None,
-                        ),
-                        report,
-                        service: None,
-                        service_command: None,
-                        task: None,
-                        task_command: None,
-                        exit_code: Some(exit_code),
-                        stdout,
-                        stderr,
-                    });
-                }
-                Err(ProvisioningBackendError::CommandFailed {
-                    stdout: backend_stdout,
-                    stderr: backend_stderr,
-                    exit_code,
-                    ..
-                }) => {
-                    if capture_phase_output {
-                        stdout.push_str(&backend_stdout);
-                        stderr.push_str(&backend_stderr);
-                    }
-                    return Ok(RepoUpResult {
-                        ok: false,
-                        status: "PROVISION FAILED",
-                        phase: "provisioning",
-                        preview: None,
-                        receipt: repo_execution_receipt(
-                            resolved_path,
-                            contract,
-                            provisioning_phase_execution_context(
-                                contract,
-                                resolved_path,
-                                &provisioning_target,
-                            ),
-                            "PROVISION FAILED",
-                            "provisioning",
-                            None,
-                            None,
-                            &preflight.findings,
-                            Some(exit_code),
-                            None,
-                        ),
-                        report: preflight,
-                        service: None,
-                        service_command: None,
-                        task: None,
-                        task_command: None,
-                        exit_code: Some(exit_code),
-                        stdout,
-                        stderr,
-                    });
-                }
-                Err(ProvisioningBackendError::MissingCommand { command }) => {
-                    let mut bootstrapped = false;
-                    if let Ok(Some((policy_pack, _policy_path))) =
-                        load_org_policy_pack_auto(resolved_path)
-                    {
-                        let bootstrap_request = adapter_bootstrap_request_for_missing_backend(
-                            &policy_pack,
-                            &provisioning.request,
-                            &command,
-                        );
-                        if !bootstrap_request.actions.is_empty() {
-                            let bootstrap_note =
-                                describe_adapter_bootstrap_request(&bootstrap_request);
-                            match apply_provisioning_request_with_target(
-                                &bootstrap_request,
-                                execution_dir,
-                                &provisioning_target,
-                                provisioning_output_mode,
-                            ) {
-                                Ok(outcome) => {
-                                    if capture_phase_output {
-                                        stdout.push_str(&outcome.stdout);
-                                        stderr.push_str(&outcome.stderr);
-                                    }
-                                    bootstrapped = true;
-                                }
-                                Err(
-                                    ProvisioningBackendError::DiagnosedCommandFailed {
-                                        stdout: bootstrap_stdout,
-                                        stderr: bootstrap_stderr,
-                                        exit_code,
-                                        ..
-                                    }
-                                    | ProvisioningBackendError::CommandFailed {
-                                        stdout: bootstrap_stdout,
-                                        stderr: bootstrap_stderr,
-                                        exit_code,
-                                        ..
-                                    },
-                                ) => {
-                                    if capture_phase_output {
-                                        stdout.push_str(&bootstrap_stdout);
-                                        stderr.push_str(&bootstrap_stderr);
-                                    }
-                                    let mut report = preflight;
-                                    let mut findings = bootstrap_failure_findings(
-                                        &bootstrap_request,
-                                        doctor_mode,
-                                        &bootstrap_stderr,
-                                    );
-                                    findings.extend(report.findings);
-                                    report.findings = findings;
-                                    return Ok(RepoUpResult {
-                                        ok: false,
-                                        status: "PROVISION FAILED",
-                                        phase: "provisioning",
-                                        preview: None,
-                                        receipt: repo_execution_receipt(
-                                            resolved_path,
-                                            contract,
-                                            provisioning_phase_execution_context(
-                                                contract,
-                                                resolved_path,
-                                                &provisioning_target,
-                                            ),
-                                            "PROVISION FAILED",
-                                            "provisioning",
-                                            None,
-                                            None,
-                                            &report.findings,
-                                            Some(exit_code),
-                                            None,
-                                        ),
-                                        report,
-                                        service: None,
-                                        service_command: None,
-                                        task: None,
-                                        task_command: None,
-                                        exit_code: Some(exit_code),
-                                        stdout,
-                                        stderr,
-                                    });
-                                }
-                                Err(ProvisioningBackendError::MissingCommand { command }) => {
-                                    stderr.push_str(&format!(
-                                        "{bootstrap_note} could not run because backend `{command}` is unavailable; falling back to repo setup\n"
-                                    ));
-                                }
-                                Err(ProvisioningBackendError::UnsupportedSource {
-                                    provisioning_source: source,
-                                }) => {
-                                    stderr.push_str(&format!(
-                                        "{bootstrap_note} cannot use built-in source `{source}`; falling back to repo setup\n"
-                                    ));
-                                }
-                                Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
-                                    stderr.push_str(&format!(
-                                        "{bootstrap_note} requested unsupported action kind `{:?}`; falling back to repo setup\n",
-                                        kind
-                                    ));
-                                }
-                                Err(ProvisioningBackendError::UnsupportedTargetKind {
-                                    backend,
-                                    target_kind,
-                                }) => {
-                                    stderr.push_str(&format!(
-                                        "{bootstrap_note} cannot target `{target_kind}` with built-in backend `{backend}`; falling back to repo setup\n"
-                                    ));
-                                }
-                            }
-                        }
-                    }
-
-                    if bootstrapped {
+                    if !bootstrap_request.actions.is_empty() {
+                        let bootstrap_note = describe_adapter_bootstrap_request(&bootstrap_request);
                         match apply_provisioning_request_with_target(
-                            &provisioning.request,
+                            &bootstrap_request,
                             execution_dir,
                             &provisioning_target,
                             provisioning_output_mode,
@@ -29387,29 +29304,34 @@ fn execute_repo_up(
                                     stdout.push_str(&outcome.stdout);
                                     stderr.push_str(&outcome.stderr);
                                 }
-                                preflight = diagnose_preconditions_with_mode(
-                                    contract,
-                                    resolved_path,
-                                    doctor_mode,
-                                );
+                                bootstrapped = true;
                             }
-                            Err(ProvisioningBackendError::DiagnosedCommandFailed {
-                                stdout: backend_stdout,
-                                stderr: backend_stderr,
-                                exit_code,
-                                diagnosis,
-                                ..
-                            }) => {
+                            Err(
+                                ProvisioningBackendError::DiagnosedCommandFailed {
+                                    stdout: bootstrap_stdout,
+                                    stderr: bootstrap_stderr,
+                                    exit_code,
+                                    ..
+                                }
+                                | ProvisioningBackendError::CommandFailed {
+                                    stdout: bootstrap_stdout,
+                                    stderr: bootstrap_stderr,
+                                    exit_code,
+                                    ..
+                                },
+                            ) => {
                                 if capture_phase_output {
-                                    stdout.push_str(&backend_stdout);
-                                    stderr.push_str(&backend_stderr);
+                                    stdout.push_str(&bootstrap_stdout);
+                                    stderr.push_str(&bootstrap_stderr);
                                 }
                                 let mut report = preflight;
-                                prepend_up_provisioning_failure_finding(
-                                    &mut report.findings,
-                                    &diagnosis,
-                                    &provisioning_target,
+                                let mut findings = bootstrap_failure_findings(
+                                    &bootstrap_request,
+                                    doctor_mode,
+                                    &bootstrap_stderr,
                                 );
+                                findings.extend(report.findings);
+                                report.findings = findings;
                                 return Ok(RepoUpResult {
                                     ok: false,
                                     status: "PROVISION FAILED",
@@ -29441,231 +29363,321 @@ fn execute_repo_up(
                                     stderr,
                                 });
                             }
-                            Err(ProvisioningBackendError::CommandFailed {
-                                stdout: bootstrap_stdout,
-                                stderr: bootstrap_stderr,
-                                exit_code,
-                                ..
-                            }) => {
-                                if capture_phase_output {
-                                    stdout.push_str(&bootstrap_stdout);
-                                    stderr.push_str(&bootstrap_stderr);
-                                }
-                                return Ok(RepoUpResult {
-                                    ok: false,
-                                    status: "PROVISION FAILED",
-                                    phase: "provisioning",
-                                    preview: None,
-                                    receipt: repo_execution_receipt(
-                                        resolved_path,
-                                        contract,
-                                        provisioning_phase_execution_context(
-                                            contract,
-                                            resolved_path,
-                                            &provisioning_target,
-                                        ),
-                                        "PROVISION FAILED",
-                                        "provisioning",
-                                        None,
-                                        None,
-                                        &preflight.findings,
-                                        Some(exit_code),
-                                        None,
-                                    ),
-                                    report: preflight,
-                                    service: None,
-                                    service_command: None,
-                                    task: None,
-                                    task_command: None,
-                                    exit_code: Some(exit_code),
-                                    stdout,
-                                    stderr,
-                                });
-                            }
                             Err(ProvisioningBackendError::MissingCommand { command }) => {
                                 stderr.push_str(&format!(
-                                    "provisioning backend `{command}` is unavailable; falling back to repo setup\n"
-                                ));
+                                        "{bootstrap_note} could not run because backend `{command}` is unavailable; falling back to repo setup\n"
+                                    ));
                             }
                             Err(ProvisioningBackendError::UnsupportedSource {
                                 provisioning_source: source,
                             }) => {
                                 stderr.push_str(&format!(
-                                    "provisioning source `{source}` is not supported by the built-in backend; falling back to repo setup\n"
-                                ));
+                                        "{bootstrap_note} cannot use built-in source `{source}`; falling back to repo setup\n"
+                                    ));
                             }
                             Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
                                 stderr.push_str(&format!(
-                                    "provisioning action kind `{:?}` is not supported by the built-in backend; falling back to repo setup\n",
-                                    kind
-                                ));
+                                        "{bootstrap_note} requested unsupported action kind `{:?}`; falling back to repo setup\n",
+                                        kind
+                                    ));
                             }
                             Err(ProvisioningBackendError::UnsupportedTargetKind {
                                 backend,
                                 target_kind,
                             }) => {
                                 stderr.push_str(&format!(
-                                    "provisioning target kind `{target_kind}` is not supported by the built-in backend `{backend}`; falling back to repo setup\n"
-                                ));
+                                        "{bootstrap_note} cannot target `{target_kind}` with built-in backend `{backend}`; falling back to repo setup\n"
+                                    ));
                             }
                         }
-                    } else {
-                        stderr.push_str(&format!(
-                            "provisioning backend `{command}` is unavailable; falling back to repo setup\n"
-                        ));
                     }
                 }
-                Err(ProvisioningBackendError::UnsupportedSource {
-                    provisioning_source: source,
-                }) => {
+
+                if bootstrapped {
+                    match apply_provisioning_request_with_target(
+                        &provisioning.request,
+                        execution_dir,
+                        &provisioning_target,
+                        provisioning_output_mode,
+                    ) {
+                        Ok(outcome) => {
+                            if capture_phase_output {
+                                stdout.push_str(&outcome.stdout);
+                                stderr.push_str(&outcome.stderr);
+                            }
+                            preflight = diagnose_preconditions_with_mode(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                            );
+                        }
+                        Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                            stdout: backend_stdout,
+                            stderr: backend_stderr,
+                            exit_code,
+                            diagnosis,
+                            ..
+                        }) => {
+                            if capture_phase_output {
+                                stdout.push_str(&backend_stdout);
+                                stderr.push_str(&backend_stderr);
+                            }
+                            let mut report = preflight;
+                            prepend_up_provisioning_failure_finding(
+                                &mut report.findings,
+                                &diagnosis,
+                                &provisioning_target,
+                            );
+                            return Ok(RepoUpResult {
+                                ok: false,
+                                status: "PROVISION FAILED",
+                                phase: "provisioning",
+                                preview: None,
+                                receipt: repo_execution_receipt(
+                                    resolved_path,
+                                    contract,
+                                    provisioning_phase_execution_context(
+                                        contract,
+                                        resolved_path,
+                                        &provisioning_target,
+                                    ),
+                                    "PROVISION FAILED",
+                                    "provisioning",
+                                    None,
+                                    None,
+                                    &report.findings,
+                                    Some(exit_code),
+                                    None,
+                                ),
+                                report,
+                                service: None,
+                                service_command: None,
+                                task: None,
+                                task_command: None,
+                                exit_code: Some(exit_code),
+                                stdout,
+                                stderr,
+                            });
+                        }
+                        Err(ProvisioningBackendError::CommandFailed {
+                            stdout: bootstrap_stdout,
+                            stderr: bootstrap_stderr,
+                            exit_code,
+                            ..
+                        }) => {
+                            if capture_phase_output {
+                                stdout.push_str(&bootstrap_stdout);
+                                stderr.push_str(&bootstrap_stderr);
+                            }
+                            return Ok(RepoUpResult {
+                                ok: false,
+                                status: "PROVISION FAILED",
+                                phase: "provisioning",
+                                preview: None,
+                                receipt: repo_execution_receipt(
+                                    resolved_path,
+                                    contract,
+                                    provisioning_phase_execution_context(
+                                        contract,
+                                        resolved_path,
+                                        &provisioning_target,
+                                    ),
+                                    "PROVISION FAILED",
+                                    "provisioning",
+                                    None,
+                                    None,
+                                    &preflight.findings,
+                                    Some(exit_code),
+                                    None,
+                                ),
+                                report: preflight,
+                                service: None,
+                                service_command: None,
+                                task: None,
+                                task_command: None,
+                                exit_code: Some(exit_code),
+                                stdout,
+                                stderr,
+                            });
+                        }
+                        Err(ProvisioningBackendError::MissingCommand { command }) => {
+                            stderr.push_str(&format!(
+                                    "provisioning backend `{command}` is unavailable; falling back to repo setup\n"
+                                ));
+                        }
+                        Err(ProvisioningBackendError::UnsupportedSource {
+                            provisioning_source: source,
+                        }) => {
+                            stderr.push_str(&format!(
+                                    "provisioning source `{source}` is not supported by the built-in backend; falling back to repo setup\n"
+                                ));
+                        }
+                        Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
+                            stderr.push_str(&format!(
+                                    "provisioning action kind `{:?}` is not supported by the built-in backend; falling back to repo setup\n",
+                                    kind
+                                ));
+                        }
+                        Err(ProvisioningBackendError::UnsupportedTargetKind {
+                            backend,
+                            target_kind,
+                        }) => {
+                            stderr.push_str(&format!(
+                                    "provisioning target kind `{target_kind}` is not supported by the built-in backend `{backend}`; falling back to repo setup\n"
+                                ));
+                        }
+                    }
+                } else {
                     stderr.push_str(&format!(
+                            "provisioning backend `{command}` is unavailable; falling back to repo setup\n"
+                        ));
+                }
+            }
+            Err(ProvisioningBackendError::UnsupportedSource {
+                provisioning_source: source,
+            }) => {
+                stderr.push_str(&format!(
                         "provisioning source `{source}` is not supported by the built-in backend; falling back to repo setup\n"
                     ));
-                }
-                Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
-                    stderr.push_str(&format!(
+            }
+            Err(ProvisioningBackendError::UnsupportedActionKind { kind }) => {
+                stderr.push_str(&format!(
                         "provisioning action kind `{:?}` is not supported by the built-in backend; falling back to repo setup\n",
                         kind
                     ));
-                }
-                Err(ProvisioningBackendError::UnsupportedTargetKind {
-                    backend,
-                    target_kind,
-                }) => {
-                    stderr.push_str(&format!(
+            }
+            Err(ProvisioningBackendError::UnsupportedTargetKind {
+                backend,
+                target_kind,
+            }) => {
+                stderr.push_str(&format!(
                         "provisioning target kind `{target_kind}` is not supported by the built-in backend `{backend}`; falling back to repo setup\n"
                     ));
-                }
             }
         }
+    }
 
-        if preflight.ok {
-            // The backend fixed the missing prerequisites; fall through to the normal flow.
-        } else if contract.tasks.contains_key("setup") {
-            let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
-            match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
-                Ok(outcome) if outcome.exit_code != 0 => {
-                    stdout.push_str(&outcome.stdout);
-                    stderr.push_str(&outcome.stderr);
+    if preflight.ok {
+        // The backend fixed the missing prerequisites; fall through to the normal flow.
+    } else if contract.tasks.contains_key("setup") {
+        let setup_task_command = contract.tasks.get("setup").and_then(task_command_preview);
+        match run_up_setup_task(contract, resolved_path, overrides, policy_env, mode) {
+            Ok(outcome) if outcome.exit_code != 0 => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "SETUP FAILED",
+                    phase: "setup",
+                    preview: None,
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        task_phase_execution_context(
+                            contract,
+                            resolved_path,
+                            overrides,
+                            outcome.target.clone(),
+                        ),
+                        "SETUP FAILED",
+                        "setup",
+                        None,
+                        Some("setup"),
+                        &[],
+                        Some(outcome.exit_code),
+                        None,
+                    ),
+                    report: DoctorReport {
+                        ok: false,
+                        provisioning: None,
+                        adapter_bootstrap: None,
+                        execution_target: None,
+                        findings: Vec::new(),
+                    },
+                    service: None,
+                    service_command: None,
+                    task: Some(String::from("setup")),
+                    task_command: setup_task_command,
+                    exit_code: Some(outcome.exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(outcome) => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                let refreshed =
+                    diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
+                if !refreshed.ok {
                     return Ok(RepoUpResult {
                         ok: false,
-                        status: "SETUP FAILED",
-                        phase: "setup",
+                        status: "NOT READY",
+                        phase: "provisioning",
                         preview: None,
                         receipt: repo_execution_receipt(
                             resolved_path,
                             contract,
-                            task_phase_execution_context(
+                            doctor_report_execution_context(
                                 contract,
                                 resolved_path,
-                                overrides,
-                                outcome.target.clone(),
+                                doctor_mode,
+                                &refreshed,
                             ),
-                            "SETUP FAILED",
-                            "setup",
+                            "NOT READY",
+                            "provisioning",
                             None,
                             Some("setup"),
-                            &[],
-                            Some(outcome.exit_code),
+                            &refreshed.findings,
                             None,
+                            refreshed
+                                .findings
+                                .first()
+                                .map(|finding| finding.next.clone()),
                         ),
-                        report: DoctorReport {
-                            ok: false,
-                            provisioning: None,
-                            adapter_bootstrap: None,
-                            execution_target: None,
-                            findings: Vec::new(),
-                        },
+                        report: refreshed,
                         service: None,
                         service_command: None,
                         task: Some(String::from("setup")),
                         task_command: setup_task_command,
-                        exit_code: Some(outcome.exit_code),
+                        exit_code: None,
                         stdout,
                         stderr,
                     });
                 }
-                Ok(outcome) => {
-                    stdout.push_str(&outcome.stdout);
-                    stderr.push_str(&outcome.stderr);
-                    let refreshed =
-                        diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
-                    if !refreshed.ok {
-                        return Ok(RepoUpResult {
-                            ok: false,
-                            status: "NOT READY",
-                            phase: "provisioning",
-                            preview: None,
-                            receipt: repo_execution_receipt(
-                                resolved_path,
-                                contract,
-                                doctor_report_execution_context(
-                                    contract,
-                                    resolved_path,
-                                    doctor_mode,
-                                    &refreshed,
-                                ),
-                                "NOT READY",
-                                "provisioning",
-                                None,
-                                Some("setup"),
-                                &refreshed.findings,
-                                None,
-                                refreshed
-                                    .findings
-                                    .first()
-                                    .map(|finding| finding.next.clone()),
-                            ),
-                            report: refreshed,
-                            service: None,
-                            service_command: None,
-                            task: Some(String::from("setup")),
-                            task_command: setup_task_command,
-                            exit_code: None,
-                            stdout,
-                            stderr,
-                        });
-                    }
-                    provisioned_setup = true;
-                }
-                Err(error) => return Err(error),
+                provisioned_setup = true;
             }
-        } else {
-            return Ok(RepoUpResult {
-                ok: false,
-                status: "NOT READY",
-                phase: "preconditions",
-                preview: None,
-                receipt: repo_execution_receipt(
-                    resolved_path,
-                    contract,
-                    doctor_report_execution_context(
-                        contract,
-                        resolved_path,
-                        doctor_mode,
-                        &preflight,
-                    ),
-                    "NOT READY",
-                    "preconditions",
-                    None,
-                    None,
-                    &preflight.findings,
-                    None,
-                    preflight
-                        .findings
-                        .first()
-                        .map(|finding| finding.next.clone()),
-                ),
-                report: preflight,
-                service: None,
-                service_command: None,
-                task: None,
-                task_command: None,
-                exit_code: None,
-                stdout,
-                stderr,
-            });
+            Err(error) => return Err(error),
         }
+    } else {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "preconditions",
+            preview: None,
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(contract, resolved_path, doctor_mode, &preflight),
+                "NOT READY",
+                "preconditions",
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
+            report: preflight,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
     }
 
     let working_dir = contract_working_dir(resolved_path);
