@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+## 1.5.2
+
+- made `ota receipt` keep explicit repo-target follow-up commands inside JSON receipt and finding remediation, so non-current-directory adoption flows no longer drop the repo path when they tell you to rerun `ota doctor`.
+- made generated `AGENTS.md` task guidance more readable by rendering `safe_tasks` and `verify_after_changes` as short nested lists instead of one long wrapped inline sentence, and trimmed trailing whitespace in generated notes.
+- added a worked existing-repo adoption example that shows the concrete `doctor -> up -> run ci -> receipt`, CI archive, and promoted-baseline flow, and linked it from the main onboarding docs.
+- removed the Ota copyright/license banner from `ota agents` generated `AGENTS.md` output, keeping only short provenance (`Generated from ... by \`ota agents\`.`) plus the actual repo-local guidance.
+- added a focused one-team rollout guide that turns the scattered `doctor -> up -> run -> receipt`, CI archive, promoted baseline, and local policy steps into one explicit adoption playbook, and linked it from the main docs entry points.
+- made `ota policy` more actionable when a policy pack is already loaded by adding direct next-step guidance into `ota policy review` and `ota doctor`, so the effective-policy view now points cleanly into boundary review and readiness.
+- tightened the receipt/baseline adoption story in the public docs by adding one explicit promoted-baseline workflow for local and CI use, including `ota receipt --json --archive --promote-baseline`, `ota receipt --json --baseline promoted`, and `ota annotations --mode receipt-diff --format markdown`.
+- tightened the public first-success docs around the proven repo loop by leading existing-repo quickstarts with `doctor -> up -> run -> receipt`, moving `ota agents` to an explicit follow-up, and adding a repeatable one-repo local/CI rollout story.
 - tightened the extension-facing JSON contract lock so `ota doctor --json`, `ota tasks --json`, `ota env --json`, and `ota receipt --json` now have regression coverage for key nested semantics such as verdicts, primary blockers, agent defaults, missing env entries, and repo receipt scope/details instead of only top-level envelope fields.
 
 ## 1.5.1

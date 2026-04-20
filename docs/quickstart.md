@@ -26,6 +26,11 @@
 
 Install ota first: [installation.md](installation.md)
 
+If you are rolling ota out to one team instead of just one repo, use
+[adoption/one-team-rollout.md](adoption/one-team-rollout.md) alongside this quickstart.
+If you want one concrete existing-repo sequence, use
+[adoption/worked-example-existing-repo.md](adoption/worked-example-existing-repo.md).
+
 ## Start Here
 
 Doctor first, contract second.
@@ -40,8 +45,8 @@ Fastest proof of value:
 ota doctor
 ota explain
 ota up
-ota agents
 ota run <task>
+ota receipt
 ```
 
 What this gives you:
@@ -49,13 +54,20 @@ What this gives you:
 - `ota doctor` tells you what is broken and what to do next
 - `ota explain` turns the current findings into an ordered fix plan
 - `ota up` prepares the repo from the contract instead of from guesswork
-- `ota agents` turns the same contract into repo-local agent guidance
 - `ota run <task>` executes a declared task through the same contract
+- `ota receipt` captures the resulting repo state as a reviewable artifact
 
 If you are not sure which task to run next, use:
 
 ```bash
 ota tasks --use
+```
+
+If you want repo-local agent guidance from the same contract after the core loop is working, use:
+
+```bash
+ota agents
+ota agents --write
 ```
 
 ## Repo Without `ota.yaml`
@@ -97,6 +109,37 @@ ota agents --write
 ```
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+
+## One Repo Rollout Story
+
+For one repo, the repeatable local path is:
+
+```bash
+ota doctor
+ota up
+ota run ci
+ota receipt
+```
+
+For CI, keep the same contract boundary and archive the read-only receipt:
+
+```bash
+ota validate
+ota doctor --json
+ota receipt --json --archive
+```
+
+That keeps local readiness, CI evidence, and later receipt comparison on one surface.
+
+When you want a repo-owned baseline for later compare gates:
+
+```bash
+ota receipt --json --archive --promote-baseline
+ota receipt --json --baseline promoted
+```
+
+Use `promoted` when the team wants an explicit accepted repo state. Use `latest` when the newest
+archived receipt is enough for a local drift check.
 
 ## Validate A Workspace
 

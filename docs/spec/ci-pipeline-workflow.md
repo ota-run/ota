@@ -95,6 +95,25 @@ stops the job immediately on a non-zero command and skips artifact upload, captu
 upload `.ota/ci/` and `.ota/receipts/`, and fail the job in a final step after the artifacts are
 persisted.
 
+## Baseline gate follow-up
+
+Once a repo has one accepted archived receipt, keep later compare gates on the same receipt
+surface:
+
+```bash
+ota receipt --json --archive --promote-baseline .
+ota receipt --json --baseline promoted . | tee .ota/ci/receipt-diff.json
+diff_status=${PIPESTATUS[0]}
+```
+
+Use `promoted` when the team wants an explicit accepted repo state owned by the repo itself. Use
+`latest` when the newest archived receipt is enough for a lighter local or branch-level compare.
+If the pipeline needs a PR or step-summary rendering for the compare result, reuse:
+
+```bash
+ota annotations --mode receipt-diff --format markdown --input .ota/ci/receipt-diff.json
+```
+
 ## Install rule
 
 For direct `ota` commands in CI:

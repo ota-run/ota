@@ -3698,25 +3698,25 @@ fn wrong_target_next_steps_for_repo_command(command: &str, policy_path: &Path) -
 }
 
 fn render_policy_text(
-    policy_path: &Path,
+    contract_path: &Path,
     source: &str,
     loaded: Option<&LoadedOrgPolicyPack>,
 ) -> String {
     let mut output = String::new();
     let policy_display_path = loaded
         .as_ref()
-        .map(|loaded| compact_policy_path_relative_to_contract(policy_path, &loaded.path))
+        .map(|loaded| compact_policy_path_relative_to_contract(contract_path, &loaded.path))
         .unwrap_or_else(|| String::from("none"));
     if plain_mode() {
         output.push_str(&format!(
             "POLICY {}\n\n",
-            compact_contract_path(policy_path)
+            compact_contract_path(contract_path)
         ));
     } else {
         output.push_str(&format!(
             "🦦 {} {}\n\n",
             paint("POLICY", "1;36"),
-            paint_code(&compact_contract_path(policy_path))
+            paint_code(&compact_contract_path(contract_path))
         ));
     }
     output.push_str(&format!(
@@ -3734,6 +3734,16 @@ fn render_policy_text(
         let yaml =
             serde_yaml::to_string(&loaded.pack).unwrap_or_else(|_| String::from("policies: {}"));
         output.push_str(yaml.trim_end());
+        output.push_str(&format_next_timeline(&[
+            format!(
+                "run `{}` to inspect the policy-vs-contract boundary",
+                command_for_repo_contract_target("ota policy review", contract_path)
+            ),
+            format!(
+                "run `{}` to inspect readiness with the active policy applied",
+                command_for_repo_contract_target("ota doctor", contract_path)
+            ),
+        ]));
     } else {
         output.push_str("No policy pack found.");
         output.push_str(&format_next_timeline(&[
@@ -5667,15 +5677,24 @@ pub fn receipt(
                     &target.contract_path,
                     &mut report.findings,
                 );
-                let receipt =
+                let findings = rewrite_doctor_findings_for_contract(
+                    &report.findings,
+                    &target.contract_path,
+                    Some(mode),
+                );
+                let mut receipt =
                     repo_readiness_receipt(&target.contract_path, &target.contract, mode, &report);
+                receipt.next = receipt
+                    .next
+                    .as_deref()
+                    .map(|next| rewrite_repo_scoped_command_targets(next, &target.contract_path));
                 if let Some(baseline) = baseline {
                     return render_repo_receipt_diff(
                         &text_path_display,
                         &path_display,
                         &target.contract_path,
                         &receipt,
-                        &report.findings,
+                        &findings,
                         baseline,
                         fail_on_new_blockers,
                         format,
@@ -5739,7 +5758,7 @@ pub fn receipt(
                     &path_display,
                     &RepoReceiptReport {
                         receipt,
-                        findings: report.findings,
+                        findings,
                         archive_path,
                         promoted_baseline,
                     },
@@ -18940,6 +18959,42 @@ fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> S
     }
 }
 
+fn rewrite_repo_scoped_command_targets(next: &str, contract_path: &Path) -> String {
+    [
+        "ota doctor --mode container",
+        "ota doctor --mode native",
+        "ota doctor",
+        "ota up --mode container",
+        "ota up --mode native",
+        "ota up",
+    ]
+    .into_iter()
+    .fold(next.to_string(), |rewritten, command| {
+        let source = format!("`{command}`");
+        let target = format!(
+            "`{}`",
+            command_for_repo_contract_target(command, contract_path)
+        );
+        rewritten.replace(&source, &target)
+    })
+}
+
+fn rewrite_doctor_findings_for_contract(
+    findings: &[Finding],
+    contract_path: &Path,
+    doctor_mode: Option<DoctorMode>,
+) -> Vec<Finding> {
+    findings
+        .iter()
+        .cloned()
+        .map(|mut finding| {
+            let next = rewrite_doctor_mode_command(&finding.next, doctor_mode);
+            finding.next = rewrite_repo_scoped_command_targets(&next, contract_path);
+            finding
+        })
+        .collect()
+}
+
 fn rewrite_up_preview_next_command(next: &str, doctor_mode: Option<DoctorMode>) -> String {
     let next = rewrite_doctor_mode_command(next, doctor_mode);
     match doctor_mode {
@@ -19502,35 +19557,10 @@ fn render_agents_markdown(
     source_display: &str,
 ) -> String {
     let mut output = String::new();
-    output.push_str("<!--\n");
-    output.push_str("                █████\n");
-    output.push_str("               ░░███\n");
-    output.push_str("       ██████  ███████    ██████\n");
-    output.push_str("      ███░░███░░░███░    ░░░░░███\n");
-    output.push_str("     ░███ ░███  ░███      ███████\n");
-    output.push_str("     ░███ ░███  ░███ ███ ███░░███\n");
-    output.push_str("     ░░██████   ░░█████ ░░████████\n");
-    output.push_str("      ░░░░░░     ░░░░░   ░░░░░░░░\n");
-    output.push('\n');
-    output.push_str("   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.\n");
-    output.push('\n');
-    output.push_str("   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.\n");
-    output.push('\n');
-    output.push_str("   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.\n");
-    output.push_str("   You may not use this file except in compliance with that License.\n");
-    output.push_str("   Unless required by applicable law or agreed to in writing, software distributed under the\n");
-    output.push_str("   License is distributed on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,\n");
-    output.push_str("   either express or implied. See the License for the specific language governing permissions\n");
-    output.push_str("   and limitations under the License.\n");
-    output.push('\n');
-    output.push_str(
-        "   If you need additional information or have any questions, please email: os@ota.run\n",
-    );
-    output.push_str("-->\n\n");
     output.push_str("# AGENTS.md\n\n");
     output.push_str("Generated from `");
     output.push_str(source_display);
-    output.push_str("`.\n\n");
+    output.push_str("` by `ota agents`.\n\n");
     output.push_str("## Repo\n\n");
     output.push_str("- `project`: `");
     output.push_str(&contract.project.name);
@@ -19559,28 +19589,14 @@ fn render_agents_markdown(
             output.push_str("`)\n");
         }
         if !agent.safe_tasks.is_empty() {
-            output.push_str("- `safe_tasks`: ");
-            output.push_str(
-                &agent
-                    .safe_tasks
-                    .iter()
-                    .map(|value| format!("`{value}` (`ota run {value}`)"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            output.push('\n');
+            render_agents_task_list(&mut output, "safe_tasks", agent.safe_tasks);
         }
         if !agent.verify_after_changes.is_empty() {
-            output.push_str("- `verify_after_changes`: ");
-            output.push_str(
-                &agent
-                    .verify_after_changes
-                    .iter()
-                    .map(|value| format!("`{value}` (`ota run {value}`)"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+            render_agents_task_list(
+                &mut output,
+                "verify_after_changes",
+                agent.verify_after_changes,
             );
-            output.push('\n');
         }
         if !agent.writable_paths.is_empty() {
             output.push_str("- `writable_paths`: ");
@@ -19635,7 +19651,7 @@ fn render_agents_markdown(
         {
             output.push_str("\n## Notes\n\n");
             for line in notes.lines() {
-                output.push_str(line);
+                output.push_str(line.trim_end());
                 output.push('\n');
             }
         }
@@ -19649,6 +19665,19 @@ fn render_agents_markdown(
     }
 
     output
+}
+
+fn render_agents_task_list(output: &mut String, label: &str, tasks: &[String]) {
+    output.push_str("- `");
+    output.push_str(label);
+    output.push_str("`:\n");
+    for value in tasks {
+        output.push_str("  - `");
+        output.push_str(value);
+        output.push_str("` (`ota run ");
+        output.push_str(value);
+        output.push_str("`)\n");
+    }
 }
 
 const AGENTS_GENERATED_START: &str = "<!-- ota-generated-agent-guidance:start -->";
@@ -20472,6 +20501,10 @@ mod tests {
         assert!(text.starts_with("🦦 POLICY ./ota.yaml\n\n"));
         assert!(text.contains("Policy source: repo policy\n"));
         assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n"));
+        assert!(text.contains("ota policy review"));
+        assert!(text.contains("policy-vs-contract boundary"));
+        assert!(text.contains("ota doctor"));
+        assert!(text.contains("active policy applied"));
     }
 
     #[test]

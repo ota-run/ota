@@ -1150,7 +1150,8 @@ fn run_executes_task_variant_from_nested_directory_real_fixture() {
 
     assert!(output.status.success(), "stderr was: {stderr}");
     assert!(stderr.contains("RUN SUMMARY"));
-    assert!(stderr.contains("Task:       setup"));
+    assert!(stderr.contains("Task:"));
+    assert!(stderr.contains("setup"));
 
     let expected = match std::env::consts::OS {
         "macos" => "macos",

@@ -53,6 +53,19 @@ The binding V1 bar for these fixtures is in [v1/release-gate.md](v1/release-gate
 - more precedence/conflict assertions on mixed-reality repos
 - targeted follow-up fixtures only when they expose a real product gap
 
+## Immediate next work
+
+1. Expand the golden adoption loop from `validate -> doctor -> check -> up -> run` to also lock
+   `receipt`, so the local readiness story and the CI evidence story stay one product path.
+2. Add one real-repo adoption pass across sibling repos that represent the public wedge:
+   `action`, `setup`, `ota-site`, and `ota`.
+3. Harden the receipt/baseline path as a first-class operability surface:
+   capture, archive, compare, and promote must stay deterministic and easy to explain.
+4. Add one more container-first loop that exercises receipt/evidence behavior, not only
+   readiness and execution planning.
+5. Tighten first-success docs around the exact repo adoption sequence:
+   `doctor`, review or author the contract, `up`, `run`, then `receipt`.
+
 ## Purpose
 
 Fixture repos should drive:

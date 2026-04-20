@@ -2926,7 +2926,7 @@ fn diagnose_container_backend_cli(contract: &Contract, findings: &mut Vec<Findin
             "container execution requires one of these CLIs to be available on PATH: {supported}"
         ),
         next: String::from(
-            "install one of the supported container engines or run `ota run --backend native` if the contract allows it, then rerun `ota doctor`",
+            "install one of the supported container engines or use `--mode native` if the contract allows it, then rerun `ota doctor`",
         ),
     });
 }
