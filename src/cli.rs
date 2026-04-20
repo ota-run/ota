@@ -10920,7 +10920,7 @@ agent:
         assert_eq!(doctor.exit_code, 0);
         let doctor_stdout = strip_ansi(&doctor.stdout);
         assert!(doctor_stdout.contains("Mode: `container`"));
-        assert!(doctor_stdout.contains("Container: `alpine:3.20`"));
+        assert!(doctor_stdout.contains("Image: `alpine:3.20`"));
         assert!(doctor_stdout.contains(&format!("ota up {repo_path}")));
         assert!(doctor_stdout.contains(&format!("ota run ci {repo_path}")));
 
@@ -18304,7 +18304,7 @@ tasks:
         assert!(stdout.contains("Preferred: `container`"));
         assert!(stdout.contains("Supported: `native`, `container`"));
         assert!(stdout.contains("Lifecycle: `ephemeral`"));
-        assert!(stdout.contains("Container: `rust:1.94-bookworm`"));
+        assert!(stdout.contains("Image: `rust:1.94-bookworm`"));
     }
 
     #[test]
@@ -18751,7 +18751,7 @@ tasks:
 
     #[test]
     #[cfg(unix)]
-    fn up_reports_not_ready_when_setup_does_not_fix_prerequisites() {
+    fn up_reports_blocked_when_setup_does_not_fix_prerequisites() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -18773,9 +18773,40 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Phase: provisioning"));
+        assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Status:    blocked"));
+        assert!(!stdout.contains("Command: printf setup > prepared.txt"));
+        assert!(fixture.dir.path().join("prepared.txt").exists());
+    }
+
+    #[test]
+    fn up_json_reports_blocked_when_setup_does_not_fix_prerequisites() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: provisioned-tool
+    kind: precondition
+    severity: error
+    run: provisioned-tool --version
+tasks:
+  setup:
+    run: printf setup > prepared.txt
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["status"], "BLOCKED");
+        assert_eq!(json["phase"], "provisioning");
+        assert_eq!(json["task"], "setup");
         assert!(fixture.dir.path().join("prepared.txt").exists());
     }
 
