@@ -1181,10 +1181,9 @@ Current behavior:
 Text output:
 
 - header: `POLICY REVIEW <path>`
-- `Policy source:` shows where ota loaded the policy from
-- `Policy path:` shows the resolved policy file path or URL
+- `Policy` is the context block and shows the active source plus resolved policy path or URL
 - `Overview` rolls up the policy findings by severity
-- grouped policy findings reuse the same premium remediation styling as `ota doctor`
+- policy findings use operator-shaped summaries and action-specific `Next:` steps instead of pointing back to `ota policy review`
 - when no policy pack is found, the text output says so explicitly and points users back to `ota policy`
 
 JSON output:

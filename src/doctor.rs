@@ -1897,7 +1897,7 @@ fn diagnose_org_policy(
                     rules.join(", ")
                 ),
                 next: String::from(
-                    "use this policy surface when repos need approved runtime or tool versions",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
                 ),
             });
         }

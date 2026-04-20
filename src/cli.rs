@@ -26422,6 +26422,42 @@ repos:
     }
 
     #[test]
+    fn policy_review_not_found_from_current_directory_keeps_actionable_next() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(fixture.path()).unwrap();
+
+        let output = run_with(["ota", "policy", "review"]);
+
+        std::env::set_current_dir(previous).unwrap();
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("POLICY REVIEW ."));
+        assert!(stderr.contains("Contract target could not be resolved"));
+        assert!(stderr.contains("Why: no `ota.yaml` found from `.` upward"));
+        assert_eq!(stderr.matches("Next:").count(), 1);
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
+        assert!(stderr.contains("run `ota detect --dry-run` to preview inferred fields"));
+    }
+
+    #[test]
+    fn policy_review_missing_explicit_path_does_not_duplicate_next() {
+        let _guard = env_mutex_lock();
+
+        let output = run_with(["ota", "policy", "review", "/tmp/ota-policy-review-missing"]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("POLICY REVIEW /tmp/ota-policy-review-missing"));
+        assert!(stderr.contains("contract path does not exist"));
+        assert_eq!(stderr.matches("Next:").count(), 1);
+        assert!(stderr.contains("run `ota init` to create a starter contract"));
+        assert!(stderr.contains("run `ota detect --write` to write a detected contract"));
+    }
+
+    #[test]
     fn workspace_receipt_not_found_uses_single_workspace_next() {
         let fixture = TempDir::new().unwrap();
 
