@@ -28932,6 +28932,25 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
     )
 }
 
+fn selected_up_provisioning_actions(
+    preflight: &DoctorReport,
+) -> Vec<crate::policy_pack::ProvisioningAction> {
+    let missing_targets = provisionable_target_keys(&preflight.findings);
+    preflight
+        .provisioning
+        .as_ref()
+        .map(|provisioning| {
+            provisioning
+                .request
+                .actions
+                .iter()
+                .filter(|action| missing_targets.contains(&provisioning_action_key(action)))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningAction) -> String {
     format!(
         "provision `{}` `{}` via `{}`{}",
@@ -28975,11 +28994,11 @@ fn build_up_preview(
     let target = execution_target(contract, resolved_path, backend, lifecycle);
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
-    let missing_targets = provisionable_target_keys(&preflight.findings);
+    let selected_actions = selected_up_provisioning_actions(preflight);
 
     if let Some(provisioning) = preflight.provisioning.as_ref() {
         for action in &provisioning.request.actions {
-            if missing_targets.contains(&provisioning_action_key(action)) {
+            if selected_actions.contains(action) {
                 actions.push(render_up_preview_provision_action(action));
             } else {
                 skipped.push(render_up_preview_skip_action(action));
@@ -29174,13 +29193,13 @@ fn execute_repo_up(
         }
     };
 
-    if let Some(provisioning) = preflight
-        .provisioning
-        .as_ref()
-        .filter(|provisioning| !provisioning.request.actions.is_empty())
-    {
+    let provisioning_actions = selected_up_provisioning_actions(&preflight);
+    if !provisioning_actions.is_empty() {
+        let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
+            actions: provisioning_actions,
+        };
         match apply_provisioning_request_with_target(
-            &provisioning.request,
+            &provisioning_request,
             execution_dir,
             &provisioning_target,
             provisioning_output_mode,
@@ -29288,7 +29307,7 @@ fn execute_repo_up(
                 {
                     let bootstrap_request = adapter_bootstrap_request_for_missing_backend(
                         &policy_pack,
-                        &provisioning.request,
+                        &provisioning_request,
                         &command,
                     );
                     if !bootstrap_request.actions.is_empty() {
@@ -29395,7 +29414,7 @@ fn execute_repo_up(
 
                 if bootstrapped {
                     match apply_provisioning_request_with_target(
-                        &provisioning.request,
+                        &provisioning_request,
                         execution_dir,
                         &provisioning_target,
                         provisioning_output_mode,
