@@ -11147,6 +11147,63 @@ tasks:
     }
 
     #[test]
+    fn receipt_json_preserves_repo_targets_for_policy_review_followups() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-policy-target
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    node:
+      source: brew
+      approved_versions: ["24.14.1"]
+  adapter_bootstrap:
+    brew:
+      source: brew-bootstrap
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let findings = json["findings"].as_array().unwrap();
+
+        let provisioning_next = findings
+            .iter()
+            .find(|finding| {
+                finding["summary"].as_str().is_some_and(|summary| {
+                    summary == "Policy-backed provisioning sources are declared"
+                })
+            })
+            .and_then(|finding| finding["next"].as_str())
+            .unwrap();
+        let bootstrap_next = findings
+            .iter()
+            .find(|finding| {
+                finding["summary"]
+                    .as_str()
+                    .is_some_and(|summary| summary == "Adapter bootstrap sources are declared")
+            })
+            .and_then(|finding| finding["next"].as_str())
+            .unwrap();
+
+        assert!(provisioning_next.contains("ota policy review"));
+        assert!(provisioning_next.contains(fixture.path()));
+        assert!(bootstrap_next.contains("ota policy review"));
+        assert!(bootstrap_next.contains(fixture.path()));
+    }
+
+    #[test]
     fn container_doctor_json_exposes_stable_execution_and_info_finding_fields() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(

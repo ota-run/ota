@@ -1985,7 +1985,7 @@ fn diagnose_org_policy(
                     )
                 },
                 next: String::from(
-                    "use this policy surface when repo prerequisites need an approved source",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                 ),
             });
         }
@@ -2123,7 +2123,7 @@ fn diagnose_adapter_bootstrap(
                 sources.join(", ")
             ),
             next: String::from(
-                "use this policy surface when adapter bootstrap needs to be approved or audited",
+                "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
             ),
         });
     }
