@@ -122,13 +122,13 @@ Start with the read path:
 ota doctor
 ota explain
 ota up
-ota agents
 ota run <task>
+ota receipt
 ```
 
 This path tells you what is wrong, turns the findings into an ordered plan, prepares the repo,
-derives repo-local agent guidance from the same contract, and gives you one declared task path
-without guessing.
+gives you one declared task path without guessing, and captures the resulting repo state as a
+reviewable artifact.
 
 If the repo is meant to run inside a container, use:
 
@@ -140,6 +140,12 @@ If you are not sure which task to run after `ota up`, use:
 
 ```bash
 ota tasks --use
+```
+
+If you want repo-local agent guidance from the same contract after the core loop is working, use:
+
+```bash
+ota agents
 ```
 
 ### Repo without `ota.yaml`
@@ -217,6 +223,38 @@ ota policy init --preset required-sections --dry-run
 ota policy init --preset provisioning --dry-run
 ota policy init --preset agent --dry-run
 ```
+
+### One repo rollout story
+
+For one repo, the repeatable local path is:
+
+```bash
+ota doctor
+ota up
+ota run ci
+ota receipt
+```
+
+For CI, keep the same contract boundary and archive the read-only receipt:
+
+```bash
+ota validate
+ota doctor --json
+ota receipt --json --archive
+```
+
+That keeps the local path and the CI artifact story on the same surface instead of inventing a
+second readiness workflow.
+
+When you want a repo-owned baseline for later compare gates:
+
+```bash
+ota receipt --json --archive --promote-baseline
+ota receipt --json --baseline promoted
+```
+
+Use `promoted` when a team wants an explicit accepted repo state, and use `latest` when the newest
+archived receipt is enough for a local drift check.
 
 Use policy review when the contract and approved policy need to be reconciled:
 
@@ -631,6 +669,8 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 ## Documentation
 
 ### Start here
+- [One-team rollout](docs/adoption/one-team-rollout.md)
+- [Worked example: existing repo](docs/adoption/worked-example-existing-repo.md)
 - [Command reference](docs/spec/command-reference.md)
 - [GitHub Action workflow](docs/spec/github-action-workflow.md)
 - [Contract reference](docs/spec/contract-reference.md)

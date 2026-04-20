@@ -847,6 +847,7 @@ Current behavior:
 - renders an explicit `Bootstrap` section when `agent.bootstrap.ota` is present, including the approved shell and PowerShell install commands for `ota`
 - preserves existing `AGENTS.md` content and appends or refreshes an ota-managed block instead of overwriting user-authored guidance
 - skips the write if the existing file already contains the generated AGENTS content
+- keeps the generated file lightweight by using short provenance (`Generated from ... by \`ota agents\`.`) instead of an Ota copyright or license banner
 - renders a `Managed block:` label in text output so the ota-owned section is explicit and shows each task list item together with its `ota run ...` command form
 - text preview points directly at `ota agents --write` and `ota doctor` so the guidance can be written and then verified from the same contract
 - pairs naturally with `ota tasks --use` when you want to confirm runnable task shapes before writing the guidance file
@@ -1078,6 +1079,8 @@ Text output:
 - `Policy source:` shows where ota loaded the policy from
 - `Policy path:` shows the resolved policy file path or URL
 - effective policy content when one is loaded
+- when a policy pack is loaded, `Next:` points to `ota policy review` for boundary inspection and
+  `ota doctor` for readiness with that active policy applied
 - when no policy pack is found, the text output says so explicitly and points users back to repo
   readiness or `.ota/org-policy.yaml`
 

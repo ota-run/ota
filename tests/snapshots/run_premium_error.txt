@@ -4,7 +4,7 @@ Where: <TMP>/ota.yaml
 Why: task `install-from-source` returned a non-zero exit code
 Next:
   » rerun `ota run install-from-source --stream` for live task output if the excerpt is insufficient
-  » run `ota tasks --use` to inspect runnable task usage
+  » run `ota tasks --use <TMP>` to inspect runnable task usage
 
 🦦 RUN SUMMARY
 

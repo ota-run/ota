@@ -10506,7 +10506,9 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("ota tasks --use"));
+        assert!(stderr.contains(fixture.path()));
     }
 
     #[test]
@@ -10530,14 +10532,12 @@ tasks:
         assert!(stderr.contains("Task Failed"));
         assert!(stderr.contains("`fail` exited with code 7"));
         assert!(stderr.contains("Why: task `fail` returned a non-zero exit code"));
-        assert!(stderr.contains("Next: run `ota tasks --use` to inspect runnable task usage"));
-        assert!(stderr.contains(
-            "Why: task `fail` returned a non-zero exit code\nNext: run `ota tasks --use` to inspect runnable task usage"
-        ));
+        assert!(stderr.contains("Next:"));
+        assert!(stderr.contains("ota tasks --use"));
+        assert!(stderr.contains(fixture.path()));
+        assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\nNext:"));
         assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
-        assert!(!stderr.contains(
-            "Next: run `ota tasks --use` to inspect runnable task usage\n\n\nRUN SUMMARY"
-        ));
+        assert!(!stderr.contains("Next:\n\n\nRUN SUMMARY"));
     }
 
     #[test]
@@ -10590,7 +10590,8 @@ tasks:
 
         assert_eq!(output.exit_code, 7);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("run `ota tasks --use` to inspect runnable task usage"));
+        assert!(stderr.contains("ota tasks --use"));
+        assert!(stderr.contains(fixture.path()));
         assert!(stderr.contains("RUN SUMMARY"));
         assert!(!stderr.contains("Task output:"));
     }
@@ -10757,6 +10758,22 @@ agent:
             "Next: run `ota tasks --use {repo_path}` to inspect runnable task usage"
         )));
         assert!(!run_stderr.contains(&format!("ota tasks --use {repo_path}/ota.yaml")));
+
+        let receipt = run_with(["ota", "receipt", "--json", fixture.path()]);
+        assert_eq!(receipt.exit_code, 0);
+        let receipt_json: Value = serde_json::from_str(&receipt.stdout).unwrap();
+        assert_eq!(receipt_json["ok"], true);
+        assert_eq!(receipt_json["mode"], "receipt");
+        assert_eq!(receipt_json["receipt"]["scope"], "repo");
+        assert_eq!(receipt_json["receipt"]["backend"], "native");
+        assert_eq!(
+            receipt_json["receipt"]["contract_identity"]["project"]["name"],
+            "loop-demo"
+        );
+        assert_eq!(
+            receipt_json["receipt"]["contract_identity"]["counts"]["tasks"],
+            2
+        );
     }
 
     #[test]
@@ -10990,6 +11007,133 @@ agent:
             receipt_json["findings"][0]["next"],
             "set FOO in policy env, the shell, or a declared env source before running tasks"
         );
+    }
+
+    #[test]
+    fn receipt_json_preserves_repo_target_in_doctor_followups() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-target
+env:
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+"#,
+        );
+
+        let output = run_with(["ota", "receipt", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let receipt_next = json["receipt"]["next"].as_str().unwrap();
+        let finding_next = json["findings"][0]["next"].as_str().unwrap();
+
+        assert!(receipt_next.contains("ota doctor"));
+        assert!(receipt_next.contains(fixture.path()));
+        assert!(finding_next.contains("ota doctor"));
+        assert!(finding_next.contains(fixture.path()));
+    }
+
+    #[test]
+    fn container_receipt_json_preserves_requested_doctor_mode_in_findings() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-target-container
+env:
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--mode",
+            "container",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let receipt_next = json["receipt"]["next"].as_str().unwrap();
+        let finding_next = json["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|finding| finding["next"].as_str())
+            .find(|next| next.contains("ota doctor --mode container"))
+            .unwrap();
+
+        assert!(receipt_next.contains("ota doctor --mode container"));
+        assert!(receipt_next.contains(fixture.path()));
+        assert!(finding_next.contains("ota doctor --mode container"));
+        assert!(finding_next.contains(fixture.path()));
+    }
+
+    #[test]
+    fn container_receipt_json_preserves_repo_targets_for_mode_specific_followups() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-container-info
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: persistent
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker]
+env:
+  vars:
+    FOO:
+      required: true
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--mode",
+            "container",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let receipt_next = json["receipt"]["next"].as_str().unwrap();
+        let finding_next = json["findings"][0]["next"].as_str().unwrap();
+
+        assert!(receipt_next.contains("ota doctor --mode native"));
+        assert!(receipt_next.contains("ota up --mode container"));
+        assert!(receipt_next.contains(fixture.path()));
+        assert!(finding_next.contains("ota doctor --mode native"));
+        assert!(finding_next.contains("ota up --mode container"));
+        assert!(finding_next.contains(fixture.path()));
     }
 
     #[test]
@@ -11375,8 +11519,8 @@ project:
         assert!(stdout.contains("VALIDATE"));
         assert!(stdout.contains("VALID"));
         assert!(stdout.contains("VALIDATE ./ota.yaml"));
-        assert!(stdout.contains("run `ota doctor` to inspect readiness"));
-        assert!(stdout.contains("run `ota tasks --use` to inspect runnable task usage"));
+        assert!(stdout.contains("run `ota doctor ../..` to inspect readiness"));
+        assert!(stdout.contains("run `ota tasks --use ../..` to inspect runnable task usage"));
     }
 
     #[test]
@@ -14758,17 +14902,15 @@ tasks:
         assert!(stdout.contains("ota doctor"));
         let agents_md = fs::read_to_string(fixture.dir.path().join("AGENTS.md")).unwrap();
         assert!(agents_md.contains("# AGENTS.md"));
-        assert!(agents_md.contains("Generated from `./ota.yaml`."));
+        assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
+        assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
-        assert!(
-            agents_md
-                .contains("`safe_tasks`: `setup` (`ota run setup`), `build` (`ota run build`)")
-        );
-        assert!(
-            agents_md.contains(
-                "`verify_after_changes`: `fmt` (`ota run fmt`), `check` (`ota run check`)"
-            )
-        );
+        assert!(agents_md.contains("- `safe_tasks`:"));
+        assert!(agents_md.contains("  - `setup` (`ota run setup`)"));
+        assert!(agents_md.contains("  - `build` (`ota run build`)"));
+        assert!(agents_md.contains("- `verify_after_changes`:"));
+        assert!(agents_md.contains("  - `fmt` (`ota run fmt`)"));
+        assert!(agents_md.contains("  - `check` (`ota run check`)"));
         assert!(agents_md.contains("## Bootstrap"));
         assert!(
             agents_md.contains("Only install ota if it is missing and installation is approved.")
@@ -14832,7 +14974,8 @@ tasks:
         assert!(agents_md.starts_with("Custom guidance"));
         assert!(agents_md.contains("ota-generated-agent-guidance:start"));
         assert!(agents_md.contains("# AGENTS.md"));
-        assert!(agents_md.contains("Generated from `./ota.yaml`."));
+        assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
+        assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
     }
 
@@ -23869,6 +24012,42 @@ policies:
             !apt_log.exists(),
             "host provisioning should not be attempted"
         );
+    }
+
+    #[test]
+    fn doctor_container_backend_missing_recommends_mode_native_instead_of_backend_flag() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: native-fallback
+execution:
+  preferred: container
+  supported: [native, container]
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+      engines: [docker, podman]
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Missing container execution backend CLI: docker, podman"));
+        assert!(text.contains("use `--mode native` if the contract allows it"));
+        assert!(!text.contains("ota run --backend native"));
     }
 
     #[test]

@@ -34,13 +34,6 @@ execution:
         - docker
 tools:
   pv: "1.6.20-1"
-policies:
-  provisioning:
-    pv:
-      source: apt
-      package: pv
-      approved_versions:
-        - "1.6.20-1"
 tasks:
   setup:
     run: pv --version > prepared.txt
