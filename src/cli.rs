@@ -2601,11 +2601,12 @@ fn run_cli(cli: Cli) -> CommandOutput {
     let update_notice_rx = should_show_update_notice(&cli).then(spawn_update_notice);
 
     if should_show_command_spinner(&cli) {
+        let spinner_label = command_spinner_label(&cli.command);
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let _ = tx.send(dispatch(cli));
         });
-        return maybe_append_update_notice(wait_with_spinner(rx), update_notice_rx);
+        return maybe_append_update_notice(wait_with_spinner(rx, spinner_label), update_notice_rx);
     }
 
     maybe_append_update_notice(dispatch(cli), update_notice_rx)
@@ -2725,7 +2726,20 @@ fn maybe_append_update_notice_with_timeout(
     }
 }
 
-fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
+fn command_spinner_label(command: &Commands) -> Option<&'static str> {
+    match command {
+        Commands::Up { .. } => Some("Preparing environment..."),
+        Commands::Workspace {
+            command: WorkspaceCommands::Up { .. },
+        } => Some("Preparing workspace..."),
+        _ => None,
+    }
+}
+
+fn wait_with_spinner(
+    rx: mpsc::Receiver<CommandOutput>,
+    label: Option<&'static str>,
+) -> CommandOutput {
     let delay = Duration::from_millis(120);
     let start = Instant::now();
 
@@ -2743,7 +2757,7 @@ fn wait_with_spinner(rx: mpsc::Receiver<CommandOutput>) -> CommandOutput {
         }
     }
 
-    let spinner = CommandSpinner::start();
+    let spinner = CommandSpinner::start(label);
     let output = rx.recv().expect("command worker should send a report");
     spinner.stop();
     output
@@ -2756,7 +2770,7 @@ struct CommandSpinner {
 }
 
 impl CommandSpinner {
-    fn start() -> Self {
+    fn start(label: Option<&'static str>) -> Self {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let thread_stop = std::sync::Arc::clone(&stop);
         let handle = thread::spawn(move || {
@@ -2765,7 +2779,14 @@ impl CommandSpinner {
             let mut stderr = io::stderr();
             while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
                 let frame = frames[index % frames.len()];
-                let _ = write!(stderr, "\r🦦 {frame}");
+                match label {
+                    Some(label) => {
+                        let _ = write!(stderr, "\r🦦 {frame} {label}");
+                    }
+                    None => {
+                        let _ = write!(stderr, "\r🦦 {frame}");
+                    }
+                }
                 let _ = stderr.flush();
                 index += 1;
                 thread::sleep(Duration::from_millis(160));
@@ -11505,6 +11526,41 @@ tasks:
         assert!(super::command_requests_spinner_when_interactive(&cli));
 
         super::commands::set_plain_mode(original_plain_mode);
+    }
+
+    #[test]
+    fn up_spinner_uses_preparing_environment_label() {
+        assert_eq!(
+            super::command_spinner_label(&super::Commands::Up {
+                path: None,
+                json: false,
+                dry_run: false,
+                stream: false,
+                backend: None,
+                lifecycle: None,
+                ephemeral: false,
+                receipt: false,
+                member: Vec::new(),
+            }),
+            Some("Preparing environment...")
+        );
+    }
+
+    #[test]
+    fn workspace_up_spinner_uses_preparing_workspace_label() {
+        assert_eq!(
+            super::command_spinner_label(&super::Commands::Workspace {
+                command: super::WorkspaceCommands::Up {
+                    json: false,
+                    jobs: 1,
+                    quiet: false,
+                    stream: false,
+                    receipt: false,
+                    path: None,
+                },
+            }),
+            Some("Preparing workspace...")
+        );
     }
 
     #[test]
