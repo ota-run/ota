@@ -3,7 +3,7 @@
 Where: <TMP>/ota.yaml
 Why: task `install-from-source` returned a non-zero exit code
 Next:
-  » rerun `ota run install-from-source --stream` for live task output if the excerpt is insufficient
+  » rerun `ota run install:from:source --stream` for live task output if the excerpt is insufficient
   » run `ota tasks --use <TMP>` to inspect runnable task usage
 
 🦦 RUN SUMMARY
@@ -12,6 +12,6 @@ Scope:     repo
 Path:      <TMP>
 Contract:  <TMP>/ota.yaml
 Mode:      native
-Task:      install-from-source
+Task:      install:from:source
 Status:    failed
 Note:      running on the host environment
