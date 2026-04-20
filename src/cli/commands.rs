@@ -4043,6 +4043,7 @@ fn render_policy_review_text(
     ));
 
     if loaded_policy.is_none() {
+        stdout.push_str("\n\n");
         stdout.push_str("No policy pack found.");
         stdout.push_str(&format_next_timeline(&[
             String::from("run `ota policy` to inspect the active policy pack"),
@@ -19137,6 +19138,7 @@ fn rewrite_repo_scoped_command_targets(next: &str, contract_path: &Path) -> Stri
         "ota doctor --mode container",
         "ota doctor --mode native",
         "ota doctor",
+        "ota policy review",
         "ota up --mode container",
         "ota up --mode native",
         "ota up",
@@ -20745,7 +20747,9 @@ mod tests {
         env::set_current_dir(cwd).unwrap();
 
         assert!(text.contains("POLICY REVIEW ./ota.yaml"));
-        assert!(text.contains("Policy source: none"));
+        assert!(text.contains("Policy\n »  Source: none"));
+        assert!(text.contains("Source: none\n\nNo policy pack found."));
+        assert!(!text.contains("Source: noneNo policy pack found."));
         assert!(text.contains("No policy pack found."));
         assert!(text.contains("run `ota policy` to inspect the active policy pack"));
         assert!(text.contains(
@@ -21055,7 +21059,7 @@ mod tests {
                     "`.ota/org-policy.yaml` declares approved provisioning sources: node via brew",
                 ),
                 next: String::from(
-                    "use this policy surface when repo prerequisites need an approved source",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                 ),
             },
         ];
@@ -21121,7 +21125,7 @@ mod tests {
                         "`.ota/org-policy.yaml` declares approved provisioning sources: curl via brew (versions 8.7.1)",
                     ),
                     next: String::from(
-                        "use this policy surface when repo prerequisites need an approved source",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                     ),
                 },
                 Finding {
@@ -21131,7 +21135,7 @@ mod tests {
                         "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                     ),
                     next: String::from(
-                        "use this policy surface when repo prerequisites need an approved source",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                     ),
                 },
                 Finding {
@@ -21141,7 +21145,7 @@ mod tests {
                         "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                     ),
                     next: String::from(
-                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                     ),
                 },
             ],
@@ -21203,7 +21207,7 @@ mod tests {
                     "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap, sdkman via sdkman-bootstrap",
                 ),
                 next: String::from(
-                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                 ),
             }],
         };
@@ -21237,9 +21241,8 @@ mod tests {
         ));
         assert!(text.contains("  » brew via `brew-bootstrap`"));
         assert!(text.contains("  » sdkman via `sdkman-bootstrap`"));
-        assert!(text.contains(
-            "Next: use this policy surface when adapter bootstrap needs to be approved or audited"
-        ));
+        assert!(text.contains("Next: use `ota policy review` to inspect the active policy source"));
+        assert!(text.contains("adapter install needs approval or audit"));
         assert!(why < provenance);
         assert!(provenance < next);
     }
@@ -21347,7 +21350,7 @@ mod tests {
                         "`.ota/org-policy.yaml` declares approved provisioning sources: curl via brew (versions 8.7.1)",
                     ),
                     next: String::from(
-                        "use this policy surface when repo prerequisites need an approved source",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                     ),
                 },
                 Finding {
@@ -21357,7 +21360,7 @@ mod tests {
                         "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                     ),
                     next: String::from(
-                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                     ),
                 },
             ],
@@ -21416,7 +21419,7 @@ mod tests {
                     "`.ota/org-policy.yaml` declares approved provisioning sources: bun via mise (versions 1.3.12)",
                 ),
                 next: String::from(
-                    "use this policy surface when repo prerequisites need an approved source",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                 ),
             },
             Finding {
@@ -21426,7 +21429,7 @@ mod tests {
                     "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: mise via mise-bootstrap",
                 ),
                 next: String::from(
-                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                 ),
             },
         ];
@@ -21505,7 +21508,7 @@ mod tests {
                         "`.ota/org-policy.yaml` declares approved provisioning sources: curl via brew (versions 8.7.1)",
                     ),
                     next: String::from(
-                        "use this policy surface when repo prerequisites need an approved source",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                     ),
                 },
                 Finding {
@@ -21515,7 +21518,7 @@ mod tests {
                         "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                     ),
                     next: String::from(
-                        "use this policy surface when repo prerequisites need an approved source",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                     ),
                 },
                 Finding {
@@ -21525,7 +21528,7 @@ mod tests {
                         "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                     ),
                     next: String::from(
-                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                        "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                     ),
                 },
             ],
@@ -21952,7 +21955,7 @@ policies:
                     "`.ota/org-policy.yaml` declares approved provisioning sources: node via brew (versions 22)",
                 ),
                 next: String::from(
-                    "use this policy surface when repo prerequisites need an approved source",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
                 ),
             },
             Finding {
@@ -21962,7 +21965,7 @@ policies:
                     "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
                 ),
                 next: String::from(
-                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
                 ),
             },
         ];
