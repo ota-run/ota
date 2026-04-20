@@ -18724,7 +18724,7 @@ tasks:
     }
 
     #[test]
-    fn up_applies_policy_backed_provisioning_even_when_doctor_is_ready() {
+    fn up_skips_policy_backed_provisioning_when_doctor_is_ready() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -18785,7 +18785,10 @@ policies:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("READY"));
         assert!(fixture.dir.path().join("prepared.txt").exists());
-        assert!(brew_log.exists(), "policy-backed provisioning should run");
+        assert!(
+            !brew_log.exists(),
+            "policy-backed provisioning should stay skipped when doctor is already ready"
+        );
     }
 
     #[test]
