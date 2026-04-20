@@ -10778,6 +10778,7 @@ agent:
 
     #[test]
     fn container_repo_adoption_loop_stays_repo_oriented_for_default_contracts() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -10810,6 +10811,15 @@ agent:
     - ci
 "#,
         );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"run\" exit /b 0\r\necho unsupported\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
 
         let repo_path = fs::canonicalize(fixture.path())
             .unwrap()
