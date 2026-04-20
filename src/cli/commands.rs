@@ -4099,7 +4099,11 @@ fn render_policy_review_text(
             stdout.push_str(&format!(
                 "{}  {}",
                 render_severity(finding.severity),
-                render_finding_summary(finding.severity, &diagnosis),
+                render_finding_summary_with_count(
+                    finding.severity,
+                    &diagnosis,
+                    single_finding_display_count(&finding.summary, &finding.why),
+                ),
             ));
             append_finding_section(&mut stdout, "Why:", &why_lines, finding.severity, None);
             if let Some(source_line) = source_line.as_deref() {
@@ -13212,7 +13216,7 @@ fn append_receipt_diff_resolved_section(stdout: &mut String, title: &str, findin
             "\n{} {} {}",
             list_bullet(),
             render_severity(finding.severity),
-            render_finding_summary(finding.severity, &finding.summary)
+            render_finding_summary_with_count(finding.severity, &finding.summary, 1)
         ));
     }
 }
@@ -18132,7 +18136,11 @@ fn render_report_section(
                 stdout.push_str(&format!(
                     "{}  {}{}{}",
                     render_severity(finding.severity),
-                    paint(&diagnosis, "1"),
+                    render_finding_summary_with_count(
+                        finding.severity,
+                        &diagnosis,
+                        single_finding_display_count(&finding.summary, &finding.why),
+                    ),
                     source_block,
                     provenance_block,
                 ));
@@ -18148,7 +18156,11 @@ fn render_report_section(
                 stdout.push_str(&format!(
                     "{}  {}",
                     render_severity(finding.severity),
-                    paint(&diagnosis, "1"),
+                    render_finding_summary_with_count(
+                        finding.severity,
+                        &diagnosis,
+                        single_finding_display_count(&finding.summary, &finding.why),
+                    ),
                 ));
                 append_finding_section(
                     &mut stdout,
@@ -18356,10 +18368,54 @@ fn finding_diagnosis_text(summary: &str, why: &str, container_image: Option<&str
     summary.to_string()
 }
 
-fn policy_surface_bullets(why: &str, lead: &str) -> Option<Vec<String>> {
+fn split_top_level_policy_items(input: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let bytes = input.as_bytes();
+    let mut index = 0usize;
+
+    while index + 1 < bytes.len() {
+        match bytes[index] {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 && bytes[index + 1] == b' ' => {
+                let item = input[start..index].trim();
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+                start = index + 2;
+                index += 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    let tail = input[start..].trim();
+    if !tail.is_empty() {
+        items.push(tail.to_string());
+    }
+
+    items
+}
+
+fn declared_policy_items(summary: &str, why: &str) -> Option<Vec<String>> {
     let (_, declared) = why.split_once(": ")?;
+    let declared = match summary {
+        "Policy-backed provisioning sources are declared" => declared
+            .split_once(". This repo's declared prerequisites can be provisioned through: ")
+            .map(|(sources, _)| sources)
+            .unwrap_or(declared),
+        _ => declared,
+    };
+    Some(split_top_level_policy_items(declared))
+}
+
+fn policy_surface_bullets(summary: &str, why: &str, lead: &str) -> Option<Vec<String>> {
+    let declared = declared_policy_items(summary, why)?;
     let mut lines = vec![lead.to_string()];
-    lines.extend(declared.split(", ").map(|item| {
+    lines.extend(declared.into_iter().map(|item| {
         if let Some((subject, adapter)) = item.split_once(" via ") {
             format!("{subject} via `{adapter}`")
         } else {
@@ -18372,25 +18428,31 @@ fn policy_surface_bullets(why: &str, lead: &str) -> Option<Vec<String>> {
 fn finding_why_lines(summary: &str, why: &str, container_image: Option<&str>) -> Vec<String> {
     if summary == "Adapter bootstrap sources are declared" {
         return policy_surface_bullets(
+            summary,
             why,
             "`.ota/org-policy.yaml` approves bootstrap for missing adapter binaries",
         )
         .unwrap_or_else(|| vec![why.to_string()]);
     }
     if summary == "Policy-backed version rules are declared" {
-        return policy_surface_bullets(why, "`.ota/org-policy.yaml` approves repo version rules")
-            .map(|lines| {
-                let mut rendered = Vec::with_capacity(lines.len());
-                if let Some((first, rest)) = lines.split_first() {
-                    rendered.push(first.clone());
-                    rendered.extend(rest.iter().map(|item| formatted_version_policy_item(item)));
-                }
-                rendered
-            })
-            .unwrap_or_else(|| vec![why.to_string()]);
+        return policy_surface_bullets(
+            summary,
+            why,
+            "`.ota/org-policy.yaml` approves repo version rules",
+        )
+        .map(|lines| {
+            let mut rendered = Vec::with_capacity(lines.len());
+            if let Some((first, rest)) = lines.split_first() {
+                rendered.push(first.clone());
+                rendered.extend(rest.iter().map(|item| formatted_version_policy_item(item)));
+            }
+            rendered
+        })
+        .unwrap_or_else(|| vec![why.to_string()]);
     }
     if summary == "Policy-backed provisioning sources are declared" {
         return policy_surface_bullets(
+            summary,
             why,
             "`.ota/org-policy.yaml` approves provisioning for declared repo prerequisites",
         )
@@ -18428,6 +18490,17 @@ fn finding_why_lines(summary: &str, why: &str, container_image: Option<&str>) ->
         ];
     }
     vec![why.to_string()]
+}
+
+fn single_finding_display_count(summary: &str, why: &str) -> usize {
+    match summary {
+        "Policy-backed version rules are declared"
+        | "Policy-backed provisioning sources are declared"
+        | "Adapter bootstrap sources are declared" => declared_policy_items(summary, why)
+            .map(|items| items.len())
+            .unwrap_or(1),
+        _ => 1,
+    }
 }
 
 fn finding_next_steps(next: &str) -> Vec<String> {
@@ -18540,7 +18613,11 @@ fn render_primary_finding_text_with_next_rewriter(
             },
             title_color
         ),
-        paint(&diagnosis, "1")
+        render_finding_summary_with_count(
+            severity,
+            &diagnosis,
+            single_finding_display_count(summary, &display_why),
+        )
     ));
     if !concise_mode() {
         append_finding_section(&mut stdout, "Why:", &why_lines, severity, contract_path);
@@ -19372,7 +19449,7 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     if let Some(backends) = execution.backends.as_ref() {
         if let Some(container) = backends.container.as_ref() {
             stdout.push('\n');
-            stdout.push_str(&detail_list_row(&paint_key("Container:"), container.image));
+            stdout.push_str(&detail_list_row(&paint_key("Image:"), container.image));
         }
         if let Some(remote) = backends.remote.as_ref() {
             stdout.push('\n');
@@ -19584,7 +19661,7 @@ fn render_doctor_execution_summary_text(
         if let Some(container) = backends.container.as_ref() {
             lines.push(section_list_row(
                 &summary_bullet(),
-                &paint_key("Container:"),
+                &paint_key("Image:"),
                 &paint_backticked_code(container.image),
             ));
         }
@@ -21326,7 +21403,7 @@ mod tests {
         assert!(text.contains("Policy"));
         assert!(text.contains(" »  Source: repo policy"));
         assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
-        assert!(text.contains("◉ INFO  Approved version policy is configured"));
+        assert!(text.contains("◉ INFO  Approved version policy is configured (2)"));
         assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
         assert!(text.contains("  » runtime `java` (versions `>=21`)"));
         assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
@@ -21397,6 +21474,38 @@ mod tests {
             "Next: use these approved sources when repo prerequisites or adapters need a governed install path, or update"
         ));
         assert!(text.contains("`./.ota/org-policy.yaml`"));
+    }
+
+    #[test]
+    fn policy_finding_counts_ignore_commas_inside_item_details() {
+        let version_why = "`.ota/org-policy.yaml` declares approved repo version rules: runtime node (versions >=20, <25), tool pnpm (versions 9.0.0, 9.1.0)";
+        assert_eq!(
+            super::single_finding_display_count(
+                "Policy-backed version rules are declared",
+                version_why,
+            ),
+            2
+        );
+
+        let provisioning_why = "`.ota/org-policy.yaml` declares approved provisioning sources: node via mise (versions 24.14.1; source_config: mirrors=uk,us), jq via apt (package: jq; versions 1.8.1). This repo's declared prerequisites can be provisioned through: node via mise (rule `24.14.1`), jq via apt (package `jq`)";
+        assert_eq!(
+            super::single_finding_display_count(
+                "Policy-backed provisioning sources are declared",
+                provisioning_why,
+            ),
+            2
+        );
+
+        let lines = super::finding_why_lines(
+            "Policy-backed provisioning sources are declared",
+            provisioning_why,
+            None,
+        );
+        assert_eq!(lines.len(), 3);
+        assert!(lines[1].contains("node via"));
+        assert!(lines[1].contains("source_config: mirrors=uk,us"));
+        assert!(lines[2].contains("jq via"));
+        assert!(lines[2].contains("package: jq; versions 1.8.1"));
     }
 
     #[test]
@@ -21621,6 +21730,114 @@ tasks:
         assert!(text.contains("UP SUMMARY"));
         assert!(text.contains("Task:"));
         assert!(text.contains("build"));
+    }
+
+    #[test]
+    fn up_blocked_provisioning_text_highlights_primary_reason_and_context() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
+            target: Some(String::from("ota-ephemeral-deadbeef")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "provisioning",
+                "BLOCKED",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+        let result = RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "provisioning",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: vec![
+                    Finding {
+                        severity: FindingSeverity::Error,
+                        summary: String::from(
+                            "Container mise cannot install requested prerequisite: node",
+                        ),
+                        why: String::from(
+                            "the Linux/container target requests `node >=24.14.1`; policy resolves that to `24.14.1` using rule `24.14.1`, but the configured `mise` provisioning path could not satisfy it inside container image `maven:3.9.14-eclipse-temurin-21-noble`",
+                        ),
+                        next: String::from(
+                            "fix the selected container image (currently `maven:3.9.14-eclipse-temurin-21-noble`) or the configured `mise` provisioning path for `node`, then rerun `ota doctor --mode container`",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Info,
+                        summary: String::from(
+                            "Host-bound readiness checks are not evaluated in container mode",
+                        ),
+                        why: String::from(
+                            "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
+                        ),
+                        next: String::from(
+                            "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
+                        ),
+                    },
+                    Finding {
+                        severity: FindingSeverity::Info,
+                        summary: String::from("Policy-backed version rules are declared"),
+                        why: String::from(
+                            "`.ota/org-policy.yaml` declares approved repo version rules: runtime java (versions >=21), runtime node (versions >=24.14.1)",
+                        ),
+                        next: String::from(
+                            "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
+                        ),
+                    },
+                ],
+            },
+            preview: None,
+            receipt,
+            service: None,
+            service_command: None,
+            task: Some(String::from("setup")),
+            task_command: None,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+
+        let text = strip_ansi_codes(&super::render_up_section("./ota.yaml", &result));
+
+        assert!(text.contains("BLOCKED"));
+        assert!(text.contains("Phase: provisioning"));
+        assert!(text.contains("Backend: container"));
+        assert!(text.contains("Task: setup"));
+        assert!(text.contains("Image: maven:3.9.14-eclipse-temurin-21-noble"));
+        assert!(text.contains("Image: maven:3.9.14-eclipse-temurin-21-noble\n\nWhy:"));
+        assert!(text.contains("Why:"));
+        assert!(text.contains("the Linux/container target requests `node >=24.14.1`"));
+        assert!(text.contains("the configured `mise` provisioning path could not satisfy it"));
+        assert!(text.contains("Next:"));
+        assert!(text.contains("rerun `ota doctor --mode container`"));
+        assert!(text.contains("Additional context:"));
+        assert!(text.contains("host-bound readiness checks are skipped in container mode"));
+        assert!(
+            text.contains("an active policy pack still governs version and provisioning rules")
+        );
+        assert!(!text.contains("Policy-backed version rules are declared"));
+        assert!(!text.contains("Review active policy surfaces"));
+        assert!(!text.contains("Target:"));
     }
 
     #[test]
@@ -22619,7 +22836,7 @@ policies:
         assert!(rendered.contains("\n→ Preferred: container"));
         assert!(rendered.contains("\n→ Supported: native, container"));
         assert!(rendered.contains("\n→ Lifecycle: ephemeral"));
-        assert!(rendered.contains("\n→ Container: rust:1.94-bookworm"));
+        assert!(rendered.contains("\n→ Image: rust:1.94-bookworm"));
         assert!(rendered.contains("\n→ Env precedence:"));
         assert!(rendered.contains("\n→ Env:"));
         assert!(!rendered.contains("\n →  Preferred:"));
@@ -23082,7 +23299,7 @@ tasks:
     }
 
     #[test]
-    fn repo_execution_receipt_renders_ephemeral_container_target() {
+    fn repo_execution_receipt_omits_ephemeral_container_target_for_up_summary() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
             r#"
@@ -23124,7 +23341,7 @@ execution:
 
         assert!(rendered.contains("Mode:      container"));
         assert!(rendered.contains("Image:     ghcr.io/ota/dev:latest"));
-        assert!(rendered.contains("Target:    ota-ephemeral-"));
+        assert!(!rendered.contains("Target:"));
     }
 
     #[test]
@@ -25827,7 +26044,7 @@ fn render_up_text(
     receipt: &ExecutionReceipt,
     show_receipt: bool,
 ) -> CommandOutput {
-    let mut stdout = render_up_section_from_parts(
+    let mut stdout = render_up_section_body(
         path,
         Some(Path::new(path)),
         status,
@@ -25840,6 +26057,7 @@ fn render_up_text(
         task_command,
         stderr,
         exit_code,
+        receipt,
     );
     if show_receipt {
         stdout.push_str(&render_execution_receipt_text(receipt));
@@ -25870,7 +26088,7 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         );
     }
 
-    render_up_section_from_parts(
+    render_up_section_body(
         path,
         Some(Path::new(path)),
         result.status,
@@ -25883,7 +26101,126 @@ fn render_up_section(path: &str, result: &RepoUpResult) -> String {
         result.task_command.as_deref(),
         phase_output_text(&result.stdout, &result.stderr).as_deref(),
         result.exit_code,
+        &result.receipt,
     )
+}
+
+fn render_up_section_body(
+    path: &str,
+    contract_path: Option<&Path>,
+    status: &str,
+    phase: &str,
+    report: &DoctorReport,
+    backend: Option<&str>,
+    service: Option<&str>,
+    service_command: Option<&str>,
+    task: Option<&str>,
+    task_command: Option<&str>,
+    stderr: Option<&str>,
+    exit_code: Option<i32>,
+    receipt: &ExecutionReceipt,
+) -> String {
+    if status == "BLOCKED" && phase == "provisioning" {
+        return render_up_blocked_provisioning_section(path, contract_path, report, receipt, task);
+    }
+
+    render_up_section_from_parts(
+        path,
+        contract_path,
+        status,
+        phase,
+        report,
+        backend,
+        service,
+        service_command,
+        task,
+        task_command,
+        stderr,
+        exit_code,
+    )
+}
+
+fn render_up_blocked_provisioning_section(
+    path: &str,
+    contract_path: Option<&Path>,
+    report: &DoctorReport,
+    receipt: &ExecutionReceipt,
+    task: Option<&str>,
+) -> String {
+    let mut stdout = format!(
+        "{}\n\n{}\n{} provisioning",
+        format_command_header("UP", path),
+        render_status_line("BLOCKED"),
+        paint_key("Phase:")
+    );
+
+    if let Some(backend) = receipt.backend.as_deref() {
+        stdout.push_str(&format!("\n{} {backend}", paint_key("Backend:")));
+    }
+    if let Some(task) = task {
+        stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
+    }
+    if let Some(image) = receipt.image.as_deref() {
+        stdout.push_str(&format!("\n{} {image}", paint_key("Image:")));
+    }
+
+    if let Some(primary) = report
+        .findings
+        .iter()
+        .find(|finding| finding.severity == FindingSeverity::Error)
+    {
+        let doctor_mode = doctor_mode_from_backend(receipt.backend.as_deref());
+        let (display_why, display_next, container_image) =
+            render_container_image_finding_text(&primary.why, &primary.next, doctor_mode);
+        let why_lines =
+            finding_why_lines(&primary.summary, &display_why, container_image.as_deref());
+        let next_steps =
+            finding_next_steps(&rewrite_doctor_mode_command(&display_next, doctor_mode));
+        stdout.push('\n');
+        append_error_detail_section(&mut stdout, "Why:", &why_lines, contract_path);
+        append_error_detail_section(&mut stdout, "Next:", &next_steps, contract_path);
+    }
+
+    let context = blocked_provisioning_context_lines(&report.findings);
+    if !context.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_key("Additional context:")));
+        for item in context {
+            stdout.push_str(&format!(
+                "\n  {} {}",
+                finding_detail_bullet(FindingSeverity::Info),
+                render_backticked_text(&item, contract_path)
+            ));
+        }
+    }
+
+    stdout
+}
+
+fn blocked_provisioning_context_lines(findings: &[Finding]) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if findings.iter().any(|finding| {
+        finding.summary == "Host-bound readiness checks are not evaluated in container mode"
+    }) {
+        lines.push(String::from(
+            "host-bound readiness checks are skipped in container mode",
+        ));
+    }
+
+    if findings.iter().any(|finding| {
+        matches!(
+            finding.summary.as_str(),
+            "Policy-backed version rules are declared"
+                | "Policy-backed provisioning sources are declared"
+                | "Adapter bootstrap sources are declared"
+        )
+    }) {
+        lines.push(String::from(
+            "an active policy pack still governs version and provisioning rules",
+        ));
+    }
+
+    lines
 }
 
 fn render_up_section_with_receipt(path: &str, result: &RepoUpResult, show_receipt: bool) -> String {
@@ -26218,7 +26555,11 @@ fn render_up_section_from_parts(
             stdout.push_str(&format!(
                 "{}  {}\n{} {}\n{} {}",
                 render_severity(finding.severity),
-                render_finding_summary(finding.severity, &finding.summary),
+                render_finding_summary_with_count(
+                    finding.severity,
+                    &finding.summary,
+                    single_finding_display_count(&finding.summary, &finding.why),
+                ),
                 finding_detail_key(finding.severity, "Why:"),
                 why,
                 finding_detail_key(finding.severity, "Next:"),
@@ -26528,7 +26869,12 @@ fn render_execution_receipt_summary_block(
     if let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
     }
-    if let Some(target) = receipt.target.as_deref() {
+    if let Some(target) = receipt.target.as_deref()
+        && !matches!(
+            (receipt.backend.as_deref(), receipt.lifecycle.as_deref()),
+            (Some("container"), Some("ephemeral"))
+        )
+    {
         lines.push(summary_detail_line("Target:", target));
     }
     lines.push(summary_detail_line("Task:", task));
@@ -27091,6 +27437,18 @@ fn render_severity(severity: FindingSeverity) -> String {
 fn render_finding_summary(severity: FindingSeverity, summary: &str) -> String {
     let _ = severity;
     paint(summary, "1")
+}
+
+fn render_finding_summary_with_count(
+    severity: FindingSeverity,
+    summary: &str,
+    count: usize,
+) -> String {
+    format!(
+        "{} {}",
+        render_finding_summary(severity, summary),
+        paint_group_meta(&format!("({count})"))
+    )
 }
 
 fn render_valid_status() -> String {
@@ -29630,7 +29988,7 @@ fn execute_repo_up(
                 if !refreshed.ok {
                     return Ok(RepoUpResult {
                         ok: false,
-                        status: "NOT READY",
+                        status: "BLOCKED",
                         phase: "provisioning",
                         preview: None,
                         receipt: repo_execution_receipt(
@@ -29642,10 +30000,10 @@ fn execute_repo_up(
                                 doctor_mode,
                                 &refreshed,
                             ),
-                            "NOT READY",
+                            "BLOCKED",
                             "provisioning",
                             None,
-                            Some("setup"),
+                            None,
                             &refreshed.findings,
                             None,
                             refreshed
@@ -29657,7 +30015,7 @@ fn execute_repo_up(
                         service: None,
                         service_command: None,
                         task: Some(String::from("setup")),
-                        task_command: setup_task_command,
+                        task_command: None,
                         exit_code: None,
                         stdout,
                         stderr,
