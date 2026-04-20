@@ -256,12 +256,6 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
         return out;
     }
 
-    if let Some(missing) = detect_missing_contract_context(&body_message) {
-        render_missing_contract_guidance(&mut out, where_label, &body_message, missing);
-        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
-        return out;
-    }
-
     if let Some((why, next_steps)) = split_embedded_next_block(&body_message) {
         if let Some((task_name, exit_code)) = parse_task_exit_failure_line(&why) {
             return render_task_exit_failure_text(
@@ -316,6 +310,12 @@ pub fn stylize_text_failure(where_label: &str, message: &str) -> String {
                 }
             }
         }
+        append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
+        return out;
+    }
+
+    if let Some(missing) = detect_missing_contract_context(&body_message) {
+        render_missing_contract_guidance(&mut out, where_label, &body_message, missing);
         append_summary_block(&mut out, summary_block.as_ref().map(|value| value.as_str()));
         return out;
     }
@@ -3591,6 +3591,16 @@ fn command_message_failure_text(
     let compact_message = compact_backticked_paths(message);
     let where_value = infer_failure_where(default_where, &compact_message);
 
+    if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
+        let why_lines = why
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        return structured_error_text(command, &where_value, summary, &why_lines, &next_steps);
+    }
+
     if let Some(missing) = detect_missing_contract_context(&compact_message) {
         let mut stdout = format_command_header(command, &where_value);
         stdout.push_str(&format!(
@@ -3600,16 +3610,6 @@ fn command_message_failure_text(
         ));
         render_missing_contract_guidance(&mut stdout, &where_value, &compact_message, missing);
         return stdout;
-    }
-
-    if let Some((why, next_steps)) = split_embedded_next_block(&compact_message) {
-        let why_lines = why
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        return structured_error_text(command, &where_value, summary, &why_lines, &next_steps);
     }
 
     structured_error_text(
@@ -3976,6 +3976,11 @@ pub fn policy_review(
         },
         OutputFormat::Json => {
             let summary = policy_review_summary(&review.report);
+            let effective_policy_path = policy_path
+                .clone()
+                .unwrap_or_else(|| String::from("./.ota/org-policy.yaml"));
+            let review_findings =
+                policy_review_findings(&review.report.findings, &effective_policy_path);
             CommandOutput {
                 stdout: to_json(&PolicyReviewSuccess {
                     ok: review.report.ok,
@@ -3983,12 +3988,12 @@ pub fn policy_review(
                     policy_source,
                     policy_path,
                     summary,
-                    finding_groups: doctor_finding_group_summaries(
-                        review.report.findings.iter(),
-                        None,
+                    finding_groups: policy_review_finding_group_summaries(
+                        review_findings.iter(),
+                        &effective_policy_path,
                     ),
                     policy: review.policy.as_ref().map(|loaded| &loaded.pack),
-                    findings: &review.report.findings,
+                    findings: &review_findings,
                 }),
                 stderr: None,
                 exit_code: if review.report.ok { 0 } else { 1 },
@@ -4032,19 +4037,10 @@ fn render_policy_review_text(
         format_command_header("POLICY REVIEW", path),
         render_readiness_status(report.ok)
     );
-    stdout.push_str("\n\n");
-    stdout.push_str(&format!(
-        "{} {}\n",
-        paint_key("Policy source:"),
-        paint_code(policy_source)
+    stdout.push_str(&render_policy_review_context_text(
+        policy_source,
+        policy_path,
     ));
-    if let Some(policy_path) = policy_path {
-        stdout.push_str(&format!(
-            "{} {}\n",
-            paint_key("Policy path:"),
-            paint_code(policy_path)
-        ));
-    }
 
     if loaded_policy.is_none() {
         stdout.push_str("No policy pack found.");
@@ -4074,8 +4070,23 @@ fn render_policy_review_text(
     }
 
     for group in group_doctor_findings(report.findings.iter()) {
+        if matches!(group.kind, DoctorFindingGroupKind::PolicySurface) && group.findings.len() > 1 {
+            stdout.push_str(&render_policy_review_policy_surface_group(
+                &group,
+                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+            ));
+            continue;
+        }
+
         if group.findings.len() == 1 {
             let finding = group.findings[0];
+            let diagnosis = finding_diagnosis_text(&finding.summary, &finding.why, None);
+            let why_lines = finding_why_lines(&finding.summary, &finding.why, None);
+            let next_steps = finding_next_steps(&policy_review_next_text(
+                &finding.summary,
+                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+                &finding.next,
+            ));
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
                 format!(
                     "{} {}",
@@ -4087,32 +4098,14 @@ fn render_policy_review_text(
             stdout.push_str(&format!(
                 "{}  {}",
                 render_severity(finding.severity),
-                render_finding_summary(finding.severity, &finding.summary),
+                render_finding_summary(finding.severity, &diagnosis),
             ));
-            append_wrapped_labeled_text(
-                &mut stdout,
-                "Why:",
-                &finding.why,
-                "",
-                84,
-                false,
-                |key| finding_detail_key(finding.severity, key),
-                |value| render_backticked_text(value, None),
-            );
+            append_finding_section(&mut stdout, "Why:", &why_lines, finding.severity, None);
             if let Some(source_line) = source_line.as_deref() {
                 stdout.push('\n');
                 stdout.push_str(source_line);
             }
-            append_wrapped_labeled_text(
-                &mut stdout,
-                "Next:",
-                &finding.next,
-                "",
-                84,
-                true,
-                |key| finding_detail_key(finding.severity, key),
-                |value| render_backticked_text(value, None),
-            );
+            append_finding_section(&mut stdout, "Next:", &next_steps, finding.severity, None);
             continue;
         }
 
@@ -4164,6 +4157,186 @@ fn render_policy_review_overview_text(summary: &PolicyReviewSummary) -> String {
             &paint(&summary.info_count.to_string(), "1;38;2;255;255;255"),
         )
     ));
+    stdout
+}
+
+fn render_policy_review_context_text(policy_source: &str, policy_path: Option<&str>) -> String {
+    let mut stdout = String::from("\n");
+    stdout.push_str(&paint_section_title("Policy"));
+    stdout.push_str(&format!(
+        "\n{}",
+        section_list_row(
+            &summary_bullet(),
+            &paint("Source:", "1;38;2;102;217;255"),
+            &paint_code(policy_source),
+        )
+    ));
+    if let Some(policy_path) = policy_path {
+        stdout.push_str(&format!(
+            "\n{}",
+            section_list_row(
+                &summary_bullet(),
+                &paint("Path:", "1;38;2;102;217;255"),
+                &paint_code(policy_path),
+            )
+        ));
+    }
+    stdout
+}
+
+fn policy_review_findings(findings: &[Finding], policy_path: &str) -> Vec<Finding> {
+    findings
+        .iter()
+        .cloned()
+        .map(|mut finding| {
+            finding.next = policy_review_next_text(&finding.summary, policy_path, &finding.next);
+            finding
+        })
+        .collect()
+}
+
+fn policy_review_next_text(summary: &str, policy_path: &str, next: &str) -> String {
+    match summary {
+        "Policy-backed version rules are declared" => format!(
+            "keep repo-declared versions inside these approved ranges, or update `{policy_path}`"
+        ),
+        "Policy-backed provisioning sources are declared" => format!(
+            "use these approved sources when repo prerequisites need a governed install path, or update `{policy_path}`"
+        ),
+        "Adapter bootstrap sources are declared" => format!(
+            "use these approved bootstrap sources when missing adapters need a governed install path, or update `{policy_path}`"
+        ),
+        _ => next.to_string(),
+    }
+}
+
+fn policy_review_finding_group_summaries<'a, I>(
+    findings: I,
+    policy_path: &str,
+) -> Vec<DoctorFindingGroupSummary>
+where
+    I: IntoIterator<Item = &'a Finding>,
+{
+    group_doctor_findings(findings)
+        .into_iter()
+        .map(|group| {
+            let display_items = doctor_finding_group_display_items(&group);
+            let (action_key, action_title, action_next) =
+                policy_review_group_metadata(&group, policy_path);
+            DoctorFindingGroupSummary {
+                action_key,
+                action_title,
+                action_next,
+                count: display_items.len(),
+            }
+        })
+        .collect()
+}
+
+fn policy_review_group_metadata(
+    group: &DoctorFindingGroup<'_>,
+    policy_path: &str,
+) -> (String, String, String) {
+    if group.findings.len() == 1 {
+        let finding = group.findings[0];
+        return match finding.summary.as_str() {
+            "Policy-backed version rules are declared" => (
+                String::from("policy-version-surface"),
+                String::from("Approved version policy is configured"),
+                policy_review_next_text(&finding.summary, policy_path, &finding.next),
+            ),
+            "Policy-backed provisioning sources are declared" => (
+                String::from("policy-surface"),
+                String::from("Approved provisioning sources are configured"),
+                policy_review_next_text(&finding.summary, policy_path, &finding.next),
+            ),
+            "Adapter bootstrap sources are declared" => (
+                String::from("policy-surface"),
+                String::from("Approved adapter bootstrap is configured"),
+                policy_review_next_text(&finding.summary, policy_path, &finding.next),
+            ),
+            _ => (
+                group.action_key.clone(),
+                doctor_finding_group_title(&group.kind, &group.findings),
+                group.findings[0].next.clone(),
+            ),
+        };
+    }
+
+    if matches!(group.kind, DoctorFindingGroupKind::PolicySurface) {
+        return (
+            String::from("policy-surface"),
+            String::from("Approved provisioning and bootstrap surfaces are configured"),
+            format!(
+                "use these approved sources when repo prerequisites or adapters need a governed install path, or update `{policy_path}`"
+            ),
+        );
+    }
+
+    (
+        group.action_key.clone(),
+        doctor_finding_group_title(&group.kind, &group.findings),
+        doctor_finding_group_next(&group.kind, &group.findings, None),
+    )
+}
+
+fn render_policy_review_policy_surface_group(
+    group: &DoctorFindingGroup<'_>,
+    policy_path: &str,
+) -> String {
+    let has_provisioning = group
+        .findings
+        .iter()
+        .any(|finding| finding.summary == "Policy-backed provisioning sources are declared");
+    let has_bootstrap = group
+        .findings
+        .iter()
+        .any(|finding| finding.summary == "Adapter bootstrap sources are declared");
+
+    let title = match (has_provisioning, has_bootstrap) {
+        (true, true) => "Approved provisioning and bootstrap surfaces are configured",
+        (true, false) => "Approved provisioning sources are configured",
+        (false, true) => "Approved adapter bootstrap is configured",
+        (false, false) => "Approved policy surfaces are configured",
+    };
+
+    let mut why_lines = Vec::new();
+    if has_provisioning {
+        why_lines.push(format!(
+            "`{policy_path}` approves provisioning sources for declared prerequisites"
+        ));
+    }
+    if has_bootstrap {
+        why_lines.push(format!(
+            "`{policy_path}` approves bootstrap sources for missing adapter binaries"
+        ));
+    }
+
+    let details = doctor_finding_group_display_items(group);
+    let mut stdout = String::from("\n\n");
+    stdout.push_str(&format!(
+        "{}  {}",
+        render_severity(group.severity),
+        render_finding_summary(group.severity, title),
+    ));
+    append_finding_section(&mut stdout, "Why:", &why_lines, group.severity, None);
+    if let Some(provenance) = doctor_group_provenance(group) {
+        stdout.push_str(&format!(
+            "\n{} {}",
+            finding_detail_key(group.severity, "Provenance:"),
+            provenance
+        ));
+    }
+    append_finding_section(&mut stdout, "Details:", &details, group.severity, None);
+    append_finding_section(
+        &mut stdout,
+        "Next:",
+        &[format!(
+            "use these approved sources when repo prerequisites or adapters need a governed install path, or update `{policy_path}`"
+        )],
+        group.severity,
+        None,
+    );
     stdout
 }
 
@@ -21111,6 +21284,190 @@ mod tests {
 
         assert!(why < source);
         assert!(source < next);
+    }
+
+    #[test]
+    fn policy_review_single_version_policy_finding_uses_operator_wording() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed version rules are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved repo version rules: runtime java (versions >=21), tool node (versions 24.14.1)",
+                ),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
+                ),
+            }],
+        };
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
+            source: PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_review_text(
+            "./ota.yaml",
+            "repo policy",
+            Some("./.ota/org-policy.yaml"),
+            Some(&loaded),
+            &report,
+        ));
+
+        assert!(text.contains("Policy"));
+        assert!(text.contains(" »  Source: repo policy"));
+        assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
+        assert!(text.contains("◉ INFO  Approved version policy is configured"));
+        assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
+        assert!(text.contains("  » runtime `java` (versions `>=21`)"));
+        assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
+        assert!(text.contains(
+            "Next: keep repo-declared versions inside these approved ranges, or update `./.ota/org-policy.yaml`"
+        ));
+    }
+
+    #[test]
+    fn policy_review_grouped_policy_surface_uses_non_circular_actions() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![
+                Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Policy-backed provisioning sources are declared"),
+                    why: String::from(
+                        "`.ota/org-policy.yaml` declares approved provisioning sources: curl via brew (versions 8.7.1)",
+                    ),
+                    next: String::from(
+                        "use this policy surface when repo prerequisites need an approved source",
+                    ),
+                },
+                Finding {
+                    severity: FindingSeverity::Info,
+                    summary: String::from("Adapter bootstrap sources are declared"),
+                    why: String::from(
+                        "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: brew via brew-bootstrap",
+                    ),
+                    next: String::from(
+                        "use this policy surface when adapter bootstrap needs to be approved or audited",
+                    ),
+                },
+            ],
+        };
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
+            source: PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_review_text(
+            "./ota.yaml",
+            "repo policy",
+            Some("./.ota/org-policy.yaml"),
+            Some(&loaded),
+            &report,
+        ));
+
+        assert!(
+            text.contains("◉ INFO  Approved provisioning and bootstrap surfaces are configured")
+        );
+        assert!(text.contains(
+            "Why:\n  » `./.ota/org-policy.yaml` approves provisioning sources for declared prerequisites"
+        ));
+        assert!(text.contains(
+            "  » `./.ota/org-policy.yaml` approves bootstrap sources for missing adapter binaries"
+        ));
+        assert!(text.contains("Details:"));
+        assert!(text.contains("  » Approved provisioning sources are configured"));
+        assert!(text.contains("  » Approved adapter bootstrap is configured"));
+        assert!(text.contains(
+            "Next: use these approved sources when repo prerequisites or adapters need a governed install path, or update"
+        ));
+        assert!(text.contains("`./.ota/org-policy.yaml`"));
+    }
+
+    #[test]
+    fn policy_review_json_group_summaries_use_policy_review_actions() {
+        let findings = vec![
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed version rules are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved repo version rules: tool bun (versions 1.3.12)",
+                ),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` declares approved provisioning sources: bun via mise (versions 1.3.12)",
+                ),
+                next: String::from(
+                    "use this policy surface when repo prerequisites need an approved source",
+                ),
+            },
+            Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Adapter bootstrap sources are declared"),
+                why: String::from(
+                    "`.ota/org-policy.yaml` can bootstrap missing adapter binaries through: mise via mise-bootstrap",
+                ),
+                next: String::from(
+                    "use this policy surface when adapter bootstrap needs to be approved or audited",
+                ),
+            },
+        ];
+
+        let normalized = super::policy_review_findings(&findings, "./.ota/org-policy.yaml");
+        assert_eq!(
+            normalized[0].next,
+            "keep repo-declared versions inside these approved ranges, or update `./.ota/org-policy.yaml`"
+        );
+        assert_eq!(
+            normalized[1].next,
+            "use these approved sources when repo prerequisites need a governed install path, or update `./.ota/org-policy.yaml`"
+        );
+        assert_eq!(
+            normalized[2].next,
+            "use these approved bootstrap sources when missing adapters need a governed install path, or update `./.ota/org-policy.yaml`"
+        );
+
+        let groups = super::policy_review_finding_group_summaries(
+            normalized.iter(),
+            "./.ota/org-policy.yaml",
+        );
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].action_key, "policy-version-surface");
+        assert_eq!(
+            groups[0].action_title,
+            "Approved version policy is configured"
+        );
+        assert_eq!(
+            groups[0].action_next,
+            "keep repo-declared versions inside these approved ranges, or update `./.ota/org-policy.yaml`"
+        );
+        assert_eq!(groups[1].action_key, "policy-surface");
+        assert_eq!(
+            groups[1].action_title,
+            "Approved provisioning and bootstrap surfaces are configured"
+        );
+        assert_eq!(
+            groups[1].action_next,
+            "use these approved sources when repo prerequisites or adapters need a governed install path, or update `./.ota/org-policy.yaml`"
+        );
     }
 
     #[test]

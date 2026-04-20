@@ -27,6 +27,8 @@
 ## Unreleased
 
 - made grouped policy findings in `ota doctor`, `ota up`, and the shared JSON summaries read like operator guidance instead of policy declarations, using active labels such as `Review active policy surfaces`, normalized item text like `Approved provisioning sources are configured`, and next steps that point into `ota policy review` when users need the active policy boundary.
+- made single version-policy findings in `ota doctor` and `ota policy review` use the same operator-facing wording and next-step path into `ota policy review`, instead of leaving the card as a raw declared-policy summary with generic guidance.
+- redesigned `ota policy review` output so policy findings no longer point back to `ota policy review` itself; the command now leads with a `Policy` context block, uses action-shaped summaries like `Approved provisioning and bootstrap surfaces are configured`, and points `Next:` at changing the repo contract, using approved sources, or updating `.ota/org-policy.yaml`.
 
 ## 1.5.2
 
