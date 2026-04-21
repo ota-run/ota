@@ -1345,6 +1345,7 @@ struct TaskRunState {
     completed: BTreeMap<String, i32>,
     completed_by_generation: BTreeMap<(String, usize), i32>,
     next_generation: usize,
+    prepared_services: BTreeSet<String>,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -1445,6 +1446,121 @@ fn run_task_internal(
     })
 }
 
+fn required_service_closure(contract: &Contract, service_names: &[String]) -> BTreeSet<String> {
+    let mut selected = BTreeSet::new();
+    for name in service_names {
+        collect_required_service_dependencies(contract, name, &mut selected);
+    }
+    selected
+}
+
+fn collect_required_service_dependencies(
+    contract: &Contract,
+    service_name: &str,
+    selected: &mut BTreeSet<String>,
+) {
+    if !selected.insert(service_name.to_string()) {
+        return;
+    }
+
+    if let Some(service) = contract.services.get(service_name) {
+        for dependency in &service.depends_on {
+            collect_required_service_dependencies(contract, dependency, selected);
+        }
+    }
+}
+
+fn append_required_service_failure(
+    stderr: &mut String,
+    task_name: &str,
+    service_name: &str,
+    why: &str,
+    next: Option<&str>,
+) {
+    if !stderr.is_empty() && !stderr.ends_with('\n') {
+        stderr.push('\n');
+    }
+    stderr.push_str(&format!(
+        "service `{service_name}` required by task `{task_name}` is not ready"
+    ));
+    if !why.trim().is_empty() {
+        stderr.push_str(&format!("\nwhy: {}", why.trim()));
+    }
+    if let Some(next) = next.map(str::trim).filter(|next| !next.is_empty()) {
+        stderr.push_str(&format!("\nnext: {next}"));
+    }
+    stderr.push('\n');
+}
+
+fn run_host_shell_command(
+    command: &str,
+    working_dir: &Path,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, String> {
+    match mode {
+        TaskExecutionMode::Stream { .. } => {
+            let mut process = shell_command(command);
+            process.current_dir(working_dir);
+            process
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+            process
+                .spawn()
+                .and_then(|mut child| child.wait())
+                .map(|status| TaskCommandOutput {
+                    exit_code: status.code().unwrap_or(1),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: None,
+                })
+                .map_err(|error| format!("failed to execute `{command}`: {error}"))
+        }
+        TaskExecutionMode::Capture => shell_command(command)
+            .current_dir(working_dir)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .and_then(|child| child.wait_with_output())
+            .map(|output| TaskCommandOutput {
+                exit_code: output.status.code().unwrap_or(1),
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                target: None,
+            })
+            .map_err(|error| format!("failed to execute `{command}`: {error}")),
+    }
+}
+
+pub(crate) fn service_start_order(contract: &Contract) -> Vec<String> {
+    let mut visited = BTreeSet::new();
+    let mut order = Vec::new();
+    for name in contract.services.keys() {
+        visit_service_start_order(contract, name.as_str(), &mut visited, &mut order);
+    }
+    order
+}
+
+fn visit_service_start_order(
+    contract: &Contract,
+    name: &str,
+    visited: &mut BTreeSet<String>,
+    order: &mut Vec<String>,
+) {
+    if !visited.insert(name.to_string()) {
+        return;
+    }
+
+    if let Some(service) = contract.services.get(name) {
+        for dependency in &service.depends_on {
+            visit_service_start_order(contract, dependency, visited, order);
+        }
+    }
+
+    order.push(name.to_string());
+}
+
 fn execute_task_with_hooks(
     contract: &Contract,
     contract_path: &Path,
@@ -1475,6 +1591,22 @@ fn execute_task_with_hooks(
     } else {
         BTreeMap::new()
     };
+
+    if let Some(exit_code) = ensure_task_required_services(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        working_dir,
+        mode,
+        state,
+    )? {
+        state.completed.insert(task_name.to_string(), exit_code);
+        state
+            .completed_by_generation
+            .insert((task_name.to_string(), generation), exit_code);
+        return Ok(exit_code);
+    }
 
     for dependency in &task.depends_on {
         let dependency_exit = execute_task_with_hooks(
@@ -1589,6 +1721,86 @@ fn execute_task_with_hooks(
         .completed_by_generation
         .insert((task_name.to_string(), generation), final_exit_code);
     Ok(final_exit_code)
+}
+
+fn ensure_task_required_services(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task: &TaskSpec,
+    working_dir: &Path,
+    mode: TaskExecutionMode,
+    state: &mut TaskRunState,
+) -> Result<Option<i32>, RunError> {
+    if task.requires_services.is_empty() {
+        return Ok(None);
+    }
+
+    let required_services = required_service_closure(contract, &task.requires_services);
+
+    for service_name in service_start_order(contract)
+        .into_iter()
+        .filter(|name| required_services.contains(name))
+    {
+        if !state.prepared_services.insert(service_name.clone()) {
+            continue;
+        }
+
+        let service = contract
+            .services
+            .get(service_name.as_str())
+            .expect("validated required service should exist");
+
+        if let Some(start) = service.start_command(service_name.as_str()) {
+            match run_host_shell_command(start.as_str(), working_dir, mode) {
+                Ok(output) => {
+                    state.stdout.push_str(&output.stdout);
+                    state.stderr.push_str(&output.stderr);
+                    if output.exit_code != 0 {
+                        append_required_service_failure(
+                            &mut state.stderr,
+                            task_name,
+                            service_name.as_str(),
+                            &format!(
+                                "service start command exited with code {}",
+                                output.exit_code
+                            ),
+                            None,
+                        );
+                        return Ok(Some(output.exit_code));
+                    }
+                }
+                Err(error) => {
+                    append_required_service_failure(
+                        &mut state.stderr,
+                        task_name,
+                        service_name.as_str(),
+                        &format!("failed to execute service start command: {error}"),
+                        None,
+                    );
+                    return Ok(Some(1));
+                }
+            }
+        }
+
+        let report =
+            crate::doctor::diagnose_service(contract, contract_path, service_name.as_str());
+        if !report.ok {
+            let finding = report.findings.first();
+            append_required_service_failure(
+                &mut state.stderr,
+                task_name,
+                service_name.as_str(),
+                finding
+                    .map(|finding| finding.why.as_str())
+                    .unwrap_or("service requirement did not pass readiness checks"),
+                finding.map(|finding| finding.next.as_str()),
+            );
+            return Ok(Some(1));
+        }
+    }
+
+    Ok(None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4320,6 +4532,41 @@ tasks:
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("script-output.txt")).unwrap(),
             "script"
+        );
+    }
+
+    #[test]
+    fn run_task_requires_services_starts_required_services_before_task() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: echo service >> run.log
+    readiness:
+      from: host
+      run: test -f run.log
+tasks:
+  build:
+    requires_services:
+      - postgres
+    script: |
+      echo task >> run.log
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["service", "task"]
         );
     }
 

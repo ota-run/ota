@@ -710,6 +710,8 @@ tasks:
     run: pnpm install
     safe_for_agent: true
   build:
+    requires_services:
+      - postgres
     depends_on:
       - setup
     run: pnpm build
@@ -742,6 +744,7 @@ Fields:
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `variants`: optional list of conditional task executions
+- `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
 
@@ -752,6 +755,7 @@ Use cases:
 - use `env` when a task needs fixed environment values that should override repo-level env for that task
 - use `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`
 - use `description` for the short summary and `notes` for the task purpose plus extra guidance
+- use `requires_services` when a task needs canonical services brought up through their manager before the task runs
 - use `depends_on` to model a build/package/upload chain without hiding order in shell scripts
 
 Task input semantics:
@@ -766,6 +770,7 @@ Task input semantics:
 - task dependencies do not inherit the parent task’s declared inputs
 - if every declared input has a default, the task can be run with no input flags
 - task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
+- `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
 
 Example:
 
@@ -879,6 +884,8 @@ Rules:
 - task dependency cycles are rejected
 - hook edges participate in the same task cycle detection as `depends_on`
 - `depends_on` is the canonical way to reuse task steps instead of calling `ota run` from inside another task script
+- `requires_services` references must resolve to known services
+- each required service must declare an actionable manager or readiness surface so ota can enforce the requirement
 
 Current execution model:
 
