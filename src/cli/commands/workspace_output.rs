@@ -265,6 +265,7 @@ mod tests {
                 contract_identity: None,
                 workspace: Some(String::from("demo")),
                 backend: None,
+                context: None,
                 lifecycle: None,
                 image: None,
                 target: None,
@@ -355,10 +356,10 @@ mod tests {
         );
 
         assert!(text.contains("Review contract drift (2)"));
-        assert!(text.contains("Review approved policy surfaces (2)"));
+        assert!(text.contains("Review active policy surfaces (2)"));
         assert_eq!(text.matches("Next:").count(), 2);
-        assert!(text.contains("» Policy-backed provisioning sources are declared"));
-        assert!(text.contains("» Adapter bootstrap sources are declared"));
+        assert!(text.contains("» Approved provisioning sources are configured"));
+        assert!(text.contains("» Approved adapter bootstrap is configured"));
         assert!(text.contains("Task output:"));
         assert!(text.contains("» sh: 1: sdk: not found"));
     }
@@ -376,6 +377,7 @@ mod tests {
                 contract_identity: None,
                 workspace: Some(String::from("demo")),
                 backend: None,
+                context: None,
                 lifecycle: None,
                 image: None,
                 target: None,

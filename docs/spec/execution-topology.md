@@ -24,7 +24,7 @@
 
 # Execution Topology
 
-Status: proposal for the next contract and runtime model. This is not current shipped behavior.
+Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
 
 ## Core truth
 

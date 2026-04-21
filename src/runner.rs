@@ -38,13 +38,16 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::execution::{
-    available_container_engines, container_engine_candidates, selected_container_engine,
+    available_container_engines, container_engine_candidates,
+    container_engine_candidates_from_backend, execution_image, matching_execution_context_name,
+    selected_container_engine, selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, PolicyPackSource, load_org_policy_pack_auto_details,
 };
 use crate::schema::{
-    Backend, Contract, EnvRequirement, EnvSourceKind, ExtensionKind, Lifecycle, TaskSpec,
+    Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
+    ExtensionKind, Lifecycle, RemoteBackend, TaskSpec,
 };
 
 #[derive(Clone)]
@@ -1132,15 +1135,11 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     let (backend, lifecycle) = effective_execution(contract, ExecutionOverrides::default());
     match (backend, lifecycle) {
         (Backend::Container, Some(Lifecycle::Persistent)) => {
-            let image = contract
-                .execution
-                .as_ref()
-                .and_then(|execution| execution.backends.as_ref())
-                .and_then(|backends| backends.container.as_ref())
-                .map(|container| container.image.clone())
-                .ok_or(RunError::MissingContainerImage {
+            let image = execution_image(contract, Backend::Container).ok_or(
+                RunError::MissingContainerImage {
                     task: String::from("clean"),
-                })?;
+                },
+            )?;
             let engine = selected_container_engine(contract).ok_or_else(|| {
                 RunError::MissingContainerBackendCli {
                     task: String::from("clean"),
@@ -1292,11 +1291,11 @@ enum TaskExecutionMode {
 }
 
 #[derive(Debug)]
-struct TaskCommandOutput {
-    exit_code: i32,
-    stdout: String,
-    stderr: String,
-    target: Option<String>,
+pub(crate) struct TaskCommandOutput {
+    pub(crate) exit_code: i32,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) target: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -1310,13 +1309,14 @@ struct TaskRunState {
     target: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedExecutionBackend {
     Native,
     Container {
         image: String,
         engine: String,
         lifecycle: Lifecycle,
+        compose_networks: Vec<String>,
     },
     Remote {
         provider: String,
@@ -1345,7 +1345,7 @@ fn run_task_internal(
             task: task_name.to_string(),
         });
     }
-    let (preferred_backend, _) = effective_execution(contract, overrides);
+    let preferred_backend = effective_task_execution(contract, task_name, overrides).backend;
     let mut preflight_loader = match mode {
         TaskExecutionMode::Stream {
             emit_progress: true,
@@ -1744,6 +1744,7 @@ fn execute_task_command(
             image,
             engine,
             lifecycle,
+            compose_networks,
         } => execute_container_task_command(
             task_name,
             command,
@@ -1754,6 +1755,7 @@ fn execute_task_command(
             image,
             engine,
             *lifecycle,
+            compose_networks,
             mode,
         ),
         ResolvedExecutionBackend::Remote {
@@ -1786,6 +1788,24 @@ fn execute_task_command(
             mode,
         ),
     }
+}
+
+pub(crate) fn run_backend_command_captured(
+    task_name: &str,
+    command: &str,
+    working_dir: &Path,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    execute_task_command(
+        task_name,
+        command,
+        working_dir,
+        &BTreeMap::new(),
+        None,
+        &BTreeSet::new(),
+        backend,
+        TaskExecutionMode::Capture,
+    )
 }
 
 fn resolve_task_inputs(
@@ -1957,15 +1977,128 @@ pub fn effective_execution(
     overrides: ExecutionOverrides,
 ) -> (Backend, Option<Lifecycle>) {
     let execution = contract.execution.as_ref();
+    let default_context = execution.and_then(|execution| execution.default_context());
     let backend = overrides
         .backend
+        .or_else(|| default_context.map(|(_, context)| context.backend))
         .or_else(|| execution.and_then(|execution| execution.preferred))
         .unwrap_or(Backend::Native);
     let lifecycle = overrides
         .lifecycle
+        .or_else(|| {
+            default_context
+                .filter(|(_, context)| context.backend == backend)
+                .and_then(|(_, context)| context.lifecycle)
+        })
         .or_else(|| execution.and_then(|execution| execution.lifecycle));
 
     (backend, lifecycle)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct EffectiveTaskExecution<'a> {
+    pub context_name: Option<&'a str>,
+    pub backend: Backend,
+    pub lifecycle: Option<Lifecycle>,
+    pub container: Option<&'a ContainerBackend>,
+    pub remote: Option<&'a RemoteBackend>,
+}
+
+fn selected_task_context<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+) -> Option<(&'a str, &'a ExecutionContext)> {
+    let execution = contract.execution.as_ref()?;
+    let task_context = contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| task.context.as_deref());
+    let context_name = task_context.or(execution.default_context.as_deref())?;
+    execution
+        .contexts
+        .get_key_value(context_name)
+        .map(|(name, context)| (name.as_str(), context))
+}
+
+pub(crate) fn named_execution_context<'a>(
+    contract: &'a Contract,
+    context_name: &str,
+) -> Option<(&'a str, &'a ExecutionContext)> {
+    contract
+        .execution
+        .as_ref()?
+        .contexts
+        .get_key_value(context_name)
+        .map(|(name, context)| (name.as_str(), context))
+}
+
+fn compose_networks_for_context(context: &ExecutionContext) -> Vec<String> {
+    context
+        .attachments
+        .compose
+        .iter()
+        .map(|project| project.trim())
+        .filter(|project| !project.is_empty())
+        .map(|project| format!("{project}_default"))
+        .collect()
+}
+
+pub(crate) fn effective_task_execution<'a>(
+    contract: &'a Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> EffectiveTaskExecution<'a> {
+    let execution = contract.execution.as_ref();
+    let selected_context = selected_task_context(contract, task_name);
+    let context = selected_context.map(|(_, context)| context);
+    let backend = overrides
+        .backend
+        .or_else(|| context.map(|context| context.backend))
+        .or_else(|| execution.and_then(|execution| execution.preferred))
+        .unwrap_or(Backend::Native);
+    let lifecycle = overrides
+        .lifecycle
+        .or_else(|| {
+            context
+                .filter(|context| context.backend == backend)
+                .and_then(|context| context.lifecycle)
+        })
+        .or_else(|| execution.and_then(|execution| execution.lifecycle));
+    let container = (backend == Backend::Container)
+        .then(|| {
+            context
+                .filter(|context| context.backend == Backend::Container)
+                .and_then(|context| context.container.as_ref())
+                .or_else(|| {
+                    execution
+                        .and_then(|execution| execution.backends.as_ref())
+                        .and_then(|backends| backends.container.as_ref())
+                })
+        })
+        .flatten();
+    let remote = (backend == Backend::Remote)
+        .then(|| {
+            context
+                .filter(|context| context.backend == Backend::Remote)
+                .and_then(|context| context.remote.as_ref())
+                .or_else(|| {
+                    execution
+                        .and_then(|execution| execution.backends.as_ref())
+                        .and_then(|backends| backends.remote.as_ref())
+                })
+        })
+        .flatten();
+    let context_name = selected_context
+        .map(|(name, _)| name)
+        .or_else(|| matching_execution_context_name(execution, backend, lifecycle));
+
+    EffectiveTaskExecution {
+        context_name,
+        backend,
+        lifecycle,
+        container,
+        remote,
+    }
 }
 
 pub(crate) fn resolve_execution_backend(
@@ -1973,28 +2106,27 @@ pub(crate) fn resolve_execution_backend(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Result<ResolvedExecutionBackend, RunError> {
-    let (preferred, lifecycle) = effective_execution(contract, overrides);
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let preferred = effective.backend;
+    let lifecycle = effective.lifecycle;
 
     match preferred {
         Backend::Native => Ok(ResolvedExecutionBackend::Native),
         Backend::Container => {
-            let Some(container) = contract
-                .execution
-                .as_ref()
-                .and_then(|execution| execution.backends.as_ref())
-                .and_then(|backends| backends.container.as_ref())
-            else {
+            let Some(container) = effective.container else {
                 return Err(RunError::MissingContainerImage {
                     task: task_name.to_string(),
                 });
             };
 
-            let engine = selected_container_engine(contract).ok_or_else(|| {
-                RunError::MissingContainerBackendCli {
-                    task: task_name.to_string(),
-                    engines: container_engine_candidates(contract).join(", "),
-                }
-            })?;
+            let engine =
+                selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
+                    RunError::MissingContainerBackendCli {
+                        task: task_name.to_string(),
+                        engines: container_engine_candidates_from_backend(Some(container))
+                            .join(", "),
+                    }
+                })?;
 
             let lifecycle = lifecycle.ok_or_else(|| RunError::MissingContainerLifecycle {
                 task: task_name.to_string(),
@@ -2004,13 +2136,14 @@ pub(crate) fn resolve_execution_backend(
                 image: container.image.clone(),
                 engine,
                 lifecycle,
+                compose_networks: selected_task_context(contract, task_name)
+                    .filter(|(_, context)| context.backend == Backend::Container)
+                    .map(|(_, context)| compose_networks_for_context(context))
+                    .unwrap_or_default(),
             })
         }
-        Backend::Remote => contract
-            .execution
-            .as_ref()
-            .and_then(|execution| execution.backends.as_ref())
-            .and_then(|backends| backends.remote.as_ref())
+        Backend::Remote => effective
+            .remote
             .ok_or_else(|| RunError::MissingRemoteProvider {
                 task: task_name.to_string(),
             })
@@ -2061,6 +2194,103 @@ pub(crate) fn resolve_execution_backend(
                     })
                 }
             }),
+    }
+}
+
+pub(crate) fn resolve_context_execution_backend(
+    contract: &Contract,
+    context_name: &str,
+) -> Result<ResolvedExecutionBackend, RunError> {
+    let Some((_, context)) = named_execution_context(contract, context_name) else {
+        return Err(RunError::UnknownTask {
+            task: format!("context:{context_name}"),
+        });
+    };
+
+    match context.backend {
+        Backend::Native => Ok(ResolvedExecutionBackend::Native),
+        Backend::Container => {
+            let Some(container) = context.container.as_ref() else {
+                return Err(RunError::MissingContainerImage {
+                    task: format!("context:{context_name}"),
+                });
+            };
+
+            let engine =
+                selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
+                    RunError::MissingContainerBackendCli {
+                        task: format!("context:{context_name}"),
+                        engines: container_engine_candidates_from_backend(Some(container))
+                            .join(", "),
+                    }
+                })?;
+
+            let lifecycle =
+                context
+                    .lifecycle
+                    .ok_or_else(|| RunError::MissingContainerLifecycle {
+                        task: format!("context:{context_name}"),
+                    })?;
+
+            Ok(ResolvedExecutionBackend::Container {
+                image: container.image.clone(),
+                engine,
+                lifecycle,
+                compose_networks: compose_networks_for_context(context),
+            })
+        }
+        Backend::Remote => {
+            let Some(remote) = context.remote.as_ref() else {
+                return Err(RunError::MissingRemoteProvider {
+                    task: format!("context:{context_name}"),
+                });
+            };
+
+            if remote.provider.trim().is_empty() {
+                return Err(RunError::MissingRemoteProvider {
+                    task: format!("context:{context_name}"),
+                });
+            }
+            let target = remote
+                .target
+                .clone()
+                .filter(|target| !target.trim().is_empty())
+                .ok_or_else(|| RunError::MissingRemoteTarget {
+                    task: format!("context:{context_name}"),
+                    provider: remote.provider.clone(),
+                    example_target: remote_target_example(&remote.provider).to_string(),
+                })?;
+
+            if is_builtin_remote_provider(&remote.provider) {
+                Ok(ResolvedExecutionBackend::Remote {
+                    provider: remote.provider.clone(),
+                    target,
+                    cwd: remote.cwd.clone(),
+                })
+            } else {
+                let Some(extension) = backend_provider_extension(contract, &remote.provider) else {
+                    return Err(RunError::MissingBackendProvider {
+                        task: format!("context:{context_name}"),
+                        provider: remote.provider.clone(),
+                    });
+                };
+
+                if extension.api_version != 1 {
+                    return Err(RunError::UnsupportedBackendProviderVersion {
+                        task: format!("context:{context_name}"),
+                        provider: remote.provider.clone(),
+                        api_version: extension.api_version,
+                    });
+                }
+
+                Ok(ResolvedExecutionBackend::BackendProvider {
+                    provider: remote.provider.clone(),
+                    command: extension.command.clone(),
+                    target,
+                    cwd: remote.cwd.clone(),
+                })
+            }
+        }
     }
 }
 
@@ -2589,6 +2819,7 @@ fn execute_container_task_command(
     image: &str,
     engine: &str,
     lifecycle: Lifecycle,
+    compose_networks: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     if let Some(issue) = probe_container_backend(engine, task_name)? {
@@ -2610,6 +2841,7 @@ fn execute_container_task_command(
             secret_env_names,
             image,
             engine,
+            compose_networks,
             mode,
         ),
         Lifecycle::Persistent => execute_persistent_container_task_command(
@@ -2621,6 +2853,7 @@ fn execute_container_task_command(
             secret_env_names,
             image,
             engine,
+            compose_networks,
             mode,
         ),
     }
@@ -2656,13 +2889,13 @@ fn execute_ephemeral_container_task_command(
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
+    compose_networks: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let container_name = ephemeral_container_name(working_dir, image, engine);
-    let mut container = Command::new(engine);
-    container
-        .arg("run")
-        .arg("--rm")
+    let mut create = Command::new(engine);
+    create
+        .arg("create")
         .arg("-i")
         .arg("--name")
         .arg(&container_name)
@@ -2672,21 +2905,46 @@ fn execute_ephemeral_container_task_command(
         .arg(format!("{}:/workspace", working_dir.display()))
         .arg("-w")
         .arg("/workspace");
+    if let Some(network) = compose_networks.first() {
+        create.arg("--network").arg(network);
+    }
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
-            container.env(name, value);
-            container.arg("--env").arg(name);
+            create.env(name, value);
+            create.arg("--env").arg(name);
         } else {
-            container.arg("--env").arg(format!("{name}={value}"));
+            create.arg("--env").arg(format!("{name}={value}"));
         }
     }
-    container
+    create
         .arg(image)
         .arg("-c")
         .arg(command_with_path_export(command, path_export));
 
+    let create_status = create.output().map_err(|source| RunError::SpawnFailed {
+        task: task_name.to_string(),
+        source,
+    })?;
+    if !create_status.status.success() {
+        return Ok(TaskCommandOutput {
+            exit_code: create_status.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&create_status.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&create_status.stderr).into_owned(),
+            target: Some(container_name.clone()),
+        });
+    }
+
+    if let Some(failure) =
+        ensure_container_networks(engine, &container_name, compose_networks, task_name)?
+    {
+        let _ = remove_persistent_container(engine, &container_name, task_name);
+        return Ok(container_command_failure(failure, container_name.clone()));
+    }
+
     match mode {
         TaskExecutionMode::Stream { .. } => {
+            let mut container = Command::new(engine);
+            container.arg("start").arg("-ai").arg(&container_name);
             let exit_code = run_streaming_command_with_loader(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
@@ -2695,6 +2953,7 @@ fn execute_ephemeral_container_task_command(
                 task: task_name.to_string(),
                 source,
             })?;
+            let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
                 exit_code,
@@ -2704,6 +2963,8 @@ fn execute_ephemeral_container_task_command(
             })
         }
         TaskExecutionMode::Capture => {
+            let mut container = Command::new(engine);
+            container.arg("start").arg("-ai").arg(&container_name);
             let output = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
@@ -2714,6 +2975,7 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+            let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
                 exit_code: output.status.code().unwrap_or(1),
@@ -2734,13 +2996,19 @@ fn execute_persistent_container_task_command(
     secret_env_names: &BTreeSet<String>,
     image: &str,
     engine: &str,
+    compose_networks: &[String],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let container_name = persistent_container_name(working_dir, image, engine);
 
-    if let Some(failure) =
-        ensure_persistent_container_ready(task_name, working_dir, image, engine, &container_name)?
-    {
+    if let Some(failure) = ensure_persistent_container_ready(
+        task_name,
+        working_dir,
+        image,
+        engine,
+        &container_name,
+        compose_networks,
+    )? {
         return Ok(failure);
     }
 
@@ -2759,8 +3027,14 @@ fn execute_persistent_container_task_command(
         if remove.exit_code != 0 {
             return Ok(container_command_failure(remove, container_name.clone()));
         }
-        let create =
-            create_persistent_container(task_name, working_dir, image, engine, &container_name)?;
+        let create = create_persistent_container(
+            task_name,
+            working_dir,
+            image,
+            engine,
+            &container_name,
+            compose_networks,
+        )?;
         if create.exit_code != 0 {
             return Ok(container_command_failure(create, container_name.clone()));
         }
@@ -2785,14 +3059,29 @@ fn ensure_persistent_container_ready(
     image: &str,
     engine: &str,
     container_name: &str,
+    compose_networks: &[String],
 ) -> Result<Option<TaskCommandOutput>, RunError> {
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code != 0 {
-        let status =
-            create_persistent_container(task_name, working_dir, image, engine, container_name)?;
+        let status = create_persistent_container(
+            task_name,
+            working_dir,
+            image,
+            engine,
+            container_name,
+            compose_networks,
+        )?;
         if status.exit_code != 0 {
             return Ok(Some(container_command_failure(
                 status,
+                container_name.to_string(),
+            )));
+        }
+        if let Some(failure) =
+            ensure_container_networks(engine, container_name, compose_networks, task_name)?
+        {
+            return Ok(Some(container_command_failure(
+                failure,
                 container_name.to_string(),
             )));
         }
@@ -2800,7 +3089,17 @@ fn ensure_persistent_container_ready(
     }
 
     match persistent_container_running(engine, container_name, task_name)? {
-        Some(true) => return Ok(None),
+        Some(true) => {
+            if let Some(failure) =
+                ensure_container_networks(engine, container_name, compose_networks, task_name)?
+            {
+                return Ok(Some(container_command_failure(
+                    failure,
+                    container_name.to_string(),
+                )));
+            }
+            return Ok(None);
+        }
         Some(false) => {
             let remove = remove_persistent_container(engine, container_name, task_name)?;
             if remove.exit_code != 0 {
@@ -2809,11 +3108,25 @@ fn ensure_persistent_container_ready(
                     container_name.to_string(),
                 )));
             }
-            let create =
-                create_persistent_container(task_name, working_dir, image, engine, container_name)?;
+            let create = create_persistent_container(
+                task_name,
+                working_dir,
+                image,
+                engine,
+                container_name,
+                compose_networks,
+            )?;
             if create.exit_code != 0 {
                 return Ok(Some(container_command_failure(
                     create,
+                    container_name.to_string(),
+                )));
+            }
+            if let Some(failure) =
+                ensure_container_networks(engine, container_name, compose_networks, task_name)?
+            {
+                return Ok(Some(container_command_failure(
+                    failure,
                     container_name.to_string(),
                 )));
             }
@@ -2830,6 +3143,15 @@ fn ensure_persistent_container_ready(
         )));
     }
 
+    if let Some(failure) =
+        ensure_container_networks(engine, container_name, compose_networks, task_name)?
+    {
+        return Ok(Some(container_command_failure(
+            failure,
+            container_name.to_string(),
+        )));
+    }
+
     Ok(None)
 }
 
@@ -2839,31 +3161,89 @@ fn create_persistent_container(
     image: &str,
     engine: &str,
     container_name: &str,
+    compose_networks: &[String],
 ) -> Result<ContainerCommandOutput, RunError> {
-    container_command_output(
+    let mut args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name.to_string(),
+        "--label".to_string(),
+        OTA_MANAGED_CONTAINER_LABEL.to_string(),
+        "--label".to_string(),
+        OTA_PERSISTENT_CONTAINER_LABEL.to_string(),
+        "--entrypoint".to_string(),
+        "sh".to_string(),
+        "-v".to_string(),
+        format!("{}:/workspace", working_dir.display()),
+        "-w".to_string(),
+        "/workspace".to_string(),
+    ];
+    if let Some(network) = compose_networks.first() {
+        args.push("--network".to_string());
+        args.push(network.clone());
+    }
+    args.push(image.to_string());
+    args.push("-lc".to_string());
+    args.push("while true; do sleep 3600; done".to_string());
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    container_command_output(engine, &arg_refs, None, task_name)
+}
+
+fn ensure_container_networks(
+    engine: &str,
+    container_name: &str,
+    compose_networks: &[String],
+    task_name: &str,
+) -> Result<Option<ContainerCommandOutput>, RunError> {
+    if compose_networks.is_empty() {
+        return Ok(None);
+    }
+
+    let inspect = container_command_output(
         engine,
         &[
-            "run",
-            "-d",
-            "--name",
+            "inspect",
+            "-f",
+            "{{json .NetworkSettings.Networks}}",
             container_name,
-            "--label",
-            OTA_MANAGED_CONTAINER_LABEL,
-            "--label",
-            OTA_PERSISTENT_CONTAINER_LABEL,
-            "--entrypoint",
-            "sh",
-            "-v",
-            &format!("{}:/workspace", working_dir.display()),
-            "-w",
-            "/workspace",
-            image,
-            "-lc",
-            "while true; do sleep 3600; done",
         ],
         None,
         task_name,
-    )
+    )?;
+    if inspect.exit_code != 0 {
+        return Ok(Some(inspect));
+    }
+
+    let attached =
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(inspect.stdout.trim())
+            .map(|networks| networks.keys().cloned().collect::<BTreeSet<_>>())
+            .unwrap_or_default();
+
+    for network in compose_networks {
+        if attached.contains(network) {
+            continue;
+        }
+
+        let status = container_command_output(
+            engine,
+            &["network", "connect", network, container_name],
+            None,
+            task_name,
+        )?;
+        if status.exit_code != 0 && !container_network_already_connected(&status) {
+            return Ok(Some(status));
+        }
+    }
+
+    Ok(None)
+}
+
+fn container_network_already_connected(status: &ContainerCommandOutput) -> bool {
+    let combined = format!("{}\n{}", status.stdout, status.stderr).to_ascii_lowercase();
+    combined.contains("already exists")
+        || combined.contains("already connected")
+        || combined.contains("is already connected")
 }
 
 fn remove_persistent_container(
@@ -3878,6 +4258,7 @@ tasks:
 
     #[test]
     fn executes_script_tasks() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -3960,6 +4341,7 @@ tasks:
                     image: String::from("rust:1.94-bookworm"),
                     engine: String::from("docker"),
                     lifecycle: Lifecycle::Ephemeral,
+                    compose_networks: Vec::new(),
                 }
             ),
             "Running test (container)"
@@ -3978,7 +4360,108 @@ tasks:
     }
 
     #[test]
+    fn resolves_task_backend_from_bound_execution_context() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+      attachments:
+        compose:
+          - local
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      service: postgres
+tasks:
+  compose:up:
+    context: host
+    run: echo host
+  build:
+    context: app
+    run: echo build
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let podman_path = bin_dir.join("podman");
+        install_fake_container_engine(&podman_path);
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&podman_path, permissions).unwrap();
+        }
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        assert!(matches!(
+            resolve_execution_backend(
+                &fixture.contract,
+                "compose:up",
+                ExecutionOverrides::default()
+            )
+            .unwrap(),
+            ResolvedExecutionBackend::Native
+        ));
+
+        let build_backend =
+            resolve_execution_backend(&fixture.contract, "build", ExecutionOverrides::default())
+                .unwrap();
+        match build_backend {
+            ResolvedExecutionBackend::Container {
+                image,
+                engine,
+                lifecycle,
+                compose_networks,
+            } => {
+                assert_eq!(image, "ghcr.io/ota/test:latest");
+                assert_eq!(engine, "podman");
+                assert_eq!(lifecycle, Lifecycle::Persistent);
+                assert_eq!(compose_networks, vec![String::from("local_default")]);
+            }
+            other => panic!("expected container backend, got {other:?}"),
+        }
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+    }
+
+    #[test]
     fn execute_task_with_hooks_caches_final_exit_after_hook_failures() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -4040,6 +4523,7 @@ tasks:
 
     #[test]
     fn reruns_after_success_tasks_even_if_completed_as_dependencies() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -5370,6 +5854,25 @@ case "$command" in
         fi
         exit 0
       fi
+      if [ "$format" = "{{json .NetworkSettings.Networks}}" ]; then
+        if [ -f "$state_dir/$name.networks" ]; then
+          first=1
+          printf "{"
+          while IFS= read -r network; do
+            [ -n "$network" ] || continue
+            if [ "$first" = "1" ]; then
+              first=0
+            else
+              printf ","
+            fi
+            printf "\"%s\":{}" "$network"
+          done < "$state_dir/$name.networks"
+          printf "}\n"
+        else
+          printf "{}\n"
+        fi
+        exit 0
+      fi
       exit 1
     fi
     name="$1"
@@ -5377,12 +5880,35 @@ case "$command" in
     exit $?
     ;;
   start)
-    name="$1"
+    attach=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -a|-i|-ai|-ia)
+          attach=1
+          shift
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
     printf "start\n" >> "$host_dir/docker-log.txt"
     if [ ! -f "$state_dir/$name.no-start-revive" ]; then
       : > "$state_dir/$name.running"
+    fi
+    if [ "$attach" = "1" ] && [ -f "$state_dir/$name.command" ]; then
+      if [ -f "$state_dir/$name.env" ]; then
+        while IFS= read -r env_entry; do
+          [ -n "$env_entry" ] || continue
+          export "$env_entry"
+        done < "$state_dir/$name.env"
+      fi
+      cd "$host_dir" || exit 1
+      exec /bin/sh -c "$(cat "$state_dir/$name.command")"
     fi
     exit 0
     ;;
@@ -5412,11 +5938,83 @@ case "$command" in
     cd "$host_dir" || exit 1
     exec /bin/sh -c "$3"
     ;;
+  create)
+    mount=""
+    name=""
+    network=""
+    env_entries=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --rm|-i)
+          shift
+          ;;
+        --entrypoint)
+          shift 2
+          ;;
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        --network)
+          network="$2"
+          shift 2
+          ;;
+        -v)
+          mount="$2"
+          shift 2
+          ;;
+        -w)
+          shift 2
+          ;;
+        --env)
+          case "$2" in
+            *=*)
+              env_entries="${env_entries}${2}
+"
+              ;;
+            *)
+              env_entries="${env_entries}${2}=$(printenv "$2")
+"
+              ;;
+          esac
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir="${mount%%:*}"
+    printf "%s" "$host_dir" > "$state_dir/$name.path"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ -n "$network" ]; then
+      printf "%s\n" "$network" > "$state_dir/$name.networks"
+    else
+      : > "$state_dir/$name.networks"
+    fi
+    if [ -n "$env_entries" ]; then
+      printf "%s" "$env_entries" > "$state_dir/$name.env"
+    else
+      : > "$state_dir/$name.env"
+    fi
+    if [ "$1" = "-c" ]; then
+      printf "%s" "$2" > "$state_dir/$name.command"
+    elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      printf "%s" "$3" > "$state_dir/$name.command"
+    else
+      printf "%s" "$1" > "$state_dir/$name.command"
+    fi
+    printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
   run)
     detached=0
     mount=""
     name=""
     labels=""
+    network=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -5436,6 +6034,10 @@ case "$command" in
         --label)
           labels="${labels}${2}
 "
+          shift 2
+          ;;
+        --network)
+          network="$2"
           shift 2
           ;;
         -v)
@@ -5461,6 +6063,11 @@ case "$command" in
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
       : > "$state_dir/$name.running"
+      if [ -n "$network" ]; then
+        printf "%s\n" "$network" > "$state_dir/$name.networks"
+      else
+        : > "$state_dir/$name.networks"
+      fi
       if [ -n "$labels" ]; then
         printf "%s" "$labels" > "$state_dir/$name.labels"
       fi
@@ -5477,6 +6084,15 @@ case "$command" in
     fi
     exec /bin/sh -c "$1"
     ;;
+  network)
+    [ "$1" = "connect" ] || exit 1
+    network="$2"
+    name="$3"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    touch "$state_dir/$name.networks"
+    grep -Fx "$network" "$state_dir/$name.networks" >/dev/null || printf "%s\n" "$network" >> "$state_dir/$name.networks"
+    exit 0
+    ;;
   rm)
     shift
     [ "$1" = "-f" ] && shift
@@ -5487,6 +6103,9 @@ case "$command" in
     rm -f "$state_dir/$name.running"
     rm -f "$state_dir/$name.no-start-revive"
     rm -f "$state_dir/$name.labels"
+    rm -f "$state_dir/$name.networks"
+    rm -f "$state_dir/$name.command"
+    rm -f "$state_dir/$name.env"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
   ;;

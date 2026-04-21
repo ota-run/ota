@@ -416,9 +416,18 @@ impl OrgPolicyPack {
         os: &str,
         contract: &crate::schema::Contract,
     ) -> Vec<String> {
+        let requirements = contract.all_requirement_surface();
+        self.version_policy_violations_for_requirement_surface_os(os, &requirements)
+    }
+
+    pub fn version_policy_violations_for_requirement_surface_os(
+        &self,
+        os: &str,
+        requirements: &crate::schema::RequirementSurface,
+    ) -> Vec<String> {
         let mut violations = Vec::new();
 
-        for (name, requirement) in &contract.runtimes {
+        for (name, requirement) in &requirements.runtimes {
             if !requirement.required_for_os(os) {
                 continue;
             }
@@ -437,7 +446,7 @@ impl OrgPolicyPack {
             }
         }
 
-        for (name, requirement) in &contract.tools {
+        for (name, requirement) in &requirements.tools {
             if !requirement.required_for_os(os) {
                 continue;
             }
@@ -624,9 +633,18 @@ impl OrgPolicyPack {
         os: &str,
         contract: &crate::schema::Contract,
     ) -> ProvisioningPlan {
+        let requirements = contract.all_requirement_surface();
+        self.provisioning_plan_for_requirement_surface_os(os, &requirements)
+    }
+
+    pub fn provisioning_plan_for_requirement_surface_os(
+        &self,
+        os: &str,
+        requirements: &crate::schema::RequirementSurface,
+    ) -> ProvisioningPlan {
         let mut plan = ProvisioningPlan::default();
 
-        for (name, requirement) in &contract.runtimes {
+        for (name, requirement) in &requirements.runtimes {
             if !requirement.required_for_os(os) {
                 continue;
             }
@@ -644,7 +662,7 @@ impl OrgPolicyPack {
             );
         }
 
-        for (name, requirement) in &contract.tools {
+        for (name, requirement) in &requirements.tools {
             if !requirement.required_for_os(os) {
                 continue;
             }
@@ -726,7 +744,17 @@ impl OrgPolicyPack {
         os: &str,
         contract: &crate::schema::Contract,
     ) -> Vec<ProvisioningAction> {
-        self.provisioning_plan_for_os(os, contract).actions
+        let requirements = contract.all_requirement_surface();
+        self.selected_provisioning_actions_for_requirement_surface_os(os, &requirements)
+    }
+
+    pub fn selected_provisioning_actions_for_requirement_surface_os(
+        &self,
+        os: &str,
+        requirements: &crate::schema::RequirementSurface,
+    ) -> Vec<ProvisioningAction> {
+        self.provisioning_plan_for_requirement_surface_os(os, requirements)
+            .actions
     }
 
     pub fn provisioning_backend_request(
@@ -1627,8 +1655,8 @@ fn section_present(contract: &crate::schema::Contract, section: &str) -> bool {
         "project" => true,
         "workspace" => contract.workspace.is_some(),
         "execution" => contract.execution.is_some(),
-        "runtimes" => !contract.runtimes.is_empty(),
-        "tools" => !contract.tools.is_empty(),
+        "runtimes" => !contract.all_requirement_surface().runtimes.is_empty(),
+        "tools" => !contract.all_requirement_surface().tools.is_empty(),
         "env" => !contract.env.is_empty(),
         "services" => !contract.services.is_empty(),
         "tasks" => !contract.tasks.is_empty(),
@@ -2598,6 +2626,43 @@ runtimes:
     }
 
     #[test]
+    fn builds_provisioning_actions_from_context_requirements() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    java:
+      source: org-mirror
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+      requirements:
+        runtimes:
+          java: "22"
+"#,
+        )
+        .unwrap();
+
+        let actions = policy.selected_provisioning_actions(&contract);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].target_kind, ProvisioningTargetKind::Runtime);
+        assert_eq!(actions[0].name, "java");
+        assert_eq!(actions[0].source, "org-mirror");
+    }
+
+    #[test]
     fn builds_provisioning_backend_request_from_allowed_targets() {
         let policy: OrgPolicyPack = serde_yaml::from_str(
             r#"
@@ -2633,6 +2698,39 @@ runtimes:
         );
         assert_eq!(request.actions[0].name, "java");
         assert_eq!(request.actions[0].source, "org-mirror");
+    }
+
+    #[test]
+    fn required_sections_accept_context_requirements() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  required_sections:
+    - runtimes
+    - tools
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
+      requirements:
+        runtimes:
+          java: "22"
+        tools:
+          maven: "3.9"
+"#,
+        )
+        .unwrap();
+
+        assert!(policy.missing_required_sections(&contract).is_empty());
     }
 
     #[test]

@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- surfaced resolved execution context names directly in `ota run` failure cards and `ota up`
+  phase/blocker cards, so the primary human-facing error path now matches the execution-topology
+  truth already present in receipts and summaries
+- made legacy `execution.preferred/...` contracts honor the branch’s single-context compatibility
+  model by surfacing the implicit workload context `app` in `ota run` / `ota up` receipts and
+  post-setup diagnosis, instead of dropping context names whenever the repo had not been upgraded
+  to explicit `execution.default_context` / `execution.contexts`
 - restore visible run progress indicators after the repo moved to container-first execution:
   interactive `ota run <task>` once again relies on the run command's own streaming loaders, and
   runs now show a short preflight loader while resolving execution backends before task spawn
@@ -36,6 +43,15 @@
 - made shared policy-surface findings point into explicit `ota policy review <repo>` follow-ups in receipt JSON, so external-repo adoption flows no longer fall back to generic “use this policy surface” wording for approved provisioning and bootstrap guidance.
 - redesigned blocked `ota up` provisioning output so it now surfaces a single primary `Reason:` and `Next:` path, demotes policy/host notes into `Additional context`, uses `BLOCKED` consistently when setup cannot clear prerequisites, suppresses leaked `setup` command framing on that path, and omits synthetic ephemeral container targets from the human `UP SUMMARY`.
 - added an `Execution Topology` design spec draft that proposes execution contexts, typed service managers, context-scoped endpoints, context-scoped readiness, and context-scoped requirements for mixed host/container service repos.
+- added the first execution-topology foundation slice: contracts can now declare `execution.default_context`, `execution.contexts`, and `tasks.<name>.context`, and `ota run` / `ota up` setup now resolve their execution backend from the bound task context instead of only the repo-wide default.
+- added the next execution-topology service slice: services can now declare typed managers for both `manager.kind: compose` and `manager.kind: host`, `ota up` / `ota doctor` derive Compose start and healthcheck commands from the Compose manager while host managers keep readiness on the host without fake derived lifecycle commands, and `ota services` now surfaces manager-backed service control in text and JSON output.
+- added the next execution-topology topology slice: services can now declare context-scoped `endpoints` plus `readiness.from`, `ota doctor` evaluates contextual readiness from the declared execution context, container task contexts now attach to declared Compose networks, and `ota services` exposes the projected service topology in text and JSON output.
+- made execution-context requirements real in readiness flows: `ota doctor`, `ota up`, and backend-scoped policy guidance now resolve runtime/tool requirements from the relevant execution contexts instead of only the legacy repo-wide `runtimes` / `tools` maps, and container-mode diagnosis now also includes host control-plane requirements when typed Compose managers are in play.
+- receipts, previews, and execution summaries now expose named execution contexts directly: `ota run`, `ota up`, and receipt-diff surfaces report which context executed the work, and `ota doctor` / other declared-execution summaries now show the default context plus the declared context topology instead of only flat backend metadata.
+- made contextual service readiness diagnosis honest when the declared readiness context is not executable: `ota doctor` now emits an explicit topology blocker with the projected endpoint and backend-resolution failure instead of collapsing that case into a generic “service readiness failed” result.
+- expanded `ota doctor --mode remote`: remote mode now probes executable remote contexts directly for runtime/tool versions, detects the remote target OS for policy-backed provisioning selection, diagnoses remote provisioning/installability failures through the same canonical provisioning path, emits approved version/provisioning policy surfaces per remote context, and blocks explicitly when a named remote context or remote OS probe is not executable.
+- made remote-topology diagnosis explicit in native doctor mode: when a repo depends on remote execution contexts, `ota doctor` now emits a partial-evaluation note instead of silently implying that local runtime/tool checks represent the remote environment too.
+- stopped `ota up` from silently remapping remote setup contexts onto native diagnosis: repos whose `setup` task resolves to a remote context now fail fast with an explicit blocker in normal and `--dry-run` flows instead of pretending host preconditions and post-setup diagnosis are authoritative.
 
 ## 1.5.2
 

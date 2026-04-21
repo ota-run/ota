@@ -692,6 +692,7 @@ enum AnnotationFormat {
 enum DoctorModeArg {
     Native,
     Container,
+    Remote,
 }
 
 impl UpdateChannel {
@@ -717,6 +718,7 @@ impl From<DoctorModeArg> for crate::doctor::DoctorMode {
         match value {
             DoctorModeArg::Native => crate::doctor::DoctorMode::Native,
             DoctorModeArg::Container => crate::doctor::DoctorMode::Container,
+            DoctorModeArg::Remote => crate::doctor::DoctorMode::Remote,
         }
     }
 }
@@ -4775,6 +4777,25 @@ case "$command" in
         fi
         exit 0
       fi
+      if [ "$format" = "{{json .NetworkSettings.Networks}}" ]; then
+        if [ -f "$state_dir/$name.networks" ]; then
+          first=1
+          printf "{"
+          while IFS= read -r network; do
+            [ -n "$network" ] || continue
+            if [ "$first" = "1" ]; then
+              first=0
+            else
+              printf ","
+            fi
+            printf "\"%s\":{}" "$network"
+          done < "$state_dir/$name.networks"
+          printf "}\n"
+        else
+          printf "{}\n"
+        fi
+        exit 0
+      fi
       exit 1
     fi
     name="$1"
@@ -4782,10 +4803,34 @@ case "$command" in
     exit $?
     ;;
   start)
-    name="$1"
+    attach=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -a|-i|-ai|-ia)
+          attach=1
+          shift
+          ;;
+        *)
+          name="$1"
+          shift
+          break
+          ;;
+      esac
+    done
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
     printf "start\n" >> "$host_dir/docker-log.txt"
+    : > "$state_dir/$name.running"
+    if [ "$attach" = "1" ] && [ -f "$state_dir/$name.command" ]; then
+      if [ -f "$state_dir/$name.env" ]; then
+        while IFS= read -r env_entry; do
+          [ -n "$env_entry" ] || continue
+          export "$env_entry"
+        done < "$state_dir/$name.env"
+      fi
+      cd "$host_dir" || exit 1
+      exec /bin/sh -c "$(cat "$state_dir/$name.command")"
+    fi
     exit 0
     ;;
   exec)
@@ -4810,11 +4855,83 @@ case "$command" in
     cd "$host_dir" || exit 1
     exec /bin/sh -c "$3"
     ;;
+  create)
+    mount=""
+    name=""
+    network=""
+    env_entries=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --rm|-i)
+          shift
+          ;;
+        --entrypoint)
+          shift 2
+          ;;
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        --network)
+          network="$2"
+          shift 2
+          ;;
+        -v)
+          mount="$2"
+          shift 2
+          ;;
+        -w)
+          shift 2
+          ;;
+        --env)
+          case "$2" in
+            *=*)
+              env_entries="${env_entries}${2}
+"
+              ;;
+            *)
+              env_entries="${env_entries}${2}=$(printenv "$2")
+"
+              ;;
+          esac
+          shift 2
+          ;;
+        *)
+          image="$1"
+          shift
+          break
+          ;;
+      esac
+    done
+    host_dir="${mount%%:*}"
+    printf "%s" "$host_dir" > "$state_dir/$name.path"
+    printf "%s" "$image" > "$host_dir/docker-image.txt"
+    if [ -n "$network" ]; then
+      printf "%s\n" "$network" > "$state_dir/$name.networks"
+    else
+      : > "$state_dir/$name.networks"
+    fi
+    if [ -n "$env_entries" ]; then
+      printf "%s" "$env_entries" > "$state_dir/$name.env"
+    else
+      : > "$state_dir/$name.env"
+    fi
+    if [ "$1" = "-c" ]; then
+      printf "%s" "$2" > "$state_dir/$name.command"
+    elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
+      printf "%s" "$3" > "$state_dir/$name.command"
+    else
+      printf "%s" "$1" > "$state_dir/$name.command"
+    fi
+    printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
+    exit 0
+    ;;
   run)
     detached=0
     mount=""
     name=""
     labels=""
+    network=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -4834,6 +4951,10 @@ case "$command" in
         --label)
           labels="${labels}${2}
 "
+          shift 2
+          ;;
+        --network)
+          network="$2"
           shift 2
           ;;
         -v)
@@ -4859,6 +4980,11 @@ case "$command" in
     if [ "$detached" = "1" ]; then
       printf "%s" "$host_dir" > "$state_dir/$name.path"
       : > "$state_dir/$name.running"
+      if [ -n "$network" ]; then
+        printf "%s\n" "$network" > "$state_dir/$name.networks"
+      else
+        : > "$state_dir/$name.networks"
+      fi
       if [ -n "$labels" ]; then
         printf "%s" "$labels" > "$state_dir/$name.labels"
       fi
@@ -4875,6 +5001,15 @@ case "$command" in
     fi
     exec /bin/sh -c "$1"
     ;;
+  network)
+    [ "$1" = "connect" ] || exit 1
+    network="$2"
+    name="$3"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    touch "$state_dir/$name.networks"
+    grep -Fx "$network" "$state_dir/$name.networks" >/dev/null || printf "%s\n" "$network" >> "$state_dir/$name.networks"
+    exit 0
+    ;;
   rm)
     shift
     [ "$1" = "-f" ] && shift
@@ -4884,6 +5019,9 @@ case "$command" in
     rm -f "$state_dir/$name.path"
     rm -f "$state_dir/$name.running"
     rm -f "$state_dir/$name.labels"
+    rm -f "$state_dir/$name.networks"
+    rm -f "$state_dir/$name.command"
+    rm -f "$state_dir/$name.env"
     printf "rm\n" >> "$host_dir/docker-log.txt"
     exit 0
     ;;
@@ -5307,6 +5445,8 @@ project:
 
     #[test]
     fn doctor_ready_next_steps_keep_repo_target_for_default_contracts() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -9433,7 +9573,7 @@ tasks:
 
     #[cfg(unix)]
     #[test]
-    fn up_runs_setup_in_ssh_remote_backend() {
+    fn up_blocks_setup_in_ssh_remote_backend() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -9505,22 +9645,19 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("READY"));
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "remote"
-        );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec sandbox-dev")
-        );
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("BLOCKED"));
+        assert!(stdout.contains("Context: app"));
+        assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
+        assert!(stdout.contains("provider `ssh` targeting `sandbox-dev`"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+        assert!(!log_path.exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn up_runs_setup_in_tsh_remote_backend() {
+    fn up_blocks_setup_in_tsh_remote_backend() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -9592,22 +9729,19 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("READY"));
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "remote"
-        );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec sandbox-dev")
-        );
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("BLOCKED"));
+        assert!(stdout.contains("Context: app"));
+        assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
+        assert!(stdout.contains("provider `tsh` targeting `sandbox-dev`"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+        assert!(!log_path.exists());
     }
 
     #[cfg(unix)]
     #[test]
-    fn up_runs_setup_in_kubectl_remote_backend() {
+    fn up_blocks_setup_in_kubectl_remote_backend() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -9679,17 +9813,14 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
-        assert!(strip_ansi(&output.stdout).contains("READY"));
-        assert_eq!(
-            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
-            "remote"
-        );
-        assert!(
-            fs::read_to_string(&log_path)
-                .unwrap()
-                .contains("exec pod/ota-dev")
-        );
+        assert_eq!(output.exit_code, 1);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("BLOCKED"));
+        assert!(stdout.contains("Context: app"));
+        assert!(stdout.contains("Remote setup contexts are not supported by `ota up` yet"));
+        assert!(stdout.contains("provider `kubectl` targeting `pod/ota-dev`"));
+        assert!(!fixture.dir.path().join("prepared.txt").exists());
+        assert!(!log_path.exists());
     }
 
     #[cfg(unix)]
@@ -10540,8 +10671,14 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
 tasks:
   fail:
+    context: app
     run: exit 7
 "#,
         );
@@ -10556,6 +10693,7 @@ tasks:
         assert!(stderr.contains("Next:"));
         assert!(stderr.contains("ota tasks --use"));
         assert!(stderr.contains(fixture.path()));
+        assert!(stderr.contains("Context: app\nWhere:"));
         assert!(stderr.contains("Why: task `fail` returned a non-zero exit code\nNext:"));
         assert!(!stderr.contains("Why: task `fail` returned a non-zero exit code\n\nNext:"));
         assert!(!stderr.contains("Next:\n\n\nRUN SUMMARY"));
@@ -10731,6 +10869,8 @@ tasks:
 
     #[test]
     fn run_success_followup_command_keeps_repo_target_for_default_contracts() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -12884,6 +13024,8 @@ version = "0.1.0"
 
     #[test]
     fn doctor_ignores_manual_detector_silence_for_contract_drift() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("ota.yaml"),
@@ -12930,6 +13072,8 @@ tasks:
 
     #[test]
     fn doctor_reports_ota_managed_detector_silence_for_contract_drift() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(
             dir.path().join("ota.yaml"),
@@ -13147,7 +13291,7 @@ services:
         assert_eq!(output.exit_code, 0);
         assert!(body.contains("SERVICES "));
         assert!(body.contains("postgres [required]"));
-        assert!(body.contains("Provider: docker-compose"));
+        assert!(body.contains("Manager: docker-compose"));
         assert!(body.contains("Start: docker compose up -d postgres"));
         assert!(body.contains("Stop: docker compose stop postgres"));
         assert!(body.contains("Healthcheck: pg_isready -U qredex -d qredex"));
@@ -13180,6 +13324,179 @@ services:
         assert_eq!(json["services"][0]["name"], "postgres");
         assert_eq!(json["services"][0]["provider"], "docker-compose");
         assert_eq!(json["services"][0]["required"], true);
+    }
+
+    #[test]
+    fn services_text_lists_typed_compose_manager_details() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    healthcheck: pg_isready -U qredex -d qredex
+"#,
+        );
+
+        let output = run_with(["ota", "services", fixture.path()]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(body.contains("Manager: compose"));
+        assert!(
+            body.contains("Start: docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'")
+        );
+        assert!(body.contains("Healthcheck: pg_isready -U qredex -d qredex"));
+    }
+
+    #[test]
+    fn services_json_reports_typed_compose_manager_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    healthcheck: pg_isready -U qredex -d qredex
+"#,
+        );
+
+        let output = run_with(["ota", "services", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["services"][0]["name"], "postgres");
+        assert_eq!(json["services"][0]["manager"]["kind"], "compose");
+        assert_eq!(json["services"][0]["manager"]["name"], "local");
+        assert_eq!(json["services"][0]["manager"]["file"], "compose.yaml");
+        assert_eq!(
+            json["services"][0]["start"],
+            "docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'"
+        );
+    }
+
+    #[test]
+    fn services_text_lists_typed_host_manager_details() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: host
+      name: local-postgres
+    healthcheck: pg_isready -h 127.0.0.1 -p 5432
+"#,
+        );
+
+        let output = run_with(["ota", "services", fixture.path()]);
+        let body = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 0);
+        assert!(body.contains("Manager: host"));
+        assert!(body.contains("Healthcheck: pg_isready -h 127.0.0.1 -p 5432"));
+        assert!(!body.contains("Start:"));
+        assert!(!body.contains("Stop:"));
+    }
+
+    #[test]
+    fn services_json_reports_typed_host_manager_summary() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    manager:
+      kind: host
+      name: local-postgres
+    endpoints:
+      app:
+        address: host.docker.internal
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h host.docker.internal -p 5432
+"#,
+        );
+
+        let output = run_with(["ota", "services", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["services"][0]["name"], "postgres");
+        assert_eq!(json["services"][0]["manager"]["kind"], "host");
+        assert_eq!(json["services"][0]["manager"]["name"], "local-postgres");
+        assert_eq!(json["services"][0]["readiness"]["from"], "app");
+    }
+
+    #[test]
+    fn services_surfaces_contextual_readiness_and_endpoints() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    endpoints:
+      app:
+        address: postgres
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+"#,
+        );
+
+        let output = run_with(["ota", "services", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["services"][0]["readiness"]["from"], "app");
+        assert_eq!(
+            json["services"][0]["readiness"]["run"],
+            "pg_isready -h postgres -p 5432"
+        );
+        assert_eq!(
+            json["services"][0]["endpoints"]["app"]["address"],
+            "postgres"
+        );
+        assert_eq!(json["services"][0]["endpoints"]["app"]["port"], 5432);
     }
 
     #[test]
@@ -13781,7 +14098,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["summary"]["error_count"], 0);
         assert_eq!(json["summary"]["warn_count"], 1);
-        assert_eq!(json["summary"]["info_count"], 0);
+        assert_eq!(json["summary"]["info_count"], 1);
         assert_eq!(json["summary"]["primary_blocker"]["severity"], "warn");
         assert_eq!(
             json["summary"]["primary_blocker"]["summary"],
@@ -13800,6 +14117,10 @@ tasks:
         assert_eq!(json["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
+        assert_eq!(
+            json["findings"][1]["summary"],
+            "Remote execution contexts are only partially evaluated in native mode"
+        );
     }
 
     #[test]
@@ -14188,6 +14509,7 @@ agent:
 
     #[test]
     fn doctor_text_lists_extensions() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -15465,6 +15787,8 @@ policies:
 
     #[test]
     fn init_write_followup_commands_keep_repo_target_for_default_contracts() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -17023,6 +17347,8 @@ project:
 
     #[test]
     fn policy_init_dry_run_previews_minimal_policy_pack() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with([
@@ -17196,6 +17522,8 @@ project:
 
     #[test]
     fn policy_init_rejects_non_canonical_policy_file_target() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with([
@@ -17500,6 +17828,8 @@ policies:
 
     #[test]
     fn explain_renders_structured_invalid_contract_for_repo_local_policy_pack_fields() {
+        let _env_guard = env_mutex_lock();
+        let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -17596,6 +17926,8 @@ policies:
 
     #[test]
     fn up_renders_repo_target_followup_commands_for_invalid_default_contracts() {
+        let _env_guard = env_mutex_lock();
+        let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
             fixture.path().join("ota.yaml"),
@@ -17785,6 +18117,7 @@ tasks:
 
     #[test]
     fn run_executes_single_task_input_shorthand_for_monorepo_member() {
+        let _env_guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "ota.yaml",
@@ -18624,6 +18957,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
 checks:
   - name: provisioned-tool
     kind: precondition
@@ -18631,6 +18969,7 @@ checks:
     run: provisioned-tool --version
 tasks:
   setup:
+    context: app
     run: exit 7
 "#
         .to_string();
@@ -18658,6 +18997,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("SETUP FAILED"));
         assert!(stdout.contains("Phase: setup"));
+        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Exit code: 7"));
     }
@@ -18758,6 +19098,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: native
 checks:
   - name: provisioned-tool
     kind: precondition
@@ -18765,6 +19110,7 @@ checks:
     run: provisioned-tool --version
 tasks:
   setup:
+    context: app
     run: printf setup > prepared.txt
 "#,
         );
@@ -18775,6 +19121,7 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("Phase: provisioning"));
+        assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Task: setup"));
         assert!(stdout.contains("Status:    blocked"));
         assert!(!stdout.contains("Command: printf setup > prepared.txt"));
@@ -22699,6 +23046,52 @@ runtimes:
     }
 
     #[test]
+    fn doctor_remote_mode_surfaces_remote_scope_honestly() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: premium-remote
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+      requirements:
+        tools:
+          jq: "*"
+tasks:
+  ci:
+    context: remote-app
+    run: echo ci
+"#,
+        );
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "--mode", "remote", "."]);
+
+        assert_eq!(output.exit_code, 1);
+        let text = strip_ansi(&output.stdout);
+        assert!(text.contains("Mode:"));
+        assert!(text.contains("`remote`"));
+        assert!(text.contains(
+            "Primary Blocker Remote target operating system could not be determined: remote-app"
+        ));
+        assert!(text.contains("remote context `remote-app`"));
+        assert!(text.contains("ota doctor --mode remote"));
+        assert!(!text.contains("Remote doctor mode still has partial policy reporting"));
+    }
+
+    #[test]
     fn doctor_container_mode_missing_runtime_mentions_configured_image() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -23525,7 +23918,7 @@ agent:
         let text = strip_ansi(&output.stdout);
         assert!(text.contains("Host-bound readiness checks are not evaluated in container mode"));
         assert!(text.contains(
-            "Why: container mode checks the execution image; env requirements, checks, service healthchecks remain host-bound and would mix contexts"
+            "Why: container mode checks the execution image; env requirements, checks, legacy service healthchecks remain host-bound and would mix contexts"
         ));
         assert!(!text.contains("execution image;\n  env requirements"));
         assert!(!text.contains("Version mismatch for runtime: node"));
@@ -24810,7 +25203,7 @@ tasks:
         );
 
         let up = run_with(["ota", "workspace", "up", "--json", multi_repo.path()]);
-        assert_eq!(up.exit_code, 0);
+        assert_eq!(up.exit_code, 1);
         assert_json_top_level_keys(&up, &["ok", "path", "receipt", "repos", "summary"]);
     }
 
@@ -26140,7 +26533,7 @@ tasks:
         let success_up = WorkspaceFixture::new_multi_repo();
         let _ssh = setup_fake_ssh(success_up.dir.path());
         let up_success = run_with(["ota", "workspace", "up", success_up.path()]);
-        assert_eq!(up_success.exit_code, 0);
+        assert_eq!(up_success.exit_code, 1);
     }
 
     #[test]
@@ -26666,6 +27059,8 @@ repos:
 
     #[test]
     fn workspace_doctor_not_found_uses_single_workspace_next() {
+        let _env_guard = env_mutex_lock();
+        let _guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
 
         let output = run_with([
@@ -27469,14 +27864,15 @@ project:
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(&format!(
             "WORKSPACE UP {}",
             compact_workspace(fixture.workspace_file())
         )));
-        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("NOT READY"));
+        assert!(stdout.contains("BLOCKED"));
         assert!(stdout.contains("SUMMARY"));
-        assert!(stdout.contains("Phase: post-setup diagnosis"));
+        assert!(stdout.contains("Phase: preconditions"));
         assert!(!stdout.contains("RECEIPT"));
         assert!(!stdout.contains("\n---\n"));
     }
@@ -27491,12 +27887,12 @@ project:
         let output = run_with(["ota", "workspace", "up", "--quiet", fixture.path()]);
         let stdout = strip_ansi(&output.stdout);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(&format!(
             "WORKSPACE UP {}",
             compact_workspace(fixture.workspace_file())
         )));
-        assert!(stdout.contains("READY"));
+        assert!(stdout.contains("NOT READY"));
         assert!(output.stderr.is_none());
     }
 
@@ -27557,7 +27953,7 @@ env:
         assert_eq!(json["summary"]["agent_verdict"], "not_ready");
         assert_eq!(json["summary"]["error_count"], 2);
         assert_eq!(json["summary"]["warn_count"], 1);
-        assert_eq!(json["summary"]["info_count"], 0);
+        assert_eq!(json["summary"]["info_count"], 1);
         assert_eq!(json["repos"][0]["name"], "web");
         assert_eq!(json["repos"][0]["ok"], false);
         assert_eq!(json["repos"][0]["execution"]["preferred"], "remote");
@@ -27939,7 +28335,7 @@ repos:
             "2",
             fixture.path(),
         ]);
-        assert_eq!(up.exit_code, 0);
+        assert_eq!(up.exit_code, 1);
         let up_json: Value = serde_json::from_str(&up.stdout).unwrap();
         assert_eq!(up_json["repos"][0]["name"], "db");
         assert_eq!(up_json["repos"][1]["name"], "api");
@@ -28265,7 +28661,7 @@ tasks:
 
         let output = run_with(["ota", "workspace", "up", fixture.path()]);
 
-        assert_eq!(output.exit_code, 0);
+        assert_eq!(output.exit_code, 1);
         let marker = fs::read_to_string(
             fixture
                 .dir
@@ -28275,7 +28671,7 @@ tasks:
                 .join("workspace-order.txt"),
         )
         .unwrap();
-        assert_eq!(marker, "db\napi\n");
+        assert_eq!(marker, "db\n");
     }
 
     #[test]

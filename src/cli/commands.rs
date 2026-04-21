@@ -47,11 +47,13 @@ use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, command_available, command_version,
     diagnose_checks_only, diagnose_contract, diagnose_contract_in_mode, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode, diagnose_service,
-    diagnose_services_only, provisioning_installability_finding,
+    diagnose_services_only, finding_targets_container_image, finding_targets_remote_backend,
+    provisioning_installability_finding,
 };
 use crate::execution::{
-    container_engine_candidates, ephemeral_container_target, execution_image, execution_target,
-    format_backend, format_lifecycle,
+    container_engine_candidates, container_engine_candidates_from_backend,
+    ephemeral_container_target, execution_image, execution_target, format_backend,
+    format_lifecycle, matching_execution_context_name, selected_container_engine_from_backend,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -60,26 +62,27 @@ use crate::output::{
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
     DiffSummary, DoctorFindingGroupSummary, DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary,
     DoctorVerdict, EnvEntry, EnvEntryKind, EnvEntryStatus, EnvFailure, EnvSourceEntry,
-    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides,
-    ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource,
-    ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary, ExplainFailure, ExplainStep,
-    ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory, InitPackAdvisorySignal,
-    InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
-    InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure, PolicyInitSuccess,
-    PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline, ReceiptDiffComparison,
-    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    ServiceSummary, ServicesFailure, ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess,
-    UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus, ValidateFailure, ValidateSuccess,
-    ValidateSummary, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    EnvSourceStatus, EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionPlanFailure,
+    ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
+    ExecutionReceiptEnvSource, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
+    ExplainFailure, ExplainStep, ExplainSuccess, ExplainSummary, InitFailure, InitPackAdvisory,
+    InitPackAdvisorySignal, InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds,
+    InitSelectedPackOptions, InitSuccess, MemberServicesSuccess, OutputFormat, PolicyInitFailure,
+    PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary, ReceiptDiffBaseline,
+    ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange,
+    ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry,
+    ReceiptHistoryInvalidArchive, ReceiptHistorySuccess, ReceiptHistorySummary,
+    ReceiptPromotedBaseline, ReceiptSuccess, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus,
+    UpStatus, ValidateFailure, ValidateSuccess, ValidateSummary, WorkspaceDiffSuccess,
+    WorkspaceDiffSummary, WorkspaceDoctorSuccess, WorkspaceDoctorSummary,
+    WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess,
+    WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker,
+    WorkspaceReceiptSuccess, WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport,
+    WorkspaceRepoExplainReport, WorkspaceRepoListReport, WorkspaceRepoRunReport,
+    WorkspaceRepoStatusReport, WorkspaceRepoTasksReport, WorkspaceRepoUpReport,
+    WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -96,7 +99,8 @@ use crate::runner::{
     DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
     ResolvedEnvValue, ResolvedExecutionBackend, RunError, StaleContainerOwnership,
     TaskExecutionRelation, clean_execution, clean_stale_execution, effective_execution,
-    env_resolution_source_label, load_declared_env_sources, load_policy_env_overlay,
+    effective_task_execution, env_resolution_source_label, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
     resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
     resolve_task_env_details_with_policy, run_streaming_command_with_loader,
     run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
@@ -384,6 +388,9 @@ fn render_task_exit_failure_text(
         "\n{}",
         stylize_inline_text(&format!("`{task_name}` exited with code {exit_code}"))
     ));
+    if let Some(context) = execution_context_from_summary_block(summary_block) {
+        out.push_str(&format!("\n{} {context}", paint_key("Context:")));
+    }
     out.push_str(&format!(
         "\n{} {}",
         paint_key("Where:"),
@@ -405,6 +412,18 @@ fn render_task_exit_failure_text(
     }
     append_summary_block(&mut out, summary_block);
     out
+}
+
+fn execution_context_from_summary_block(summary_block: Option<&str>) -> Option<String> {
+    let summary_block = summary_block?;
+    let plain = strip_ansi_codes(summary_block);
+    plain.lines().find_map(|line| {
+        line.trim_start()
+            .strip_prefix("Context:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 fn split_summary_block(message: &str) -> (Option<String>, String) {
@@ -1298,6 +1317,7 @@ fn resolve_execution_plan(
                 image,
                 engine,
                 lifecycle,
+                ..
             } => {
                 let target = match lifecycle {
                     Lifecycle::Persistent => {
@@ -2779,8 +2799,13 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
 
         output.push_str(&format!(
             "\n  {} {}",
-            paint_key("Provider:"),
-            service.provider.as_deref().unwrap_or("-")
+            paint_key("Manager:"),
+            service
+                .manager
+                .as_ref()
+                .map(|manager| manager.kind.as_str())
+                .or(service.provider.as_deref())
+                .unwrap_or("-")
         ));
         output.push_str(&format!(
             "\n  {} {}",
@@ -2803,6 +2828,34 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
                 &mut output,
                 "Healthcheck:",
                 healthcheck,
+                "  ",
+                84,
+                stylize_inline_text,
+            );
+        }
+        if let Some(readiness) = service.readiness.as_ref() {
+            append_wrapped_detail(
+                &mut output,
+                "Readiness:",
+                &format!("from {} -> {}", readiness.from, readiness.run),
+                "  ",
+                84,
+                stylize_inline_text,
+            );
+        }
+        if !service.endpoints.is_empty() {
+            let projections = service
+                .endpoints
+                .iter()
+                .map(|(context, endpoint)| {
+                    format!("{context}={}:{}", endpoint.address, endpoint.port)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            append_wrapped_detail(
+                &mut output,
+                "Endpoints:",
+                &projections,
                 "  ",
                 84,
                 stylize_inline_text,
@@ -12622,6 +12675,7 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
                 ok: archive.payload.ok,
                 contract: archive.payload.receipt.contract,
                 backend: archive.payload.receipt.backend,
+                context: archive.payload.receipt.context,
                 lifecycle: archive.payload.receipt.lifecycle,
                 summary: archive.payload.summary.into(),
             })
@@ -12961,6 +13015,7 @@ fn build_repo_receipt_diff_report(
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         backend: baseline.record.payload.receipt.backend,
+        context: baseline.record.payload.receipt.context,
         lifecycle: baseline.record.payload.receipt.lifecycle,
         summary: baseline.record.payload.summary.into(),
     };
@@ -12970,6 +13025,7 @@ fn build_repo_receipt_diff_report(
         contract_identity: Some(current_contract_identity),
         contract_identity_details: current_receipt.contract_identity.clone(),
         backend: current_receipt.backend.clone(),
+        context: current_receipt.context.clone(),
         lifecycle: current_receipt.lifecycle.clone(),
         summary: current_receipt.summary,
     };
@@ -13151,6 +13207,7 @@ fn append_receipt_diff_side_section(
     title: &str,
     contract: &str,
     backend: Option<&str>,
+    context: Option<&str>,
     lifecycle: Option<&str>,
     summary: &ExecutionReceiptSummary,
 ) {
@@ -13167,6 +13224,14 @@ fn append_receipt_diff_side_section(
             summary_bullet(),
             paint_key("Backend:"),
             backend
+        ));
+    }
+    if let Some(context) = context {
+        stdout.push_str(&format!(
+            "\n {}  {} {}",
+            summary_bullet(),
+            paint_key("Context:"),
+            context
         ));
     }
     if let Some(lifecycle) = lifecycle {
@@ -13403,6 +13468,7 @@ fn render_repo_receipt_diff(
                 "Baseline",
                 &report.baseline.contract,
                 report.baseline.backend.as_deref(),
+                report.baseline.context.as_deref(),
                 report.baseline.lifecycle.as_deref(),
                 &report.baseline.summary,
             );
@@ -13411,6 +13477,7 @@ fn render_repo_receipt_diff(
                 "Current",
                 &report.current.contract,
                 report.current.backend.as_deref(),
+                report.current.context.as_deref(),
                 report.current.lifecycle.as_deref(),
                 &report.current.summary,
             );
@@ -19049,7 +19116,7 @@ fn doctor_finding_group_title(kind: &DoctorFindingGroupKind, findings: &[&Findin
         DoctorFindingGroupKind::EnvironmentValue => String::from("Fix environment values"),
         DoctorFindingGroupKind::ContractDrift => String::from("Review contract drift"),
         DoctorFindingGroupKind::PolicySurface => String::from("Review active policy surfaces"),
-        DoctorFindingGroupKind::ServiceHealth => String::from("Fix service healthchecks"),
+        DoctorFindingGroupKind::ServiceHealth => String::from("Fix service readiness"),
         DoctorFindingGroupKind::CheckFailure => String::from("Review checks"),
         DoctorFindingGroupKind::ExecutionBackend => {
             String::from("Install required execution backend")
@@ -19102,7 +19169,7 @@ fn doctor_finding_group_why(kind: &DoctorFindingGroupKind, findings: &[&Finding]
             "the active policy exposes approved version, provisioning, or bootstrap surfaces",
         ),
         DoctorFindingGroupKind::ServiceHealth => {
-            String::from("one or more services failed healthchecks")
+            String::from("one or more services failed readiness checks")
         }
         DoctorFindingGroupKind::CheckFailure => String::from("one or more checks failed"),
         DoctorFindingGroupKind::ExecutionBackend => {
@@ -19206,6 +19273,7 @@ fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> S
         Some(DoctorMode::Container) => {
             next.replace("`ota doctor`", "`ota doctor --mode container`")
         }
+        Some(DoctorMode::Remote) => next.replace("`ota doctor`", "`ota doctor --mode remote`"),
         _ => next.to_string(),
     }
 }
@@ -19213,10 +19281,12 @@ fn rewrite_doctor_mode_command(next: &str, doctor_mode: Option<DoctorMode>) -> S
 fn rewrite_repo_scoped_command_targets(next: &str, contract_path: &Path) -> String {
     [
         "ota doctor --mode container",
+        "ota doctor --mode remote",
         "ota doctor --mode native",
         "ota doctor",
         "ota policy review",
         "ota up --mode container",
+        "ota up --mode remote",
         "ota up --mode native",
         "ota up",
     ]
@@ -19253,6 +19323,10 @@ fn rewrite_up_preview_next_command(next: &str, doctor_mode: Option<DoctorMode>) 
         Some(DoctorMode::Container) => next.replace(
             "`ota doctor --mode container`",
             "`ota up --dry-run --mode container`",
+        ),
+        Some(DoctorMode::Remote) => next.replace(
+            "`ota doctor --mode remote`",
+            "`ota up --dry-run --mode remote`",
         ),
         Some(DoctorMode::Native) => next.replace("`ota doctor`", "`ota up --dry-run`"),
         None => next.replace("`ota doctor`", "`ota up --dry-run`"),
@@ -19432,7 +19506,16 @@ fn render_explain_summary_text(summary: &ExplainSummary, action_count: usize) ->
 fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
     let mut stdout = String::new();
     stdout.push_str(&format!("{}\n", paint_section_title("Execution")));
+    if let Some(default_context) = execution.default_context {
+        stdout.push_str(&detail_list_row(
+            &paint_key("Default Context:"),
+            default_context,
+        ));
+    }
     if let Some(preferred) = execution.preferred {
+        if execution.default_context.is_some() {
+            stdout.push('\n');
+        }
         stdout.push_str(&detail_list_row(&paint_key("Preferred:"), preferred));
     }
     if !execution.supported.is_empty() {
@@ -19467,6 +19550,18 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
             }
         }
     }
+    if !execution.contexts.is_empty() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Contexts:"),
+            &execution
+                .contexts
+                .iter()
+                .map(format_execution_context_brief)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
     if !execution.env.is_empty() {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
@@ -19495,6 +19590,29 @@ fn render_execution_summary_text(execution: &ExecutionSummary<'_>) -> String {
         }
     }
     stdout
+}
+
+fn format_execution_context_brief(context: &ExecutionContextSummary<'_>) -> String {
+    let mut details = vec![context.backend.to_string()];
+    if let Some(lifecycle) = context.lifecycle {
+        details.push(lifecycle.to_string());
+    }
+    if let Some(container) = context.container.as_ref() {
+        details.push(format!("image={}", container.image));
+    }
+    if let Some(remote) = context.remote.as_ref() {
+        details.push(format!("provider={}", remote.provider));
+        if let Some(target) = remote.target {
+            details.push(format!("target={target}"));
+        }
+    }
+    if let Some(attachments) = context.attachments.as_ref()
+        && !attachments.compose.is_empty()
+    {
+        details.push(format!("compose={}", attachments.compose.join("+")));
+    }
+
+    format!("{} ({})", context.name, details.join(", "))
 }
 
 fn render_execution_plan_text(
@@ -19636,6 +19754,13 @@ fn render_doctor_execution_summary_text(
             &paint_backticked_code(mode.as_str()),
         ));
     }
+    if let Some(default_context) = execution.default_context {
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Default Context:"),
+            &paint_backticked_code(default_context),
+        ));
+    }
     if let Some(preferred) = execution.preferred {
         lines.push(section_list_row(
             &summary_bullet(),
@@ -19691,6 +19816,18 @@ fn render_doctor_execution_summary_text(
                 &details.join(" "),
             ));
         }
+    }
+    if !execution.contexts.is_empty() {
+        lines.push(section_list_row(
+            &summary_bullet(),
+            &paint_key("Contexts:"),
+            &execution
+                .contexts
+                .iter()
+                .map(format_execution_context_brief)
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
     }
     if !execution.env.is_empty() {
         lines.push(section_list_row(
@@ -20413,14 +20550,17 @@ fn bootstrap_failure_findings(
     let rerun = match doctor_mode {
         DoctorMode::Container => "ota up --mode container",
         DoctorMode::Native => "ota up",
+        DoctorMode::Remote => "ota doctor --mode remote",
     };
     let environment = match doctor_mode {
         DoctorMode::Container => "container",
         DoctorMode::Native => "host",
+        DoctorMode::Remote => "remote",
     };
     let install_target = match doctor_mode {
         DoctorMode::Container => "container image",
         DoctorMode::Native => "host",
+        DoctorMode::Remote => "remote environment",
     };
     let missing_commands = extract_missing_backend_commands(stderr);
 
@@ -20490,6 +20630,7 @@ fn rerun_up_command_for_target(target: &ProvisioningExecutionTarget) -> &'static
     match target {
         ProvisioningExecutionTarget::Container { .. } => "ota up --mode container",
         ProvisioningExecutionTarget::Native => "ota up",
+        ProvisioningExecutionTarget::Remote { .. } => "ota up --mode remote",
     }
 }
 
@@ -20541,6 +20682,7 @@ mod tests {
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
         DetectComparison, DetectComparisonRemoval, ExecutionReceipt, ExecutionReceiptSummary,
+        ExecutionSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -20801,10 +20943,11 @@ mod tests {
         env::set_current_dir(cwd).unwrap();
 
         assert!(text.contains("POLICY REVIEW ./ota.yaml"));
-        assert!(text.contains("Policy source: repo policy"));
-        assert!(text.contains("Policy path: ./.ota/org-policy.yaml"));
-        assert!(text.contains("Policy path: ./.ota/org-policy.yaml\n\nOverview"));
-        assert!(!text.contains("Policy path: ./.ota/org-policy.yaml\n\n\nOverview"));
+        assert!(text.contains("Policy\n"));
+        assert!(text.contains(" »  Source: repo policy"));
+        assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
+        assert!(text.contains(" »  Path: ./.ota/org-policy.yaml\nOverview"));
+        assert!(!text.contains(" »  Path: ./.ota/org-policy.yaml\n\nOverview"));
         assert!(text.contains("Repo does not satisfy org policy pack"));
         assert!(text.contains("AGENTS.md"));
     }
@@ -21096,6 +21239,7 @@ mod tests {
 
     #[test]
     fn explain_text_groups_shared_actions_by_remediation() {
+        let _guard = env_mutex_lock();
         let findings = [
             Finding {
                 severity: FindingSeverity::Error,
@@ -21149,13 +21293,11 @@ mod tests {
         assert!(text.contains("Plan"));
         assert!(text.contains("1. Fix version mismatches (2)"));
         assert!(text.contains("» java resolved `25.0.2`, requires `21`"));
-        assert!(
-            text.contains("Next:\n      run `sdk install java 21`\n      and rerun `ota doctor`")
-        );
+        assert!(text.contains("run `sdk install java 21`"));
+        assert!(text.contains("and rerun `ota doctor`"));
         assert!(text.contains("» node resolved `24.14.1`, requires `22`"));
-        assert!(
-            text.contains("Next:\n      run `brew install node@22`\n      and rerun `ota doctor`")
-        );
+        assert!(text.contains("run `brew install node@22`"));
+        assert!(text.contains("and rerun `ota doctor`"));
         assert!(text.contains("2. Review contract drift (2)"));
         assert!(text.contains("» `tools.node` is no longer detected"));
         assert!(text.contains("Next:"));
@@ -21359,7 +21501,10 @@ mod tests {
         ));
 
         let why = text.find("Why:").expect("why");
-        let source = text.find("Source:").expect("source");
+        let source = text
+            .rfind("\nSource:")
+            .or_else(|| text.rfind("\n Source:"))
+            .expect("source");
         let next = text.find("Next:").expect("next");
 
         assert!(why < source);
@@ -21653,6 +21798,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("sh: 1: sdk: not found"),
             Some(127),
         ));
@@ -21742,6 +21888,7 @@ tasks:
             contract_identity: None,
             workspace: None,
             backend: Some(String::from("container")),
+            context: None,
             lifecycle: Some(String::from("ephemeral")),
             image: Some(String::from("maven:3.9.14-eclipse-temurin-21-noble")),
             target: Some(String::from("ota-ephemeral-deadbeef")),
@@ -21788,7 +21935,7 @@ tasks:
                             "Host-bound readiness checks are not evaluated in container mode",
                         ),
                         why: String::from(
-                            "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
+                            "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
                         ),
                         next: String::from(
                             "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
@@ -21937,6 +22084,45 @@ tasks:
     }
 
     #[test]
+    fn finding_targets_provisioning_action_strips_context_suffix() {
+        let finding = Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Version mismatch for runtime: java (context remote-app)"),
+            why: String::from("java is declared in the contract but is not available"),
+            next: String::from("install `java` and rerun `ota doctor`"),
+        };
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Runtime,
+            name: String::from("java"),
+            requested_version: String::from("21"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("sdkman"),
+            source_config: None,
+            approved_version: Some(String::from("21")),
+            policy_match: None,
+        };
+        let other_action = ProvisioningAction {
+            name: String::from("node"),
+            ..action.clone()
+        };
+
+        assert_eq!(
+            super::provisionable_target_key_for_finding(&finding),
+            Some(String::from("runtime:java"))
+        );
+        assert!(super::finding_targets_provisioning_action(
+            &finding, &action
+        ));
+        assert!(!super::finding_targets_provisioning_action(
+            &finding,
+            &other_action
+        ));
+    }
+
+    #[test]
     fn up_preview_does_not_treat_probe_failures_as_provisionable() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -22008,6 +22194,50 @@ tasks:
     }
 
     #[test]
+    fn up_preview_adds_readiness_check_for_services_with_endpoints_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+services:
+  api:
+    provider: docker-compose
+    endpoints:
+      local:
+        address: 127.0.0.1
+        port: 8080
+tasks:
+  setup:
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert!(
+            preview
+                .plan
+                .actions
+                .contains(&String::from("verify service `api` readiness"))
+        );
+    }
+
+    #[test]
     fn up_preview_omits_ephemeral_container_target() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -22047,6 +22277,62 @@ tasks:
             Some("ghcr.io/ota/dev:latest")
         );
         assert_eq!(preview.execution.target, None);
+    }
+
+    #[test]
+    fn up_preview_uses_setup_task_context_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  setup:
+    context: app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            &preflight,
+        );
+
+        assert_eq!(preview.execution.backend, "container");
+        assert_eq!(preview.execution.context.as_deref(), Some("app"));
+        assert_eq!(preview.execution.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(
+            preview.execution.image.as_deref(),
+            Some("ghcr.io/ota/dev:latest")
+        );
+        assert!(
+            preview
+                .execution
+                .target
+                .as_deref()
+                .is_some_and(|target| target.starts_with("ota-"))
+        );
     }
 
     #[test]
@@ -22094,6 +22380,73 @@ policies:
             "expected package alias in execution policy line, got: {}",
             lines[0]
         );
+    }
+
+    #[test]
+    fn execution_policy_lines_use_backend_requirement_surface() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      requirements:
+        tools:
+          node: "22"
+tasks:
+  setup:
+    context: app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  provisioning:
+    docker:
+      source: apt
+      package: docker.io
+      approved_versions:
+        - "*"
+    node:
+      source: mise
+      approved_versions:
+        - "22"
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let native_lines =
+            super::execution_policy_lines(&contract, &contract_path, Backend::Native);
+        let container_lines =
+            super::execution_policy_lines(&contract, &contract_path, Backend::Container);
+
+        assert_eq!(native_lines.len(), 1);
+        assert!(native_lines[0].contains("tool docker (package: docker.io)"));
+        assert_eq!(container_lines.len(), 1);
+        assert!(container_lines[0].contains("tool node 22 via mise"));
     }
 
     #[test]
@@ -22605,6 +22958,7 @@ policies:
             None,
             None,
             None,
+            None,
             Some("bash: line 1: sdk: command not found"),
             Some(127),
         ));
@@ -22812,6 +23166,7 @@ policies:
     #[test]
     fn execution_summary_uses_compact_detail_arrow_spacing() {
         let execution = crate::output::ExecutionSummary {
+            default_context: Some("app"),
             preferred: Some("container"),
             supported: vec!["native", "container"],
             lifecycle: Some("ephemeral"),
@@ -22821,6 +23176,40 @@ policies:
                 }),
                 remote: None,
             }),
+            contexts: vec![
+                crate::output::ExecutionContextSummary {
+                    name: "app",
+                    backend: "container",
+                    lifecycle: Some("ephemeral"),
+                    container: Some(crate::output::ExecutionContainerSummary {
+                        image: "rust:1.94-bookworm",
+                    }),
+                    remote: None,
+                    attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
+                        compose: vec!["local"],
+                    }),
+                },
+                crate::output::ExecutionContextSummary {
+                    name: "host",
+                    backend: "native",
+                    lifecycle: None,
+                    container: None,
+                    remote: None,
+                    attachments: None,
+                },
+                crate::output::ExecutionContextSummary {
+                    name: "remote-build",
+                    backend: "remote",
+                    lifecycle: None,
+                    container: None,
+                    remote: Some(crate::output::ExecutionRemoteSummary {
+                        provider: "ssh",
+                        target: Some("devbox"),
+                        cwd: Some("/workspace"),
+                    }),
+                    attachments: None,
+                },
+            ],
             env: vec![crate::output::ExecutionEnvSummary {
                 name: "PATH",
                 required: false,
@@ -22833,14 +23222,125 @@ policies:
 
         let rendered = strip_ansi_codes(&super::render_execution_summary_text(&execution));
 
+        assert!(rendered.contains("\n→ Default Context: app"));
         assert!(rendered.contains("\n→ Preferred: container"));
         assert!(rendered.contains("\n→ Supported: native, container"));
         assert!(rendered.contains("\n→ Lifecycle: ephemeral"));
         assert!(rendered.contains("\n→ Image: rust:1.94-bookworm"));
+        assert!(rendered.contains(
+            "\n→ Contexts: app (container, ephemeral, image=rust:1.94-bookworm, compose=local), host (native), remote-build (remote, provider=ssh, target=devbox)"
+        ));
         assert!(rendered.contains("\n→ Env precedence:"));
         assert!(rendered.contains("\n→ Env:"));
         assert!(!rendered.contains("\n →  Preferred:"));
         assert!(!rendered.contains("\n →  Env precedence:"));
+    }
+
+    #[test]
+    fn doctor_execution_summary_includes_named_contexts() {
+        let execution = crate::output::ExecutionSummary {
+            default_context: Some("app"),
+            preferred: Some("container"),
+            supported: vec!["native", "container"],
+            lifecycle: Some("persistent"),
+            backends: Some(crate::output::ExecutionBackendsSummary {
+                container: Some(crate::output::ExecutionContainerSummary {
+                    image: "maven:3.9.14-eclipse-temurin-21-noble",
+                }),
+                remote: None,
+            }),
+            contexts: vec![
+                crate::output::ExecutionContextSummary {
+                    name: "app",
+                    backend: "container",
+                    lifecycle: Some("persistent"),
+                    container: Some(crate::output::ExecutionContainerSummary {
+                        image: "maven:3.9.14-eclipse-temurin-21-noble",
+                    }),
+                    remote: None,
+                    attachments: Some(crate::output::ExecutionContextAttachmentsSummary {
+                        compose: vec!["local"],
+                    }),
+                },
+                crate::output::ExecutionContextSummary {
+                    name: "host",
+                    backend: "native",
+                    lifecycle: None,
+                    container: None,
+                    remote: None,
+                    attachments: None,
+                },
+            ],
+            env: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&super::render_doctor_execution_summary_text(
+            &execution,
+            Some(DoctorMode::Container),
+        ));
+
+        assert!(rendered.contains("\n »  Mode: `container`"));
+        assert!(rendered.contains("\n »  Default Context: `app`"));
+        assert!(rendered.contains("\n »  Preferred: `container`"));
+        assert!(rendered.contains("\n »  Image: `maven:3.9.14-eclipse-temurin-21-noble`"));
+        assert!(rendered.contains(
+            "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local), host (native)"
+        ));
+    }
+
+    #[test]
+    fn execution_summary_from_contract_includes_named_contexts() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(&contract_path, "kind: ota").unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: topology-example
+execution:
+  default_context: app
+  preferred: container
+  lifecycle: persistent
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+      attachments:
+        compose:
+          - local
+    host:
+      backend: native
+"#,
+        )
+        .unwrap();
+
+        let execution = ExecutionSummary::from_contract(&contract, &contract_path).unwrap();
+
+        assert_eq!(execution.default_context, Some("app"));
+        assert_eq!(execution.contexts.len(), 2);
+        assert_eq!(execution.contexts[0].name, "app");
+        assert_eq!(execution.contexts[0].backend, "container");
+        assert_eq!(execution.contexts[0].lifecycle, Some("persistent"));
+        assert_eq!(
+            execution.contexts[0]
+                .container
+                .as_ref()
+                .map(|container| container.image),
+            Some("maven:3.9.14-eclipse-temurin-21-noble")
+        );
+        assert_eq!(
+            execution.contexts[0]
+                .attachments
+                .as_ref()
+                .map(|attachments| attachments.compose.clone()),
+            Some(vec!["local"])
+        );
+        assert_eq!(execution.contexts[1].name, "host");
+        assert_eq!(execution.contexts[1].backend, "native");
     }
 
     #[test]
@@ -23027,6 +23527,7 @@ policies:
             Some("container"),
             None,
             None,
+            None,
             Some("setup"),
             Some("cargo fetch"),
             Some("Downloading crates ..."),
@@ -23143,6 +23644,109 @@ tasks:
     }
 
     #[test]
+    fn run_execution_receipt_uses_task_context_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    context: app
+    run: echo test
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+            }],
+            0,
+            true,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.backend.as_deref(), Some("container"));
+        assert_eq!(receipt.context.as_deref(), Some("app"));
+        assert_eq!(receipt.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(receipt.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
+        assert!(
+            receipt
+                .target
+                .as_deref()
+                .is_some_and(|target| target.starts_with("ota-"))
+        );
+        let rendered =
+            render_execution_receipt_summary_block(&receipt, Some("test"), "RUN SUMMARY");
+        assert!(rendered.contains("Context:"));
+        assert!(rendered.contains("app"));
+    }
+
+    #[test]
+    fn run_execution_receipt_uses_implicit_legacy_app_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+        let receipt = run_execution_receipt(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            "test",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("test"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+            }],
+            0,
+            true,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.backend.as_deref(), Some("container"));
+        assert_eq!(receipt.context.as_deref(), Some("app"));
+        assert_eq!(receipt.lifecycle.as_deref(), Some("persistent"));
+        assert_eq!(receipt.image.as_deref(), Some("ghcr.io/ota/dev:latest"));
+    }
+
+    #[test]
     fn run_execution_receipt_marks_hook_reruns_in_step_detail() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -23220,6 +23824,7 @@ tasks:
             contract_identity: None,
             workspace: None,
             backend: Some(String::from("native")),
+            context: None,
             lifecycle: None,
             image: None,
             target: None,
@@ -23258,6 +23863,7 @@ tasks:
             contract_identity: None,
             workspace: None,
             backend: Some(String::from("native")),
+            context: None,
             lifecycle: None,
             image: None,
             target: None,
@@ -23415,7 +24021,7 @@ execution:
                     "Host-bound readiness checks are not evaluated in container mode",
                 ),
                 why: String::from(
-                    "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
+                    "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
                 ),
                 next: String::from(
                     "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
@@ -23686,7 +24292,7 @@ policies:
                         "Host-bound readiness checks are not evaluated in container mode",
                     ),
                     why: String::from(
-                        "container mode checks the execution image; service healthchecks remain host-bound and would mix contexts",
+                        "container mode checks the execution image; legacy service healthchecks remain host-bound and would mix contexts",
                     ),
                     next: String::from(
                         "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
@@ -23703,6 +24309,7 @@ policies:
             "provisioning",
             &report,
             Some("container"),
+            None,
             None,
             None,
             None,
@@ -23792,6 +24399,7 @@ checks:
         assert_eq!(result.status, "READY");
         assert_eq!(result.phase, "post-setup diagnosis");
         assert_eq!(result.receipt.backend.as_deref(), Some("container"));
+        assert_eq!(result.receipt.context.as_deref(), Some("app"));
         assert_eq!(result.receipt.lifecycle.as_deref(), Some("ephemeral"));
         assert_eq!(
             result.receipt.image.as_deref(),
@@ -23864,6 +24472,7 @@ checks:
             None,
             None,
             None,
+            None,
             Some("bash: line 1: curl: command not found\nbash: line 1: zip: command not found"),
             Some(127),
         ));
@@ -23912,6 +24521,128 @@ execution:
                 }
             ),
             DoctorMode::Native
+        );
+    }
+
+    #[test]
+    fn up_doctor_mode_uses_setup_task_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-up
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  setup:
+    context: app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            up_doctor_mode(&contract, ExecutionOverrides::default()),
+            DoctorMode::Container
+        );
+    }
+
+    #[test]
+    fn up_blocks_remote_setup_contexts_before_running_setup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-up
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: devbox
+tasks:
+  setup:
+    context: remote-app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            Path::new("ota.yaml"),
+            ExecutionOverrides::default(),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "preconditions");
+        assert_eq!(result.task.as_deref(), Some("setup"));
+        assert_eq!(result.receipt.context.as_deref(), Some("remote-app"));
+        assert_eq!(
+            result.report.findings[0].summary,
+            "Remote setup contexts are not supported by `ota up` yet"
+        );
+    }
+
+    #[test]
+    fn up_dry_run_surfaces_remote_setup_context_blocker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-up
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: devbox
+tasks:
+  setup:
+    context: remote-app
+    run: echo setup
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            Path::new("ota.yaml"),
+            ExecutionOverrides::default(),
+            None,
+            true,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        let preview = result.preview.expect("expected dry-run preview");
+        assert_eq!(
+            preview.blockers[0].summary,
+            "Remote setup contexts are not supported by `ota up` yet"
         );
     }
 
@@ -24923,10 +25654,11 @@ fn run_single_contract_target_streaming(
     show_receipt: bool,
     details_footer: &str,
 ) -> Result<String, RunCommandFailure> {
+    let task_name = canonical_declared_task_name(&target.contract, task_name);
     match run_task_with_args_with_overrides(
         &target.contract,
         &target.contract_path,
-        task_name,
+        task_name.as_str(),
         task_inputs,
         overrides,
     ) {
@@ -24935,7 +25667,7 @@ fn run_single_contract_target_streaming(
                 &target.contract,
                 &target.contract_path,
                 overrides,
-                task_name,
+                task_name.as_str(),
                 member,
                 &outcome.task_steps,
                 outcome.exit_code,
@@ -24955,7 +25687,7 @@ fn run_single_contract_target_streaming(
             }
             output.push_str(&render_execution_receipt_summary_block(
                 &receipt,
-                Some(task_name),
+                Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
             if !output.is_empty() {
@@ -24965,7 +25697,7 @@ fn run_single_contract_target_streaming(
             Ok(output)
         }
         Ok(outcome) => {
-            let failed_task_name = failed_task_name(&outcome.task_steps, task_name);
+            let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
             Err(RunCommandFailure {
                 message: format!(
                     "task `{failed_task_name}` failed with exit code {}",
@@ -24976,7 +25708,7 @@ fn run_single_contract_target_streaming(
                         &target.contract,
                         &target.contract_path,
                         overrides,
-                        task_name,
+                        task_name.as_str(),
                         member,
                         &outcome.task_steps,
                         outcome.exit_code,
@@ -24990,7 +25722,7 @@ fn run_single_contract_target_streaming(
                             details_footer
                         )),
                     ),
-                    Some(task_name),
+                    Some(task_name.as_str()),
                     "RUN SUMMARY",
                 )),
                 exit_code: outcome.exit_code,
@@ -24999,7 +25731,7 @@ fn run_single_contract_target_streaming(
                         &target.contract,
                         &target.contract_path,
                         overrides,
-                        task_name,
+                        task_name.as_str(),
                         member,
                         &outcome.task_steps,
                         outcome.exit_code,
@@ -25021,7 +25753,7 @@ fn run_single_contract_target_streaming(
                 &target.contract,
                 &target.contract_path,
                 overrides,
-                task_name,
+                task_name.as_str(),
                 member,
                 &[],
                 1,
@@ -25033,14 +25765,17 @@ fn run_single_contract_target_streaming(
                     details_footer
                 )),
             );
-            let summary =
-                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let summary = render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name.as_str()),
+                "RUN SUMMARY",
+            );
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
                     &target.contract,
                     &target.contract_path,
-                    task_name,
+                    task_name.as_str(),
                     member,
                     overrides,
                     &error,
@@ -25064,10 +25799,11 @@ fn run_single_contract_target_captured(
     show_receipt: bool,
     details_footer: &str,
 ) -> Result<String, RunCommandFailure> {
+    let task_name = canonical_declared_task_name(&target.contract, task_name);
     match run_task_captured_with_args_with_overrides_with_policy(
         &target.contract,
         &target.contract_path,
-        task_name,
+        task_name.as_str(),
         task_inputs,
         overrides,
         None,
@@ -25077,7 +25813,7 @@ fn run_single_contract_target_captured(
                 &target.contract,
                 &target.contract_path,
                 overrides,
-                task_name,
+                task_name.as_str(),
                 member,
                 &outcome.task_steps,
                 outcome.exit_code,
@@ -25097,7 +25833,7 @@ fn run_single_contract_target_captured(
             }
             output.push_str(&render_execution_receipt_summary_block(
                 &receipt,
-                Some(task_name),
+                Some(task_name.as_str()),
                 "RUN SUMMARY",
             ));
             if !output.is_empty() {
@@ -25107,12 +25843,12 @@ fn run_single_contract_target_captured(
             Ok(output)
         }
         Ok(outcome) => {
-            let failed_task_name = failed_task_name(&outcome.task_steps, task_name);
+            let failed_task_name = failed_task_name(&outcome.task_steps, task_name.as_str());
             let receipt = run_execution_receipt(
                 &target.contract,
                 &target.contract_path,
                 overrides,
-                task_name,
+                task_name.as_str(),
                 member,
                 &outcome.task_steps,
                 outcome.exit_code,
@@ -25123,8 +25859,11 @@ fn run_single_contract_target_captured(
                     repo_run_stream_command(&failed_task_name, member)
                 )),
             );
-            let summary =
-                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let summary = render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name.as_str()),
+                "RUN SUMMARY",
+            );
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_captured_failure_text(
@@ -25148,7 +25887,7 @@ fn run_single_contract_target_captured(
                 &target.contract,
                 &target.contract_path,
                 overrides,
-                task_name,
+                task_name.as_str(),
                 member,
                 &[],
                 1,
@@ -25160,14 +25899,17 @@ fn run_single_contract_target_captured(
                     details_footer
                 )),
             );
-            let summary =
-                render_execution_receipt_summary_block(&receipt, Some(task_name), "RUN SUMMARY");
+            let summary = render_execution_receipt_summary_block(
+                &receipt,
+                Some(task_name.as_str()),
+                "RUN SUMMARY",
+            );
             let receipt_text = show_receipt.then(|| render_execution_receipt_text(&receipt));
             Err(RunCommandFailure {
                 message: render_run_structured_error_text(
                     &target.contract,
                     &target.contract_path,
-                    task_name,
+                    task_name.as_str(),
                     member,
                     overrides,
                     &error,
@@ -25180,6 +25922,29 @@ fn run_single_contract_target_captured(
             })
         }
     }
+}
+
+fn canonical_declared_task_name(contract: &Contract, requested_task_name: &str) -> String {
+    if contract.tasks.contains_key(requested_task_name) {
+        return requested_task_name.to_string();
+    }
+
+    let mut alias_matches = contract
+        .tasks
+        .keys()
+        .filter(|task_name| task_cli_alias(task_name) == requested_task_name);
+    let first_match = alias_matches.next();
+    if first_match.is_some() && alias_matches.next().is_none() {
+        return first_match
+            .expect("a unique task alias match should still exist")
+            .to_string();
+    }
+
+    requested_task_name.to_string()
+}
+
+fn task_cli_alias(task_name: &str) -> String {
+    task_name.replace(':', "-")
 }
 
 fn failed_task_name(executed_steps: &[ExecutedTaskStep], requested_task: &str) -> String {
@@ -25655,8 +26420,13 @@ fn execution_policy_lines(
         return Vec::new();
     };
 
+    let requirements = contract.requirement_surface_for_backend(backend);
+
     policy_pack
-        .selected_provisioning_actions_for_os(policy_target_os_for_backend(backend), contract)
+        .selected_provisioning_actions_for_requirement_surface_os(
+            policy_target_os_for_backend(backend),
+            &requirements,
+        )
         .into_iter()
         .map(|action| {
             let mut line = format!(
@@ -25694,9 +26464,14 @@ fn run_execution_receipt(
     target: Option<String>,
     next: Option<String>,
 ) -> ExecutionReceipt {
-    let (backend, lifecycle) = effective_execution(contract, overrides);
-    let image = execution_image(contract, backend);
-    let target = target.or_else(|| execution_target(contract, contract_path, backend, lifecycle));
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let backend = effective.backend;
+    let lifecycle = effective.lifecycle;
+    let image = match backend {
+        Backend::Container => effective.container.map(|container| container.image.clone()),
+        Backend::Native | Backend::Remote => None,
+    };
+    let target = target.or_else(|| effective_task_execution_target(contract_path, effective));
     let task_env = contract.tasks.get(task_name).map(|task| &task.env);
     let env_details =
         resolve_task_env_details(contract, contract_path, task_env).unwrap_or_default();
@@ -25727,6 +26502,7 @@ fn run_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
+        context: effective.context_name.map(str::to_string),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image,
         target,
@@ -26131,6 +26907,7 @@ fn render_up_section_body(
         phase,
         report,
         backend,
+        receipt.context.as_deref(),
         service,
         service_command,
         task,
@@ -26156,6 +26933,9 @@ fn render_up_blocked_provisioning_section(
 
     if let Some(backend) = receipt.backend.as_deref() {
         stdout.push_str(&format!("\n{} {backend}", paint_key("Backend:")));
+    }
+    if let Some(context) = receipt.context.as_deref() {
+        stdout.push_str(&format!("\n{} {context}", paint_key("Context:")));
     }
     if let Some(task) = task {
         stdout.push_str(&format!("\n{} {task}", paint_key("Task:")));
@@ -26258,6 +27038,13 @@ fn render_up_preview_text(
 
     stdout.push_str(&format!("\n\n{}\n", paint_section_title("Execution")));
     stdout.push_str(&detail_list_row(&paint_key("Backend:"), &execution.backend));
+    if let Some(context) = execution.context.as_deref() {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Context:"),
+            &paint_backticked_code(context),
+        ));
+    }
     if let Some(lifecycle) = execution.lifecycle.as_deref() {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(&paint_key("Lifecycle:"), lifecycle));
@@ -26474,6 +27261,7 @@ fn render_up_section_from_parts(
     phase: &str,
     report: &DoctorReport,
     backend: Option<&str>,
+    context: Option<&str>,
     service: Option<&str>,
     service_command: Option<&str>,
     task: Option<&str>,
@@ -26490,6 +27278,9 @@ fn render_up_section_from_parts(
     );
     if let Some(backend) = backend {
         stdout.push_str(&format!("\n{} {backend}", paint_key("Backend:")));
+    }
+    if let Some(context) = context {
+        stdout.push_str(&format!("\n{} {context}", paint_key("Context:")));
     }
     if let Some(service) = service {
         stdout.push_str(&format!("\n{} {service}", paint_key("Service:")));
@@ -26581,6 +27372,7 @@ fn render_up_section_from_parts(
 fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
     match backend.map(|backend| backend.trim()) {
         Some("container") => Some(DoctorMode::Container),
+        Some("remote") => Some(DoctorMode::Remote),
         Some("native") => Some(DoctorMode::Native),
         _ => None,
     }
@@ -26866,6 +27658,9 @@ fn render_execution_receipt_summary_block(
         lines.push(summary_detail_line("Lifecycle:", lifecycle));
     }
     lines.push(summary_detail_line("Mode:", &mode));
+    if let Some(context) = receipt.context.as_deref() {
+        lines.push(summary_detail_line("Context:", context));
+    }
     if let Some(image) = receipt.image.as_deref() {
         lines.push(summary_detail_line("Image:", image));
     }
@@ -28219,6 +29014,7 @@ struct CommandRunResult {
 #[derive(Debug, Clone, Default)]
 struct PhaseExecutionContext {
     backend: Option<String>,
+    context: Option<String>,
     lifecycle: Option<String>,
     image: Option<String>,
     target: Option<String>,
@@ -28266,6 +29062,8 @@ struct ArchivedRepoReceiptData {
     contract_identity: Option<ContractIdentity>,
     #[serde(default)]
     backend: Option<String>,
+    #[serde(default)]
+    context: Option<String>,
     #[serde(default)]
     lifecycle: Option<String>,
 }
@@ -28431,6 +29229,7 @@ fn doctor_mode_execution_overrides(mode: DoctorMode) -> ExecutionOverrides {
         backend: Some(match mode {
             DoctorMode::Native => Backend::Native,
             DoctorMode::Container => Backend::Container,
+            DoctorMode::Remote => Backend::Remote,
         }),
         lifecycle: None,
     }
@@ -28506,6 +29305,7 @@ fn repo_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         workspace: None,
         backend: context.backend,
+        context: context.context,
         lifecycle: context.lifecycle,
         image: context.image,
         target: context.target,
@@ -28539,6 +29339,15 @@ fn phase_execution_backend(context: &PhaseExecutionContext) -> Option<Backend> {
     }
 }
 
+fn matching_default_execution_context_name(
+    contract: &Contract,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+) -> Option<String> {
+    matching_execution_context_name(contract.execution.as_ref(), backend, lifecycle)
+        .map(str::to_string)
+}
+
 fn native_phase_execution_context() -> PhaseExecutionContext {
     PhaseExecutionContext {
         backend: Some(String::from("native")),
@@ -28554,19 +29363,59 @@ fn selected_phase_execution_context(
     let (backend, lifecycle) = effective_execution(contract, overrides);
     PhaseExecutionContext {
         backend: Some(format_backend(backend).to_string()),
+        context: matching_default_execution_context_name(contract, backend, lifecycle),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image: execution_image(contract, backend),
         target: execution_target(contract, path, backend, lifecycle),
     }
 }
 
+fn effective_task_execution_target(
+    path: &Path,
+    effective: crate::runner::EffectiveTaskExecution<'_>,
+) -> Option<String> {
+    match effective.backend {
+        Backend::Remote => effective.remote.and_then(|remote| remote.target.clone()),
+        Backend::Container if effective.lifecycle == Some(Lifecycle::Persistent) => {
+            let container = effective.container?;
+            let engine =
+                selected_container_engine_from_backend(Some(container)).unwrap_or_else(|| {
+                    container_engine_candidates_from_backend(Some(container))
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| String::from("docker"))
+                });
+            Some(persistent_container_name(
+                path.parent().unwrap_or(path),
+                &container.image,
+                &engine,
+            ))
+        }
+        Backend::Container | Backend::Native => None,
+    }
+}
+
 fn task_phase_execution_context(
     contract: &Contract,
     path: &Path,
+    task_name: &str,
     overrides: ExecutionOverrides,
     target: Option<String>,
 ) -> PhaseExecutionContext {
-    let mut context = selected_phase_execution_context(contract, path, overrides);
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let mut context = PhaseExecutionContext {
+        backend: Some(format_backend(effective.backend).to_string()),
+        context: effective.context_name.map(str::to_string),
+        lifecycle: effective
+            .lifecycle
+            .map(format_lifecycle)
+            .map(str::to_string),
+        image: effective
+            .container
+            .map(|container| container.image.clone())
+            .filter(|_| matches!(effective.backend, Backend::Container)),
+        target: effective_task_execution_target(path, effective),
+    };
     if target.is_some() {
         context.target = target;
     }
@@ -28579,12 +29428,29 @@ fn doctor_phase_execution_context(
     mode: DoctorMode,
 ) -> PhaseExecutionContext {
     match mode {
-        DoctorMode::Native => native_phase_execution_context(),
+        DoctorMode::Native => PhaseExecutionContext {
+            context: matching_default_execution_context_name(contract, Backend::Native, None),
+            ..native_phase_execution_context()
+        },
         DoctorMode::Container => PhaseExecutionContext {
             backend: Some(String::from("container")),
+            context: matching_default_execution_context_name(
+                contract,
+                Backend::Container,
+                Some(Lifecycle::Ephemeral),
+            )
+            .or_else(|| {
+                matching_default_execution_context_name(contract, Backend::Container, None)
+            }),
             lifecycle: Some(String::from("ephemeral")),
             image: execution_image(contract, Backend::Container),
             target: ephemeral_container_target(contract, path),
+        },
+        DoctorMode::Remote => PhaseExecutionContext {
+            backend: Some(String::from("remote")),
+            context: matching_default_execution_context_name(contract, Backend::Remote, None),
+            target: execution_target(contract, path, Backend::Remote, None),
+            ..PhaseExecutionContext::default()
         },
     }
 }
@@ -28608,11 +29474,19 @@ fn provisioning_phase_execution_context(
     target: &ProvisioningExecutionTarget,
 ) -> PhaseExecutionContext {
     match target {
-        ProvisioningExecutionTarget::Native => native_phase_execution_context(),
+        ProvisioningExecutionTarget::Native => PhaseExecutionContext {
+            context: matching_default_execution_context_name(contract, Backend::Native, None),
+            ..native_phase_execution_context()
+        },
         ProvisioningExecutionTarget::Container {
             image, lifecycle, ..
         } => PhaseExecutionContext {
             backend: Some(String::from("container")),
+            context: matching_default_execution_context_name(
+                contract,
+                Backend::Container,
+                Some(*lifecycle),
+            ),
             lifecycle: Some(format_lifecycle(*lifecycle).to_string()),
             image: Some(image.clone()),
             target: match lifecycle {
@@ -28621,6 +29495,14 @@ fn provisioning_phase_execution_context(
                 }
                 Lifecycle::Ephemeral => None,
             },
+        },
+        ProvisioningExecutionTarget::Remote { context_name, .. } => PhaseExecutionContext {
+            backend: Some(String::from("remote")),
+            context: context_name.clone().or_else(|| {
+                matching_default_execution_context_name(contract, Backend::Remote, None)
+            }),
+            target: execution_target(contract, path, Backend::Remote, None),
+            ..PhaseExecutionContext::default()
         },
     }
 }
@@ -28892,6 +29774,7 @@ fn workspace_up_receipt(
         contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
+        context: None,
         lifecycle: None,
         image: None,
         target: None,
@@ -28957,6 +29840,7 @@ fn workspace_status_receipt(
         contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
+        context: None,
         lifecycle: None,
         image: None,
         target: None,
@@ -29025,6 +29909,7 @@ fn workspace_run_receipt(
         contract_identity: Some(contract_identity.clone()),
         workspace: Some(workspace_name.to_string()),
         backend: None,
+        context: None,
         lifecycle: None,
         image: None,
         target: None,
@@ -29165,7 +30050,7 @@ fn resolve_provisioning_execution_target(
     contract: &Contract,
     overrides: ExecutionOverrides,
 ) -> Result<ProvisioningExecutionTarget, Finding> {
-    let (backend, _) = effective_execution(contract, overrides);
+    let backend = effective_task_execution(contract, "setup", overrides).backend;
     if !matches!(backend, Backend::Container) {
         return Ok(ProvisioningExecutionTarget::Native);
     }
@@ -29175,6 +30060,7 @@ fn resolve_provisioning_execution_target(
             image,
             engine,
             lifecycle,
+            ..
         }) => Ok(ProvisioningExecutionTarget::Container {
             image,
             engine,
@@ -29250,36 +30136,45 @@ fn resolve_provisioning_execution_target(
 }
 
 fn up_doctor_mode(contract: &Contract, overrides: ExecutionOverrides) -> DoctorMode {
-    match effective_execution(contract, overrides).0 {
+    match effective_task_execution(contract, "setup", overrides).backend {
         Backend::Container => DoctorMode::Container,
         Backend::Native | Backend::Remote => DoctorMode::Native,
     }
 }
 
-fn provisionable_target_keys(findings: &[Finding]) -> BTreeSet<String> {
-    findings
-        .iter()
-        .filter_map(provisionable_target_key_for_finding)
-        .collect()
-}
-
 fn provisionable_target_key_for_finding(finding: &Finding) -> Option<String> {
     if let Some(name) = finding.summary.strip_prefix("Missing runtime: ") {
-        return Some(format!("runtime:{}", name.trim()));
+        return Some(format!("runtime:{}", strip_finding_context_suffix(name)));
     }
     if let Some(name) = finding
         .summary
         .strip_prefix("Version mismatch for runtime: ")
     {
-        return Some(format!("runtime:{}", name.trim()));
+        return Some(format!("runtime:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding.summary.strip_prefix("Runtime probe failed: ") {
+        return Some(format!("runtime:{}", strip_finding_context_suffix(name)));
+    }
+    if let Some(name) = finding
+        .summary
+        .strip_prefix("Unparseable version for runtime: ")
+    {
+        return Some(format!("runtime:{}", strip_finding_context_suffix(name)));
     }
     if let Some(name) = finding.summary.strip_prefix("Missing tool: ") {
-        return Some(format!("tool:{}", name.trim()));
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
     }
-    finding
-        .summary
-        .strip_prefix("Version mismatch for tool: ")
-        .map(|name| format!("tool:{}", name.trim()))
+    if let Some(name) = finding.summary.strip_prefix("Version mismatch for tool: ") {
+        return Some(format!("tool:{}", strip_finding_context_suffix(name)));
+    }
+    None
+}
+
+fn strip_finding_context_suffix(name: &str) -> String {
+    name.rsplit_once(" (context ").map_or_else(
+        || name.trim().to_string(),
+        |(name, _)| name.trim().to_string(),
+    )
 }
 
 fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> String {
@@ -29293,7 +30188,6 @@ fn provisioning_action_key(action: &crate::policy_pack::ProvisioningAction) -> S
 fn selected_up_provisioning_actions(
     preflight: &DoctorReport,
 ) -> Vec<crate::policy_pack::ProvisioningAction> {
-    let missing_targets = provisionable_target_keys(&preflight.findings);
     preflight
         .provisioning
         .as_ref()
@@ -29302,11 +30196,81 @@ fn selected_up_provisioning_actions(
                 .request
                 .actions
                 .iter()
-                .filter(|action| missing_targets.contains(&provisioning_action_key(action)))
+                .filter(|action| {
+                    preflight
+                        .findings
+                        .iter()
+                        .any(|finding| finding_targets_provisioning_action(finding, action))
+                })
                 .cloned()
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn finding_targets_provisioning_action(
+    finding: &Finding,
+    action: &crate::policy_pack::ProvisioningAction,
+) -> bool {
+    if let Some(key) = provisionable_target_key_for_finding(finding) {
+        return key == provisioning_action_key(action);
+    }
+
+    let contextual_probe_target = if finding_targets_container_image(&finding.why)
+        || finding_targets_remote_backend(&finding.why)
+    {
+        if let Some(name) = finding.summary.strip_prefix("Runtime probe failed: ") {
+            Some(format!("runtime:{}", strip_finding_context_suffix(name)))
+        } else if let Some(name) = finding
+            .summary
+            .strip_prefix("Unparseable version for runtime: ")
+        {
+            Some(format!("runtime:{}", strip_finding_context_suffix(name)))
+        } else if let Some(name) = finding.summary.strip_prefix("Tool probe failed: ") {
+            Some(format!("tool:{}", strip_finding_context_suffix(name)))
+        } else {
+            finding
+                .summary
+                .strip_prefix("Unparseable version for tool: ")
+                .map(|name| format!("tool:{}", strip_finding_context_suffix(name)))
+        }
+    } else {
+        None
+    };
+
+    if let Some(key) = contextual_probe_target {
+        return key == provisioning_action_key(action);
+    }
+
+    if !matches!(
+        finding.code(),
+        "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
+            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED"
+    ) {
+        return false;
+    }
+
+    finding
+        .summary
+        .rsplit_once(':')
+        .map(|(_, name)| strip_finding_context_suffix(name) == action.name.trim())
+        .unwrap_or(false)
 }
 
 fn render_up_preview_provision_action(action: &crate::policy_pack::ProvisioningAction) -> String {
@@ -29333,10 +30297,13 @@ fn append_up_preview_service_actions(contract: &Contract, actions: &mut Vec<Stri
             .get(service_name.as_str())
             .expect("validated service should exist");
 
-        if service.start.is_some() {
+        if service.start_command(service_name.as_str()).is_some() {
             actions.push(format!("start service `{service_name}`"));
         }
-        if service.healthcheck.is_some() {
+        if service.healthcheck.is_some()
+            || service.readiness.is_some()
+            || !service.endpoints.is_empty()
+        {
             actions.push(format!("verify service `{service_name}` readiness"));
         }
     }
@@ -29348,8 +30315,10 @@ fn build_up_preview(
     overrides: ExecutionOverrides,
     preflight: &DoctorReport,
 ) -> RepoUpPreview {
-    let (backend, lifecycle) = effective_execution(contract, overrides);
-    let target = execution_target(contract, resolved_path, backend, lifecycle);
+    let effective = effective_task_execution(contract, "setup", overrides);
+    let backend = effective.backend;
+    let lifecycle = effective.lifecycle;
+    let target = effective_task_execution_target(resolved_path, effective);
     let mut actions = Vec::new();
     let mut skipped = Vec::new();
     let selected_actions = selected_up_provisioning_actions(preflight);
@@ -29376,14 +30345,12 @@ fn build_up_preview(
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
+            context: effective.context_name.map(str::to_string),
             lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
-            image: contract
-                .execution
-                .as_ref()
-                .and_then(|execution| execution.backends.as_ref())
-                .and_then(|backends| backends.container.as_ref())
-                .filter(|_| matches!(backend, Backend::Container))
-                .map(|container| container.image.clone()),
+            image: effective
+                .container
+                .map(|container| container.image.clone())
+                .filter(|_| matches!(backend, Backend::Container)),
             target,
             task: contract
                 .tasks
@@ -29410,7 +30377,11 @@ fn preview_receipt(
     repo_execution_receipt(
         resolved_path,
         contract,
-        selected_phase_execution_context(contract, resolved_path, overrides),
+        if contract.tasks.contains_key("setup") {
+            task_phase_execution_context(contract, resolved_path, "setup", overrides, None)
+        } else {
+            selected_phase_execution_context(contract, resolved_path, overrides)
+        },
         status,
         "preview",
         None,
@@ -29463,6 +30434,93 @@ fn run_up_setup_task(
     }
 }
 
+fn remote_up_blocker_finding(
+    phase_task: Option<&str>,
+    context_name: Option<&str>,
+    remote: Option<&crate::schema::RemoteBackend>,
+) -> Finding {
+    let provider = remote
+        .map(|remote| remote.provider.trim())
+        .filter(|provider| !provider.is_empty())
+        .unwrap_or("unknown");
+    let target = remote
+        .and_then(|remote| remote.target.as_deref())
+        .filter(|target| !target.trim().is_empty());
+    let context_suffix = context_name
+        .map(|context| format!(" context `{context}`"))
+        .unwrap_or_default();
+    let target_suffix = target
+        .map(|target| format!(" targeting `{target}`"))
+        .unwrap_or_default();
+
+    match phase_task {
+        Some(task) => Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Remote setup contexts are not supported by `ota up` yet"),
+            why: format!(
+                "task `{task}` resolves to remote{context_suffix} via provider `{provider}`{target_suffix}, but current `ota up` orchestration only prepares native and container workload planes authoritatively"
+            ),
+            next: String::from(
+                "use `ota run setup`, `ota execution plan --mode remote`, and `ota doctor` together, or move `tasks.setup` to a native/container context until remote `ota up` support ships",
+            ),
+        },
+        None => Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Remote repo execution is not supported by `ota up` yet"),
+            why: format!(
+                "the selected repo execution resolves to remote{context_suffix} via provider `{provider}`{target_suffix}, but current `ota up` orchestration only prepares native and container workload planes authoritatively"
+            ),
+            next: String::from(
+                "use `ota execution plan --mode remote` plus explicit remote task execution, or move the repo default execution to a native/container context until remote `ota up` support ships",
+            ),
+        },
+    }
+}
+
+fn up_remote_execution_blocker(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+) -> Option<(PhaseExecutionContext, Option<&'static str>, Finding)> {
+    if contract.tasks.contains_key("setup") {
+        let effective = effective_task_execution(contract, "setup", overrides);
+        if effective.backend == Backend::Remote {
+            return Some((
+                task_phase_execution_context(contract, resolved_path, "setup", overrides, None),
+                Some("setup"),
+                remote_up_blocker_finding(Some("setup"), effective.context_name, effective.remote),
+            ));
+        }
+    } else {
+        let (backend, _) = effective_execution(contract, overrides);
+        if backend == Backend::Remote {
+            let context = selected_phase_execution_context(contract, resolved_path, overrides);
+            let context_name = context.context.clone();
+            let remote = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.default_context())
+                .filter(|(_, selected)| selected.backend == Backend::Remote)
+                .and_then(|(name, _)| named_execution_context(contract, name))
+                .and_then(|(_, context)| context.remote.as_ref())
+                .or_else(|| {
+                    contract
+                        .execution
+                        .as_ref()
+                        .and_then(|execution| execution.backends.as_ref())
+                        .and_then(|backends| backends.remote.as_ref())
+                });
+            return Some((
+                context,
+                None,
+                remote_up_blocker_finding(None, context_name.as_deref(), remote),
+            ));
+        }
+    }
+
+    None
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -29479,6 +30537,64 @@ fn execute_repo_up(
         RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
     };
     let capture_phase_output = matches!(mode, RepoExecutionMode::Capture);
+    if let Some((phase_context, phase_task, blocker)) =
+        up_remote_execution_blocker(contract, resolved_path, overrides)
+    {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![blocker.clone()],
+        };
+        if dry_run {
+            let preview = build_up_preview(contract, resolved_path, overrides, &report);
+            let receipt =
+                preview_receipt(contract, resolved_path, overrides, "BLOCKED", &[blocker]);
+            return Ok(RepoUpResult {
+                ok: false,
+                status: "BLOCKED",
+                phase: "preconditions",
+                report,
+                preview: Some(preview),
+                receipt,
+                service: None,
+                service_command: None,
+                task: phase_task.map(String::from),
+                task_command: None,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "preconditions",
+            preview: None,
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                phase_context,
+                "BLOCKED",
+                "preconditions",
+                None,
+                phase_task,
+                &report.findings,
+                None,
+                report.findings.first().map(|finding| finding.next.clone()),
+            ),
+            report,
+            service: None,
+            service_command: None,
+            task: phase_task.map(String::from),
+            task_command: None,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+    }
     let doctor_mode = up_doctor_mode(contract, overrides);
     let execution_dir = contract_working_dir(resolved_path);
     let mut preflight = diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
@@ -29953,6 +31069,7 @@ fn execute_repo_up(
                         task_phase_execution_context(
                             contract,
                             resolved_path,
+                            "setup",
                             overrides,
                             outcome.target.clone(),
                         ),
@@ -30064,8 +31181,8 @@ fn execute_repo_up(
             .get(name.as_str())
             .expect("validated service should exist");
 
-        if let Some(start) = service.start.as_deref() {
-            match run_shell_command(start, working_dir, mode, "Starting service") {
+        if let Some(start) = service.start_command(name.as_str()) {
+            match run_shell_command(&start, working_dir, mode, "Starting service") {
                 Ok(command) if command.exit_code == 0 => {
                     stdout.push_str(&command.stdout);
                     stderr.push_str(&command.stderr);
@@ -30098,7 +31215,7 @@ fn execute_repo_up(
                             findings: Vec::new(),
                         },
                         service: Some(name.clone()),
-                        service_command: Some(start.to_string()),
+                        service_command: Some(start.clone()),
                         task: None,
                         task_command: None,
                         exit_code: Some(command.exit_code),
@@ -30194,6 +31311,7 @@ fn execute_repo_up(
                         task_phase_execution_context(
                             contract,
                             resolved_path,
+                            "setup",
                             overrides,
                             outcome.target.clone(),
                         ),

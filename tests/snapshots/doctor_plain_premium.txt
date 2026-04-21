@@ -6,7 +6,7 @@ Verdict
  -  Repo: not ready
  -  Agent: ready
 
--> Primary Blocker Version mismatch for runtime: node
+-> Primary Blocker Version mismatch for runtime: node (1)
 Why: node resolved to `24.14.1` but the contract requires `22`; ota probed
      `./bin/node` with
      `node --version`
@@ -25,7 +25,7 @@ Agent
  -  Writable paths: `src`, `docs`
  -  Protected paths: `ota.yaml`, `Cargo.lock`
 
-WARN  Ephemeral lifecycle is advisory in native mode
+WARN  Ephemeral lifecycle is advisory in native mode (1)
 Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native execution
      still runs in the host shell.
 Provenance: repo contract
