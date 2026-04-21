@@ -173,6 +173,37 @@ pub(crate) fn matching_execution_context_name<'a>(
     None
 }
 
+pub(crate) fn matching_declared_execution_context_name<'a>(
+    execution: Option<&'a Execution>,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+) -> Option<&'a str> {
+    let execution = execution?;
+
+    if let Some((name, context)) = execution.default_context()
+        && context.backend == backend
+        && (lifecycle.is_none() || context.lifecycle == lifecycle)
+    {
+        return Some(name);
+    }
+
+    for (name, context) in &execution.contexts {
+        if context.backend == backend && (lifecycle.is_none() || context.lifecycle == lifecycle) {
+            return Some(name.as_str());
+        }
+    }
+
+    if execution.default_context.is_none()
+        && execution.contexts.is_empty()
+        && execution.preferred == Some(backend)
+        && (lifecycle.is_none() || execution.lifecycle == lifecycle)
+    {
+        return Some(LEGACY_EXECUTION_CONTEXT_NAME);
+    }
+
+    None
+}
+
 fn selected_container_backend(execution: Option<&Execution>) -> Option<&ContainerBackend> {
     execution
         .and_then(|execution| execution.default_context())
