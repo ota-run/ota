@@ -12011,6 +12011,32 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_required_services() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: echo postgres
+tasks:
+  setup:
+    run: echo setup
+    requires_services:
+      - postgres
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["tasks"][0]["name"], "setup");
+        assert_eq!(json["tasks"][0]["requires_services"][0], "postgres");
+    }
+
+    #[test]
     fn tasks_json_reports_selected_os_variant() {
         let fixture = ContractFixture::new(
             r#"

@@ -10174,6 +10174,7 @@ pub fn workspace_tasks(
                                 script: (execution.kind == "script")
                                     .then(|| execution.body.to_string()),
                                 depends_on: task.depends_on.clone(),
+                                requires_services: task.requires_services.clone(),
                                 after_success: task.after_success.clone(),
                                 after_failure: task.after_failure.clone(),
                                 after_always: task.after_always.clone(),
@@ -16522,6 +16523,15 @@ fn render_tasks_text(
                 String::from("-")
             } else {
                 task.depends_on.join(",")
+            }
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Requires Services:"),
+            if task.requires_services.is_empty() {
+                String::from("-")
+            } else {
+                task.requires_services.join(",")
             }
         ));
         output.push_str(&format!(
@@ -27862,6 +27872,12 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
+            if !task.requires_services.is_empty() {
+                stdout.push_str(&format!(
+                    " requires_services={}",
+                    task.requires_services.join(",")
+                ));
+            }
             if !task.after_success.is_empty() {
                 stdout.push_str(&format!(" after_success={}", task.after_success.join(",")));
             }
@@ -27927,6 +27943,11 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 } else {
                     task.depends_on.join(",")
                 },
+                if task.requires_services.is_empty() {
+                    String::from("-")
+                } else {
+                    task.requires_services.join(",")
+                },
                 [
                     if task.after_success.is_empty() {
                         None
@@ -27968,6 +27989,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             "Task",
             "Kind",
             "Depends On",
+            "Requires Services",
             "Hooks",
             "Command",
             "Use",

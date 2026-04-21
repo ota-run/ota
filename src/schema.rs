@@ -744,6 +744,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
+    pub requires_services: Vec<String>,
+    #[serde(default)]
     pub after_success: Vec<String>,
     #[serde(default)]
     pub after_failure: Vec<String>,

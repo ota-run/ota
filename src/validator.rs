@@ -902,6 +902,9 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors,
             );
         }
+        for service_name in &task.requires_services {
+            validate_task_service_reference(contract, name, service_name, errors);
+        }
         for dependency in &task.after_success {
             validate_task_dependency_reference(
                 tasks,
@@ -954,6 +957,36 @@ fn validate_task_dependency_reference(
     if dependency.trim().is_empty() {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` must not declare an empty `{field}` task reference"
+        )));
+    }
+}
+
+fn validate_task_service_reference(
+    contract: &Contract,
+    task_name: &str,
+    service_name: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if service_name.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must not declare an empty `requires_services` entry"
+        )));
+        return;
+    }
+
+    let Some(service) = contract.services.get(service_name) else {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` requires unknown service `{service_name}`"
+        )));
+        return;
+    };
+
+    if service.start_command(service_name).is_none()
+        && service.healthcheck.is_none()
+        && service.readiness.is_none()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` requires service `{service_name}` but that service does not declare a start command, healthcheck, or readiness probe"
         )));
     }
 }
@@ -2231,6 +2264,31 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "task `dev` must declare a non-empty `script` body"
+        );
+    }
+
+    #[test]
+    fn rejects_task_requires_unknown_service() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    requires_services:
+      - postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` requires unknown service `postgres`"
         );
     }
 

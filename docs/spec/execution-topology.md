@@ -24,7 +24,7 @@
 
 # Execution Topology
 
-Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
+Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, `tasks.<name>.requires_services`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
 
 ## Core truth
 
@@ -58,9 +58,10 @@ The current shipped model makes five things first-class:
 
 1. execution contexts
 2. typed service managers
-3. context-scoped endpoint projection
-4. context-scoped readiness
-5. context-scoped requirements
+3. task-level service requirements
+4. context-scoped endpoint projection
+5. context-scoped readiness
+6. context-scoped requirements
 
 ## Design principles
 
@@ -138,6 +139,12 @@ tasks:
     context: app
     run: mvn -q -DskipTests dependency:go-offline
 
+  db:integration:
+    context: app
+    requires_services:
+      - postgres
+    run: mvn -B -Dgroups=db-integration test
+
   build:
     context: app
     run: mvn package
@@ -148,6 +155,7 @@ tasks:
 ```
 
 This makes orchestration tasks and workload tasks honest without forcing Docker into the app image.
+`requires_services` lets a task declare that canonical services must be ready before its body runs, while ownership still stays with `services.<name>.manager`.
 
 ### `services.<name>.manager`
 
