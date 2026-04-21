@@ -1206,12 +1206,14 @@ fn persistent_cleanup_targets(
                             .join(", "),
                     }
                 })?;
-            targets.push((
-                Some(name.clone()),
-                container.image.clone(),
-                engine,
-                container_publications_for_context(contract, Some(name)),
-            ));
+            for publications in task_container_publication_sets_for_context(contract, Some(name)) {
+                targets.push((
+                    Some(name.clone()),
+                    container.image.clone(),
+                    engine.clone(),
+                    publications,
+                ));
+            }
         }
     }
 
@@ -1234,7 +1236,14 @@ fn persistent_cleanup_targets(
             engines: container_engine_candidates(contract).join(", "),
         }
     })?;
-    targets.push((None, image, engine, Vec::new()));
+    for publications in task_container_publication_sets_for_context(contract, None) {
+        targets.push((
+            Some(LEGACY_EXECUTION_CONTEXT_NAME.to_string()),
+            image.clone(),
+            engine.clone(),
+            publications,
+        ));
+    }
     Ok(targets)
 }
 
@@ -2376,12 +2385,12 @@ fn task_container_publications(
         .collect()
 }
 
-fn container_publications_for_context(
+fn task_container_publication_sets_for_context(
     contract: &Contract,
     context_name: Option<&str>,
-) -> Vec<ContainerPortPublication> {
+) -> Vec<Vec<ContainerPortPublication>> {
     let normalized_context = context_name.unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME);
-    let mut by_port = BTreeMap::new();
+    let mut publication_sets = vec![Vec::new()];
 
     for task_name in contract.tasks.keys() {
         if task_container_context_name(contract, task_name.as_str())
@@ -2390,12 +2399,17 @@ fn container_publications_for_context(
         {
             continue;
         }
-        for publication in task_container_publications(contract, task_name.as_str()) {
-            by_port.entry(publication.bind_port).or_insert(publication);
+        let publications = task_container_publications(contract, task_name.as_str());
+        if publication_sets
+            .iter()
+            .any(|existing| *existing == publications)
+        {
+            continue;
         }
+        publication_sets.push(publications);
     }
 
-    by_port.into_values().collect()
+    publication_sets
 }
 
 fn container_identity_seed(
@@ -2519,7 +2533,7 @@ pub(crate) fn resolve_execution_backend(
             })?;
 
             let context_name = effective.context_name.map(str::to_string);
-            let publications = container_publications_for_context(contract, effective.context_name);
+            let publications = task_container_publications(contract, task_name);
 
             Ok(ResolvedExecutionBackend::Container {
                 context_name,
@@ -2588,131 +2602,6 @@ pub(crate) fn resolve_execution_backend(
     }
 }
 
-pub(crate) fn resolve_prepared_task_runtime(
-    contract: &Contract,
-    contract_path: &Path,
-    task_name: &str,
-    overrides: ExecutionOverrides,
-) -> Result<Option<ResolvedTaskRuntime>, RunError> {
-    let Some(task) = contract.tasks.get(task_name) else {
-        return Ok(None);
-    };
-    let Some(runtime) = task.service_runtime() else {
-        return Ok(None);
-    };
-
-    match resolve_execution_backend(contract, task_name, overrides)? {
-        ResolvedExecutionBackend::Native => resolve_static_native_task_runtime(runtime),
-        ResolvedExecutionBackend::Container {
-            context_name,
-            image,
-            engine,
-            lifecycle,
-            compose_networks,
-            publications,
-        } => {
-            if lifecycle != Lifecycle::Persistent {
-                return Ok(None);
-            }
-
-            if let Some(issue) = probe_container_backend(&engine, task_name)? {
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: String::from("container"),
-                    details: issue,
-                });
-            }
-
-            let identity_seed = container_identity_seed(context_name.as_deref(), &publications);
-            let container_name = persistent_container_name_for_seed(
-                contract_working_dir(contract_path),
-                &image,
-                &engine,
-                identity_seed.as_deref(),
-            );
-            if let Some(failure) = ensure_persistent_container_ready(
-                task_name,
-                contract_working_dir(contract_path),
-                &image,
-                &engine,
-                &container_name,
-                &compose_networks,
-                &publications,
-            )? {
-                let details = if failure.stderr.trim().is_empty() {
-                    failure.stdout.trim().to_string()
-                } else {
-                    failure.stderr.trim().to_string()
-                };
-                return Err(RunError::RuntimeEndpointDiscoveryFailed {
-                    task: task_name.to_string(),
-                    listener: String::from("container"),
-                    details: if details.is_empty() {
-                        String::from("failed to prepare the persistent container context")
-                    } else {
-                        details
-                    },
-                });
-            }
-            resolve_container_task_runtime(Some(runtime), &engine, &container_name, task_name)
-        }
-        ResolvedExecutionBackend::Remote { .. }
-        | ResolvedExecutionBackend::BackendProvider { .. } => Ok(None),
-    }
-}
-
-fn resolve_static_native_task_runtime(
-    runtime: &crate::schema::TaskRuntimeSpec,
-) -> Result<Option<ResolvedTaskRuntime>, RunError> {
-    let mut listeners = BTreeMap::new();
-
-    for (listener_name, listener) in &runtime.listeners {
-        let bind_port = match listener.bind.port.mode {
-            crate::schema::TaskRuntimePortMode::Fixed => listener
-                .bind
-                .port
-                .value
-                .expect("validated fixed native listener should include a bind port"),
-            crate::schema::TaskRuntimePortMode::Discover => return Ok(None),
-        };
-
-        let resolved = listener
-            .project
-            .host
-            .as_ref()
-            .map(|host| ResolvedTaskRuntimeResolution {
-                host: Some(ResolvedTaskRuntimeHost {
-                    address: host.address.trim().to_string(),
-                    port: bind_port,
-                    url: listener.protocol.url_scheme().map(|scheme| {
-                        format!(
-                            "{scheme}://{}:{bind_port}{}",
-                            host.address.trim(),
-                            normalized_runtime_path(host.path.as_deref())
-                        )
-                    }),
-                }),
-            });
-
-        listeners.insert(
-            listener_name.clone(),
-            ResolvedTaskRuntimeListener {
-                protocol: listener.protocol,
-                bind: ResolvedTaskRuntimeBind {
-                    address: listener.bind.address.trim().to_string(),
-                    port: bind_port,
-                },
-                resolved,
-            },
-        );
-    }
-
-    Ok(Some(ResolvedTaskRuntime {
-        kind: runtime.kind,
-        listeners,
-    }))
-}
-
 pub(crate) fn resolve_context_execution_backend(
     contract: &Contract,
     context_name: &str,
@@ -2754,7 +2643,7 @@ pub(crate) fn resolve_context_execution_backend(
                 engine,
                 lifecycle,
                 compose_networks: compose_networks_for_context(context),
-                publications: container_publications_for_context(contract, Some(context_name)),
+                publications: Vec::new(),
             })
         }
         Backend::Remote => {
@@ -4495,7 +4384,12 @@ struct ContainerCommandOutput {
 }
 
 pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
-    persistent_container_name_for_seed(working_dir, image, engine, None)
+    persistent_container_name_for_seed(
+        working_dir,
+        image,
+        engine,
+        Some(LEGACY_EXECUTION_CONTEXT_NAME),
+    )
 }
 
 fn persistent_container_name_for_seed(
@@ -5750,6 +5644,25 @@ tasks:
   compose:up:
     context: host
     run: echo host
+  dev:
+    context: app
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
   build:
     context: app
     run: echo build
@@ -5795,12 +5708,26 @@ tasks:
                 engine,
                 lifecycle,
                 compose_networks,
+                publications,
                 ..
             } => {
                 assert_eq!(image, "ghcr.io/ota/test:latest");
                 assert_eq!(engine, "podman");
                 assert_eq!(lifecycle, Lifecycle::Persistent);
                 assert_eq!(compose_networks, vec![String::from("local_default")]);
+                assert!(publications.is_empty());
+            }
+            other => panic!("expected container backend, got {other:?}"),
+        }
+
+        let dev_backend =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .unwrap();
+        match dev_backend {
+            ResolvedExecutionBackend::Container { publications, .. } => {
+                assert_eq!(publications.len(), 1);
+                assert_eq!(publications[0].bind_port, 3000);
+                assert_eq!(publications[0].host_address, "127.0.0.1");
             }
             other => panic!("expected container backend, got {other:?}"),
         }
@@ -7160,6 +7087,90 @@ tasks:
   build:
     context: app
     run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("rm\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_unpublished_persistent_container_when_context_also_has_projected_workload() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+  dev:
+    context: app
+    run: printf dev >> prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
 "#,
         );
         let bin_dir = fixture.dir.path().join("bin");

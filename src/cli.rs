@@ -4580,8 +4580,6 @@ fn command_where_label(command: &Commands) -> &'static str {
 mod tests {
     use std::ffi::OsString;
     use std::fs;
-    #[cfg(unix)]
-    use std::hash::{Hash, Hasher};
     use std::path::{Path, PathBuf};
     #[cfg(unix)]
     use std::process::Command;
@@ -9029,11 +9027,11 @@ tasks:
             fs::set_permissions(&docker_path, permissions).unwrap();
         }
 
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        fixture.dir.path().display().to_string().hash(&mut hasher);
-        "ghcr.io/ota/test:latest".hash(&mut hasher);
-        "docker".hash(&mut hasher);
-        let container_name = format!("ota-{:x}", hasher.finish());
+        let container_name = crate::runner::persistent_container_name(
+            fixture.dir.path(),
+            "ghcr.io/ota/test:latest",
+            "docker",
+        );
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
         fs::write(
@@ -9079,6 +9077,50 @@ tasks:
             format!("Cleaned {}", compact_contract(fixture.file_path()))
         );
         assert!(fixture.dir.path().join("docker-log.txt").exists());
+    }
+
+    #[test]
+    fn up_does_not_report_endpoint_for_unstarted_workload_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: exit 0
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let output = run_with(["ota", "up", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let rendered = strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        ));
+        assert!(!rendered.contains("Endpoint:"));
+        assert!(!rendered.contains("http://127.0.0.1:3000/"));
     }
 
     #[test]
@@ -15339,6 +15381,8 @@ project:
 
     #[test]
     fn agents_preview_external_contract_uses_explicit_paths() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -18115,6 +18159,7 @@ tasks:
 
     #[test]
     fn run_executes_single_task_input_shorthand_without_explicit_path() {
+        let _env_guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -22155,6 +22200,7 @@ tasks:
     run: npm run dev
 "#,
         );
+        let _cwd_guard = cwd_mutex_lock();
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let _completion = CompletionRequestGuard::set(CompletionRequest {
             words: vec![

@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- fixed workload-endpoint projection boundaries so `ota up` no longer advertises task endpoints before the workload actually ran, task-scoped host publications no longer leak into unrelated container tasks, and persistent container cleanup/reuse now follows the same seeded identity as execution
 - added task-scoped workload endpoint projection through `tasks.<name>.runtime.kind: service`, including named listeners with bind plus host projection settings, validation for impossible native/container projection plans, resolved runtime endpoints in `ota run` receipts/JSON, and workload endpoint reporting in `ota up` summaries and receipts
 - updated the flagship adoption example and spec docs so containerized app ingress is modeled as task-owned workload topology instead of overloading `services`
 - expanded the contract reference so the workload listener section now explains `fixed`, `discover`, and `auto` mode semantics plus the current native/container support rules
