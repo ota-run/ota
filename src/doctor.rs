@@ -97,15 +97,6 @@ fn backend_for_mode(mode: DoctorMode) -> Backend {
     }
 }
 
-fn contract_has_typed_compose_manager(contract: &Contract) -> bool {
-    contract.services.values().any(|service| {
-        service
-            .manager
-            .as_ref()
-            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose)
-    })
-}
-
 fn contract_has_remote_execution_context(contract: &Contract) -> bool {
     contract.execution.as_ref().is_some_and(|execution| {
         execution.preferred == Some(Backend::Remote)
@@ -117,11 +108,7 @@ fn contract_has_remote_execution_context(contract: &Contract) -> bool {
 }
 
 fn precondition_requirement_surface(contract: &Contract, mode: DoctorMode) -> RequirementSurface {
-    let mut surface = contract.requirement_surface_for_backend(backend_for_mode(mode));
-    if mode == DoctorMode::Container && contract_has_typed_compose_manager(contract) {
-        surface.merge(&contract.context_requirement_surface_for_backend(Backend::Native));
-    }
-    surface
+    contract.requirement_surface_for_backend(backend_for_mode(mode))
 }
 
 fn remote_os_probe_command() -> &'static str {
@@ -1933,31 +1920,6 @@ fn diagnose_contract_with_scope(
                 &mut findings,
             )
         };
-        if mode == DoctorMode::Container && contract_has_typed_compose_manager(contract) {
-            let host_surface = contract.context_requirement_surface_for_backend(Backend::Native);
-            diagnose_runtimes(
-                &host_surface.runtimes,
-                current_os(),
-                contract_path,
-                DoctorMode::Native,
-                None,
-                None,
-                None,
-                &provisioning_actions,
-                &mut findings,
-            );
-            diagnose_tools(
-                &host_surface.tools,
-                current_os(),
-                contract_path,
-                DoctorMode::Native,
-                None,
-                None,
-                None,
-                &provisioning_actions,
-                &mut findings,
-            );
-        }
         if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
             findings.push(remote_mode_scope_note_finding());
         }
@@ -6798,7 +6760,8 @@ tasks:
     }
 
     #[test]
-    fn container_preconditions_include_host_context_requirements_for_compose_managers() {
+    fn container_preconditions_do_not_pull_unrelated_host_context_requirements_for_compose_managers()
+     {
         let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -6840,7 +6803,7 @@ services:
             DoctorMode::Container,
         );
         assert!(
-            report
+            !report
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Missing tool: definitely-not-installed")

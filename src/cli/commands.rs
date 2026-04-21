@@ -53,7 +53,7 @@ use crate::doctor::{
 use crate::execution::{
     container_engine_candidates, container_engine_candidates_from_backend,
     ephemeral_container_target, execution_image, execution_target, format_backend,
-    format_lifecycle, matching_execution_context_name, selected_container_engine_from_backend,
+    format_lifecycle, selected_container_engine_from_backend,
 };
 use crate::output::{
     AgentSummary, AgentsFailure, AgentsSuccess, CheckSuccess, CommandOutput,
@@ -20689,9 +20689,9 @@ mod tests {
         OrgPolicyPack, PolicyPackSource, PolicyRules, ProvisioningAction, ProvisioningActionKind,
         ProvisioningBackendRequest, ProvisioningPlan, ProvisioningTargetKind,
     };
-    use crate::provisioning::apply_provisioning_request;
+    use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{ExecutedTaskStep, ExecutionOverrides, TaskExecutionRelation};
-    use crate::schema::Backend;
+    use crate::schema::{Backend, Lifecycle};
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
@@ -23286,6 +23286,73 @@ policies:
         assert!(rendered.contains(
             "\n »  Contexts: app (container, persistent, image=maven:3.9.14-eclipse-temurin-21-noble, compose=local), host (native)"
         ));
+    }
+
+    #[test]
+    fn phase_execution_contexts_use_matching_named_contexts() {
+        let contract = parse_contract_str(
+            Path::new("/tmp/ota.yaml"),
+            r#"
+version: 1
+project:
+  name: topology-example
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+    remote-db:
+      backend: remote
+      remote:
+        provider: ssh
+        target: sandbox-dev
+        cwd: /tmp
+"#,
+        )
+        .unwrap();
+
+        let doctor_container = super::doctor_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            DoctorMode::Container,
+        );
+        assert_eq!(doctor_container.context.as_deref(), Some("app"));
+
+        let doctor_remote = super::doctor_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            DoctorMode::Remote,
+        );
+        assert_eq!(doctor_remote.context.as_deref(), Some("remote-db"));
+
+        let provisioning_container = super::provisioning_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            &ProvisioningExecutionTarget::Container {
+                image: String::from("ghcr.io/ota/dev:latest"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Ephemeral,
+            },
+        );
+        assert_eq!(provisioning_container.context.as_deref(), Some("app"));
+
+        let provisioning_remote = super::provisioning_phase_execution_context(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            &ProvisioningExecutionTarget::Remote {
+                provider: String::from("ssh"),
+                provider_command: None,
+                target: String::from("sandbox-dev"),
+                cwd: Some(String::from("/tmp")),
+                context_name: None,
+            },
+        );
+        assert_eq!(provisioning_remote.context.as_deref(), Some("remote-db"));
     }
 
     #[test]
@@ -29339,13 +29406,17 @@ fn phase_execution_backend(context: &PhaseExecutionContext) -> Option<Backend> {
     }
 }
 
-fn matching_default_execution_context_name(
+fn matching_phase_execution_context_name(
     contract: &Contract,
     backend: Backend,
     lifecycle: Option<Lifecycle>,
 ) -> Option<String> {
-    matching_execution_context_name(contract.execution.as_ref(), backend, lifecycle)
-        .map(str::to_string)
+    crate::execution::matching_declared_execution_context_name(
+        contract.execution.as_ref(),
+        backend,
+        lifecycle,
+    )
+    .map(str::to_string)
 }
 
 fn native_phase_execution_context() -> PhaseExecutionContext {
@@ -29363,7 +29434,7 @@ fn selected_phase_execution_context(
     let (backend, lifecycle) = effective_execution(contract, overrides);
     PhaseExecutionContext {
         backend: Some(format_backend(backend).to_string()),
-        context: matching_default_execution_context_name(contract, backend, lifecycle),
+        context: matching_phase_execution_context_name(contract, backend, lifecycle),
         lifecycle: lifecycle.map(format_lifecycle).map(str::to_string),
         image: execution_image(contract, backend),
         target: execution_target(contract, path, backend, lifecycle),
@@ -29429,26 +29500,24 @@ fn doctor_phase_execution_context(
 ) -> PhaseExecutionContext {
     match mode {
         DoctorMode::Native => PhaseExecutionContext {
-            context: matching_default_execution_context_name(contract, Backend::Native, None),
+            context: matching_phase_execution_context_name(contract, Backend::Native, None),
             ..native_phase_execution_context()
         },
         DoctorMode::Container => PhaseExecutionContext {
             backend: Some(String::from("container")),
-            context: matching_default_execution_context_name(
+            context: matching_phase_execution_context_name(
                 contract,
                 Backend::Container,
                 Some(Lifecycle::Ephemeral),
             )
-            .or_else(|| {
-                matching_default_execution_context_name(contract, Backend::Container, None)
-            }),
+            .or_else(|| matching_phase_execution_context_name(contract, Backend::Container, None)),
             lifecycle: Some(String::from("ephemeral")),
             image: execution_image(contract, Backend::Container),
             target: ephemeral_container_target(contract, path),
         },
         DoctorMode::Remote => PhaseExecutionContext {
             backend: Some(String::from("remote")),
-            context: matching_default_execution_context_name(contract, Backend::Remote, None),
+            context: matching_phase_execution_context_name(contract, Backend::Remote, None),
             target: execution_target(contract, path, Backend::Remote, None),
             ..PhaseExecutionContext::default()
         },
@@ -29475,14 +29544,14 @@ fn provisioning_phase_execution_context(
 ) -> PhaseExecutionContext {
     match target {
         ProvisioningExecutionTarget::Native => PhaseExecutionContext {
-            context: matching_default_execution_context_name(contract, Backend::Native, None),
+            context: matching_phase_execution_context_name(contract, Backend::Native, None),
             ..native_phase_execution_context()
         },
         ProvisioningExecutionTarget::Container {
             image, lifecycle, ..
         } => PhaseExecutionContext {
             backend: Some(String::from("container")),
-            context: matching_default_execution_context_name(
+            context: matching_phase_execution_context_name(
                 contract,
                 Backend::Container,
                 Some(*lifecycle),
@@ -29498,9 +29567,9 @@ fn provisioning_phase_execution_context(
         },
         ProvisioningExecutionTarget::Remote { context_name, .. } => PhaseExecutionContext {
             backend: Some(String::from("remote")),
-            context: context_name.clone().or_else(|| {
-                matching_default_execution_context_name(contract, Backend::Remote, None)
-            }),
+            context: context_name
+                .clone()
+                .or_else(|| matching_phase_execution_context_name(contract, Backend::Remote, None)),
             target: execution_target(contract, path, Backend::Remote, None),
             ..PhaseExecutionContext::default()
         },
