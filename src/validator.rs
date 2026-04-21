@@ -1138,12 +1138,10 @@ fn validate_container_runtime_publication_conflicts(
                 listener.protocol,
                 host.address.trim().to_string(),
                 match host.port.mode {
-                    TaskRuntimeHostPortMode::Fixed => format!(
-                        "fixed:{}",
-                        host.port
-                            .value
-                            .expect("validated fixed host publication should include a value")
-                    ),
+                    TaskRuntimeHostPortMode::Fixed => match host.port.value {
+                        Some(value) => format!("fixed:{value}"),
+                        None => continue,
+                    },
                     TaskRuntimeHostPortMode::Auto => String::from("auto"),
                 },
             );
@@ -1755,6 +1753,53 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_fixed_host_publication_without_a_host_port_value() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "with `project.host.port.mode: fixed` must declare `project.host.port.value`",
+            )
+        }));
     }
 
     #[test]

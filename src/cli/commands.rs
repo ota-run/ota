@@ -3634,6 +3634,31 @@ fn structured_error_text(
     stdout
 }
 
+fn structured_field_error_text(
+    command: &str,
+    where_value: &str,
+    field: &str,
+    summary: &str,
+    why_lines: &[String],
+    next_steps: &[String],
+) -> String {
+    let mut stdout = format_command_header(command, where_value);
+    stdout.push_str(&format!(
+        "\n\n{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint(summary, "1;37")
+    ));
+    stdout.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    stdout.push_str(&format!("\n{} {}", paint_key("Field:"), paint_code(field)));
+    append_error_detail_section(&mut stdout, "Why:", why_lines, None);
+    append_error_detail_section(&mut stdout, "Next:", next_steps, None);
+    stdout
+}
+
 fn command_message_failure_text(
     command: &str,
     default_where: &str,
@@ -3672,6 +3697,19 @@ fn command_message_failure_text(
         &[compact_message],
         fallback_next_steps,
     )
+}
+
+fn parse_fixed_host_projection_error(error: &str) -> Option<(String, String)> {
+    let error = error.strip_prefix("task `")?;
+    let (task_name, remainder) = error.split_once("` listener `")?;
+    let (listener_name, remainder) = remainder.split_once(
+        "` with `project.host.port.mode: fixed` must declare `project.host.port.value`",
+    )?;
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    Some((task_name.to_string(), listener_name.to_string()))
 }
 
 fn invalid_repo_contract_output(
@@ -26849,6 +26887,53 @@ fn render_run_preferred_backend_validation_text(
     ))
 }
 
+fn render_run_runtime_validation_text(
+    resolved_path: &Path,
+    member: Option<&str>,
+    task_name: &str,
+    errors: &ValidationErrors,
+) -> Option<String> {
+    if errors.errors().len() != 1 {
+        return None;
+    }
+
+    let error = errors.errors()[0].to_string();
+    let text_path_display = display_contract_target(&compact_contract_path(resolved_path), member);
+    let (parsed_task_name, listener_name) = parse_fixed_host_projection_error(&error)?;
+    if parsed_task_name != task_name {
+        return None;
+    }
+
+    let field =
+        format!("tasks.{task_name}.runtime.listeners.{listener_name}.project.host.port.value");
+    let why_lines = vec![String::from(
+        "`project.host.port.mode: fixed` requires `project.host.port.value`",
+    )];
+    let next_steps = vec![
+        format!(
+            "set `project.host.port.value` for `tasks.{task_name}.runtime.listeners.{listener_name}`"
+        ),
+        String::from("or change `project.host.port.mode` to `auto`"),
+        format!(
+            "rerun {} to revalidate the contract",
+            paint_code(&format!(
+                "`{}`",
+                command_for_repo_contract_target("ota validate", resolved_path)
+            ))
+        ),
+        task_use_details_step(Some(resolved_path), member),
+    ];
+
+    Some(structured_field_error_text(
+        "RUN",
+        &text_path_display,
+        &field,
+        "Task runtime projection is invalid",
+        &why_lines,
+        &next_steps,
+    ))
+}
+
 fn render_run_contract_problem_failure(
     resolved_path: &Path,
     member: Option<&str>,
@@ -26858,6 +26943,9 @@ fn render_run_contract_problem_failure(
     let message = match &error {
         ContractProblem::Validation(errors) => {
             render_run_preferred_backend_validation_text(resolved_path, member, task_name, errors)
+                .or_else(|| {
+                    render_run_runtime_validation_text(resolved_path, member, task_name, errors)
+                })
                 .unwrap_or_else(|| {
                     invalid_repo_contract_output(
                         "RUN",
