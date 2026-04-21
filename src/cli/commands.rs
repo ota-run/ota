@@ -30391,6 +30391,9 @@ fn append_up_preview_service_actions(contract: &Contract, actions: &mut Vec<Stri
         if service.start_command(service_name.as_str()).is_some() {
             actions.push(format!("start service `{service_name}`"));
         }
+    }
+
+    for (service_name, service) in &contract.services {
         if service.healthcheck.is_some()
             || service.readiness.is_some()
             || !service.endpoints.is_empty()

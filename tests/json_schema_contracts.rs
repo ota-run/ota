@@ -37,13 +37,16 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let success = &schema["oneOf"][0]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
     let member_properties = &success["members"]["items"]["properties"];
+    let member_task_properties = &member_properties["tasks"]["items"]["properties"];
 
     assert!(success.get("agent").is_some());
     assert!(success.get("members").is_some());
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("tasks").is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
+    assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("variants").is_some());
+    assert!(member_task_properties.get("requires_services").is_some());
 }
 
 #[test]
@@ -554,6 +557,7 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("kind").is_some());
     assert!(task.get("description").is_some());
     assert!(task.get("depends_on").is_some());
+    assert!(task.get("requires_services").is_some());
     assert!(task.get("after_success").is_some());
     assert!(task.get("after_failure").is_some());
     assert!(task.get("after_always").is_some());

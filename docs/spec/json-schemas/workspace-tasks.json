@@ -58,6 +58,10 @@
                   "type": "array",
                   "items": { "type": "string" }
                 },
+                "requires_services": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
                 "after_success": {
                   "type": "array",
                   "items": {

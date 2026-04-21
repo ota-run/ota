@@ -63,6 +63,10 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "requires_services": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "safe_for_agent": { "type": "boolean" },
               "variants": {
                 "type": "array",
@@ -140,6 +144,10 @@
                     "script": { "type": "string" },
                     "selected_variant_os": { "type": "string" },
                     "depends_on": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "requires_services": {
                       "type": "array",
                       "items": { "type": "string" }
                     },

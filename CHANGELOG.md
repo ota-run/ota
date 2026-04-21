@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- expanded the topology guide with a service-scoped requirements comparison so users can distinguish contract-wide runtimes/tools from service-owned lifecycle and readiness concerns
+- added a docs decision guide that compares top-level requirements, execution-context requirements, service managers, task prerequisites, and execution modes, and linked it from the docs home page so users can choose the right contract shape faster
+- fixed `requires_services` enforcement so task service prerequisites fail on any readiness/healthcheck finding, including warning-severity service checks
+- fixed `requires_services` runner behavior so readiness is re-checked for every task or hook that declares a service, while service start commands still dedupe within a run
+- added `requires_services` to the published `ota tasks --json` and `ota workspace tasks --json` schemas, with matching docs/reference examples so valid output no longer fails schema validation
 - added task-level `requires_services` so tasks can declare canonical services that must be ready before the task body runs, and surfaced that requirement in task text/JSON output plus the execution-topology docs and site examples
 - surfaced resolved execution context names directly in `ota run` failure cards and `ota up`
   phase/blocker cards, so the primary human-facing error path now matches the execution-topology
