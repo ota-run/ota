@@ -105,12 +105,8 @@ awk -v new_version="$new_version" '
 
 mv "$tmp_file" "$cargo_toml"
 
-# Update VERSION file
-version_file="$repo_root/VERSION"
-printf '%s\n' "$new_version" > "$version_file"
-
 printf '🦦 VERSION BUMP\n'
-printf 'Updated: Cargo.toml, VERSION\n'
+printf 'Updated: Cargo.toml\n'
 printf 'From: %s\n' "$current_version"
 printf 'To:   %s\n' "$new_version"
 printf '\nNext:\n'
