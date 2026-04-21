@@ -29,9 +29,6 @@
 - added task-scoped workload endpoint projection through `tasks.<name>.runtime.kind: service`, including named listeners with bind plus host projection settings, validation for impossible native/container projection plans, resolved runtime endpoints in `ota run` receipts/JSON, and workload endpoint reporting in `ota up` summaries and receipts
 - updated the flagship adoption example and spec docs so containerized app ingress is modeled as task-owned workload topology instead of overloading `services`
 - expanded the contract reference so the workload listener section now explains `fixed`, `discover`, and `auto` mode semantics plus the current native/container support rules
-
-## 1.7.0
-
 - fixed Windows-only test support utility compilation in `provisioning` command tests by centralizing shim executable setup, keeping executable behavior correct on Unix and avoiding brittle permission mutation on non-Unix platforms
 - stabilized release-gate behavior by ensuring the same fix ships with existing test fixtures and contract validations so release automation can complete without platform-specific failures
 
