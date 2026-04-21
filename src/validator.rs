@@ -23,7 +23,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::schema::{
-    AgentConfig, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec, TaskSpec,
+    AgentConfig, Backend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
+    TaskRuntimeProtocol, TaskSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -850,6 +852,8 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             )));
         }
 
+        validate_task_runtime(contract, name, task, errors);
+
         let mut seen_variant_os = BTreeSet::new();
         for (index, variant) in task.variants.iter().enumerate() {
             let Some(os) = variant.when.os.as_deref() else {
@@ -937,7 +941,259 @@ fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
     }
 
+    validate_container_runtime_publication_conflicts(contract, errors);
     detect_task_cycles(tasks, errors);
+}
+
+fn validate_task_runtime(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(runtime) = task.runtime.as_ref() else {
+        return;
+    };
+
+    if runtime.kind != TaskRuntimeKind::Service {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime kind is not supported"
+        )));
+        return;
+    }
+
+    if runtime.listeners.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` with `runtime.kind: service` must declare at least one listener"
+        )));
+    }
+
+    let backend = task_execution_backend(contract, task);
+    let discover_listener_count = runtime
+        .listeners
+        .values()
+        .filter(|listener| listener.bind.port.mode == TaskRuntimePortMode::Discover)
+        .count();
+    if discover_listener_count > 1 {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` must not declare more than one `bind.port.mode: discover` listener; keep discovery deterministic"
+        )));
+    }
+
+    for (listener_name, listener) in &runtime.listeners {
+        if listener_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime listeners must not declare an empty listener name"
+            )));
+            continue;
+        }
+
+        if listener.bind.address.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` listener `{listener_name}` must declare a non-empty `bind.address`"
+            )));
+        }
+
+        match listener.bind.port.mode {
+            TaskRuntimePortMode::Fixed => {
+                if listener.bind.port.value.is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` listener `{listener_name}` with `bind.port.mode: fixed` must declare `bind.port.value`"
+                    )));
+                }
+            }
+            TaskRuntimePortMode::Discover => {
+                if listener.bind.port.value.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` listener `{listener_name}` with `bind.port.mode: discover` must not declare `bind.port.value`"
+                    )));
+                }
+            }
+        }
+
+        if let Some(host) = listener.project.host.as_ref() {
+            validate_task_runtime_host_projection(
+                contract,
+                task_name,
+                task,
+                listener_name,
+                listener.protocol,
+                host,
+                errors,
+            );
+
+            if backend == Backend::Container {
+                if listener.bind.port.mode != TaskRuntimePortMode::Fixed {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` listener `{listener_name}` in a container context must use `bind.port.mode: fixed` when `project.host` is declared"
+                    )));
+                }
+                if is_loopback_only_address(listener.bind.address.trim()) {
+                    errors.push(ValidationError::new(format!(
+                            "task `{task_name}` listener `{listener_name}` cannot project to the host from a loopback-only container bind address `{}`",
+                            listener.bind.address.trim()
+                        )));
+                }
+            } else if backend == Backend::Native {
+                match (listener.bind.port.mode, host.port.mode) {
+                    (TaskRuntimePortMode::Fixed, TaskRuntimeHostPortMode::Fixed)
+                        if listener.bind.port.value != host.port.value =>
+                    {
+                        errors.push(ValidationError::new(format!(
+                                "task `{task_name}` listener `{listener_name}` uses native execution, so `project.host.port.value` must match the fixed bind port"
+                            )));
+                    }
+                    (TaskRuntimePortMode::Discover, TaskRuntimeHostPortMode::Fixed) => {
+                        errors.push(ValidationError::new(format!(
+                                "task `{task_name}` listener `{listener_name}` cannot use `project.host.port.mode: fixed` with a native `bind.port.mode: discover` listener"
+                            )));
+                    }
+                    _ => {}
+                }
+            }
+        } else if backend == Backend::Remote {
+            errors.push(ValidationError::new(format!(
+                    "task `{task_name}` runtime service listeners are not supported on remote execution contexts yet"
+                )));
+        }
+    }
+}
+
+fn validate_task_runtime_host_projection(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    listener_name: &str,
+    protocol: TaskRuntimeProtocol,
+    host: &TaskRuntimeHostProjectionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if host.address.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` listener `{listener_name}` host projection must declare a non-empty `address`"
+        )));
+    }
+
+    match host.port.mode {
+        TaskRuntimeHostPortMode::Fixed => {
+            if host.port.value.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` with `project.host.port.mode: fixed` must declare `project.host.port.value`"
+                )));
+            }
+        }
+        TaskRuntimeHostPortMode::Auto => {
+            if host.port.value.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` with `project.host.port.mode: auto` must not declare `project.host.port.value`"
+                )));
+            }
+        }
+    }
+
+    if let Some(path) = host.path.as_deref()
+        && protocol.url_scheme().is_some()
+        && !path.trim().is_empty()
+        && !path.starts_with('/')
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` listener `{listener_name}` host projection `path` must start with `/`"
+        )));
+    }
+
+    if task_execution_backend(contract, task) == Backend::Remote {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` runtime host projection is not supported on remote execution contexts yet"
+        )));
+    }
+}
+
+fn validate_container_runtime_publication_conflicts(
+    contract: &Contract,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut seen = BTreeMap::<(String, u16), (String, TaskRuntimeProtocol, String, String)>::new();
+
+    for (task_name, task) in &contract.tasks {
+        let Some(runtime) = task.service_runtime() else {
+            continue;
+        };
+        if task_execution_backend(contract, task) != Backend::Container {
+            continue;
+        }
+
+        let context_name = task_execution_context_name(contract, task)
+            .unwrap_or("$legacy")
+            .to_string();
+        for (listener_name, listener) in &runtime.listeners {
+            let Some(host) = listener.project.host.as_ref() else {
+                continue;
+            };
+            let Some(container_port) = listener.bind.port.value else {
+                continue;
+            };
+            let publication_key = (context_name.clone(), container_port);
+            let signature = (
+                listener_name.clone(),
+                listener.protocol,
+                host.address.trim().to_string(),
+                match host.port.mode {
+                    TaskRuntimeHostPortMode::Fixed => format!(
+                        "fixed:{}",
+                        host.port
+                            .value
+                            .expect("validated fixed host publication should include a value")
+                    ),
+                    TaskRuntimeHostPortMode::Auto => String::from("auto"),
+                },
+            );
+
+            if let Some((existing_listener, existing_protocol, existing_address, existing_port)) =
+                seen.get(&publication_key)
+                && (existing_protocol != &signature.1
+                    || existing_address != &signature.2
+                    || existing_port != &signature.3)
+            {
+                errors.push(ValidationError::new(format!(
+                    "container context `{}` publishes internal port `{container_port}` more than once with conflicting host projection settings (`{task_name}.{listener_name}` conflicts with `{existing_listener}`)",
+                    context_name
+                )));
+            } else {
+                seen.insert(publication_key, signature);
+            }
+        }
+    }
+}
+
+fn task_execution_backend(contract: &Contract, task: &TaskSpec) -> Backend {
+    if let Some(context_name) = task_execution_context_name(contract, task)
+        && let Some(context) = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get(context_name))
+    {
+        return context.backend;
+    }
+
+    contract
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.preferred)
+        .unwrap_or(Backend::Native)
+}
+
+fn task_execution_context_name<'a>(contract: &'a Contract, task: &'a TaskSpec) -> Option<&'a str> {
+    task.context
+        .as_deref()
+        .or_else(|| contract.execution.as_ref()?.default_context.as_deref())
+}
+
+fn is_loopback_only_address(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized == "::1"
+        || normalized == "127.0.0.1"
+        || normalized.starts_with("127.")
 }
 
 fn validate_task_dependency_reference(

@@ -97,14 +97,14 @@ use crate::provisioning::{
 };
 use crate::runner::{
     DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
-    ResolvedEnvValue, ResolvedExecutionBackend, RunError, StaleContainerOwnership,
-    TaskExecutionRelation, clean_execution, clean_stale_execution, effective_execution,
-    effective_task_execution, env_resolution_source_label, load_declared_env_sources,
-    load_policy_env_overlay, named_execution_context, persistent_container_name,
-    resolve_declared_env_source_value, resolve_execution_backend, resolve_task_env_details,
-    resolve_task_env_details_with_policy, run_streaming_command_with_loader,
-    run_task_captured_with_args_with_overrides_with_policy, run_task_with_args_with_overrides,
-    run_task_with_progress_and_args_and_overrides_with_policy,
+    ResolvedEnvValue, ResolvedExecutionBackend, ResolvedTaskRuntime, RunError,
+    StaleContainerOwnership, TaskExecutionRelation, clean_execution, clean_stale_execution,
+    effective_execution, effective_task_execution, env_resolution_source_label,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, resolve_declared_env_source_value, resolve_execution_backend,
+    resolve_prepared_task_runtime, resolve_task_env_details, resolve_task_env_details_with_policy,
+    run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
+    run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
 use crate::schema::{Backend, Contract, EnvRequirement, ExtensionSpec, Lifecycle, TaskSpec};
 use crate::update;
@@ -21849,6 +21849,7 @@ tasks:
             true,
             Some(String::from("container")),
             None,
+            None,
         );
         let result = RepoUpResult {
             ok: true,
@@ -21905,6 +21906,8 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            runtime: None,
+            workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
@@ -23653,6 +23656,7 @@ tasks:
             true,
             None,
             None,
+            None,
         );
 
         assert_eq!(receipt.env["OTA_TEST_SECRET"], "<redacted>");
@@ -23704,6 +23708,7 @@ tasks:
             127,
             false,
             Some(String::from("container")),
+            None,
             Some(String::from("install the missing tool and rerun the task")),
         );
         let summary = render_execution_receipt_summary_block(&receipt, Some("fail"), "RUN SUMMARY");
@@ -23761,6 +23766,7 @@ tasks:
             true,
             None,
             None,
+            None,
         );
 
         assert_eq!(receipt.backend.as_deref(), Some("container"));
@@ -23813,6 +23819,7 @@ tasks:
             }],
             0,
             true,
+            None,
             None,
             None,
         );
@@ -23875,6 +23882,7 @@ tasks:
             true,
             None,
             None,
+            None,
         );
 
         assert_eq!(
@@ -23908,6 +23916,8 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            runtime: None,
+            workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
@@ -23947,6 +23957,8 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            runtime: None,
+            workloads: BTreeMap::new(),
             policy: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
@@ -23967,6 +23979,72 @@ tasks:
         ));
 
         assert!(rendered.contains("Status:    failed"));
+    }
+
+    #[test]
+    fn execution_summary_uses_workload_endpoint_when_runtime_is_absent() {
+        let mut workloads = BTreeMap::new();
+        workloads.insert(
+            String::from("dev"),
+            crate::runner::ResolvedTaskRuntime {
+                kind: crate::schema::TaskRuntimeKind::Service,
+                listeners: BTreeMap::from([(
+                    String::from("http"),
+                    crate::runner::ResolvedTaskRuntimeListener {
+                        protocol: crate::schema::TaskRuntimeProtocol::Http,
+                        bind: crate::runner::ResolvedTaskRuntimeBind {
+                            address: String::from("0.0.0.0"),
+                            port: 3000,
+                        },
+                        resolved: Some(crate::runner::ResolvedTaskRuntimeResolution {
+                            host: Some(crate::runner::ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 49153,
+                                url: Some(String::from("http://127.0.0.1:49153/")),
+                            }),
+                        }),
+                    },
+                )]),
+            },
+        );
+
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("persistent")),
+            image: Some(String::from("node:24")),
+            target: Some(String::from("ota-container")),
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            runtime: None,
+            workloads,
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "post-setup diagnosis",
+                "READY",
+                None,
+                None,
+            )],
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary::default(),
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(
+            &receipt,
+            None,
+            "UP SUMMARY",
+        ));
+
+        assert!(rendered.contains("Endpoint:  http://127.0.0.1:49153/"));
     }
 
     #[test]
@@ -25750,6 +25828,7 @@ fn run_single_contract_target_streaming(
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
+                outcome.runtime.clone(),
                 None,
             );
             let mut output = String::new();
@@ -25791,6 +25870,7 @@ fn run_single_contract_target_streaming(
                         outcome.exit_code,
                         false,
                         outcome.target.clone(),
+                        outcome.runtime.clone(),
                         Some(format!(
                             "{}; {}",
                             format!(
@@ -25814,6 +25894,7 @@ fn run_single_contract_target_streaming(
                         outcome.exit_code,
                         false,
                         outcome.target.clone(),
+                        outcome.runtime.clone(),
                         Some(format!(
                             "{}; {}",
                             format!(
@@ -25835,6 +25916,7 @@ fn run_single_contract_target_streaming(
                 &[],
                 1,
                 false,
+                None,
                 None,
                 Some(format!(
                     "{}; {}",
@@ -25896,6 +25978,7 @@ fn run_single_contract_target_captured(
                 outcome.exit_code,
                 true,
                 outcome.target.clone(),
+                outcome.runtime.clone(),
                 None,
             );
             let mut output = String::new();
@@ -25931,6 +26014,7 @@ fn run_single_contract_target_captured(
                 outcome.exit_code,
                 false,
                 outcome.target.clone(),
+                outcome.runtime.clone(),
                 Some(format!(
                     "inspect the task output excerpt and rerun `{}`",
                     repo_run_stream_command(&failed_task_name, member)
@@ -25969,6 +26053,7 @@ fn run_single_contract_target_captured(
                 &[],
                 1,
                 false,
+                None,
                 None,
                 Some(format!(
                     "{}; {}",
@@ -26539,6 +26624,7 @@ fn run_execution_receipt(
     _exit_code: i32,
     ok: bool,
     target: Option<String>,
+    runtime: Option<crate::runner::ResolvedTaskRuntime>,
     next: Option<String>,
 ) -> ExecutionReceipt {
     let effective = effective_task_execution(contract, task_name, overrides);
@@ -26596,6 +26682,8 @@ fn run_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
+        runtime,
+        workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, contract_path, backend),
         steps,
         blocked: Vec::new(),
@@ -27559,6 +27647,19 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         }
     }
 
+    if let Some(runtime) = receipt.runtime.as_ref() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime:")));
+        append_runtime_listener_lines(&mut stdout, runtime, "");
+    }
+
+    if !receipt.workloads.is_empty() {
+        stdout.push_str(&format!("\n\n{}", paint_section_title("Workloads:")));
+        for (task_name, runtime) in &receipt.workloads {
+            stdout.push_str(&format!("\n{}", paint_key(task_name)));
+            append_runtime_listener_lines(&mut stdout, runtime, "  ");
+        }
+    }
+
     if !receipt.policy.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Policy:")));
         for line in &receipt.policy {
@@ -27749,6 +27850,9 @@ fn render_execution_receipt_summary_block(
     {
         lines.push(summary_detail_line("Target:", target));
     }
+    if let Some(endpoint) = primary_receipt_endpoint(receipt) {
+        lines.push(summary_detail_line("Endpoint:", &endpoint));
+    }
     lines.push(summary_detail_line("Task:", task));
     let status = aggregate_execution_summary_status(receipt.ok, &receipt.steps, &receipt.blocked);
     lines.push(summary_detail_line(
@@ -27770,6 +27874,67 @@ fn render_execution_receipt_status(status: &str) -> String {
         value if value.contains("FAILED") => render_failed_status_label(value),
         other => paint(other, "1;37"),
     }
+}
+
+fn append_runtime_listener_lines(
+    stdout: &mut String,
+    runtime: &crate::runner::ResolvedTaskRuntime,
+    indent: &str,
+) {
+    for (listener_name, listener) in &runtime.listeners {
+        stdout.push_str(&format!(
+            "\n{indent}{} {}:{}",
+            paint_key(listener_name),
+            listener.bind.address,
+            listener.bind.port
+        ));
+        if let Some(host) = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+        {
+            if let Some(url) = host.url.as_deref() {
+                stdout.push_str(&format!("\n{indent}  {} {}", paint_key("Endpoint:"), url));
+            } else {
+                stdout.push_str(&format!(
+                    "\n{indent}  {} {}:{}",
+                    paint_key("Host:"),
+                    host.address,
+                    host.port
+                ));
+            }
+        }
+    }
+}
+
+fn primary_runtime_endpoint(runtime: &crate::runner::ResolvedTaskRuntime) -> Option<String> {
+    runtime.listeners.values().find_map(|listener| {
+        listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .and_then(|host| host.url.clone())
+            .or_else(|| {
+                listener
+                    .resolved
+                    .as_ref()
+                    .and_then(|resolved| resolved.host.as_ref())
+                    .map(|host| format!("{}:{}", host.address, host.port))
+            })
+    })
+}
+
+fn primary_receipt_endpoint(receipt: &ExecutionReceipt) -> Option<String> {
+    receipt
+        .runtime
+        .as_ref()
+        .and_then(primary_runtime_endpoint)
+        .or_else(|| {
+            receipt
+                .workloads
+                .values()
+                .find_map(primary_runtime_endpoint)
+        })
 }
 
 fn render_execution_summary_status_value(status: &str) -> String {
@@ -29098,6 +29263,7 @@ struct CommandRunResult {
     stdout: String,
     stderr: String,
     target: Option<String>,
+    runtime: Option<ResolvedTaskRuntime>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29411,6 +29577,8 @@ fn repo_execution_receipt(
                 source: receipt_env_source(value),
             })
             .collect(),
+        runtime: None,
+        workloads: BTreeMap::new(),
         policy: execution_policy_lines(contract, path, execution_backend),
         steps,
         blocked: Vec::new(),
@@ -29875,6 +30043,8 @@ fn workspace_up_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        runtime: None,
+        workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
         blocked,
@@ -29938,6 +30108,8 @@ fn workspace_status_receipt(
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
+        runtime: None,
+        workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
         blocked: Vec::new(),
@@ -30010,6 +30182,8 @@ fn workspace_run_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        runtime: None,
+        workloads: BTreeMap::new(),
         policy: Vec::new(),
         steps,
         blocked,
@@ -30038,6 +30212,7 @@ fn acquire_workspace_repo(
             stdout: String::new(),
             stderr: String::new(),
             target: None,
+            runtime: None,
         });
     }
 
@@ -30073,6 +30248,7 @@ fn acquire_workspace_repo(
             stdout,
             stderr,
             target: None,
+            runtime: None,
         });
     }
 
@@ -30092,6 +30268,7 @@ fn acquire_workspace_repo(
                 stdout,
                 stderr,
                 target: None,
+                runtime: None,
             });
         }
     }
@@ -30101,6 +30278,7 @@ fn acquire_workspace_repo(
         stdout,
         stderr,
         target: None,
+        runtime: None,
     })
 }
 
@@ -30123,6 +30301,7 @@ fn run_git_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
+                runtime: None,
             })
         }
         RepoExecutionMode::Stream => {
@@ -30132,6 +30311,7 @@ fn run_git_command(
                 stdout: String::new(),
                 stderr: String::new(),
                 target: None,
+                runtime: None,
             })
         }
     }
@@ -30508,6 +30688,7 @@ fn run_up_setup_task(
             stdout: String::new(),
             stderr: String::new(),
             target: outcome.target,
+            runtime: outcome.runtime,
         })
         .map_err(render_run_error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
@@ -30523,9 +30704,47 @@ fn run_up_setup_task(
             stdout: outcome.stdout,
             stderr: outcome.stderr,
             target: outcome.target,
+            runtime: outcome.runtime,
         })
         .map_err(render_run_error),
     }
+}
+
+fn resolve_up_workloads(
+    contract: &Contract,
+    resolved_path: &Path,
+    overrides: ExecutionOverrides,
+    setup_runtime: Option<&ResolvedTaskRuntime>,
+) -> Result<BTreeMap<String, ResolvedTaskRuntime>, String> {
+    let mut workloads = BTreeMap::new();
+
+    if let Some(runtime) = setup_runtime.cloned() {
+        workloads.insert(String::from("setup"), runtime);
+    }
+
+    for task_name in contract.tasks.keys() {
+        if task_name == "setup" && workloads.contains_key("setup") {
+            continue;
+        }
+        if contract
+            .tasks
+            .get(task_name.as_str())
+            .and_then(TaskSpec::service_runtime)
+            .is_none()
+        {
+            continue;
+        }
+
+        match resolve_prepared_task_runtime(contract, resolved_path, task_name, overrides) {
+            Ok(Some(runtime)) => {
+                workloads.insert(task_name.clone(), runtime);
+            }
+            Ok(None) => {}
+            Err(error) => return Err(render_run_error(error)),
+        }
+    }
+
+    Ok(workloads)
 }
 
 fn remote_up_blocker_finding(
@@ -30626,6 +30845,7 @@ fn execute_repo_up(
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut provisioned_setup = false;
+    let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
         RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
@@ -31194,6 +31414,7 @@ fn execute_repo_up(
             Ok(outcome) => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                setup_runtime = outcome.runtime;
                 let refreshed =
                     diagnose_preconditions_with_mode(contract, resolved_path, doctor_mode);
                 if !refreshed.ok {
@@ -31436,29 +31657,34 @@ fn execute_repo_up(
             Ok(outcome) => {
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
+                setup_runtime = outcome.runtime;
             }
             Err(error) => return Err(error),
         }
     }
 
     let report = diagnose_contract_in_mode(contract, resolved_path, doctor_mode);
+    let workloads =
+        resolve_up_workloads(contract, resolved_path, overrides, setup_runtime.as_ref())?;
+    let mut receipt = repo_execution_receipt(
+        resolved_path,
+        contract,
+        doctor_report_execution_context(contract, resolved_path, doctor_mode, &report),
+        if report.ok { "READY" } else { "NOT READY" },
+        "post-setup diagnosis",
+        None,
+        None,
+        &report.findings,
+        None,
+        report.findings.first().map(|finding| finding.next.clone()),
+    );
+    receipt.workloads = workloads;
     Ok(RepoUpResult {
         ok: report.ok,
         status: if report.ok { "READY" } else { "NOT READY" },
         phase: "post-setup diagnosis",
         preview: None,
-        receipt: repo_execution_receipt(
-            resolved_path,
-            contract,
-            doctor_report_execution_context(contract, resolved_path, doctor_mode, &report),
-            if report.ok { "READY" } else { "NOT READY" },
-            "post-setup diagnosis",
-            None,
-            None,
-            &report.findings,
-            None,
-            report.findings.first().map(|finding| finding.next.clone()),
-        ),
+        receipt,
         report,
         service: None,
         service_command: None,
@@ -33257,6 +33483,7 @@ fn run_workspace_repo_refresh_command(
                 stdout,
                 stderr,
                 target: None,
+                runtime: None,
             });
         }
 
@@ -33271,6 +33498,7 @@ fn run_workspace_repo_refresh_command(
             stdout,
             stderr,
             target: None,
+            runtime: None,
         });
     }
 
@@ -33695,6 +33923,7 @@ fn run_workspace_repo_task(
                         stdout: result.stdout,
                         stderr: result.stderr,
                         target: result.target,
+                        runtime: result.runtime,
                     })
                 }
                 RepoExecutionMode::Stream => {
@@ -33712,6 +33941,7 @@ fn run_workspace_repo_task(
                         stdout: String::new(),
                         stderr: String::new(),
                         target: result.target,
+                        runtime: result.runtime,
                     })
                 }
             };
@@ -34161,6 +34391,7 @@ fn run_shell_command(
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
+                    runtime: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -34176,6 +34407,7 @@ fn run_shell_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
+                runtime: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }

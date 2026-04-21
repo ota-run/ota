@@ -28,8 +28,8 @@ use crate::detector::{Confidence, DetectContract, Inference};
 use crate::doctor::{AdapterBootstrapDiagnostics, Finding, FindingSeverity};
 use crate::policy_pack::{OrgPolicyPack, ProvisioningBackendRequest, ProvisioningPlan};
 use crate::runner::{
-    blocking_declared_env_source_label, env_resolution_source_label, load_declared_env_sources,
-    load_policy_env_overlay, resolve_declared_env_source_value,
+    ResolvedTaskRuntime, blocking_declared_env_source_label, env_resolution_source_label,
+    load_declared_env_sources, load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
     AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
@@ -293,6 +293,10 @@ pub struct ExecutionReceipt {
     pub env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<ResolvedTaskRuntime>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub workloads: BTreeMap<String, ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub policy: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

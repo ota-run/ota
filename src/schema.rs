@@ -746,6 +746,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub requires_services: Vec<String>,
     #[serde(default)]
+    pub runtime: Option<TaskRuntimeSpec>,
+    #[serde(default)]
     pub after_success: Vec<String>,
     #[serde(default)]
     pub after_failure: Vec<String>,
@@ -787,6 +789,110 @@ impl TaskSpec {
                 })
             })
     }
+
+    pub fn service_runtime(&self) -> Option<&TaskRuntimeSpec> {
+        self.runtime
+            .as_ref()
+            .filter(|runtime| runtime.kind == TaskRuntimeKind::Service)
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeSpec {
+    pub kind: TaskRuntimeKind,
+    #[serde(default)]
+    pub listeners: BTreeMap<String, TaskRuntimeListenerSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRuntimeKind {
+    Service,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeListenerSpec {
+    pub protocol: TaskRuntimeProtocol,
+    pub bind: TaskRuntimeBindSpec,
+    #[serde(default)]
+    pub project: TaskRuntimeProjectionSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRuntimeProtocol {
+    Http,
+    Https,
+    Tcp,
+}
+
+impl TaskRuntimeProtocol {
+    pub const fn network_protocol(self) -> &'static str {
+        "tcp"
+    }
+
+    pub const fn url_scheme(self) -> Option<&'static str> {
+        match self {
+            Self::Http => Some("http"),
+            Self::Https => Some("https"),
+            Self::Tcp => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeBindSpec {
+    pub address: String,
+    pub port: TaskRuntimePortSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimePortSpec {
+    pub mode: TaskRuntimePortMode,
+    #[serde(default)]
+    pub value: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRuntimePortMode {
+    Fixed,
+    Discover,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeProjectionSpec {
+    #[serde(default)]
+    pub host: Option<TaskRuntimeHostProjectionSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeHostProjectionSpec {
+    pub address: String,
+    pub port: TaskRuntimeHostPortSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeHostPortSpec {
+    pub mode: TaskRuntimeHostPortMode,
+    #[serde(default)]
+    pub value: Option<u16>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskRuntimeHostPortMode {
+    Fixed,
+    Auto,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
