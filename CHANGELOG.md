@@ -26,13 +26,10 @@
 
 ## Unreleased
 
-## 1.7.0
+## 1.6.0
 
 - fixed Windows-only test support utility compilation in `provisioning` command tests by centralizing shim executable setup, keeping executable behavior correct on Unix and avoiding brittle permission mutation on non-Unix platforms
 - stabilized release-gate behavior by ensuring the same fix ships with existing test fixtures and contract validations so release automation can complete without platform-specific failures
-
-## 1.6.0
-
 - refreshed the shipped example contracts and public execution templates to the current execution-context and typed-service-manager model, including the adoption starter, container/remote templates, and the in-repo advanced examples
 - expanded the topology guide with a service-scoped requirements comparison so users can distinguish contract-wide runtimes/tools from service-owned lifecycle and readiness concerns
 - added a docs decision guide that compares top-level requirements, execution-context requirements, service managers, task prerequisites, and execution modes, and linked it from the docs home page so users can choose the right contract shape faster
