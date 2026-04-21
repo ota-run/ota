@@ -253,6 +253,28 @@ execution:
       provider: ssh
       target: sandbox-dev
       cwd: /workspace
+  # Context model (shipped)
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+          podman: "*"
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      requirements:
+        runtimes:
+          node: ">=24.14.1"
+        tools:
+          npm: ">=10.5"
+      attachments:
+        compose:
+          - local
 ```
 
 Supported backend values:
@@ -277,16 +299,25 @@ Current validation rule:
 - `daytona`: `sandbox-dev`
 - `ssh` / `tsh`: `user@host`
 - `kubectl`: `pod/ota-dev`
+- `execution.default_context` declares the context used when task-level `context` is not set
+- `execution.contexts` defines backend and requirement surfaces per context
+- each `execution.contexts.<name>` requires:
+  - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
+  - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
+  - optional `attachments.compose` to attach container workloads to compose project networks
 
 Current implementation:
 
-- `ota run` now supports `execution.preferred: container` when `execution.backends.container.image` is configured
-- the first container path uses the first available configured container engine CLI, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
-- `ota up` now runs the `setup` task through the same configured execution backend when one exists
-- `ota run` now supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
+- `ota run` resolves a task context from `tasks.<name>.context` and `execution.default_context`, then executes that context's backend
+- `execution.contexts` are used for context-scoped requirement checks and receipts
+- `tasks.<name>.context` lets a task declare a non-default execution context
+- `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
+- the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, and runs task bodies with `sh -lc`
+- `ota up` now runs the `setup` task in the task's resolved context backend
+- `ota run` supports remote execution when the resolved context or legacy `execution.backends.remote` declares `provider` and `target`
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
 - the current remote path shells out to the local provider CLI with optional `execution.backends.remote.cwd`
-- `ota up` runs its `setup` task through the same remote backend path when remote execution is preferred or explicitly overridden
+- `ota up` runs its `setup` task through the same remote context/backend path when remote execution is selected or explicitly overridden
 - remote provisioning and remote workspace selection are still out of scope today
 
 Current lifecycle meaning:
@@ -304,9 +335,10 @@ Current command behavior:
 - `ota up` prints the same lifecycle note on stderr when its `setup` phase uses backend-backed execution
 - `ota clean` removes persistent container state for repos using `execution.preferred: container` with `lifecycle: persistent`
 - `ota clean` currently has no remote cleanup action; remote-backed repos report `No cleanup needed` today
-- `ota doctor` checks the required backend CLI for the preferred execution backend and reports unsupported shipped remote providers early
+- `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)
-- `ota up` still runs service start commands, service healthchecks, and diagnosis on the host today
+- `ota doctor` evaluates context-specific requirements for declared contexts
+- `ota up` still runs service start commands, service healthchecks, and diagnosis on the host unless the resolved execution path is containerized
 
 ## `services`
 
@@ -329,6 +361,23 @@ services:
     start: docker compose up -d postgres
     stop: docker compose stop postgres
     healthcheck: pg_isready -h localhost -p 5432
+  billing-db:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: billing-db
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+      app:
+        address: billing-db
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h billing-db -p 5432
 ```
 
 Fields:
@@ -338,19 +387,32 @@ Fields:
 - `start`: optional string
 - `stop`: optional string
 - `healthcheck`: optional string
+- `manager`: optional object with:
+  - `kind: compose|host`
+  - `name`: compose project name (`compose` required)
+  - `service`: compose service name when `kind: compose`
+  - `file`: optional compose file path when `kind: compose`
+- `endpoints`: optional per-context projections of reachable service address/port
 - `depends_on`: optional list of service names
 - `timeout`: optional healthcheck timeout in milliseconds
+- `readiness`: optional explicit readiness check that runs in a named execution context
+- `readiness.from`: context name that owns the runtime for the check
+- `readiness.run`: command to execute in that context
 
 Current behavior:
 
 - services are part of the accepted V1 contract surface
-- service declarations must include at least one actionable field: `provider`, `start`, `stop`, or `healthcheck`
+- service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
 - `timeout` must be greater than zero when set
 - `readiness_gate` is a later-spec draft field and is not accepted by the current shipped parser
 - `ota doctor` runs declared service `healthcheck` commands
 - for `provider: docker-compose`, `ota doctor` runs the healthcheck inside the service container via `docker compose exec -T <service> sh -lc <healthcheck>`
+- for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
+- for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
+- `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
+- `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
 - failed required service healthchecks are blocking errors
 - failed optional service healthchecks are warnings
 - timed out required service healthchecks are blocking errors

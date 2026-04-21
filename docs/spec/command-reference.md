@@ -631,9 +631,13 @@ ota run version:bump --version major
 - hook task failures affect the final `ota run` exit code for the parent task
 - resolves the best matching task variant for the current OS when variants are declared
 - executes either `run` or `script`
-- when `execution.preferred: container` is configured with `execution.backends.container.image`, runs tasks through the first available configured container engine CLI, falling back to `docker` when no engines are listed
-- when container execution is configured, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
-- supports remote execution when `execution.backends.remote.provider` and `execution.backends.remote.target` are configured
+- resolves task execution backend from:
+  - `tasks.<name>.context` when set
+  - `execution.default_context`
+  - legacy `execution.preferred` / `execution.backends`
+- for container tasks, runs through the first available configured container engine CLI, falling back to `docker` when no engines are listed
+- for container tasks, `execution.lifecycle: ephemeral` uses a fresh container and `execution.lifecycle: persistent` reuses a named container
+- supports remote execution when the resolved task/context backend declares `provider` and `target`
 - current shipped remote providers are `daytona`, `ssh`, `tsh`, and `kubectl`
 - remote target guidance:
 - `daytona`: `sandbox-dev`
@@ -671,8 +675,8 @@ ota doctor --member api --member web --json [PATH]
 - repeated `--member` values diagnose those members in the provided order
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - checks configured env requirements, declared checks, and service healthchecks in native mode
-- checks preferred execution backend prerequisites such as `docker` / `podman` / `nerdctl`, `daytona`, `ssh`, `tsh`, or `kubectl` when backend-backed execution is configured
-- `--mode native` diagnoses host/native readiness; `--mode container` diagnoses the selected container execution context when container backends are declared
+- checks required execution backends for the selected `--mode` and resolved contexts
+- `--mode native` diagnoses host/native readiness; `--mode container` diagnoses selected container context requirements
 - warns on suspicious remote target shape:
 - `ssh` / `tsh` targets without `user@host`
 - `kubectl` targets not starting with `pod/`
@@ -681,6 +685,8 @@ ota doctor --member api --member web --json [PATH]
 - in container mode, ota also uses safe non-mutating installability probes for the shipped mutating provisioning adapters when policy-backed provisioning is declared
 - in container mode, `apt` findings distinguish pinned-version unavailable, package unavailable, and apt-index/source failures when the backend evidence supports that classification
 - in container mode, host-bound env, check, and service healthchecks are omitted so container diagnosis does not mix execution contexts
+- when `services.<name>.readiness` is used, readiness probes run in the declared context and use the matching endpoint projection for reporting
+- `ota doctor --mode remote` probes runtime/tool requirements in each executable remote context
 - shows any inert top-level `extensions` entries in the human-readable report so adapter metadata is visible without execution
 - warns when a required service has no healthcheck, because readiness cannot be verified
 - honors `services.<name>.timeout` when a service healthcheck is declared
