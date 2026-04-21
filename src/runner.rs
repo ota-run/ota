@@ -4709,6 +4709,7 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolves_task_backend_from_bound_execution_context() {
         #[cfg(unix)]
