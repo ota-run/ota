@@ -33,7 +33,8 @@ use crate::policy_pack::{
     ProvisioningAction, ProvisioningActionKind, ProvisioningBackendRequest, ProvisioningTargetKind,
 };
 use crate::runner::{
-    StreamPhaseLoader, join_stream_reader, persistent_container_name, stream_reader_to_sink,
+    ResolvedExecutionBackend, StreamPhaseLoader, join_stream_reader, persistent_container_name,
+    run_backend_command_captured, stream_reader_to_sink,
 };
 use crate::schema::Lifecycle;
 
@@ -50,6 +51,13 @@ pub enum ProvisioningExecutionTarget {
         image: String,
         engine: String,
         lifecycle: Lifecycle,
+    },
+    Remote {
+        provider: String,
+        provider_command: Option<String>,
+        target: String,
+        cwd: Option<String>,
+        context_name: Option<String>,
     },
 }
 
@@ -109,7 +117,7 @@ pub enum ProvisioningBackendError {
     },
 }
 
-pub trait ProvisioningBackend {
+pub(crate) trait ProvisioningBackend {
     fn source(&self) -> &'static str;
     fn apply(
         &self,
@@ -891,6 +899,15 @@ impl AptProvisioningBackend {
                         Self::apt_options()
                     ),
                 ),
+                ProvisioningExecutionTarget::Remote { .. } => (
+                    String::from("apt-get"),
+                    vec![
+                        String::from("install"),
+                        String::from("-y"),
+                        install_target.to_string(),
+                    ],
+                    format!("apt-get install -y {install_target}"),
+                ),
             };
         }
 
@@ -901,13 +918,13 @@ impl AptProvisioningBackend {
             Self::apt_options()
         );
         match target {
-            ProvisioningExecutionTarget::Native | ProvisioningExecutionTarget::Container { .. } => {
-                (
-                    String::from("sh"),
-                    vec![String::from("-lc"), shell_script],
-                    format!("apt-get install -y {install_target} using source_config.sources_list"),
-                )
-            }
+            ProvisioningExecutionTarget::Native
+            | ProvisioningExecutionTarget::Container { .. }
+            | ProvisioningExecutionTarget::Remote { .. } => (
+                String::from("sh"),
+                vec![String::from("-lc"), shell_script],
+                format!("apt-get install -y {install_target} using source_config.sources_list"),
+            ),
         }
     }
 
@@ -2672,7 +2689,7 @@ fn generic_failure_diagnosis(action: &ProvisioningAction) -> ProvisioningFailure
     }
 }
 
-pub fn probe_provisioning_installability_with_target(
+pub(crate) fn probe_provisioning_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -2714,7 +2731,7 @@ pub fn probe_provisioning_installability_with_target(
     }
 }
 
-pub fn probe_brew_installability_with_target(
+pub(crate) fn probe_brew_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -2751,7 +2768,7 @@ pub fn probe_brew_installability_with_target(
     })
 }
 
-pub fn probe_mise_installability_with_target(
+pub(crate) fn probe_mise_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -2808,7 +2825,7 @@ pub fn probe_mise_installability_with_target(
     })
 }
 
-pub fn probe_asdf_installability_with_target(
+pub(crate) fn probe_asdf_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -2865,7 +2882,7 @@ pub fn probe_asdf_installability_with_target(
     })
 }
 
-pub fn probe_sdkman_installability_with_target(
+pub(crate) fn probe_sdkman_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -2938,7 +2955,7 @@ pub fn probe_sdkman_installability_with_target(
     })
 }
 
-pub fn probe_uv_installability_with_target(
+pub(crate) fn probe_uv_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3002,7 +3019,7 @@ pub fn probe_uv_installability_with_target(
     })
 }
 
-pub fn probe_winget_installability_with_target(
+pub(crate) fn probe_winget_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3058,7 +3075,7 @@ pub fn probe_winget_installability_with_target(
     })
 }
 
-pub fn probe_choco_installability_with_target(
+pub(crate) fn probe_choco_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3135,7 +3152,7 @@ pub fn probe_choco_installability_with_target(
     })
 }
 
-pub fn probe_scoop_installability_with_target(
+pub(crate) fn probe_scoop_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3203,7 +3220,7 @@ pub fn probe_scoop_installability_with_target(
     })
 }
 
-pub fn probe_pacman_installability_with_target(
+pub(crate) fn probe_pacman_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3240,7 +3257,7 @@ pub fn probe_pacman_installability_with_target(
     })
 }
 
-pub fn probe_dnf_installability_with_target(
+pub(crate) fn probe_dnf_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3277,7 +3294,7 @@ pub fn probe_dnf_installability_with_target(
     })
 }
 
-pub fn probe_apt_installability_with_target(
+pub(crate) fn probe_apt_installability_with_target(
     action: &ProvisioningAction,
     working_dir: &Path,
     target: &ProvisioningExecutionTarget,
@@ -3595,7 +3612,62 @@ fn execute_provisioning_command(
             engine,
             lifecycle,
         } => run_container_command(engine, image, *lifecycle, working_dir, command, args, mode),
+        ProvisioningExecutionTarget::Remote {
+            provider,
+            provider_command,
+            target,
+            cwd,
+            ..
+        } => {
+            let backend = if let Some(command) = provider_command {
+                ResolvedExecutionBackend::BackendProvider {
+                    provider: provider.clone(),
+                    command: command.clone(),
+                    target: target.clone(),
+                    cwd: cwd.clone(),
+                }
+            } else {
+                ResolvedExecutionBackend::Remote {
+                    provider: provider.clone(),
+                    target: target.clone(),
+                    cwd: cwd.clone(),
+                }
+            };
+            let output = run_backend_command_captured(
+                "provisioning",
+                &shell_command(command, args),
+                working_dir,
+                &backend,
+            )
+            .map_err(|error| match error {
+                crate::runner::RunError::SpawnFailed { source, .. }
+                    if source.kind() == io::ErrorKind::NotFound =>
+                {
+                    ProvisioningBackendError::MissingCommand {
+                        command: remote_backend_command(provider_command, provider),
+                    }
+                }
+                other => ProvisioningBackendError::CommandFailed {
+                    command: shell_command(command, args),
+                    exit_code: 1,
+                    stdout: String::new(),
+                    stderr: other.to_string(),
+                },
+            })?;
+
+            Ok(ProvisioningCommandOutput {
+                exit_code: output.exit_code,
+                stdout: output.stdout,
+                stderr: output.stderr,
+            })
+        }
     }
+}
+
+fn remote_backend_command(provider_command: &Option<String>, provider: &str) -> String {
+    provider_command
+        .clone()
+        .unwrap_or_else(|| provider.to_string())
 }
 
 #[cfg(test)]

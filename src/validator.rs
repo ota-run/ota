@@ -86,8 +86,8 @@ pub fn validate_contract(contract: &Contract) -> Result<(), ValidationErrors> {
     validate_tool_details(&contract.tools, &mut errors);
     validate_policies(contract, &mut errors);
     validate_env(&contract.env, &mut errors);
-    validate_services(&contract.services, &mut errors);
-    validate_tasks(&contract.tasks, &mut errors);
+    validate_services(contract, &mut errors);
+    validate_tasks(contract, &mut errors);
     validate_checks(contract, &mut errors);
     validate_agent(contract.agent.as_ref(), &contract.tasks, &mut errors);
 
@@ -169,6 +169,16 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let Some(execution) = &contract.execution else {
         return;
     };
+
+    if execution
+        .default_context
+        .as_deref()
+        .is_some_and(|name| name.trim().is_empty())
+    {
+        errors.push(ValidationError::new(
+            "`execution.default_context` must not be empty",
+        ));
+    }
 
     if let Some(preferred) = execution.preferred
         && !execution.supported.is_empty()
@@ -319,6 +329,173 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`execution.preferred: remote` with provider `{provider}` requires `execution.backends.remote.target` (example: `{example}`)"
             )));
         }
+    }
+
+    if let Some(default_context) = execution.default_context.as_deref()
+        && !execution.contexts.contains_key(default_context)
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.default_context` is set to `{default_context}` but it is missing from `execution.contexts`"
+        )));
+    }
+    if let Some((context_name, context)) = execution.default_context()
+        && let Some(preferred) = execution.preferred
+        && context.backend != preferred
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.default_context` `{context_name}` resolves to `{}` but `execution.preferred` is `{}`; align them or keep only one default execution declaration",
+            format_backend(context.backend),
+            format_backend(preferred)
+        )));
+    }
+    if let Some((context_name, context)) = execution.default_context()
+        && let Some(lifecycle) = execution.lifecycle
+        && context.lifecycle.is_some()
+        && context.lifecycle != Some(lifecycle)
+    {
+        errors.push(ValidationError::new(format!(
+            "`execution.default_context` `{context_name}` resolves to lifecycle `{}` but `execution.lifecycle` is `{}`; align them or keep only one default execution declaration",
+            format_lifecycle(context.lifecycle.expect("context lifecycle should exist")),
+            format_lifecycle(lifecycle)
+        )));
+    }
+
+    for (name, context) in &execution.contexts {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`execution.contexts` must not declare an empty context name",
+            ));
+        }
+
+        match context.backend {
+            crate::schema::Backend::Native => {
+                if context.lifecycle.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: native` must not declare `lifecycle`"
+                    )));
+                }
+                if context.container.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: native` must not declare `container` settings"
+                    )));
+                }
+                if context.remote.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: native` must not declare `remote` settings"
+                    )));
+                }
+            }
+            crate::schema::Backend::Container => {
+                let Some(container) = context.container.as_ref() else {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: container` requires `execution.contexts.{name}.container.image`"
+                    )));
+                    continue;
+                };
+
+                if context.lifecycle.is_none() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: container` requires an explicit `execution.contexts.{name}.lifecycle`"
+                    )));
+                }
+                if container.image.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.container.image` must not be empty"
+                    )));
+                }
+                if context.remote.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: container` must not declare `remote` settings"
+                    )));
+                }
+            }
+            crate::schema::Backend::Remote => {
+                let Some(remote) = context.remote.as_ref() else {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: remote` requires `execution.contexts.{name}.remote.provider`"
+                    )));
+                    continue;
+                };
+
+                let provider = remote.provider.trim();
+                if provider.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.remote.provider` must not be empty"
+                    )));
+                } else if !is_builtin_remote_provider(provider) {
+                    let Some(extension) = contract.extensions.get(provider) else {
+                        errors.push(ValidationError::new(format!(
+                            "`execution.contexts.{name}.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
+                        )));
+                        continue;
+                    };
+
+                    if extension.kind != ExtensionKind::BackendProvider {
+                        errors.push(ValidationError::new(format!(
+                            "`execution.contexts.{name}.remote.provider` `{provider}` must refer to a `backend_provider` extension"
+                        )));
+                    } else if extension.api_version != 1 {
+                        errors.push(ValidationError::new(format!(
+                            "`execution.contexts.{name}.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
+                        )));
+                    }
+                }
+
+                if remote
+                    .target
+                    .as_deref()
+                    .is_none_or(|target| target.trim().is_empty())
+                {
+                    let example = remote_target_example(provider);
+                    if provider.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "`execution.contexts.{name}.backend: remote` requires `execution.contexts.{name}.remote.target`"
+                        )));
+                    } else {
+                        errors.push(ValidationError::new(format!(
+                            "`execution.contexts.{name}.backend: remote` with provider `{provider}` requires `execution.contexts.{name}.remote.target` (example: `{example}`)"
+                        )));
+                    }
+                }
+                if remote
+                    .cwd
+                    .as_deref()
+                    .is_some_and(|cwd| cwd.trim().is_empty())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.remote.cwd` must not be empty"
+                    )));
+                }
+                if context.container.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.backend: remote` must not declare `container` settings"
+                    )));
+                }
+            }
+        }
+
+        for compose_target in &context.attachments.compose {
+            if compose_target.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`execution.contexts.{name}.attachments.compose` must not contain empty values"
+                )));
+            }
+        }
+
+        validate_named_versions(
+            &format!("execution context `{name}` runtime"),
+            &context.requirements.runtimes,
+            errors,
+            |value| value.version(),
+        );
+        validate_runtime_details(&context.requirements.runtimes, errors);
+        validate_named_versions(
+            &format!("execution context `{name}` tool"),
+            &context.requirements.tools,
+            errors,
+            |value| value.version(),
+        );
+        validate_tool_details(&context.requirements.tools, errors);
     }
 }
 
@@ -599,10 +776,27 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_tasks(tasks: &BTreeMap<String, TaskSpec>, errors: &mut Vec<ValidationError>) {
+fn validate_tasks(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let tasks = &contract.tasks;
+    let execution = contract.execution.as_ref();
+
     for (name, task) in tasks {
         if name.trim().is_empty() {
             errors.push(ValidationError::new("task name must not be empty"));
+        }
+
+        if let Some(context_name) = task.context.as_deref() {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare an empty `context`"
+                )));
+            } else if execution.map(|execution| execution.contexts.contains_key(context_name))
+                != Some(true)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` references unknown `context: {context_name}`; declare it under `execution.contexts`"
+                )));
+            }
         }
 
         for (input_name, input) in &task.inputs {
@@ -775,10 +969,73 @@ fn is_task_input_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<ValidationError>) {
+fn validate_services(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let services = &contract.services;
+
     for (name, service) in services {
         if name.trim().is_empty() {
             errors.push(ValidationError::new("service name must not be empty"));
+        }
+
+        if let Some(manager) = &service.manager {
+            if service.provider.is_some() || service.start.is_some() || service.stop.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` uses `manager`, so remove legacy `provider`, `start`, and `stop` fields"
+                )));
+            }
+
+            match manager.kind {
+                crate::schema::ServiceManagerKind::Compose => {
+                    if manager
+                        .name
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` compose manager must declare a non-empty `manager.name`"
+                        )));
+                    }
+                    if manager
+                        .service
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` compose manager must declare a non-empty `manager.service`"
+                        )));
+                    }
+                    if manager
+                        .file
+                        .as_deref()
+                        .is_some_and(|value| value.trim().is_empty())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` manager field `file` must not be empty"
+                        )));
+                    }
+                }
+                crate::schema::ServiceManagerKind::Host => {
+                    if manager
+                        .name
+                        .as_deref()
+                        .is_some_and(|value| value.trim().is_empty())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` manager field `name` must not be empty"
+                        )));
+                    }
+                    if manager.file.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.file`"
+                        )));
+                    }
+                    if manager.service.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.service`"
+                        )));
+                    }
+                }
+            }
         }
 
         for (field, value) in [
@@ -794,19 +1051,93 @@ fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<
             }
         }
 
+        if let Some(readiness) = &service.readiness {
+            if readiness.from.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness field `from` must not be empty"
+                )));
+            }
+            if readiness.run.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness field `run` must not be empty"
+                )));
+            }
+            if service.healthcheck.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` must not declare both `healthcheck` and `readiness`; keep legacy host-bound `healthcheck` or migrate to `readiness`"
+                )));
+            }
+            if !readiness.from.trim().is_empty()
+                && contract
+                    .execution
+                    .as_ref()
+                    .is_none_or(|execution| !execution.contexts.contains_key(readiness.from.trim()))
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness references unknown `from: {}`; declare it under `execution.contexts`",
+                    readiness.from.trim()
+                )));
+            }
+            if !readiness.from.trim().is_empty()
+                && !service.endpoints.contains_key(readiness.from.trim())
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness from `{}` requires a matching `services.{name}.endpoints.{}` projection",
+                    readiness.from.trim(),
+                    readiness.from.trim()
+                )));
+            }
+            if service.timeout.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness does not yet support `timeout`; remove `services.{name}.timeout` or keep legacy `healthcheck` if timeout enforcement is required"
+                )));
+            }
+        }
+
+        for (context_name, endpoint) in &service.endpoints {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` endpoints must not declare an empty context name"
+                )));
+                continue;
+            }
+            if contract
+                .execution
+                .as_ref()
+                .is_none_or(|execution| !execution.contexts.contains_key(context_name))
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` endpoint projection `{context_name}` references unknown execution context"
+                )));
+            }
+            if endpoint.address.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` endpoint `{context_name}` must declare a non-empty `address`"
+                )));
+            }
+            if endpoint.port == 0 {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` endpoint `{context_name}` must declare `port` greater than zero"
+                )));
+            }
+        }
+
         if matches!(service.timeout, Some(0)) {
             errors.push(ValidationError::new(format!(
                 "service `{name}` must declare a timeout greater than zero"
             )));
         }
 
-        if service.provider.is_none()
+        if service.manager.is_none()
+            && service.provider.is_none()
             && service.start.is_none()
             && service.stop.is_none()
             && service.healthcheck.is_none()
+            && service.readiness.is_none()
+            && service.endpoints.is_empty()
         {
             errors.push(ValidationError::new(format!(
-                "service `{name}` must declare at least one of `provider`, `start`, `stop`, or `healthcheck`"
+                "service `{name}` must declare at least one of `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
             )));
         }
 
@@ -815,6 +1146,23 @@ fn validate_services(services: &BTreeMap<String, ServiceSpec>, errors: &mut Vec<
                 errors.push(ValidationError::new(format!(
                     "service `{name}` depends on unknown service `{dependency}`"
                 )));
+            }
+        }
+    }
+
+    if let Some(execution) = &contract.execution {
+        for (context_name, context) in &execution.contexts {
+            for compose_target in &context.attachments.compose {
+                if !services.values().any(|service| {
+                    service.manager.as_ref().is_some_and(|manager| {
+                        manager.kind == crate::schema::ServiceManagerKind::Compose
+                            && manager.name.as_deref() == Some(compose_target.as_str())
+                    })
+                }) {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{context_name}.attachments.compose` references unknown compose manager `{compose_target}`"
+                    )));
+                }
             }
         }
     }
@@ -1087,6 +1435,13 @@ fn format_backend(backend: crate::schema::Backend) -> &'static str {
     }
 }
 
+fn format_lifecycle(lifecycle: crate::schema::Lifecycle) -> &'static str {
+    match lifecycle {
+        crate::schema::Lifecycle::Persistent => "persistent",
+        crate::schema::Lifecycle::Ephemeral => "ephemeral",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -1192,6 +1547,247 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_compose_service_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    healthcheck: pg_isready -U qredex -d qredex
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_host_service_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    manager:
+      kind: host
+      name: local-postgres
+    endpoints:
+      app:
+        address: host.docker.internal
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h host.docker.internal -p 5432
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_service_endpoint_projection_for_unknown_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` endpoint projection `host` references unknown execution context")
+        }));
+    }
+
+    #[test]
+    fn rejects_service_readiness_without_matching_endpoint_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: app
+      run: pg_isready -h postgres -p 5432
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` readiness from `app` requires a matching `services.postgres.endpoints.app` projection")
+        }));
+    }
+
+    #[test]
+    fn rejects_mixing_service_manager_with_legacy_control_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      service: postgres
+    provider: docker-compose
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "service `postgres` uses `manager`, so remove legacy `provider`, `start`, and `stop` fields"
+        );
+    }
+
+    #[test]
+    fn rejects_host_service_manager_with_compose_only_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: host
+      file: compose.yaml
+      service: postgres
+    healthcheck: pg_isready -h 127.0.0.1 -p 5432
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` host manager must not declare `manager.file`")
+        }));
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` host manager must not declare `manager.service`")
+        }));
+    }
+
+    #[test]
+    fn rejects_unknown_compose_attachment_target() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      attachments:
+        compose:
+          - local
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: wrong
+      service: postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("`execution.contexts.app.attachments.compose` references unknown compose manager `local`")
+        }));
     }
 
     #[test]
@@ -1487,7 +2083,7 @@ services:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "service `postgres` must declare at least one of `provider`, `start`, `stop`, or `healthcheck`"
+            "service `postgres` must declare at least one of `manager`, `provider`, `start`, `stop`, `healthcheck`, `readiness`, or `endpoints`"
         );
     }
 
@@ -1853,6 +2449,87 @@ tasks:
         assert_eq!(
             errors.errors()[0].to_string(),
             "`execution.preferred: container` requires an explicit `execution.lifecycle`"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_default_execution_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.default_context` is set to `app` but it is missing from `execution.contexts`"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_task_context_reference() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    context: app
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `test` references unknown `context: app`; declare it under `execution.contexts`"
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_default_execution_declarations() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "`execution.default_context` `app` resolves to `container` but `execution.preferred` is `native`; align them or keep only one default execution declaration"
         );
     }
 

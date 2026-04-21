@@ -32,8 +32,8 @@ use crate::runner::{
     load_policy_env_overlay, resolve_declared_env_source_value,
 };
 use crate::schema::{
-    AgentConfig, Backend, Contract, ExtensionSpec, Lifecycle, ServiceSpec, TaskInputSpec, TaskSpec,
-    TaskVariantView,
+    AgentConfig, Backend, Contract, ExecutionContext, ExtensionSpec, Lifecycle, ServiceSpec,
+    TaskInputSpec, TaskSpec, TaskVariantView,
 };
 use crate::workspace::{WorkspaceExecutionSummary, WorkspaceRepoDoctorReport};
 
@@ -280,6 +280,8 @@ pub struct ExecutionReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
@@ -482,7 +484,29 @@ pub struct ExecutionEnvSummary<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ExecutionContextAttachmentsSummary<'a> {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub compose: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionContextSummary<'a> {
+    pub name: &'a str,
+    pub backend: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<ExecutionContainerSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<ExecutionRemoteSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<ExecutionContextAttachmentsSummary<'a>>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ExecutionSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_context: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -491,6 +515,8 @@ pub struct ExecutionSummary<'a> {
     pub lifecycle: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backends: Option<ExecutionBackendsSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub contexts: Vec<ExecutionContextSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<ExecutionEnvSummary<'a>>,
 }
@@ -510,6 +536,7 @@ impl<'a> ExecutionSummary<'a> {
         let declared_sources = load_declared_env_sources(contract, contract_path);
 
         Some(Self {
+            default_context: execution.default_context.as_deref(),
             preferred: execution.preferred.map(format_backend),
             supported: execution
                 .supported
@@ -535,6 +562,11 @@ impl<'a> ExecutionSummary<'a> {
                             cwd: remote.cwd.as_deref(),
                         }),
                 }),
+            contexts: execution
+                .contexts
+                .iter()
+                .map(|(name, context)| summarize_execution_context(name, context))
+                .collect(),
             env: contract
                 .env
                 .iter()
@@ -568,6 +600,41 @@ impl<'a> ExecutionSummary<'a> {
                 })
                 .collect(),
         })
+    }
+}
+
+fn summarize_execution_context<'a>(
+    name: &'a str,
+    context: &'a ExecutionContext,
+) -> ExecutionContextSummary<'a> {
+    ExecutionContextSummary {
+        name,
+        backend: format_backend(context.backend),
+        lifecycle: context.lifecycle.map(format_lifecycle),
+        container: context
+            .container
+            .as_ref()
+            .map(|container| ExecutionContainerSummary {
+                image: &container.image,
+            }),
+        remote: context
+            .remote
+            .as_ref()
+            .map(|remote| ExecutionRemoteSummary {
+                provider: &remote.provider,
+                target: remote.target.as_deref(),
+                cwd: remote.cwd.as_deref(),
+            }),
+        attachments: (!context.attachments.compose.is_empty()).then(|| {
+            ExecutionContextAttachmentsSummary {
+                compose: context
+                    .attachments
+                    .compose
+                    .iter()
+                    .map(String::as_str)
+                    .collect(),
+            }
+        }),
     }
 }
 
@@ -895,6 +962,8 @@ pub struct ReceiptHistoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     pub summary: ExecutionReceiptSummary,
 }
@@ -976,6 +1045,8 @@ pub struct ReceiptDiffSide {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     pub summary: ExecutionReceiptSummary,
 }
@@ -999,6 +1070,8 @@ pub struct ReceiptDiffBaseline {
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     pub summary: ExecutionReceiptSummary,
@@ -1292,6 +1365,8 @@ pub struct UpStatus<'a> {
 #[derive(Debug, Clone, Serialize)]
 pub struct UpPreviewExecution {
     pub backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1734,6 +1809,8 @@ pub struct ServiceSummary {
     pub name: String,
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub manager: Option<ServiceManagerSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
@@ -1741,6 +1818,10 @@ pub struct ServiceSummary {
     pub stop: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub healthcheck: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ServiceReadinessSummary>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub endpoints: BTreeMap<String, ServiceEndpointSummary>,
     pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
@@ -1751,12 +1832,82 @@ impl ServiceSummary {
         Self {
             name: name.to_string(),
             required: service.required,
+            manager: service
+                .manager
+                .as_ref()
+                .map(ServiceManagerSummary::from_spec),
             provider: service.provider.clone(),
-            start: service.start.clone(),
-            stop: service.stop.clone(),
+            start: service.start_command(name),
+            stop: service.stop_command(name),
             healthcheck: service.healthcheck.clone(),
+            readiness: service
+                .readiness
+                .as_ref()
+                .map(ServiceReadinessSummary::from_spec),
+            endpoints: service
+                .endpoints
+                .iter()
+                .map(|(context, endpoint)| {
+                    (context.clone(), ServiceEndpointSummary::from_spec(endpoint))
+                })
+                .collect(),
             depends_on: service.depends_on.clone(),
             timeout: service.timeout,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceReadinessSummary {
+    pub from: String,
+    pub run: String,
+}
+
+impl ServiceReadinessSummary {
+    fn from_spec(readiness: &crate::schema::ServiceReadinessSpec) -> Self {
+        Self {
+            from: readiness.from.clone(),
+            run: readiness.run.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceEndpointSummary {
+    pub address: String,
+    pub port: u16,
+}
+
+impl ServiceEndpointSummary {
+    fn from_spec(endpoint: &crate::schema::ServiceEndpointSpec) -> Self {
+        Self {
+            address: endpoint.address.clone(),
+            port: endpoint.port,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceManagerSummary {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+}
+
+impl ServiceManagerSummary {
+    fn from_spec(manager: &crate::schema::ServiceManagerSpec) -> Self {
+        Self {
+            kind: match manager.kind {
+                crate::schema::ServiceManagerKind::Compose => String::from("compose"),
+                crate::schema::ServiceManagerKind::Host => String::from("host"),
+            },
+            name: manager.name.clone(),
+            file: manager.file.clone(),
+            service: manager.service.clone(),
         }
     }
 }

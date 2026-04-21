@@ -46,12 +46,13 @@ use crate::provisioning::{
     render_provisioning_action_command,
 };
 use crate::runner::{
-    DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, load_declared_env_sources,
-    resolve_declared_env_source_value,
+    DeclaredEnvSourceStatus, LoadedDeclaredEnvSource, ResolvedExecutionBackend, RunError,
+    load_declared_env_sources, resolve_context_execution_backend,
+    resolve_declared_env_source_value, run_backend_command_captured,
 };
 use crate::schema::{
-    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RuntimeRequirement,
-    ServiceSpec,
+    Backend, CheckKind, CheckSeverity, Contract, ExtensionKind, Lifecycle, RequirementSurface,
+    RuntimeRequirement, ServiceSpec, ToolRequirement,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -75,6 +76,7 @@ pub struct Finding {
 pub enum DoctorMode {
     Native,
     Container,
+    Remote,
 }
 
 impl DoctorMode {
@@ -82,8 +84,300 @@ impl DoctorMode {
         match self {
             DoctorMode::Native => "native",
             DoctorMode::Container => "container",
+            DoctorMode::Remote => "remote",
         }
     }
+}
+
+fn backend_for_mode(mode: DoctorMode) -> Backend {
+    match mode {
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Remote => Backend::Remote,
+    }
+}
+
+fn contract_has_typed_compose_manager(contract: &Contract) -> bool {
+    contract.services.values().any(|service| {
+        service
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose)
+    })
+}
+
+fn contract_has_remote_execution_context(contract: &Contract) -> bool {
+    contract.execution.as_ref().is_some_and(|execution| {
+        execution.preferred == Some(Backend::Remote)
+            || execution
+                .contexts
+                .values()
+                .any(|context| context.backend == Backend::Remote)
+    })
+}
+
+fn precondition_requirement_surface(contract: &Contract, mode: DoctorMode) -> RequirementSurface {
+    let mut surface = contract.requirement_surface_for_backend(backend_for_mode(mode));
+    if mode == DoctorMode::Container && contract_has_typed_compose_manager(contract) {
+        surface.merge(&contract.context_requirement_surface_for_backend(Backend::Native));
+    }
+    surface
+}
+
+fn remote_os_probe_command() -> &'static str {
+    r#"uname -s 2>/dev/null || printf '%s\n' "${OS:-}""#
+}
+
+fn normalize_remote_target_os(value: &str) -> Option<&'static str> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.contains("linux") {
+        Some("linux")
+    } else if normalized.contains("darwin") || normalized.contains("mac") {
+        Some("macos")
+    } else if normalized.contains("windows")
+        || normalized.contains("mingw")
+        || normalized.contains("msys")
+        || normalized.contains("cygwin")
+    {
+        Some("windows")
+    } else {
+        None
+    }
+}
+
+fn remote_target_os_probe_finding(context_name: Option<&str>, why: String) -> Finding {
+    let suffix = context_name
+        .map(|value| format!(": {value}"))
+        .unwrap_or_default();
+    let next = context_name
+        .map(|value| {
+            format!(
+                "make sure ota can execute `{}` successfully in remote context `{value}`, then rerun `ota doctor --mode remote`",
+                remote_os_probe_command()
+            )
+        })
+        .unwrap_or_else(|| {
+            format!(
+                "make sure ota can execute `{}` successfully through the selected remote backend, then rerun `ota doctor --mode remote`",
+                remote_os_probe_command()
+            )
+        });
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: format!("Remote target operating system could not be determined{suffix}"),
+        why,
+        next,
+    }
+}
+
+fn probe_remote_target_os(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+) -> Result<String, String> {
+    let output = run_backend_command_captured(
+        "doctor-remote-os",
+        remote_os_probe_command(),
+        working_dir,
+        backend,
+    )
+    .map_err(|error| error.to_string())?;
+    if output.exit_code != 0 {
+        let details = if output.stderr.trim().is_empty() {
+            if output.stdout.trim().is_empty() {
+                format!(
+                    "`{}` exited with code {} before ota could determine the remote OS",
+                    remote_os_probe_command(),
+                    output.exit_code
+                )
+            } else {
+                format!(
+                    "`{}` exited with code {}: {}",
+                    remote_os_probe_command(),
+                    output.exit_code,
+                    output.stdout.trim()
+                )
+            }
+        } else {
+            format!(
+                "`{}` exited with code {}: {}",
+                remote_os_probe_command(),
+                output.exit_code,
+                output.stderr.trim()
+            )
+        };
+        return Err(details);
+    }
+
+    let raw = output
+        .stdout
+        .lines()
+        .chain(output.stderr.lines())
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "`{}` did not return a recognizable operating system name",
+                remote_os_probe_command()
+            )
+        })?;
+
+    normalize_remote_target_os(raw)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "ota could not map remote OS probe output `{raw}` to `linux`, `macos`, or `windows`"
+            )
+        })
+}
+
+fn remote_doctor_probe_contexts(
+    contract: &Contract,
+    contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    findings: &mut Vec<Finding>,
+) -> Vec<RemoteProbeContext> {
+    let mut probes = Vec::new();
+    let Some(execution) = contract.execution.as_ref() else {
+        return probes;
+    };
+    let working_dir = contract_working_dir(contract_path);
+
+    for (name, context) in execution
+        .contexts
+        .iter()
+        .filter(|(_, context)| context.backend == Backend::Remote)
+    {
+        let backend = match resolve_context_execution_backend(contract, name) {
+            Ok(backend) => backend,
+            Err(error) => {
+                findings.push(Finding {
+                    severity: FindingSeverity::Error,
+                    summary: format!("Remote execution context is not executable: {name}"),
+                    why: error.to_string(),
+                    next: format!(
+                        "repair `execution.contexts.{name}` so ota can execute that remote context, then rerun `ota doctor --mode remote`"
+                    ),
+                });
+                continue;
+            }
+        };
+        let target_os = match probe_remote_target_os(&backend, working_dir) {
+            Ok(target_os) => target_os,
+            Err(why) => {
+                findings.push(remote_target_os_probe_finding(Some(name.as_str()), why));
+                continue;
+            }
+        };
+        let mut requirement_surface = RequirementSurface {
+            runtimes: contract.runtimes.clone(),
+            tools: contract.tools.clone(),
+        };
+        requirement_surface
+            .runtimes
+            .extend(context.requirements.runtimes.clone());
+        requirement_surface
+            .tools
+            .extend(context.requirements.tools.clone());
+        let provisioning_actions = loaded_policy
+            .map(|loaded| {
+                loaded
+                    .pack
+                    .selected_provisioning_actions_for_requirement_surface_os(
+                        &target_os,
+                        &requirement_surface,
+                    )
+            })
+            .unwrap_or_default();
+        probes.push(RemoteProbeContext {
+            context_name: Some(name.clone()),
+            backend,
+            target_os,
+            requirement_surface,
+            provisioning_actions,
+        });
+    }
+
+    if !probes.is_empty() {
+        return probes;
+    }
+
+    let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+    else {
+        return probes;
+    };
+    let Some(target) = remote
+        .target
+        .clone()
+        .filter(|target| !target.trim().is_empty())
+    else {
+        return probes;
+    };
+    let backend = match remote.provider.as_str() {
+        "daytona" | "ssh" | "tsh" | "kubectl" => ResolvedExecutionBackend::Remote {
+            provider: remote.provider.clone(),
+            target,
+            cwd: remote.cwd.clone(),
+        },
+        other => {
+            let Some(extension) = contract.extensions.get(other) else {
+                return probes;
+            };
+            if extension.kind != ExtensionKind::BackendProvider || extension.api_version != 1 {
+                return probes;
+            }
+            ResolvedExecutionBackend::BackendProvider {
+                provider: remote.provider.clone(),
+                command: extension.command.clone(),
+                target,
+                cwd: remote.cwd.clone(),
+            }
+        }
+    };
+    let target_os = match probe_remote_target_os(&backend, working_dir) {
+        Ok(target_os) => target_os,
+        Err(why) => {
+            findings.push(remote_target_os_probe_finding(None, why));
+            return probes;
+        }
+    };
+    let requirement_surface = RequirementSurface {
+        runtimes: contract.runtimes.clone(),
+        tools: contract.tools.clone(),
+    };
+    let provisioning_actions = loaded_policy
+        .map(|loaded| {
+            loaded
+                .pack
+                .selected_provisioning_actions_for_requirement_surface_os(
+                    &target_os,
+                    &requirement_surface,
+                )
+        })
+        .unwrap_or_default();
+
+    probes.push(RemoteProbeContext {
+        context_name: None,
+        backend,
+        target_os,
+        requirement_surface,
+        provisioning_actions,
+    });
+
+    probes
+}
+
+fn has_remote_backend_blocker(findings: &[Finding]) -> bool {
+    findings.iter().any(|finding| {
+        matches!(
+            finding.code(),
+            "OTA_BACKEND_CLI_MISSING"
+                | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+                | "OTA_CONTAINER_BACKEND_CLI_MISSING"
+        )
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -135,6 +429,15 @@ pub struct AdapterBootstrapDiagnostics {
 struct ContainerProbeContext {
     image: String,
     engine: String,
+}
+
+#[derive(Debug, Clone)]
+struct RemoteProbeContext {
+    context_name: Option<String>,
+    backend: ResolvedExecutionBackend,
+    target_os: String,
+    requirement_surface: RequirementSurface,
+    provisioning_actions: Vec<ProvisioningAction>,
 }
 
 const CONTAINER_PROBE_PATH_MARKER: &str = "__OTA_RESOLVED_PATH__";
@@ -196,6 +499,18 @@ fn provisioning_diagnosis_requirement_summary(diagnosis: &ProvisioningFailureDia
     }
 }
 
+fn remote_target_label(context_name: Option<&str>) -> String {
+    context_name
+        .map(|value| format!("remote context `{value}`"))
+        .unwrap_or_else(|| String::from("the selected remote backend"))
+}
+
+fn remote_context_summary_suffix(context_name: Option<&str>) -> String {
+    context_name
+        .map(|value| format!(" (context {value})"))
+        .unwrap_or_default()
+}
+
 pub(crate) fn provisioning_installability_finding(
     diagnosis: &ProvisioningFailureDiagnosis,
     target: &ProvisioningExecutionTarget,
@@ -203,11 +518,17 @@ pub(crate) fn provisioning_installability_finding(
 ) -> Finding {
     let image = match target {
         ProvisioningExecutionTarget::Container { image, .. } => Some(image.as_str()),
-        ProvisioningExecutionTarget::Native => None,
+        ProvisioningExecutionTarget::Native | ProvisioningExecutionTarget::Remote { .. } => None,
     };
     let image_hint = image
         .map(|value| format!(" (currently `{value}`)"))
         .unwrap_or_default();
+    let remote_context = match target {
+        ProvisioningExecutionTarget::Remote { context_name, .. } => context_name.as_deref(),
+        _ => None,
+    };
+    let remote_suffix = remote_context_summary_suffix(remote_context);
+    let remote_label = remote_target_label(remote_context);
 
     match (&target, diagnosis.backend.as_str(), diagnosis.kind) {
         (
@@ -411,6 +732,131 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
         },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            "apt",
+            ProvisioningFailureKind::VersionUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote apt cannot install pinned package version: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} requests {}, but the configured apt sources do not provide that version",
+                provisioning_diagnosis_requirement_summary(diagnosis)
+            ),
+            next: format!(
+                "fix the remote apt sources or relax the version pin for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            "apt",
+            ProvisioningFailureKind::PackageUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote apt cannot locate required package: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} requests `{}`, but the configured apt sources do not provide that package",
+                diagnosis.name
+            ),
+            next: format!(
+                "fix the remote apt sources so `{}` is available, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            "apt",
+            ProvisioningFailureKind::IndexUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote apt cannot refresh configured sources: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} could not refresh apt indexes, so ota could not verify or install {}",
+                provisioning_diagnosis_requirement_summary(diagnosis)
+            ),
+            next: format!("fix remote apt repository access, then rerun `{rerun_command}`"),
+        },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            backend,
+            ProvisioningFailureKind::VersionUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote {backend} cannot install pinned version: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} requests {}, but the configured `{backend}` provisioning path does not provide that version",
+                provisioning_diagnosis_requirement_summary(diagnosis)
+            ),
+            next: format!(
+                "fix the remote `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            backend,
+            ProvisioningFailureKind::PackageUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote {backend} cannot locate required package: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} requests `{}`, but the configured `{backend}` provisioning path does not provide that package",
+                diagnosis.name
+            ),
+            next: format!(
+                "fix the remote `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
+        (
+            ProvisioningExecutionTarget::Remote { .. },
+            backend,
+            ProvisioningFailureKind::IndexUnavailable,
+        ) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote {backend} cannot refresh configured sources: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
+                provisioning_diagnosis_requirement_summary(diagnosis)
+            ),
+            next: format!(
+                "fix the remote `{backend}` repository access, then rerun `{rerun_command}`"
+            ),
+        },
+        (ProvisioningExecutionTarget::Remote { .. }, backend, _) => Finding {
+            severity: FindingSeverity::Error,
+            summary: format!(
+                "Remote {backend} cannot install requested prerequisite: {}{}",
+                diagnosis.name, remote_suffix
+            ),
+            why: format!(
+                "{remote_label} requests {}, but the configured `{backend}` provisioning path could not satisfy it",
+                provisioning_diagnosis_requirement_summary(diagnosis)
+            ),
+            next: format!(
+                "fix the remote `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
+                diagnosis.name
+            ),
+        },
     }
 }
 
@@ -482,6 +928,19 @@ impl Finding {
                 "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
             }
             s if s.starts_with("Suspicious remote target for ") => "OTA_REMOTE_TARGET_SUSPICIOUS",
+            "Remote execution contexts are only partially evaluated in native mode" => {
+                "OTA_REMOTE_DOCTOR_PARTIAL"
+            }
+            s if s.starts_with("Remote execution context is not executable: ") => {
+                "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
+            }
+            s if s.starts_with("Remote target operating system could not be determined") => {
+                "OTA_REMOTE_TARGET_OS_UNDETERMINED"
+            }
+            s if s.starts_with("Service readiness context is not executable: ") => {
+                "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+            }
+            s if s.starts_with("Service readiness failed: ") => "OTA_SERVICE_READINESS_FAILED",
             s if s.starts_with("Service healthcheck failed: ") => "OTA_SERVICE_CHECK_FAILED",
             s if s.starts_with("Service healthcheck timed out: ") => "OTA_SERVICE_CHECK_TIMED_OUT",
             s if s.starts_with("Required service cannot be verified: ") => {
@@ -538,6 +997,29 @@ impl Finding {
             {
                 "OTA_HOST_PROVISIONING_BACKEND_FAILED"
             }
+            s if s.starts_with("Remote apt cannot install pinned package version: ") => {
+                "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote apt cannot locate required package: ") => {
+                "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote apt cannot refresh configured sources: ") => {
+                "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote ") && s.contains(" cannot install pinned version: ") => {
+                "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote ") && s.contains(" cannot locate required package: ") => {
+                "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote ") && s.contains(" cannot refresh configured sources: ") => {
+                "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            }
+            s if s.starts_with("Remote ")
+                && s.contains(" cannot install requested prerequisite: ") =>
+            {
+                "OTA_REMOTE_PROVISIONING_BACKEND_FAILED"
+            }
             "Repo does not satisfy org policy pack" => "OTA_POLICY_PACK_VIOLATION",
             "Invalid org policy pack" => "OTA_POLICY_PACK_INVALID",
             "Policy-backed provisioning sources are declared" => {
@@ -563,8 +1045,12 @@ impl Finding {
                 "execution"
             }
             "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => "execution",
-            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => "remote",
-            "OTA_SERVICE_CHECK_FAILED"
+            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+            | "OTA_REMOTE_TARGET_SUSPICIOUS"
+            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
+            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => "remote",
+            "OTA_SERVICE_READINESS_FAILED"
+            | "OTA_SERVICE_CHECK_FAILED"
             | "OTA_SERVICE_CHECK_TIMED_OUT"
             | "OTA_SERVICE_UNVERIFIABLE" => "service",
             "OTA_ENV_MISSING"
@@ -587,7 +1073,14 @@ impl Finding {
             | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "provisioning",
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
+            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => "provisioning",
             "OTA_POLICY_PACK_VIOLATION"
             | "OTA_POLICY_PACK_INVALID"
             | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
@@ -622,6 +1115,8 @@ impl Finding {
             | "OTA_TOOL_VERSION_UNPARSEABLE" => {
                 if finding_targets_container_image(&self.why) {
                     "container_target"
+                } else if finding_targets_remote_backend(&self.why) {
+                    "remote_target"
                 } else {
                     "host"
                 }
@@ -637,10 +1132,19 @@ impl Finding {
             | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
-            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" | "OTA_REMOTE_TARGET_SUSPICIOUS" => {
-                "remote_backend"
-            }
-            "OTA_SERVICE_CHECK_FAILED"
+            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+            | "OTA_REMOTE_TARGET_SUSPICIOUS"
+            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
+            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => "remote_backend",
+            "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => "remote_target",
+            "OTA_SERVICE_READINESS_FAILED"
+            | "OTA_SERVICE_CHECK_FAILED"
             | "OTA_SERVICE_CHECK_TIMED_OUT"
             | "OTA_SERVICE_UNVERIFIABLE" => "service",
             "OTA_POLICY_PACK_VIOLATION"
@@ -689,6 +1193,27 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_REMOTE_CONTEXT_UNEXECUTABLE" => (
+                "the named remote execution context could not be resolved".to_string(),
+                "the named remote execution context is executable".to_string(),
+                "remote_backend".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_TARGET_OS_UNDETERMINED" => (
+                "ota could not determine the remote target operating system".to_string(),
+                "ota can determine the remote target operating system".to_string(),
+                "remote_backend".to_string(),
+                remote_os_probe_command().to_string(),
+                String::new(),
+            ),
+            "OTA_SERVICE_READINESS_FAILED" => (
+                "the configured service readiness probe failed".to_string(),
+                "the service readiness probe passes from its declared context".to_string(),
+                "service".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_SERVICE_CHECK_FAILED" => (
                 "the configured service healthcheck failed".to_string(),
                 "the service healthcheck passes".to_string(),
@@ -729,6 +1254,8 @@ impl Finding {
                 "the installed version satisfies the contract requirement".to_string(),
                 if finding_targets_container_image(&self.why) {
                     "container_target".to_string()
+                } else if finding_targets_remote_backend(&self.why) {
+                    "remote_target".to_string()
                 } else {
                     "host".to_string()
                 },
@@ -740,6 +1267,8 @@ impl Finding {
                 "the required runtime or tool is available on PATH".to_string(),
                 if finding_targets_container_image(&self.why) {
                     "container_target".to_string()
+                } else if finding_targets_remote_backend(&self.why) {
+                    "remote_target".to_string()
                 } else {
                     "host".to_string()
                 },
@@ -752,6 +1281,8 @@ impl Finding {
                     .to_string(),
                 if finding_targets_container_image(&self.why) {
                     "container_target".to_string()
+                } else if finding_targets_remote_backend(&self.why) {
+                    "remote_target".to_string()
                 } else {
                     "host".to_string()
                 },
@@ -764,6 +1295,8 @@ impl Finding {
                     .to_string(),
                 if finding_targets_container_image(&self.why) {
                     "container_target".to_string()
+                } else if finding_targets_remote_backend(&self.why) {
+                    "remote_target".to_string()
                 } else {
                     "host".to_string()
                 },
@@ -847,6 +1380,64 @@ impl Finding {
                 "the configured host provisioning backend could not satisfy the requested prerequisite".to_string(),
                 "the configured host provisioning backend satisfies the requested prerequisite".to_string(),
                 "host_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_APT_VERSION_UNAVAILABLE" => (
+                "the configured remote apt sources do not provide the pinned package version"
+                    .to_string(),
+                "the configured remote apt sources provide the pinned package version"
+                    .to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE" => (
+                "the configured remote apt sources do not provide the requested package"
+                    .to_string(),
+                "the configured remote apt sources provide the requested package".to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_APT_INDEX_UNAVAILABLE" => (
+                "the configured remote apt sources could not refresh indexes".to_string(),
+                "the configured remote apt sources refresh successfully".to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE" => (
+                "the configured remote provisioning backend could not provide the pinned version"
+                    .to_string(),
+                "the configured remote provisioning backend provides the pinned version"
+                    .to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                "the configured remote provisioning backend could not provide the requested package"
+                    .to_string(),
+                "the configured remote provisioning backend provides the requested package"
+                    .to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE" => (
+                "the configured remote provisioning backend could not refresh its sources"
+                    .to_string(),
+                "the configured remote provisioning backend refreshes its sources successfully"
+                    .to_string(),
+                "remote_provisioning".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => (
+                "the configured remote provisioning backend could not satisfy the requested prerequisite".to_string(),
+                "the configured remote provisioning backend satisfies the requested prerequisite".to_string(),
+                "remote_provisioning".to_string(),
                 String::new(),
                 String::new(),
             ),
@@ -1119,11 +1710,13 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
     };
 
     if let Some(loaded_policy_ref) = loaded_policy.as_ref() {
+        let requirement_surface = contract.all_requirement_surface();
         diagnose_org_policy(
             contract,
             contract_path,
             Some(loaded_policy_ref),
             current_os(),
+            &requirement_surface,
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
@@ -1180,7 +1773,8 @@ pub fn diagnose_service(contract: &Contract, contract_path: &Path, name: &str) -
     let working_dir = contract_working_dir(contract_path);
 
     if let Some(service) = contract.services.get(name)
-        && let Some(finding) = service_finding(name, service, working_dir)
+        && let Some(finding) =
+            service_finding(contract, name, service, working_dir, DoctorMode::Native)
     {
         findings.push(finding);
     }
@@ -1214,6 +1808,7 @@ fn diagnose_contract_with_scope(
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
+    let requirement_surface = precondition_requirement_surface(contract, mode);
     let loaded_policy = if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         match load_org_policy_pack_auto_details(contract_path) {
             Ok(policy) => policy,
@@ -1225,14 +1820,21 @@ fn diagnose_contract_with_scope(
     } else {
         None
     };
-    let provisioning_actions = loaded_policy
-        .as_ref()
-        .map(|loaded| {
-            loaded
-                .pack
-                .selected_provisioning_actions_for_os(policy_target_os_for_mode(mode), contract)
-        })
-        .unwrap_or_default();
+    let provisioning_actions = if mode == DoctorMode::Remote {
+        Vec::new()
+    } else {
+        loaded_policy
+            .as_ref()
+            .map(|loaded| {
+                loaded
+                    .pack
+                    .selected_provisioning_actions_for_requirement_surface_os(
+                        policy_target_os_for_mode(mode),
+                        &requirement_surface,
+                    )
+            })
+            .unwrap_or_default()
+    };
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         diagnose_lifecycle(contract, &mut findings);
         let container_probe = diagnose_execution_backend(contract, &mut findings, mode);
@@ -1247,24 +1849,111 @@ fn diagnose_contract_with_scope(
                 &declared_env_sources,
                 &mut findings,
             );
-        } else if contract_has_host_bound_readiness_surfaces(contract) {
+        } else if mode == DoctorMode::Container
+            && contract_has_host_bound_readiness_surfaces(contract)
+        {
             findings.push(container_mode_scope_note_finding(contract));
         }
-        let container_probe_started = diagnose_runtimes(
-            contract,
-            contract_path,
-            mode,
-            container_probe.as_ref(),
-            &provisioning_actions,
-            &mut findings,
-        ) || diagnose_tools(
-            contract,
-            contract_path,
-            mode,
-            container_probe.as_ref(),
-            &provisioning_actions,
-            &mut findings,
-        );
+        let container_probe_started = if mode == DoctorMode::Remote {
+            if let Some(note) = remote_mode_host_scope_note_finding(contract) {
+                findings.push(note);
+            }
+            let mut remote_probe_contexts = Vec::new();
+            if !has_remote_backend_blocker(&findings) {
+                remote_probe_contexts = remote_doctor_probe_contexts(
+                    contract,
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    &mut findings,
+                );
+                for remote_probe in &remote_probe_contexts {
+                    diagnose_runtimes(
+                        &remote_probe.requirement_surface.runtimes,
+                        &remote_probe.target_os,
+                        contract_path,
+                        mode,
+                        None,
+                        Some(&remote_probe.backend),
+                        remote_probe.context_name.as_deref(),
+                        &remote_probe.provisioning_actions,
+                        &mut findings,
+                    );
+                    diagnose_tools(
+                        &remote_probe.requirement_surface.tools,
+                        &remote_probe.target_os,
+                        contract_path,
+                        mode,
+                        None,
+                        Some(&remote_probe.backend),
+                        remote_probe.context_name.as_deref(),
+                        &remote_probe.provisioning_actions,
+                        &mut findings,
+                    );
+                }
+            }
+            diagnose_remote_org_policy(
+                contract,
+                contract_path,
+                loaded_policy.as_ref(),
+                &remote_probe_contexts,
+                &mut findings,
+            );
+            false
+        } else {
+            diagnose_runtimes(
+                &contract
+                    .requirement_surface_for_backend(backend_for_mode(mode))
+                    .runtimes,
+                policy_target_os_for_mode(mode),
+                contract_path,
+                mode,
+                container_probe.as_ref(),
+                None,
+                None,
+                &provisioning_actions,
+                &mut findings,
+            ) || diagnose_tools(
+                &contract
+                    .requirement_surface_for_backend(backend_for_mode(mode))
+                    .tools,
+                policy_target_os_for_mode(mode),
+                contract_path,
+                mode,
+                container_probe.as_ref(),
+                None,
+                None,
+                &provisioning_actions,
+                &mut findings,
+            )
+        };
+        if mode == DoctorMode::Container && contract_has_typed_compose_manager(contract) {
+            let host_surface = contract.context_requirement_surface_for_backend(Backend::Native);
+            diagnose_runtimes(
+                &host_surface.runtimes,
+                current_os(),
+                contract_path,
+                DoctorMode::Native,
+                None,
+                None,
+                None,
+                &provisioning_actions,
+                &mut findings,
+            );
+            diagnose_tools(
+                &host_surface.tools,
+                current_os(),
+                contract_path,
+                DoctorMode::Native,
+                None,
+                None,
+                None,
+                &provisioning_actions,
+                &mut findings,
+            );
+        }
+        if mode == DoctorMode::Native && contract_has_remote_execution_context(contract) {
+            findings.push(remote_mode_scope_note_finding());
+        }
         if mode == DoctorMode::Container
             && container_probe_started
             && let Some(container_probe) = container_probe.as_ref()
@@ -1275,22 +1964,23 @@ fn diagnose_contract_with_scope(
                 &container_probe.engine,
             ));
         }
-        provisioning = diagnose_org_policy(
-            contract,
-            contract_path,
-            loaded_policy.as_ref(),
-            policy_target_os_for_mode(mode),
-            &mut findings,
-        );
+        if mode != DoctorMode::Remote {
+            provisioning = diagnose_org_policy(
+                contract,
+                contract_path,
+                loaded_policy.as_ref(),
+                policy_target_os_for_mode(mode),
+                &requirement_surface,
+                &mut findings,
+            );
+        }
         adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy.as_ref(), &mut findings);
     }
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
     }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
-        if mode == DoctorMode::Native {
-            diagnose_services(contract, contract_path, &mut findings);
-        }
+        diagnose_services(contract, contract_path, mode, &mut findings);
     }
     if scope != DoctorScope::ServicesOnly {
         if mode == DoctorMode::Native {
@@ -1391,6 +2081,8 @@ fn diagnose_execution_backend(
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
             findings.push(container_mode_not_configured_finding());
+        } else if mode == DoctorMode::Remote {
+            findings.push(remote_mode_not_configured_finding());
         }
         return None;
     };
@@ -1414,6 +2106,88 @@ fn diagnose_execution_backend(
             image: container.image.clone(),
             engine,
         });
+    }
+
+    if mode == DoctorMode::Remote {
+        let Some(remote) = execution
+            .default_context()
+            .filter(|(_, context)| context.backend == Backend::Remote)
+            .and_then(|(_, context)| context.remote.as_ref())
+            .or_else(|| {
+                execution
+                    .backends
+                    .as_ref()
+                    .and_then(|backends| backends.remote.as_ref())
+            })
+        else {
+            findings.push(remote_mode_not_configured_finding());
+            return None;
+        };
+
+        let provider = remote.provider.trim();
+        let cli = match provider {
+            "daytona" => Some("daytona"),
+            "ssh" => Some("ssh"),
+            "tsh" => Some("tsh"),
+            "kubectl" => Some("kubectl"),
+            other => {
+                let Some(extension) = contract.extensions.get(other) else {
+                    findings.push(Finding {
+                        severity: FindingSeverity::Error,
+                        summary: format!("Unsupported remote execution backend provider: {other}"),
+                        why: format!(
+                            "the contract requests remote diagnosis with provider `{other}`, but current Ota only supports built-in providers or a matching `backend_provider` extension"
+                        ),
+                        next: String::from(
+                            "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
+                        ),
+                    });
+                    return None;
+                };
+
+                if extension.kind != ExtensionKind::BackendProvider {
+                    findings.push(Finding {
+                        severity: FindingSeverity::Error,
+                        summary: format!("Unsupported remote execution backend provider: {other}"),
+                        why: format!(
+                            "the contract requests remote diagnosis with provider `{other}`, but the matching extension is not a `backend_provider`"
+                        ),
+                        next: String::from(
+                            "change the extension kind to `backend_provider` or change the remote provider name",
+                        ),
+                    });
+                    return None;
+                }
+
+                if extension.api_version != 1 {
+                    findings.push(Finding {
+                        severity: FindingSeverity::Error,
+                        summary: format!("Unsupported backend provider api_version: {other}"),
+                        why: format!(
+                            "the matching backend provider extension declares unsupported `api_version {}`",
+                            extension.api_version
+                        ),
+                        next: String::from(
+                            "bump the backend provider extension to `api_version: 1`",
+                        ),
+                    });
+                    return None;
+                }
+
+                None
+            }
+        };
+        if let Some(cli) = cli {
+            if let Some(target) = remote.target.as_deref() {
+                diagnose_remote_target_shape(provider, target, findings);
+            }
+            diagnose_backend_cli(
+                cli,
+                &format!("remote execution backend provider `{provider}`"),
+                findings,
+            );
+        }
+        return None;
     }
 
     match execution.preferred {
@@ -1510,8 +2284,26 @@ fn container_mode_not_configured_finding() -> Finding {
     }
 }
 
+fn remote_mode_not_configured_finding() -> Finding {
+    Finding {
+        severity: FindingSeverity::Error,
+        summary: String::from("Remote execution is not configured"),
+        why: String::from(
+            "remote diagnosis requires `execution.backends.remote.provider` and a targetable remote execution context so Ota can inspect the remote backend that actually runs tasks",
+        ),
+        next: String::from(
+            "add `execution.backends.remote.provider` plus `execution.backends.remote.target`, or rerun `ota doctor` without `--mode remote`",
+        ),
+    }
+}
+
 fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
-    !contract.env.vars.is_empty() || !contract.checks.is_empty() || !contract.services.is_empty()
+    !contract.env.vars.is_empty()
+        || !contract.checks.is_empty()
+        || contract
+            .services
+            .values()
+            .any(|service| service.readiness.is_none() && service.healthcheck.is_some())
 }
 
 fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
@@ -1522,8 +2314,12 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
     if !contract.checks.is_empty() {
         skipped.push("checks");
     }
-    if !contract.services.is_empty() {
-        skipped.push("service healthchecks");
+    if contract
+        .services
+        .values()
+        .any(|service| service.readiness.is_none() && service.healthcheck.is_some())
+    {
+        skipped.push("legacy service healthchecks");
     }
 
     let verb = if skipped.len() == 1 {
@@ -1542,6 +2338,57 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
             "use `ota doctor --mode native` for host readiness, or `ota up --mode container` for container execution readiness",
         ),
     }
+}
+
+fn remote_mode_scope_note_finding() -> Finding {
+    Finding {
+        severity: FindingSeverity::Info,
+        summary: String::from(
+            "Remote execution contexts are only partially evaluated in native mode",
+        ),
+        why: String::from(
+            "native doctor mode can validate remote backend declarations and run contextual readiness probes from executable remote contexts, but runtime and tool version checks still evaluate the local host rather than the declared remote environment",
+        ),
+        next: String::from(
+            "use `ota execution plan --mode remote` to inspect the remote backend contract, and verify remote runtimes and tools through remote execution paths until a dedicated remote doctor mode ships",
+        ),
+    }
+}
+
+fn remote_policy_subject(context_name: Option<&str>) -> String {
+    context_name
+        .map(|value| format!("remote context `{value}`"))
+        .unwrap_or_else(|| String::from("the selected remote backend"))
+}
+
+fn remote_mode_host_scope_note_finding(contract: &Contract) -> Option<Finding> {
+    let skipped = contract
+        .services
+        .iter()
+        .filter(|(_, service)| service.healthcheck.is_some() && service.readiness.is_none())
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+
+    if skipped.is_empty() {
+        return None;
+    }
+
+    let verb = if skipped.len() == 1 {
+        "remains"
+    } else {
+        "remain"
+    };
+    let skipped = skipped.join(", ");
+    Some(Finding {
+        severity: FindingSeverity::Info,
+        summary: String::from("Host-bound readiness checks are not evaluated in remote mode"),
+        why: format!(
+            "remote mode checks the declared remote execution backend; {skipped} {verb} host-bound and would mix contexts"
+        ),
+        next: String::from(
+            "use `ota doctor --mode native` for host readiness, or declare `services.<name>.readiness.from` on an executable context for topology-aware remote checks",
+        ),
+    })
 }
 
 fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec<Finding>) {
@@ -1583,18 +2430,74 @@ fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec
     }
 }
 
-fn diagnose_services(contract: &Contract, contract_path: &Path, findings: &mut Vec<Finding>) {
+fn diagnose_services(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    findings: &mut Vec<Finding>,
+) {
     let working_dir = contract_working_dir(contract_path);
 
     for (name, service) in &contract.services {
-        if let Some(finding) = service_finding(name, service, working_dir) {
+        if let Some(finding) = service_finding(contract, name, service, working_dir, mode) {
             findings.push(finding);
         }
     }
 }
 
-fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Option<Finding> {
+fn service_finding(
+    contract: &Contract,
+    name: &str,
+    service: &ServiceSpec,
+    working_dir: &Path,
+    mode: DoctorMode,
+) -> Option<Finding> {
+    if let Some(readiness) = &service.readiness {
+        return match run_service_readiness(contract, name, service, working_dir, readiness) {
+            Ok(CheckStatus::Passed) => None,
+            Ok(CheckStatus::Failed) => Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Service readiness failed: {name}"),
+                why: service_readiness_failure_why(
+                    name,
+                    service.endpoint_for_context(readiness.from.as_str()),
+                    readiness.from.as_str(),
+                ),
+                next: match service.start_command(name) {
+                    Some(start) => format!("run `{start}` and re-run `ota doctor`"),
+                    None => format!(
+                        "repair `{name}` from context `{}` and rerun `ota doctor`",
+                        readiness.from
+                    ),
+                },
+            }),
+            Ok(CheckStatus::TimedOut(_)) => None,
+            Err(error) => Some(Finding {
+                severity: if service.required {
+                    FindingSeverity::Error
+                } else {
+                    FindingSeverity::Warn
+                },
+                summary: format!("Service readiness context is not executable: {name}"),
+                why: service_readiness_execution_why(
+                    name,
+                    service.endpoint_for_context(readiness.from.as_str()),
+                    readiness.from.as_str(),
+                    &error,
+                ),
+                next: service_readiness_execution_next(name, readiness.from.as_str()),
+            }),
+        };
+    }
+
     if let Some(healthcheck) = service.healthcheck.as_deref() {
+        if mode != DoctorMode::Native {
+            return None;
+        }
         return match run_service_healthcheck(name, service, working_dir, healthcheck) {
             CheckStatus::Passed => None,
             CheckStatus::Failed => Some(Finding {
@@ -1605,7 +2508,7 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
                 },
                 summary: format!("Service healthcheck failed: {name}"),
                 why: format!("service `{name}` did not pass its configured healthcheck"),
-                next: match service.start.as_deref() {
+                next: match service.start_command(name) {
                     Some(start) => format!("run `{start}` and re-run `ota doctor`"),
                     None => format!(
                         "start or repair `{name}` and re-run its healthcheck: {healthcheck}, then rerun `ota doctor`"
@@ -1628,7 +2531,7 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
     }
 
     if service.required {
-        let why = if service.start.is_some() {
+        let why = if service.start_command(name).is_some() {
             format!(
                 "service `{name}` is required but no `healthcheck` is configured, so Ota cannot verify readiness"
             )
@@ -1638,7 +2541,7 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
             )
         };
 
-        let next = if service.start.is_some() {
+        let next = if service.start_command(name).is_some() {
             format!("add `services.{name}.healthcheck` so `ota doctor` can verify readiness")
         } else {
             format!("add `services.{name}.healthcheck` and optionally `services.{name}.start`")
@@ -1655,26 +2558,84 @@ fn service_finding(name: &str, service: &ServiceSpec, working_dir: &Path) -> Opt
     None
 }
 
+fn service_readiness_failure_why(
+    name: &str,
+    endpoint: Option<&crate::schema::ServiceEndpointSpec>,
+    context_name: &str,
+) -> String {
+    match endpoint {
+        Some(endpoint) => format!(
+            "service `{name}` did not pass its configured readiness probe from context `{context_name}`; projected endpoint is `{}:{}`",
+            endpoint.address, endpoint.port
+        ),
+        None => format!(
+            "service `{name}` did not pass its configured readiness probe from context `{context_name}`"
+        ),
+    }
+}
+
+fn service_readiness_execution_why(
+    name: &str,
+    endpoint: Option<&crate::schema::ServiceEndpointSpec>,
+    context_name: &str,
+    error: &RunError,
+) -> String {
+    match endpoint {
+        Some(endpoint) => format!(
+            "service `{name}` declares readiness from context `{context_name}` against projected endpoint `{}:{}`, but Ota could not execute that readiness probe: {}",
+            endpoint.address, endpoint.port, error
+        ),
+        None => format!(
+            "service `{name}` declares readiness from context `{context_name}`, but Ota could not execute that readiness probe: {}",
+            error
+        ),
+    }
+}
+
+fn service_readiness_execution_next(name: &str, context_name: &str) -> String {
+    format!(
+        "repair execution context `{context_name}` or move `services.{name}.readiness.from` to a context Ota can execute, then rerun `ota doctor`"
+    )
+}
+
+fn run_service_readiness(
+    contract: &Contract,
+    name: &str,
+    _service: &ServiceSpec,
+    working_dir: &Path,
+    readiness: &crate::schema::ServiceReadinessSpec,
+) -> Result<CheckStatus, RunError> {
+    let backend = resolve_context_execution_backend(contract, readiness.from.as_str())?;
+
+    match run_backend_command_captured(
+        &format!("readiness:{name}"),
+        readiness.run.as_str(),
+        working_dir,
+        &backend,
+    ) {
+        Ok(output) if output.exit_code == 0 => Ok(CheckStatus::Passed),
+        Ok(_) => Ok(CheckStatus::Failed),
+        Err(error) => Err(error),
+    }
+}
+
 fn run_service_healthcheck(
     name: &str,
     service: &ServiceSpec,
     working_dir: &Path,
     healthcheck: &str,
 ) -> CheckStatus {
-    match service.provider.as_deref() {
-        Some("docker-compose") => {
-            let command = compose_service_healthcheck_command(name, healthcheck);
-            run_check(&command, working_dir, service.timeout)
-        }
-        _ => run_check(healthcheck, working_dir, service.timeout),
-    }
+    let command = service.healthcheck_command(name, healthcheck);
+    run_check(&command, working_dir, service.timeout)
 }
 
+#[cfg(test)]
 fn compose_service_healthcheck_command(name: &str, healthcheck: &str) -> String {
-    format!(
-        "docker compose exec -T {name} sh -lc {}",
-        shell_single_quote(healthcheck)
-    )
+    let service = ServiceSpec {
+        provider: Some(String::from("docker-compose")),
+        ..ServiceSpec::default()
+    };
+    service.healthcheck_command(name, healthcheck)
 }
 
 fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: &mut Vec<Finding>) {
@@ -1757,10 +2718,13 @@ fn diagnose_env(
 }
 
 fn diagnose_runtimes(
-    contract: &Contract,
+    runtimes: &BTreeMap<String, RuntimeRequirement>,
+    target_os: &str,
     contract_path: &Path,
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
@@ -1768,9 +2732,8 @@ fn diagnose_runtimes(
         return false;
     }
 
-    let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
-    for (name, requirement) in &contract.runtimes {
+    for (name, requirement) in runtimes {
         if !requirement.active_for_os(target_os) {
             continue;
         }
@@ -1785,6 +2748,8 @@ fn diagnose_runtimes(
             runtime_provider_hint(requirement, target_os),
             mode,
             container_probe,
+            remote_probe,
+            remote_context_name,
             contract_path,
             provisioning_actions,
             findings,
@@ -1794,10 +2759,13 @@ fn diagnose_runtimes(
 }
 
 fn diagnose_tools(
-    contract: &Contract,
+    tools: &BTreeMap<String, ToolRequirement>,
+    target_os: &str,
     contract_path: &Path,
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
@@ -1805,9 +2773,8 @@ fn diagnose_tools(
         return false;
     }
 
-    let target_os = policy_target_os_for_mode(mode);
     let mut container_probe_started = false;
-    for (name, requirement) in &contract.tools {
+    for (name, requirement) in tools {
         if !requirement.active_for_os(target_os) {
             continue;
         }
@@ -1822,6 +2789,8 @@ fn diagnose_tools(
             None,
             mode,
             container_probe,
+            remote_probe,
+            remote_context_name,
             contract_path,
             provisioning_actions,
             findings,
@@ -1839,6 +2808,7 @@ fn diagnose_org_policy(
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     policy_os: &str,
+    requirement_surface: &RequirementSurface,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
     let Some(loaded_policy) = loaded_policy else {
@@ -1851,7 +2821,8 @@ fn diagnose_org_policy(
 
     let missing_sections = policy_pack.missing_required_sections(contract);
     let missing_files = policy_pack.missing_required_files(contract_root);
-    let version_violations = policy_pack.version_policy_violations_for_os(policy_os, contract);
+    let version_violations = policy_pack
+        .version_policy_violations_for_requirement_surface_os(policy_os, requirement_surface);
     if missing_sections.is_empty() && missing_files.is_empty() && version_violations.is_empty() {
         if !policy_pack.policies.version_policy.runtimes.is_empty()
             || !policy_pack.policies.version_policy.tools.is_empty()
@@ -1902,9 +2873,14 @@ fn diagnose_org_policy(
             });
         }
 
-        let provisioning_plan = policy_pack.provisioning_plan_for_os(policy_os, contract);
-        let provisioning_request =
-            policy_pack.provisioning_backend_request_for_os(policy_os, contract);
+        let provisioning_plan = policy_pack
+            .provisioning_plan_for_requirement_surface_os(policy_os, requirement_surface);
+        let provisioning_request = ProvisioningBackendRequest {
+            actions: policy_pack.selected_provisioning_actions_for_requirement_surface_os(
+                policy_os,
+                requirement_surface,
+            ),
+        };
 
         let missing_packages: Vec<String> = provisioning_plan
             .blocked
@@ -1962,7 +2938,10 @@ fn diagnose_org_policy(
             }
 
             let matched_targets: Vec<String> = policy_pack
-                .selected_provisioning_actions_for_os(policy_os, contract)
+                .selected_provisioning_actions_for_requirement_surface_os(
+                    policy_os,
+                    requirement_surface,
+                )
                 .into_iter()
                 .map(|entry| provisioning_action_audit_summary(&entry))
                 .collect();
@@ -2042,10 +3021,201 @@ fn diagnose_org_policy(
     None
 }
 
+fn policy_version_rules_for_requirement_surface_os(
+    policy_pack: &crate::policy_pack::OrgPolicyPack,
+    policy_os: &str,
+    requirement_surface: &RequirementSurface,
+) -> Vec<String> {
+    let mut rules = Vec::new();
+
+    for (name, requirement) in &requirement_surface.runtimes {
+        if !requirement.required_for_os(policy_os) {
+            continue;
+        }
+        let Some(effective_versions) = policy_pack.effective_version_policy_versions_for_os(
+            policy_os,
+            ProvisioningTargetKind::Runtime,
+            name,
+        ) else {
+            continue;
+        };
+        let approved_versions = if effective_versions.is_empty() {
+            String::from("any version")
+        } else {
+            format!("versions {}", effective_versions.join(", "))
+        };
+        rules.push(format!("runtime {name} ({approved_versions})"));
+    }
+
+    for (name, requirement) in &requirement_surface.tools {
+        if !requirement.required_for_os(policy_os) {
+            continue;
+        }
+        let Some(effective_versions) = policy_pack.effective_version_policy_versions_for_os(
+            policy_os,
+            ProvisioningTargetKind::Tool,
+            name,
+        ) else {
+            continue;
+        };
+        let approved_versions = if effective_versions.is_empty() {
+            String::from("any version")
+        } else {
+            format!("versions {}", effective_versions.join(", "))
+        };
+        rules.push(format!("tool {name} ({approved_versions})"));
+    }
+
+    rules
+}
+
+fn diagnose_remote_org_policy(
+    contract: &Contract,
+    contract_path: &Path,
+    loaded_policy: Option<&LoadedOrgPolicyPack>,
+    remote_probe_contexts: &[RemoteProbeContext],
+    findings: &mut Vec<Finding>,
+) {
+    let Some(loaded_policy) = loaded_policy else {
+        return;
+    };
+    let policy_pack = &loaded_policy.pack;
+    let policy_path = &loaded_policy.path;
+    let contract_root = contract_working_dir(contract_path);
+
+    let missing_sections = policy_pack.missing_required_sections(contract);
+    let missing_files = policy_pack.missing_required_files(contract_root);
+    if !missing_sections.is_empty() || !missing_files.is_empty() {
+        let mut why_parts = Vec::new();
+        if !missing_sections.is_empty() {
+            why_parts.push(format!(
+                "missing contract sections: {}",
+                missing_sections.join(", ")
+            ));
+        }
+        if !missing_files.is_empty() {
+            why_parts.push(format!("missing files: {}", missing_files.join(", ")));
+        }
+
+        findings.push(Finding {
+            severity: FindingSeverity::Error,
+            summary: String::from("Repo does not satisfy org policy pack"),
+            why: format!(
+                "`{}` requires {}",
+                compact_display_path(policy_path),
+                why_parts.join(" and ")
+            ),
+            next: format!(
+                "add the missing items or update `{}`",
+                compact_display_path(policy_path)
+            ),
+        });
+        return;
+    }
+
+    for remote_probe in remote_probe_contexts {
+        let context_label = remote_policy_subject(remote_probe.context_name.as_deref());
+        let version_violations = policy_pack.version_policy_violations_for_requirement_surface_os(
+            &remote_probe.target_os,
+            &remote_probe.requirement_surface,
+        );
+        if !version_violations.is_empty() {
+            findings.push(Finding {
+                severity: FindingSeverity::Error,
+                summary: String::from("Repo does not satisfy org policy pack"),
+                why: format!(
+                    "`{}` requires {context_label} to stay within approved versions, but version policy violations: {}",
+                    compact_display_path(policy_path),
+                    version_violations.join("; ")
+                ),
+                next: format!(
+                    "update the requirements for {context_label}, or widen `{}`",
+                    compact_display_path(policy_path)
+                ),
+            });
+            continue;
+        }
+
+        let version_rules = policy_version_rules_for_requirement_surface_os(
+            policy_pack,
+            &remote_probe.target_os,
+            &remote_probe.requirement_surface,
+        );
+        if !version_rules.is_empty() {
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed version rules are declared"),
+                why: format!(
+                    "`{}` declares approved repo version rules for {context_label}: {}",
+                    compact_display_path(policy_path),
+                    version_rules.join(", ")
+                ),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when remote context requirements need a governed version",
+                ),
+            });
+        }
+
+        let provisioning_plan = policy_pack.provisioning_plan_for_requirement_surface_os(
+            &remote_probe.target_os,
+            &remote_probe.requirement_surface,
+        );
+        let missing_packages: Vec<String> = provisioning_plan
+            .blocked
+            .iter()
+            .filter_map(|entry| {
+                entry.blocked_reason.as_ref().and_then(|reason| {
+                    if reason.contains("requires an explicit `package`") {
+                        Some(reason.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+
+        if !missing_packages.is_empty() {
+            findings.push(Finding {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Policy provisioning needs explicit package identifiers"),
+                why: format!(
+                    "policy-backed provisioning cannot proceed for {context_label}: {}",
+                    missing_packages.join("; ")
+                ),
+                next: format!(
+                    "add `package` to the matching `policies.provisioning.<name>` rule or platform override, then rerun `ota doctor --mode remote` for {context_label}",
+                ),
+            });
+        }
+
+        if !remote_probe.provisioning_actions.is_empty() {
+            let matched_targets: Vec<String> = remote_probe
+                .provisioning_actions
+                .iter()
+                .map(provisioning_action_audit_summary)
+                .collect();
+            findings.push(Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: format!(
+                    "`{}` declares approved provisioning sources for {context_label}: {}. This repo's declared prerequisites can be provisioned through: {}",
+                    compact_display_path(policy_path),
+                    matched_targets.join(", "),
+                    matched_targets.join(", ")
+                ),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when remote context prerequisites need a governed install path",
+                ),
+            });
+        }
+    }
+}
+
 fn policy_target_os_for_mode(mode: DoctorMode) -> &'static str {
     match mode {
         DoctorMode::Native => current_os(),
         DoctorMode::Container => "linux",
+        DoctorMode::Remote => current_os(),
     }
 }
 
@@ -2430,6 +3600,8 @@ fn diagnose_command_version(
     provider_hint: Option<&str>,
     mode: DoctorMode,
     container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
     contract_path: &Path,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
@@ -2463,13 +3635,25 @@ fn diagnose_command_version(
             executable_name,
             contract_working_dir(contract_path),
         ))
+    } else if mode == DoctorMode::Remote {
+        let Some(remote_probe) = remote_probe else {
+            return false;
+        };
+        Some(command_version_probe_in_remote(
+            remote_probe,
+            executable_name,
+            contract_working_dir(contract_path),
+        ))
     } else {
         None
     };
-    let container_probe_started = version_probe
+    let probe_started = version_probe
         .as_ref()
         .map(|probe| probe.probe_started)
         .unwrap_or(false);
+    let finding_display_name = remote_context_name
+        .map(|context_name| format!("{display_name} (context {context_name})"))
+        .unwrap_or_else(|| display_name.to_string());
     let actual = if let Some(probe) = version_probe.as_ref() {
         match &probe.outcome {
             CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
@@ -2514,6 +3698,27 @@ fn diagnose_command_version(
                             );
                             (why, next)
                         }
+                        DoctorMode::Remote => {
+                            let why = match (error.as_deref(), exit_code) {
+                                (Some(message), _) => format!(
+                                    "ota probed `{resolved_path}` through the declared remote backend with `{}`, but the command could not be executed: {message}",
+                                    probe.command
+                                ),
+                                (None, Some(code)) => format!(
+                                    "ota probed `{resolved_path}` through the declared remote backend with `{}`, but the command exited with code {code} before ota could read a version",
+                                    probe.command
+                                ),
+                                (None, None) => format!(
+                                    "ota probed `{resolved_path}` through the declared remote backend with `{}`, but the command failed before ota could read a version",
+                                    probe.command
+                                ),
+                            };
+                            let next = format!(
+                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `ota doctor --mode remote`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
                         DoctorMode::Native => {
                             let why = match (error.as_deref(), exit_code) {
                                 (Some(message), _) => format!(
@@ -2542,11 +3747,14 @@ fn diagnose_command_version(
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!("{} probe failed: {display_name}", kind_label(kind)),
+                        summary: format!(
+                            "{} probe failed: {finding_display_name}",
+                            kind_label(kind)
+                        ),
                         why,
                         next,
                     });
-                    return container_probe_started;
+                    return probe_started;
                 }
                 CommandVersionProbeOutcome::Unparseable => {
                     let resolved_path = probe
@@ -2569,6 +3777,17 @@ fn diagnose_command_version(
                             );
                             (why, next)
                         }
+                        DoctorMode::Remote => {
+                            let why = format!(
+                                "ota probed `{resolved_path}` through the declared remote backend with `{}`, but the output did not contain a parseable version",
+                                probe.command
+                            );
+                            let next = format!(
+                                "run `{}` through the selected remote backend, inspect `{resolved_path}`, and make sure the output contains a parseable version before rerunning `ota doctor --mode remote`",
+                                probe.command
+                            );
+                            (why, next)
+                        }
                         DoctorMode::Native => {
                             let why = format!(
                                 "ota probed `{resolved_path}` with `{}`, but the output did not contain a parseable version",
@@ -2587,11 +3806,11 @@ fn diagnose_command_version(
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!("Unparseable version for {kind}: {display_name}"),
+                        summary: format!("Unparseable version for {kind}: {finding_display_name}"),
                         why,
                         next,
                     });
-                    return container_probe_started;
+                    return probe_started;
                 }
                 CommandVersionProbeOutcome::Version(_) => {}
             }
@@ -2622,7 +3841,26 @@ fn diagnose_command_version(
                 },
                 "ota doctor --mode container",
             ));
-            return container_probe_started;
+            return probe_started;
+        }
+        if mode == DoctorMode::Remote
+            && let Some(failure) = remote_installability_failure(
+                target_kind,
+                display_name,
+                requirement,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                provisioning_actions,
+            )
+            && let Some(target) = remote_provisioning_target(remote_probe, remote_context_name)
+        {
+            findings.push(provisioning_installability_finding(
+                &failure,
+                &target,
+                "ota doctor --mode remote",
+            ));
+            return probe_started;
         }
         let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding {
@@ -2631,7 +3869,7 @@ fn diagnose_command_version(
             } else {
                 FindingSeverity::Warn
             },
-            summary: format!("Missing {kind}: {display_name}"),
+            summary: format!("Missing {kind}: {finding_display_name}"),
             why: match (mode, container_image) {
                 (DoctorMode::Container, Some(image)) => format!(
                     "{display_name} is declared in the contract but is not available inside container image `{image}`"
@@ -2639,6 +3877,17 @@ fn diagnose_command_version(
                 (DoctorMode::Container, None) => format!(
                     "{display_name} is declared in the contract but is not available inside the configured container image"
                 ),
+                (DoctorMode::Remote, _) => remote_context_name
+                    .map(|context_name| {
+                        format!(
+                            "{display_name} is declared for remote context `{context_name}` but is not available through the declared remote backend"
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{display_name} is declared for remote execution but is not available through the declared remote backend"
+                        )
+                    }),
                 _ => format!("{display_name} is declared in the contract but is not available on PATH"),
             },
             next: match (mode, container_image) {
@@ -2648,6 +3897,17 @@ fn diagnose_command_version(
                 (DoctorMode::Container, None) => format!(
                     "update `execution.backends.container.image` so `{display_name}` is available, then rerun `ota doctor --mode container`"
                 ),
+                (DoctorMode::Remote, _) => remote_context_name
+                    .map(|context_name| {
+                        format!(
+                            "make `{display_name}` available in remote context `{context_name}` and rerun `ota doctor --mode remote`"
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "make `{display_name}` available in the selected remote backend and rerun `ota doctor --mode remote`"
+                        )
+                    }),
                 _ => exact_remediation
                     .map(|command| format!("run `{command}` and rerun `ota doctor`"))
                     .unwrap_or_else(|| {
@@ -2657,11 +3917,11 @@ fn diagnose_command_version(
                     }),
             },
         });
-        return container_probe_started;
+        return probe_started;
     };
 
     if version_matches(requirement, &actual) {
-        return container_probe_started;
+        return probe_started;
     }
 
     if mode == DoctorMode::Container
@@ -2689,17 +3949,56 @@ fn diagnose_command_version(
             },
             "ota doctor --mode container",
         ));
-        return container_probe_started;
+        return probe_started;
+    }
+    if mode == DoctorMode::Remote
+        && let Some(failure) = remote_installability_failure(
+            target_kind,
+            display_name,
+            requirement,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            provisioning_actions,
+        )
+        && let Some(target) = remote_provisioning_target(remote_probe, remote_context_name)
+    {
+        findings.push(provisioning_installability_finding(
+            &failure,
+            &target,
+            "ota doctor --mode remote",
+        ));
+        return probe_started;
     }
 
     let container_image = container_probe.map(|probe| probe.image.as_str());
-    let native_probe_suffix = version_probe
+    let probe_suffix = version_probe
         .as_ref()
         .and_then(|probe| {
-            probe
-                .resolved_path
-                .as_ref()
-                .map(|path| format!("; ota probed `{}` with `{}`", path.display(), probe.command))
+            let path = probe.resolved_path.as_ref()?;
+            Some(match (mode, container_image, remote_context_name) {
+                (DoctorMode::Container, Some(image), _) => format!(
+                    "; ota probed `{}` inside container image `{image}` with `{}`",
+                    path.display(),
+                    probe.command
+                ),
+                (DoctorMode::Container, None, _) => format!(
+                    "; ota probed `{}` inside the configured container image with `{}`",
+                    path.display(),
+                    probe.command
+                ),
+                (DoctorMode::Remote, _, Some(context_name)) => format!(
+                    "; ota probed `{}` through remote context `{context_name}` with `{}`",
+                    path.display(),
+                    probe.command
+                ),
+                (DoctorMode::Remote, _, None) => format!(
+                    "; ota probed `{}` through the selected remote backend with `{}`",
+                    path.display(),
+                    probe.command
+                ),
+                _ => format!("; ota probed `{}` with `{}`", path.display(), probe.command),
+            })
         })
         .unwrap_or_default();
     findings.push(Finding {
@@ -2708,7 +4007,7 @@ fn diagnose_command_version(
         } else {
             FindingSeverity::Warn
         },
-        summary: format!("Version mismatch for {kind}: {display_name}"),
+        summary: format!("Version mismatch for {kind}: {finding_display_name}"),
         why: match (mode, container_image) {
             (DoctorMode::Container, Some(image)) => format!(
                 "{display_name} resolved to `{actual}` inside container image `{image}` but the contract requires `{requirement}`"
@@ -2716,8 +4015,19 @@ fn diagnose_command_version(
             (DoctorMode::Container, None) => format!(
                 "{display_name} resolved to `{actual}` inside the configured container image but the contract requires `{requirement}`"
             ),
+            (DoctorMode::Remote, _) => remote_context_name
+                .map(|context_name| {
+                    format!(
+                        "{display_name} resolved to `{actual}` through remote context `{context_name}` but the contract requires `{requirement}`{probe_suffix}"
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "{display_name} resolved to `{actual}` through the selected remote backend but the contract requires `{requirement}`{probe_suffix}"
+                    )
+                }),
             _ => format!(
-                "{display_name} resolved to `{actual}` but the contract requires `{requirement}`{native_probe_suffix}"
+                "{display_name} resolved to `{actual}` but the contract requires `{requirement}`{probe_suffix}"
             ),
         },
         next: match (mode, container_image) {
@@ -2727,6 +4037,17 @@ fn diagnose_command_version(
             (DoctorMode::Container, None) => format!(
                 "update `execution.backends.container.image` so `{display_name}` satisfies `{requirement}`, then rerun `ota doctor --mode container`"
             ),
+            (DoctorMode::Remote, _) => remote_context_name
+                .map(|context_name| {
+                    format!(
+                        "update `{display_name}` in remote context `{context_name}` so it satisfies `{requirement}`, then rerun `ota doctor --mode remote`"
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "update `{display_name}` in the selected remote backend so it satisfies `{requirement}`, then rerun `ota doctor --mode remote`"
+                    )
+                }),
             _ => exact_remediation
                 .map(|command| format!("run `{command}` and rerun `ota doctor`"))
                 .unwrap_or_else(|| {
@@ -2736,7 +4057,7 @@ fn diagnose_command_version(
                 }),
         },
     });
-    container_probe_started
+    probe_started
 }
 
 fn container_installability_failure(
@@ -2758,6 +4079,63 @@ fn container_installability_failure(
         engine: container_probe.engine.clone(),
         lifecycle: Lifecycle::Ephemeral,
     };
+    match probe_provisioning_installability_with_target(
+        action,
+        contract_working_dir(contract_path),
+        &target,
+    ) {
+        Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => Some(diagnosis),
+        _ => None,
+    }
+}
+
+fn remote_provisioning_target(
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
+) -> Option<ProvisioningExecutionTarget> {
+    match remote_probe? {
+        ResolvedExecutionBackend::Remote {
+            provider,
+            target,
+            cwd,
+        } => Some(ProvisioningExecutionTarget::Remote {
+            provider: provider.clone(),
+            provider_command: None,
+            target: target.clone(),
+            cwd: cwd.clone(),
+            context_name: remote_context_name.map(str::to_string),
+        }),
+        ResolvedExecutionBackend::BackendProvider {
+            provider,
+            command,
+            target,
+            cwd,
+        } => Some(ProvisioningExecutionTarget::Remote {
+            provider: provider.clone(),
+            provider_command: Some(command.clone()),
+            target: target.clone(),
+            cwd: cwd.clone(),
+            context_name: remote_context_name.map(str::to_string),
+        }),
+        ResolvedExecutionBackend::Native | ResolvedExecutionBackend::Container { .. } => None,
+    }
+}
+
+fn remote_installability_failure(
+    target_kind: ProvisioningTargetKind,
+    display_name: &str,
+    requirement: &str,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+) -> Option<ProvisioningFailureDiagnosis> {
+    let target = remote_provisioning_target(remote_probe, remote_context_name)?;
+    let action = provisioning_actions.iter().find(|action| {
+        action.target_kind == target_kind
+            && action.name == display_name
+            && action.requested_version == requirement
+    })?;
     match probe_provisioning_installability_with_target(
         action,
         contract_working_dir(contract_path),
@@ -2831,6 +4209,54 @@ fn command_version_probe_in_container(
             } else {
                 CommandVersionProbeOutcome::ProbeFailed {
                     exit_code: output.status.code(),
+                    error: None,
+                }
+            };
+            (probe_started, resolved_path.map(PathBuf::from), outcome)
+        }
+        Err(error) => (
+            false,
+            None,
+            CommandVersionProbeOutcome::ProbeFailed {
+                exit_code: None,
+                error: Some(error.to_string()),
+            },
+        ),
+    };
+
+    CommandVersionProbe {
+        command,
+        resolved_path,
+        probe_started,
+        outcome,
+    }
+}
+
+fn command_version_probe_in_remote(
+    backend: &ResolvedExecutionBackend,
+    name: &str,
+    working_dir: &Path,
+) -> CommandVersionProbe {
+    let command = version_command_string(name);
+    let output = run_backend_command_captured(
+        &format!("doctor-probe:{name}"),
+        version_probe_command_string(name).as_str(),
+        working_dir,
+        backend,
+    );
+    let (probe_started, resolved_path, outcome) = match output {
+        Ok(output) => {
+            let (probe_started, resolved_path, combined) =
+                extract_container_probe_output(output.stdout.as_bytes(), output.stderr.as_bytes());
+            let outcome = if output.exit_code == 0 {
+                extract_version_token(&combined)
+                    .map(CommandVersionProbeOutcome::Version)
+                    .unwrap_or(CommandVersionProbeOutcome::Unparseable)
+            } else if resolved_path.is_none() {
+                CommandVersionProbeOutcome::Missing
+            } else {
+                CommandVersionProbeOutcome::ProbeFailed {
+                    exit_code: Some(output.exit_code),
                     error: None,
                 }
             };
@@ -3286,9 +4712,15 @@ fn finding_probe_command(why: &str) -> Option<String> {
     extract_backticked_after(why, " with `")
 }
 
-fn finding_targets_container_image(why: &str) -> bool {
+pub(crate) fn finding_targets_container_image(why: &str) -> bool {
     why.contains("inside container image `")
         || why.contains("inside the configured container image")
+}
+
+pub(crate) fn finding_targets_remote_backend(why: &str) -> bool {
+    why.contains("through the declared remote backend")
+        || why.contains("through remote context `")
+        || why.contains("through the selected remote backend")
 }
 
 pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
@@ -3427,6 +4859,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::parser::parse_contract_str;
+    use crate::schema::ServiceSpec;
     #[cfg(windows)]
     use crate::test_support::cwd_mutex_lock;
     use crate::test_support::env_mutex_lock;
@@ -4310,6 +5743,575 @@ tasks:
     }
 
     #[test]
+    fn warns_that_native_doctor_only_partially_evaluates_remote_contexts() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+extensions:
+  backend-demo:
+    kind: backend_provider
+    command: ota-ext-backend
+    api_version: 1
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: backend-demo
+        target: sandbox-dev
+      requirements:
+        tools:
+          jq: "*"
+tasks:
+  test:
+    context: remote-app
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "Remote execution contexts are only partially evaluated in native mode"
+            })
+            .expect("expected remote doctor scope note");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert!(
+            finding
+                .why
+                .contains("runtime and tool version checks still evaluate the local host")
+        );
+        assert!(finding.next.contains("ota execution plan --mode remote"));
+    }
+
+    #[test]
+    fn remote_doctor_mode_emits_policy_surfaces_per_remote_context() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "uname", "#!/bin/sh\necho 'Linux'\n");
+        write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.8.1'\n");
+        write_fake_command(
+            &bin_dir,
+            "ssh",
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+exec /bin/sh -lc "$1"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+      requirements:
+        tools:
+          jq: "jq-1.8.1"
+tasks:
+  test:
+    context: remote-app
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  version_policy:
+    tools:
+      jq:
+        approved_versions:
+          - "jq-1.8.1"
+  provisioning:
+    jq:
+      source: apt
+      package: jq
+      approved_versions:
+        - "jq-1.8.1"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            &fixture.path().join("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_contract_in_mode(
+            &contract,
+            &fixture.path().join("ota.yaml"),
+            DoctorMode::Remote,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let version_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed version rules are declared")
+            .expect("expected remote policy version finding");
+        assert!(
+            version_finding
+                .why
+                .contains("for remote context `remote-app`")
+        );
+        assert!(version_finding.why.contains("tool jq (versions jq-1.8.1)"));
+
+        let provisioning_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
+            .expect("expected remote policy provisioning finding");
+        assert!(
+            provisioning_finding
+                .why
+                .contains("for remote context `remote-app`")
+        );
+        assert!(
+            provisioning_finding
+                .why
+                .contains("tool jq jq-1.8.1 via apt")
+        );
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary == "Remote doctor mode still has partial policy reporting"
+        }));
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary
+                == "Remote execution contexts are only partially evaluated in native mode"
+        }));
+    }
+
+    #[test]
+    fn remote_doctor_mode_requires_remote_execution_configuration() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_contract_in_mode(&contract, synthetic_contract_path(), DoctorMode::Remote);
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Remote execution is not configured")
+            .expect("expected remote configuration blocker");
+        assert_eq!(finding.severity, FindingSeverity::Error);
+        assert!(finding.next.contains("ota doctor"));
+        assert!(finding.next.contains("--mode remote"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_doctor_mode_probes_tool_versions_through_remote_contexts() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.7.0'\n");
+        write_fake_command(
+            &bin_dir,
+            "ssh",
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+exec /bin/sh -lc "$1"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+      requirements:
+        tools:
+          jq: "jq-1.8.1"
+tasks:
+  test:
+    context: remote-app
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_contract_in_mode(&contract, synthetic_contract_path(), DoctorMode::Remote);
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Version mismatch for tool: jq (context remote-app)")
+            .expect("expected remote version mismatch");
+        assert!(finding.why.contains("through remote context `remote-app`"));
+        assert_eq!(finding.owner(), "remote_target");
+        assert_eq!(finding.evidence().source, "remote_target");
+        assert_eq!(finding.evidence().command, "jq --version");
+        assert!(!finding.evidence().path.is_empty());
+        assert!(finding.evidence().path.ends_with("/jq"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_doctor_mode_reports_policy_backed_provisioning_failures_from_remote_contexts() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "uname", "#!/bin/sh\necho 'Linux'\n");
+        write_fake_command(
+            &bin_dir,
+            "apt-get",
+            r#"#!/bin/sh
+case " $* " in
+  *" update "*) exit 0 ;;
+  *) echo "E: Unable to locate package nodejs" >&2; exit 100 ;;
+esac
+"#,
+        );
+        write_fake_command(
+            &bin_dir,
+            "ssh",
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+exec /bin/sh -lc "$1"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+      requirements:
+        runtimes:
+          node:
+            version: "24.14.1"
+tasks:
+  test:
+    context: remote-app
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  provisioning:
+    node:
+      source: apt
+      package: nodejs
+      approved_versions:
+        - "24.14.1"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            &fixture.path().join("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_contract_in_mode(
+            &contract,
+            &fixture.path().join("ota.yaml"),
+            DoctorMode::Remote,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "Remote apt cannot locate required package: node (context remote-app)"
+            })
+            .expect("expected remote provisioning blocker");
+        assert_eq!(finding.severity, FindingSeverity::Error);
+        assert!(
+            finding
+                .why
+                .contains("remote context `remote-app` requests `node`")
+        );
+        assert_eq!(finding.owner(), "remote_target");
+        assert_eq!(finding.evidence().source, "remote_provisioning");
+    }
+
+    #[test]
+    fn remote_doctor_mode_reports_version_policy_violations_per_context() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "uname", "#!/bin/sh\necho 'Linux'\n");
+        write_fake_command(&bin_dir, "jq", "#!/bin/sh\necho 'jq-1.8.1'\n");
+        write_fake_command(
+            &bin_dir,
+            "ssh",
+            r#"#!/bin/sh
+target="$1"
+shift
+[ "$1" = "sh" ] || exit 1
+shift
+[ "$1" = "-lc" ] || exit 1
+shift
+exec /bin/sh -lc "$1"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: remote-app
+  contexts:
+    remote-app:
+      backend: remote
+      remote:
+        provider: ssh
+        target: user@host
+      requirements:
+        tools:
+          jq: "jq-1.8.1"
+tasks:
+  test:
+    context: remote-app
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+  version_policy:
+    tools:
+      jq:
+        approved_versions:
+          - "jq-1.7.0"
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            &fixture.path().join("ota.yaml"),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_contract_in_mode(
+            &contract,
+            &fixture.path().join("ota.yaml"),
+            DoctorMode::Remote,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Repo does not satisfy org policy pack")
+            .expect("expected remote version policy blocker");
+        assert!(finding.why.contains("remote context `remote-app`"));
+        assert!(finding.why.contains("version policy violations"));
+        assert!(
+            finding
+                .next
+                .contains("update the requirements for remote context `remote-app`")
+        );
+    }
+
+    #[test]
+    fn remote_doctor_mode_reports_unexecutable_non_default_remote_contexts() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    remote-bad:
+      backend: remote
+      remote:
+        provider: ssh
+      requirements:
+        tools:
+          jq: "*"
+tasks:
+  test:
+    context: host
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let report =
+            diagnose_contract_in_mode(&contract, synthetic_contract_path(), DoctorMode::Remote);
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Remote execution context is not executable: remote-bad"
+            })
+            .expect("expected remote context blocker");
+        assert_eq!(finding.severity, FindingSeverity::Error);
+        assert!(finding.next.contains("execution.contexts.remote-bad"));
+        assert_eq!(finding.owner(), "remote_backend");
+    }
+
+    #[test]
     fn warns_for_suspicious_ssh_remote_target_shape() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -4646,6 +6648,197 @@ tasks:
     }
 
     #[test]
+    fn reports_contextual_service_readiness_failures_with_projected_endpoint() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      run: exit 1
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(!report.ok);
+        assert_eq!(report.findings.len(), 1);
+        assert_eq!(report.findings[0].severity, FindingSeverity::Error);
+        assert_eq!(
+            report.findings[0].summary,
+            "Service readiness failed: postgres"
+        );
+        assert!(
+            report.findings[0]
+                .why
+                .contains("projected endpoint is `127.0.0.1:5432`")
+        );
+    }
+
+    #[test]
+    fn reports_unexecutable_service_readiness_contexts_explicitly() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    remote-db:
+      backend: remote
+      remote:
+        provider: ssh
+services:
+  postgres:
+    required: true
+    endpoints:
+      remote-db:
+        address: postgres.internal
+        port: 5432
+    readiness:
+      from: remote-db
+      run: pg_isready -h postgres.internal -p 5432
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Service readiness context is not executable: postgres"
+            })
+            .expect("expected readiness execution blocker");
+        assert_eq!(finding.severity, FindingSeverity::Error);
+        assert_eq!(
+            finding.summary,
+            "Service readiness context is not executable: postgres"
+        );
+        assert!(finding.why.contains("context `remote-db`"));
+        assert!(finding.why.contains("postgres.internal:5432"));
+        assert!(
+            finding
+                .why
+                .contains("requires `execution.backends.remote.target`")
+        );
+        assert!(
+            finding
+                .next
+                .contains("repair execution context `remote-db`")
+        );
+    }
+
+    #[test]
+    fn preconditions_use_native_context_requirements() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          definitely-not-installed: "*"
+tasks:
+  setup:
+    context: host
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing tool: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn container_preconditions_include_host_context_requirements_for_compose_managers() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          definitely-not-installed: "*"
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  setup:
+    context: app
+    run: printf ready
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions_with_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing tool: definitely-not-installed")
+        );
+    }
+
+    #[test]
     fn reports_optional_service_healthcheck_failures_as_warnings() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -4786,6 +6979,7 @@ checks:
 
     #[test]
     fn reports_timed_out_service_healthchecks() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -4876,6 +7070,48 @@ tasks:
             compose_service_healthcheck_command("postgres", "pg_isready -U qredex -d qredex"),
             "docker compose exec -T postgres sh -lc 'pg_isready -U qredex -d qredex'"
         );
+    }
+
+    #[test]
+    fn compose_service_manager_wraps_healthcheck_in_declared_project_and_file() {
+        let service = ServiceSpec {
+            manager: Some(crate::schema::ServiceManagerSpec {
+                kind: crate::schema::ServiceManagerKind::Compose,
+                name: Some(String::from("local")),
+                file: Some(String::from("compose.yaml")),
+                service: Some(String::from("postgres")),
+            }),
+            ..ServiceSpec::default()
+        };
+
+        assert_eq!(
+            service.healthcheck_command("postgres", "pg_isready -U qredex -d qredex"),
+            "docker compose -f 'compose.yaml' -p 'local' exec -T 'postgres' sh -lc 'pg_isready -U qredex -d qredex'"
+        );
+        assert_eq!(
+            service.start_command("postgres").as_deref(),
+            Some("docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'")
+        );
+    }
+
+    #[test]
+    fn host_service_manager_keeps_healthcheck_on_host_without_derived_start_command() {
+        let service = ServiceSpec {
+            manager: Some(crate::schema::ServiceManagerSpec {
+                kind: crate::schema::ServiceManagerKind::Host,
+                name: Some(String::from("local-postgres")),
+                file: None,
+                service: None,
+            }),
+            ..ServiceSpec::default()
+        };
+
+        assert_eq!(
+            service.healthcheck_command("postgres", "pg_isready -h 127.0.0.1 -p 5432"),
+            "pg_isready -h 127.0.0.1 -p 5432"
+        );
+        assert_eq!(service.start_command("postgres"), None);
+        assert_eq!(service.stop_command("postgres"), None);
     }
 
     #[test]
@@ -5257,6 +7493,7 @@ policies:
     #[cfg(unix)]
     #[test]
     fn reports_timed_out_checks() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"

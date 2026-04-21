@@ -23,7 +23,9 @@
 use std::path::Path;
 
 use crate::doctor::command_available;
-use crate::schema::{Backend, Contract, Lifecycle};
+use crate::schema::{Backend, ContainerBackend, Contract, Execution, Lifecycle, RemoteBackend};
+
+pub(crate) const LEGACY_EXECUTION_CONTEXT_NAME: &str = "app";
 
 pub(crate) fn format_backend(backend: Backend) -> &'static str {
     match backend {
@@ -47,13 +49,7 @@ pub(crate) fn execution_target(
     lifecycle: Option<Lifecycle>,
 ) -> Option<String> {
     match backend {
-        Backend::Remote => contract
-            .execution
-            .as_ref()?
-            .backends
-            .as_ref()?
-            .remote
-            .as_ref()?
+        Backend::Remote => selected_remote_backend(contract.execution.as_ref())?
             .target
             .clone(),
         Backend::Container => {
@@ -71,17 +67,10 @@ pub(crate) fn ephemeral_container_target(
     contract: &Contract,
     contract_path: &Path,
 ) -> Option<String> {
-    let image = contract
-        .execution
-        .as_ref()?
-        .backends
-        .as_ref()?
-        .container
-        .as_ref()?
-        .image
-        .clone();
-    let engine = selected_container_engine(contract).unwrap_or_else(|| {
-        container_engine_candidates(contract)
+    let container = selected_container_backend(contract.execution.as_ref())?;
+    let image = container.image.clone();
+    let engine = selected_container_engine_from_backend(Some(container)).unwrap_or_else(|| {
+        container_engine_candidates_from_backend(Some(container))
             .into_iter()
             .next()
             .unwrap_or_else(|| String::from("docker"))
@@ -94,17 +83,10 @@ pub(crate) fn ephemeral_container_target(
 }
 
 fn persistent_container_target(contract: &Contract, contract_path: &Path) -> Option<String> {
-    let image = contract
-        .execution
-        .as_ref()?
-        .backends
-        .as_ref()?
-        .container
-        .as_ref()?
-        .image
-        .clone();
-    let engine = selected_container_engine(contract).unwrap_or_else(|| {
-        container_engine_candidates(contract)
+    let container = selected_container_backend(contract.execution.as_ref())?;
+    let image = container.image.clone();
+    let engine = selected_container_engine_from_backend(Some(container)).unwrap_or_else(|| {
+        container_engine_candidates_from_backend(Some(container))
             .into_iter()
             .next()
             .unwrap_or_else(|| String::from("docker"))
@@ -119,13 +101,7 @@ fn persistent_container_target(contract: &Contract, contract_path: &Path) -> Opt
 pub(crate) fn execution_image(contract: &Contract, backend: Backend) -> Option<String> {
     match backend {
         Backend::Container => Some(
-            contract
-                .execution
-                .as_ref()?
-                .backends
-                .as_ref()?
-                .container
-                .as_ref()?
+            selected_container_backend(contract.execution.as_ref())?
                 .image
                 .clone(),
         ),
@@ -134,11 +110,15 @@ pub(crate) fn execution_image(contract: &Contract, backend: Backend) -> Option<S
 }
 
 pub(crate) fn container_engine_candidates(contract: &Contract) -> Vec<String> {
-    let engines = contract
-        .execution
-        .as_ref()
-        .and_then(|execution| execution.backends.as_ref())
-        .and_then(|backends| backends.container.as_ref())
+    container_engine_candidates_from_backend(selected_container_backend(
+        contract.execution.as_ref(),
+    ))
+}
+
+pub(crate) fn container_engine_candidates_from_backend(
+    container: Option<&ContainerBackend>,
+) -> Vec<String> {
+    let engines = container
         .map(|container| container.engines.clone())
         .unwrap_or_default();
 
@@ -150,7 +130,13 @@ pub(crate) fn container_engine_candidates(contract: &Contract) -> Vec<String> {
 }
 
 pub(crate) fn selected_container_engine(contract: &Contract) -> Option<String> {
-    container_engine_candidates(contract)
+    selected_container_engine_from_backend(selected_container_backend(contract.execution.as_ref()))
+}
+
+pub(crate) fn selected_container_engine_from_backend(
+    container: Option<&ContainerBackend>,
+) -> Option<String> {
+    container_engine_candidates_from_backend(container)
         .into_iter()
         .find(|engine| command_available(engine))
 }
@@ -161,4 +147,58 @@ pub(crate) fn available_container_engines() -> Vec<String> {
         .filter(|engine| command_available(engine))
         .map(String::from)
         .collect()
+}
+
+pub(crate) fn matching_execution_context_name<'a>(
+    execution: Option<&'a Execution>,
+    backend: Backend,
+    lifecycle: Option<Lifecycle>,
+) -> Option<&'a str> {
+    let execution = execution?;
+
+    if let Some((name, context)) = execution.default_context() {
+        if context.backend == backend && (lifecycle.is_none() || context.lifecycle == lifecycle) {
+            return Some(name);
+        }
+    }
+
+    if execution.default_context.is_none()
+        && execution.contexts.is_empty()
+        && execution.preferred == Some(backend)
+        && (lifecycle.is_none() || execution.lifecycle == lifecycle)
+    {
+        return Some(LEGACY_EXECUTION_CONTEXT_NAME);
+    }
+
+    None
+}
+
+fn selected_container_backend(execution: Option<&Execution>) -> Option<&ContainerBackend> {
+    execution
+        .and_then(|execution| execution.default_context())
+        .and_then(|(_, context)| {
+            (context.backend == Backend::Container)
+                .then(|| context.container.as_ref())
+                .flatten()
+        })
+        .or_else(|| {
+            execution
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.container.as_ref())
+        })
+}
+
+fn selected_remote_backend(execution: Option<&Execution>) -> Option<&RemoteBackend> {
+    execution
+        .and_then(|execution| execution.default_context())
+        .and_then(|(_, context)| {
+            (context.backend == Backend::Remote)
+                .then(|| context.remote.as_ref())
+                .flatten()
+        })
+        .or_else(|| {
+            execution
+                .and_then(|execution| execution.backends.as_ref())
+                .and_then(|backends| backends.remote.as_ref())
+        })
 }

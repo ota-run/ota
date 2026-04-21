@@ -92,6 +92,10 @@ pub struct Execution {
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
     pub backends: Option<ExecutionBackends>,
+    #[serde(default)]
+    pub default_context: Option<String>,
+    #[serde(default)]
+    pub contexts: BTreeMap<String, ExecutionContext>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -101,6 +105,112 @@ pub struct ExecutionBackends {
     pub container: Option<ContainerBackend>,
     #[serde(default)]
     pub remote: Option<RemoteBackend>,
+}
+
+impl Execution {
+    pub fn default_context(&self) -> Option<(&str, &ExecutionContext)> {
+        let name = self.default_context.as_deref()?;
+        self.contexts
+            .get_key_value(name)
+            .map(|(name, context)| (name.as_str(), context))
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RequirementSurface {
+    pub runtimes: BTreeMap<String, RuntimeRequirement>,
+    pub tools: BTreeMap<String, ToolRequirement>,
+}
+
+impl RequirementSurface {
+    pub fn is_empty(&self) -> bool {
+        self.runtimes.is_empty() && self.tools.is_empty()
+    }
+
+    pub fn merge(&mut self, other: &RequirementSurface) {
+        self.runtimes.extend(other.runtimes.clone());
+        self.tools.extend(other.tools.clone());
+    }
+}
+
+impl Contract {
+    pub fn all_requirement_surface(&self) -> RequirementSurface {
+        let mut surface = RequirementSurface {
+            runtimes: self.runtimes.clone(),
+            tools: self.tools.clone(),
+        };
+
+        if let Some(execution) = self.execution.as_ref() {
+            for context in execution.contexts.values() {
+                surface
+                    .runtimes
+                    .extend(context.requirements.runtimes.clone());
+                surface.tools.extend(context.requirements.tools.clone());
+            }
+        }
+
+        surface
+    }
+
+    pub fn requirement_surface_for_backend(&self, backend: Backend) -> RequirementSurface {
+        let mut surface = RequirementSurface {
+            runtimes: self.runtimes.clone(),
+            tools: self.tools.clone(),
+        };
+        surface.merge(&self.context_requirement_surface_for_backend(backend));
+        surface
+    }
+
+    pub fn context_requirement_surface_for_backend(&self, backend: Backend) -> RequirementSurface {
+        let mut surface = RequirementSurface::default();
+
+        if let Some(execution) = self.execution.as_ref() {
+            for context in execution.contexts.values() {
+                if context.backend != backend {
+                    continue;
+                }
+
+                surface
+                    .runtimes
+                    .extend(context.requirements.runtimes.clone());
+                surface.tools.extend(context.requirements.tools.clone());
+            }
+        }
+
+        surface
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionContext {
+    pub backend: Backend,
+    #[serde(default)]
+    pub lifecycle: Option<Lifecycle>,
+    #[serde(default)]
+    pub container: Option<ContainerBackend>,
+    #[serde(default)]
+    pub remote: Option<RemoteBackend>,
+    #[serde(default)]
+    pub requirements: ExecutionContextRequirements,
+    #[serde(default)]
+    pub attachments: ExecutionContextAttachments,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionContextRequirements {
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, RuntimeRequirement>,
+    #[serde(default)]
+    pub tools: BTreeMap<String, ToolRequirement>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionContextAttachments {
+    #[serde(default)]
+    pub compose: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -418,17 +528,198 @@ pub struct ServiceSpec {
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
+    pub manager: Option<ServiceManagerSpec>,
+    #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
     pub start: Option<String>,
     #[serde(default)]
     pub stop: Option<String>,
     #[serde(default)]
+    pub endpoints: BTreeMap<String, ServiceEndpointSpec>,
+    #[serde(default)]
     pub healthcheck: Option<String>,
+    #[serde(default)]
+    pub readiness: Option<ServiceReadinessSpec>,
     #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub timeout: Option<u64>,
+}
+
+impl ServiceSpec {
+    pub fn manager_label(&self) -> Option<String> {
+        self.manager
+            .as_ref()
+            .map(ServiceManagerSpec::display_label)
+            .or_else(|| self.provider.clone())
+    }
+
+    pub fn start_command(&self, service_name: &str) -> Option<String> {
+        self.start.clone().or_else(|| {
+            self.manager
+                .as_ref()
+                .and_then(|manager| manager.start_command(service_name))
+        })
+    }
+
+    pub fn stop_command(&self, service_name: &str) -> Option<String> {
+        self.stop.clone().or_else(|| {
+            self.manager
+                .as_ref()
+                .and_then(|manager| manager.stop_command(service_name))
+        })
+    }
+
+    pub fn healthcheck_command(&self, service_name: &str, healthcheck: &str) -> String {
+        if let Some(manager) = &self.manager {
+            manager.healthcheck_command(service_name, healthcheck)
+        } else if self.provider.as_deref() == Some("docker-compose") {
+            format!(
+                "docker compose exec -T {service_name} sh -lc {}",
+                shell_single_quote(healthcheck)
+            )
+        } else {
+            healthcheck.to_string()
+        }
+    }
+
+    pub fn readiness_context(&self) -> Option<&str> {
+        self.readiness
+            .as_ref()
+            .map(|readiness| readiness.from.as_str())
+    }
+
+    pub fn readiness_command(&self, service_name: &str) -> Option<String> {
+        self.readiness
+            .as_ref()
+            .map(|readiness| readiness.run.clone())
+            .or_else(|| {
+                self.healthcheck
+                    .as_deref()
+                    .map(|healthcheck| self.healthcheck_command(service_name, healthcheck))
+            })
+    }
+
+    pub fn endpoint_for_context(&self, context_name: &str) -> Option<&ServiceEndpointSpec> {
+        self.endpoints.get(context_name)
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceEndpointSpec {
+    pub address: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceReadinessSpec {
+    pub from: String,
+    pub run: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceManagerSpec {
+    pub kind: ServiceManagerKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+}
+
+impl ServiceManagerSpec {
+    pub fn display_label(&self) -> String {
+        match self.kind {
+            ServiceManagerKind::Compose => match self.name.as_deref() {
+                Some(name) if !name.trim().is_empty() => format!("compose ({name})"),
+                _ => String::from("compose"),
+            },
+            ServiceManagerKind::Host => match self.name.as_deref() {
+                Some(name) if !name.trim().is_empty() => format!("host ({name})"),
+                _ => String::from("host"),
+            },
+        }
+    }
+
+    pub fn start_command(&self, service_name: &str) -> Option<String> {
+        match self.kind {
+            ServiceManagerKind::Compose => Some(format!(
+                "{} up -d {}",
+                self.compose_command_prefix(),
+                shell_single_quote(self.compose_service(service_name))
+            )),
+            ServiceManagerKind::Host => None,
+        }
+    }
+
+    pub fn stop_command(&self, service_name: &str) -> Option<String> {
+        match self.kind {
+            ServiceManagerKind::Compose => Some(format!(
+                "{} stop {}",
+                self.compose_command_prefix(),
+                shell_single_quote(self.compose_service(service_name))
+            )),
+            ServiceManagerKind::Host => None,
+        }
+    }
+
+    pub fn healthcheck_command(&self, service_name: &str, healthcheck: &str) -> String {
+        match self.kind {
+            ServiceManagerKind::Compose => format!(
+                "{} exec -T {} sh -lc {}",
+                self.compose_command_prefix(),
+                shell_single_quote(self.compose_service(service_name)),
+                shell_single_quote(healthcheck)
+            ),
+            ServiceManagerKind::Host => healthcheck.to_string(),
+        }
+    }
+
+    fn compose_service<'a>(&'a self, service_name: &'a str) -> &'a str {
+        self.service
+            .as_deref()
+            .filter(|service| !service.trim().is_empty())
+            .unwrap_or(service_name)
+    }
+
+    fn compose_command_prefix(&self) -> String {
+        let mut command = String::from("docker compose");
+        if let Some(file) = self.file.as_deref().filter(|file| !file.trim().is_empty()) {
+            command.push_str(" -f ");
+            command.push_str(&shell_single_quote(file));
+        }
+        if let Some(name) = self.name.as_deref().filter(|name| !name.trim().is_empty()) {
+            command.push_str(" -p ");
+            command.push_str(&shell_single_quote(name));
+        }
+        command
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceManagerKind {
+    Compose,
+    Host,
+}
+
+impl ServiceManagerKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compose => "compose",
+            Self::Host => "host",
+        }
+    }
+}
+
+fn shell_single_quote(input: &str) -> String {
+    let escaped = input.replace('\'', r#"'\''"#);
+    format!("'{escaped}'")
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -440,6 +731,8 @@ pub struct TaskSpec {
     pub notes: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(default)]
+    pub context: Option<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
