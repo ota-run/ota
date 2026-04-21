@@ -106,6 +106,7 @@ fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> S
     working_dir.display().to_string().hash(&mut hasher);
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
+    "app".hash(&mut hasher);
     format!("ota-{:x}", hasher.finish())
 }
 

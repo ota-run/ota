@@ -102,7 +102,7 @@ use crate::runner::{
     effective_execution, effective_task_execution, env_resolution_source_label,
     load_declared_env_sources, load_policy_env_overlay, named_execution_context,
     persistent_container_name, resolve_declared_env_source_value, resolve_execution_backend,
-    resolve_prepared_task_runtime, resolve_task_env_details, resolve_task_env_details_with_policy,
+    resolve_task_env_details, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides, run_task_with_progress_and_args_and_overrides_with_policy,
 };
@@ -30711,40 +30711,15 @@ fn run_up_setup_task(
 }
 
 fn resolve_up_workloads(
-    contract: &Contract,
-    resolved_path: &Path,
-    overrides: ExecutionOverrides,
     setup_runtime: Option<&ResolvedTaskRuntime>,
-) -> Result<BTreeMap<String, ResolvedTaskRuntime>, String> {
+) -> BTreeMap<String, ResolvedTaskRuntime> {
     let mut workloads = BTreeMap::new();
 
     if let Some(runtime) = setup_runtime.cloned() {
         workloads.insert(String::from("setup"), runtime);
     }
 
-    for task_name in contract.tasks.keys() {
-        if task_name == "setup" && workloads.contains_key("setup") {
-            continue;
-        }
-        if contract
-            .tasks
-            .get(task_name.as_str())
-            .and_then(TaskSpec::service_runtime)
-            .is_none()
-        {
-            continue;
-        }
-
-        match resolve_prepared_task_runtime(contract, resolved_path, task_name, overrides) {
-            Ok(Some(runtime)) => {
-                workloads.insert(task_name.clone(), runtime);
-            }
-            Ok(None) => {}
-            Err(error) => return Err(render_run_error(error)),
-        }
-    }
-
-    Ok(workloads)
+    workloads
 }
 
 fn remote_up_blocker_finding(
@@ -31664,8 +31639,7 @@ fn execute_repo_up(
     }
 
     let report = diagnose_contract_in_mode(contract, resolved_path, doctor_mode);
-    let workloads =
-        resolve_up_workloads(contract, resolved_path, overrides, setup_runtime.as_ref())?;
+    let workloads = resolve_up_workloads(setup_runtime.as_ref());
     let mut receipt = repo_execution_receipt(
         resolved_path,
         contract,
