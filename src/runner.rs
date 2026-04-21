@@ -882,11 +882,21 @@ fn compose_path_value(
 }
 
 fn command_with_path_export(command: &str, path_export: Option<&str>) -> String {
-    let Some(path) = path_export else {
-        return command.to_string();
+    let command = match path_export {
+        Some(path) => format!("export PATH={}; {command}", shell_quote(path)),
+        None => command.to_string(),
     };
+    signal_forwarding_shell_script(command)
+}
 
-    format!("export PATH={}; {command}", shell_quote(path))
+#[cfg(unix)]
+fn signal_forwarding_shell_script(command: String) -> String {
+    format!("trap 'kill 0' INT TERM; {command}")
+}
+
+#[cfg(windows)]
+fn signal_forwarding_shell_script(command: String) -> String {
+    command
 }
 
 fn policy_env_label(source: PolicyPackSource) -> String {
@@ -3752,8 +3762,6 @@ fn execute_ephemeral_container_task_command(
         let _ = remove_persistent_container(engine, &container_name, task_name);
         return Ok(container_command_failure(failure, container_name.clone()));
     }
-    let resolved_runtime =
-        resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -3767,6 +3775,8 @@ fn execute_ephemeral_container_task_command(
                 task: task_name.to_string(),
                 source,
             })?;
+            let resolved_runtime =
+                resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -3790,6 +3800,8 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+            let resolved_runtime =
+                resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
             let _ = remove_persistent_container(engine, &container_name, task_name);
 
             Ok(TaskCommandOutput {
@@ -4464,7 +4476,9 @@ fn visit_task(
 #[cfg(unix)]
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command);
+    shell
+        .arg("-lc")
+        .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }
 
@@ -5560,6 +5574,101 @@ tasks:
         assert_eq!(host.port, listener.bind.port);
         let expected_url = format!("http://127.0.0.1:{}/", listener.bind.port);
         assert_eq!(host.url.as_deref(), Some(expected_url.as_str()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_reports_auto_container_runtime_endpoint_after_start() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready > prepared.txt
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
+            "ready"
+        );
+        let runtime = outcome
+            .runtime
+            .expect("auto container service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("auto container listener should resolve a host endpoint");
+        assert_eq!(listener.bind.address, "0.0.0.0");
+        assert_eq!(listener.bind.port, 3000);
+        assert_eq!(host.address, "127.0.0.1");
+        assert_eq!(host.port, 49153);
+        assert_eq!(host.url.as_deref(), Some("http://127.0.0.1:49153/"));
     }
 
     #[test]
@@ -7311,6 +7420,33 @@ case "$command" in
     [ -f "$state_dir/$name.path" ]
     exit $?
     ;;
+  port)
+    name="$1"
+    query="$2"
+    [ -f "$state_dir/$name.path" ] || exit 1
+    if [ -f "$state_dir/$name.publish" ]; then
+      while IFS= read -r publication; do
+        [ -n "$publication" ] || continue
+        transport="${publication##*/}"
+        publication="${publication%/*}"
+        if printf "%s" "$publication" | grep -q "::"; then
+          host_address="${publication%%::*}"
+          bind_port="${publication##*::}"
+          host_port="49153"
+        else
+          host_address="${publication%%:*}"
+          remainder="${publication#*:}"
+          host_port="${remainder%%:*}"
+          bind_port="${remainder##*:}"
+        fi
+        if [ "$bind_port/$transport" = "$query" ]; then
+          printf "%s:%s\n" "$host_address" "$host_port"
+          exit 0
+        fi
+      done < "$state_dir/$name.publish"
+    fi
+    exit 1
+    ;;
   start)
     attach=0
     while [ "$#" -gt 0 ]; do
@@ -7375,6 +7511,7 @@ case "$command" in
     name=""
     network=""
     env_entries=""
+    pub_entries=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --rm|-i)
@@ -7396,6 +7533,11 @@ case "$command" in
           shift 2
           ;;
         -w)
+          shift 2
+          ;;
+        -p)
+          pub_entries="${pub_entries}${2}
+"
           shift 2
           ;;
         --env)
@@ -7431,6 +7573,11 @@ case "$command" in
     else
       : > "$state_dir/$name.env"
     fi
+    if [ -n "$pub_entries" ]; then
+      printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+    else
+      : > "$state_dir/$name.publish"
+    fi
     if [ "$1" = "-c" ]; then
       printf "%s" "$2" > "$state_dir/$name.command"
     elif [ "$1" = "sh" ] && [ "$2" = "-c" ]; then
@@ -7447,6 +7594,7 @@ case "$command" in
     name=""
     labels=""
     network=""
+    pub_entries=""
     while [ "$#" -gt 0 ]; do
       case "$1" in
         -d)
@@ -7479,6 +7627,11 @@ case "$command" in
         -w)
           shift 2
           ;;
+        -p)
+          pub_entries="${pub_entries}${2}
+"
+          shift 2
+          ;;
         --env)
           export "$2"
           shift 2
@@ -7503,8 +7656,18 @@ case "$command" in
       if [ -n "$labels" ]; then
         printf "%s" "$labels" > "$state_dir/$name.labels"
       fi
+      if [ -n "$pub_entries" ]; then
+        printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+      else
+        : > "$state_dir/$name.publish"
+      fi
       printf "run-persistent\n" >> "$host_dir/docker-log.txt"
       exit 0
+    fi
+    if [ -n "$pub_entries" ]; then
+      printf "%s" "$pub_entries" > "$state_dir/$name.publish"
+    else
+      : > "$state_dir/$name.publish"
     fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
