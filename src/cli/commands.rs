@@ -34411,7 +34411,9 @@ fn finalize_debug(
 #[cfg(unix)]
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command);
+    shell
+        .arg("-lc")
+        .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }
 
@@ -34420,6 +34422,16 @@ fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("cmd");
     shell.arg("/C").arg(command);
     shell
+}
+
+#[cfg(unix)]
+fn signal_forwarding_shell_script(command: String) -> String {
+    format!("trap 'kill 0' INT TERM; {command}")
+}
+
+#[cfg(windows)]
+fn signal_forwarding_shell_script(command: String) -> String {
+    command
 }
 
 fn to_json<T: serde::Serialize>(value: &T) -> String {

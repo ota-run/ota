@@ -89,8 +89,12 @@ if (-not $found -or -not $currentVersion) {
 
 Set-Content -Path $cargoToml -Value $lines
 
+# Update VERSION file
+$versionFile = Join-Path $repoRoot "VERSION"
+Set-Content -Path $versionFile -Value "$Version"
+
 Write-Host "🦦 VERSION BUMP" -ForegroundColor Cyan
-Write-Host "Updated: Cargo.toml"
+Write-Host "Updated: Cargo.toml, VERSION"
 Write-Host "From: $currentVersion"
 Write-Host "To:   $Version"
 Write-Host ""

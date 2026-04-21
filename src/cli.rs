@@ -47,7 +47,7 @@ mod commands;
 #[command(name = "ota")]
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
-    version = env!("CARGO_PKG_VERSION"),
+    version = include_str!("../VERSION"),
     after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
@@ -2834,7 +2834,7 @@ fn is_version_request(args: &[OsString]) -> bool {
 }
 
 fn render_version_output(args: &[OsString]) -> String {
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let version = format!("v{}", include_str!("../VERSION"));
     if args
         .iter()
         .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
@@ -11779,7 +11779,7 @@ tasks:
             std::ffi::OsString::from("--plain"),
         ]);
 
-        assert_eq!(output, format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(output, format!("🦦 v{}", include_str!("../VERSION")));
     }
 
     #[test]
