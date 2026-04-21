@@ -47,7 +47,7 @@ mod commands;
 #[command(name = "ota")]
 #[command(
     about = "Diagnose, prepare, and run repos from one explicit contract.\nDoctor first, contract second.",
-    version = include_str!("../VERSION"),
+    version = env!("CARGO_PKG_VERSION"),
     after_help = "\nChoose a flow:\n  existing repo with ota.yaml  ota doctor\n  turn findings into a plan    ota explain\n  repo without ota.yaml        ota detect --dry-run .\n  review a starter contract    ota init --dry-run\n  inspect execution choice     ota execution plan\n  prepare the repo             ota up\n  inspect env requirements     ota env\n  scaffold org policy          ota policy init --dry-run\n  review policy boundary       ota policy review\n  generate agent guidance      ota agents\n  list runnable tasks          ota tasks --use\n  run a declared task          ota run ci\n  enable shell completion      ota completion --setup\n\nWorkspace:\n  inspect readiness            ota workspace doctor .\n  inspect execution choice     ota workspace execution plan .\n  explain blockers             ota workspace explain .\n  prepare the workspace        ota workspace up",
     help_template = "🦦 {name} v{version}\n{about-with-newline}\nUsage:\n  {usage}\n\n{all-args}{after-help}"
 )]
@@ -2834,7 +2834,7 @@ fn is_version_request(args: &[OsString]) -> bool {
 }
 
 fn render_version_output(args: &[OsString]) -> String {
-    let version = format!("v{}", include_str!("../VERSION"));
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
     if args
         .iter()
         .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
@@ -10514,6 +10514,100 @@ tasks:
     }
 
     #[test]
+    fn validate_with_bind_port_mode_auto_reports_field_specific_guidance() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: auto
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Invalid contract"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.mode"));
+        assert!(
+            stderr.contains("task `dev` listener `http` with `bind.port.mode: auto` is invalid")
+        );
+        assert!(stderr.contains("`bind.port.mode` only supports `fixed` or `discover`"));
+        assert!(stderr.contains("`auto` is only valid on `project.host.port.mode`"));
+        assert!(stderr.contains("change this field to `fixed` or `discover`"));
+        assert!(stderr.contains("rerun `ota validate"));
+        assert!(!stderr.contains("failed to parse contract"));
+    }
+
+    #[test]
+    fn doctor_with_fixed_bind_missing_value_reports_field_specific_next_steps() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Invalid contract"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.bind.port.value"));
+        assert!(stderr.contains(
+            "task `dev` listener `http` with `bind.port.mode: fixed` must declare `bind.port.value`"
+        ));
+        assert!(stderr.contains("set `bind.port.value` for `tasks.dev.runtime.listeners.http`"));
+        assert!(stderr.contains("rerun `ota doctor"));
+        assert!(!stderr.contains("repair `./ota.yaml`"));
+    }
+
+    #[test]
     fn run_with_kubectl_remote_provider_missing_target_fails_with_guidance() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -11832,7 +11926,7 @@ tasks:
             std::ffi::OsString::from("--plain"),
         ]);
 
-        assert_eq!(output, format!("🦦 v{}", include_str!("../VERSION")));
+        assert_eq!(output, format!("🦦 v{}", env!("CARGO_PKG_VERSION")));
     }
 
     #[test]
