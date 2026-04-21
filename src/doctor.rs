@@ -1596,6 +1596,13 @@ impl Finding {
             | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
             | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED"
             | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
             | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
@@ -6158,6 +6165,8 @@ policies:
                 .contains("remote context `remote-app` requests `node`")
         );
         assert_eq!(finding.owner(), "remote_target");
+        assert_eq!(finding.provenance().as_deref(), Some("org policy"));
+        assert_eq!(finding.provenance_key().as_deref(), Some("org_policy"));
         assert_eq!(finding.evidence().source, "remote_provisioning");
     }
 
