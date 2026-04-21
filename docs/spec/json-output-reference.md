@@ -411,6 +411,7 @@ Success:
         }
       },
       "depends_on": [],
+      "requires_services": ["postgres"],
       "safe_for_agent": false
     }
   ]
@@ -442,6 +443,7 @@ Root monorepo summary output can also include grouped member results:
             }
           },
           "depends_on": [],
+          "requires_services": ["postgres"],
           "safe_for_agent": false
         }
       ]
@@ -1067,8 +1069,8 @@ provisioning signals without mutating anything.
 ```
 
 Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can also carry
-`after_success`, `after_failure`, and `after_always` so automation can see the same post-outcome
-task graph that `ota run` executes.
+`requires_services`, `after_success`, `after_failure`, and `after_always` so automation can see
+the same service and post-outcome task graph that `ota run` executes.
 
 ## `ota workspace list --json`
 

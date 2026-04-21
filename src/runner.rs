@@ -1345,7 +1345,7 @@ struct TaskRunState {
     completed: BTreeMap<String, i32>,
     completed_by_generation: BTreeMap<(String, usize), i32>,
     next_generation: usize,
-    prepared_services: BTreeSet<String>,
+    started_services: BTreeSet<String>,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -1742,59 +1742,54 @@ fn ensure_task_required_services(
         .into_iter()
         .filter(|name| required_services.contains(name))
     {
-        if !state.prepared_services.insert(service_name.clone()) {
-            continue;
-        }
-
         let service = contract
             .services
             .get(service_name.as_str())
             .expect("validated required service should exist");
 
-        if let Some(start) = service.start_command(service_name.as_str()) {
-            match run_host_shell_command(start.as_str(), working_dir, mode) {
-                Ok(output) => {
-                    state.stdout.push_str(&output.stdout);
-                    state.stderr.push_str(&output.stderr);
-                    if output.exit_code != 0 {
+        if state.started_services.insert(service_name.clone()) {
+            if let Some(start) = service.start_command(service_name.as_str()) {
+                match run_host_shell_command(start.as_str(), working_dir, mode) {
+                    Ok(output) => {
+                        state.stdout.push_str(&output.stdout);
+                        state.stderr.push_str(&output.stderr);
+                        if output.exit_code != 0 {
+                            append_required_service_failure(
+                                &mut state.stderr,
+                                task_name,
+                                service_name.as_str(),
+                                &format!(
+                                    "service start command exited with code {}",
+                                    output.exit_code
+                                ),
+                                None,
+                            );
+                            return Ok(Some(output.exit_code));
+                        }
+                    }
+                    Err(error) => {
                         append_required_service_failure(
                             &mut state.stderr,
                             task_name,
                             service_name.as_str(),
-                            &format!(
-                                "service start command exited with code {}",
-                                output.exit_code
-                            ),
+                            &format!("failed to execute service start command: {error}"),
                             None,
                         );
-                        return Ok(Some(output.exit_code));
+                        return Ok(Some(1));
                     }
-                }
-                Err(error) => {
-                    append_required_service_failure(
-                        &mut state.stderr,
-                        task_name,
-                        service_name.as_str(),
-                        &format!("failed to execute service start command: {error}"),
-                        None,
-                    );
-                    return Ok(Some(1));
                 }
             }
         }
 
         let report =
             crate::doctor::diagnose_service(contract, contract_path, service_name.as_str());
-        if !report.ok {
-            let finding = report.findings.first();
+        if let Some(finding) = report.findings.first() {
             append_required_service_failure(
                 &mut state.stderr,
                 task_name,
                 service_name.as_str(),
-                finding
-                    .map(|finding| finding.why.as_str())
-                    .unwrap_or("service requirement did not pass readiness checks"),
-                finding.map(|finding| finding.next.as_str()),
+                finding.why.as_str(),
+                Some(finding.next.as_str()),
             );
             return Ok(Some(1));
         }
@@ -4546,9 +4541,7 @@ project:
 services:
   postgres:
     start: echo service >> run.log
-    readiness:
-      from: host
-      run: test -f run.log
+    healthcheck: test -f run.log
 tasks:
   build:
     requires_services:
@@ -4568,6 +4561,74 @@ tasks:
                 .collect::<Vec<_>>(),
             vec!["service", "task"]
         );
+    }
+
+    #[test]
+    fn run_task_requires_services_rechecks_readiness_for_hook_tasks() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: echo start >> run.log
+    healthcheck: touch ready.flag
+tasks:
+  build:
+    requires_services:
+      - postgres
+    after_success:
+      - verify
+    script: |
+      rm -f ready.flag
+      echo task >> run.log
+  verify:
+    requires_services:
+      - postgres
+    script: |
+      test -f ready.flag
+      echo verify >> run.log
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["start", "task", "verify"]
+        );
+    }
+
+    #[test]
+    fn run_task_requires_services_fails_when_service_healthcheck_warns() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  cache:
+    healthcheck: exit 1
+tasks:
+  build:
+    requires_services:
+      - cache
+    script: |
+      echo task >> run.log
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        assert_eq!(outcome.exit_code, 1);
+        assert!(!fixture.dir.path().join("run.log").exists());
     }
 
     #[test]
