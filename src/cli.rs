@@ -10461,6 +10461,59 @@ tasks:
     }
 
     #[test]
+    fn run_text_reports_task_runtime_projection_field_when_host_port_value_is_missing() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: printf ready
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Task runtime projection is invalid"));
+        assert!(stderr.contains("Field: tasks.dev.runtime.listeners.http.project.host.port.value"));
+        assert!(
+            stderr.contains("`project.host.port.mode: fixed` requires `project.host.port.value`")
+        );
+        assert!(
+            stderr.contains("set `project.host.port.value` for `tasks.dev.runtime.listeners.http`")
+        );
+        assert!(stderr.contains("or change `project.host.port.mode` to `auto`"));
+    }
+
+    #[test]
     fn run_with_kubectl_remote_provider_missing_target_fails_with_guidance() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
