@@ -26,6 +26,7 @@
 
 ## Unreleased
 
+- added task-level `requires_services` so tasks can declare canonical services that must be ready before the task body runs, and surfaced that requirement in task text/JSON output plus the execution-topology docs and site examples
 - surfaced resolved execution context names directly in `ota run` failure cards and `ota up`
   phase/blocker cards, so the primary human-facing error path now matches the execution-topology
   truth already present in receipts and summaries
