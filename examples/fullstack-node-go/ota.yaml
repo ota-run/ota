@@ -4,9 +4,10 @@ project:
   description: Example contract for a Node application with a Go service
   type: application
 execution:
-  preferred: native
-  supported:
-    - native
+  default_context: host
+  contexts:
+    host:
+      backend: native
 runtimes:
   node: "22.4.0"
   go: "1.24.0"
@@ -21,17 +22,20 @@ env:
         - ci
 tasks:
   setup:
+    context: host
     description: Install application dependencies
     category: setup
     run: npm install
     safe_for_agent: true
   build:
+    context: host
     description: Build the app bundle
     category: build
     run: npm run build
     depends_on:
       - setup
   service-test:
+    context: host
     description: Run the Go service tests
     category: test
     run: go test ./...
