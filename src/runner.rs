@@ -1132,37 +1132,79 @@ pub fn run_task_captured_with_args_with_overrides_with_policy(
 }
 
 pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
-    let (backend, lifecycle) = effective_execution(contract, ExecutionOverrides::default());
-    match (backend, lifecycle) {
-        (Backend::Container, Some(Lifecycle::Persistent)) => {
-            let image = execution_image(contract, Backend::Container).ok_or(
-                RunError::MissingContainerImage {
-                    task: String::from("clean"),
-                },
-            )?;
-            let engine = selected_container_engine(contract).ok_or_else(|| {
-                RunError::MissingContainerBackendCli {
-                    task: String::from("clean"),
-                    engines: container_engine_candidates(contract).join(", "),
-                }
-            })?;
-            let working_dir = contract_working_dir(contract_path);
-            let container_name = persistent_container_name(working_dir, &image, &engine);
-            let inspect_exit_code =
-                container_command_exit_code(&engine, &["inspect", &container_name], None, "clean")?;
-            if inspect_exit_code != 0 {
-                return Ok(false);
-            }
-            let remove_exit_code = container_command_exit_code(
-                &engine,
-                &["rm", "-f", &container_name],
-                None,
-                "clean",
-            )?;
-            Ok(remove_exit_code == 0)
-        }
-        _ => Ok(false),
+    let cleanup_targets = persistent_cleanup_targets(contract)?;
+    if cleanup_targets.is_empty() {
+        return Ok(false);
     }
+
+    let working_dir = contract_working_dir(contract_path);
+    let mut cleaned = false;
+    let mut visited = BTreeSet::new();
+    for (image, engine) in cleanup_targets {
+        let container_name = persistent_container_name(working_dir, &image, &engine);
+        if !visited.insert((engine.clone(), container_name.clone())) {
+            continue;
+        }
+        let inspect_exit_code =
+            container_command_exit_code(&engine, &["inspect", &container_name], None, "clean")?;
+        if inspect_exit_code != 0 {
+            continue;
+        }
+        let remove_exit_code =
+            container_command_exit_code(&engine, &["rm", "-f", &container_name], None, "clean")?;
+        cleaned |= remove_exit_code == 0;
+    }
+
+    Ok(cleaned)
+}
+
+fn persistent_cleanup_targets(contract: &Contract) -> Result<Vec<(String, String)>, RunError> {
+    let mut targets = Vec::new();
+    if let Some(execution) = contract.execution.as_ref() {
+        for (name, context) in &execution.contexts {
+            if context.backend != Backend::Container
+                || context.lifecycle != Some(Lifecycle::Persistent)
+            {
+                continue;
+            }
+            let Some(container) = context.container.as_ref() else {
+                return Err(RunError::MissingContainerImage {
+                    task: format!("context:{name}"),
+                });
+            };
+            let engine =
+                selected_container_engine_from_backend(Some(container)).ok_or_else(|| {
+                    RunError::MissingContainerBackendCli {
+                        task: format!("context:{name}"),
+                        engines: container_engine_candidates_from_backend(Some(container))
+                            .join(", "),
+                    }
+                })?;
+            targets.push((container.image.clone(), engine));
+        }
+    }
+
+    if !targets.is_empty() {
+        return Ok(targets);
+    }
+
+    let (backend, lifecycle) = effective_execution(contract, ExecutionOverrides::default());
+    if backend != Backend::Container || lifecycle != Some(Lifecycle::Persistent) {
+        return Ok(Vec::new());
+    }
+
+    let image =
+        execution_image(contract, Backend::Container).ok_or(RunError::MissingContainerImage {
+            task: String::from("clean"),
+        })?;
+    let engine = selected_container_engine(contract).ok_or_else(|| {
+        RunError::MissingContainerBackendCli {
+            task: String::from("clean"),
+            engines: container_engine_candidates(contract).join(", "),
+        }
+    })?;
+    targets.push((image, engine));
+    Ok(targets)
 }
 
 pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupReport, RunError> {
@@ -5760,6 +5802,71 @@ tasks:
         }
 
         let _ = run_task(&fixture.contract, fixture.file_path(), "setup").unwrap();
+        let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(cleaned);
+        assert!(
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt"))
+                .unwrap()
+                .contains("rm\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleans_persistent_named_container_context_backend() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
         let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
 
         match original_path {
