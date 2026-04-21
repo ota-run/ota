@@ -54,7 +54,7 @@ The current single repo-wide execution story is too coarse for that reality.
 
 Model the repo as execution topology, not as one flat backend choice.
 
-The next contract should make five things first-class:
+The current shipped model makes five things first-class:
 
 1. execution contexts
 2. typed service managers
@@ -72,7 +72,7 @@ The next contract should make five things first-class:
 
 ## Proposed contract model
 
-### `execution.contexts`
+### `execution.contexts` model
 
 Execution contexts define where workloads run.
 
