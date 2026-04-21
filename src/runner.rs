@@ -28,17 +28,17 @@ use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::execution::{
-    available_container_engines, container_engine_candidates,
+    LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_engine_candidates,
     container_engine_candidates_from_backend, execution_image, matching_execution_context_name,
     selected_container_engine, selected_container_engine_from_backend,
 };
@@ -47,7 +47,8 @@ use crate::policy_pack::{
 };
 use crate::schema::{
     Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
-    ExtensionKind, Lifecycle, RemoteBackend, TaskSpec,
+    ExtensionKind, Lifecycle, RemoteBackend, TaskRuntimeHostPortMode, TaskRuntimeKind,
+    TaskRuntimeProtocol, TaskSpec,
 };
 
 #[derive(Clone)]
@@ -391,6 +392,12 @@ pub enum RunError {
         provider: String,
         exit_code: i32,
     },
+    #[error("task `{task}` could not resolve declared runtime listener `{listener}`: {details}")]
+    RuntimeEndpointDiscoveryFailed {
+        task: String,
+        listener: String,
+        details: String,
+    },
     #[error(
         "task `{task}` uses secret environment variables that cannot be passed through remote execution: {names}"
     )]
@@ -509,6 +516,7 @@ pub struct RunOutcome {
     pub task_steps: Vec<ExecutedTaskStep>,
     pub exit_code: i32,
     pub target: Option<String>,
+    pub runtime: Option<ResolvedTaskRuntime>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -519,6 +527,7 @@ pub struct CapturedRunOutcome {
     pub stdout: String,
     pub stderr: String,
     pub target: Option<String>,
+    pub runtime: Option<ResolvedTaskRuntime>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1054,6 +1063,7 @@ pub fn run_task_with_progress_and_args_and_overrides_with_policy(
         task_steps: outcome.task_steps,
         exit_code: outcome.exit_code,
         target: outcome.target,
+        runtime: outcome.runtime,
     })
 }
 
@@ -1140,8 +1150,14 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     let working_dir = contract_working_dir(contract_path);
     let mut cleaned = false;
     let mut visited = BTreeSet::new();
-    for (image, engine) in cleanup_targets {
-        let container_name = persistent_container_name(working_dir, &image, &engine);
+    for (context_name, image, engine, publications) in cleanup_targets {
+        let identity_seed = container_identity_seed(context_name.as_deref(), &publications);
+        let container_name = persistent_container_name_for_seed(
+            working_dir,
+            &image,
+            &engine,
+            identity_seed.as_deref(),
+        );
         if !visited.insert((engine.clone(), container_name.clone())) {
             continue;
         }
@@ -1158,7 +1174,17 @@ pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool
     Ok(cleaned)
 }
 
-fn persistent_cleanup_targets(contract: &Contract) -> Result<Vec<(String, String)>, RunError> {
+fn persistent_cleanup_targets(
+    contract: &Contract,
+) -> Result<
+    Vec<(
+        Option<String>,
+        String,
+        String,
+        Vec<ContainerPortPublication>,
+    )>,
+    RunError,
+> {
     let mut targets = Vec::new();
     if let Some(execution) = contract.execution.as_ref() {
         for (name, context) in &execution.contexts {
@@ -1180,7 +1206,12 @@ fn persistent_cleanup_targets(contract: &Contract) -> Result<Vec<(String, String
                             .join(", "),
                     }
                 })?;
-            targets.push((container.image.clone(), engine));
+            targets.push((
+                Some(name.clone()),
+                container.image.clone(),
+                engine,
+                container_publications_for_context(contract, Some(name)),
+            ));
         }
     }
 
@@ -1203,7 +1234,7 @@ fn persistent_cleanup_targets(contract: &Contract) -> Result<Vec<(String, String
             engines: container_engine_candidates(contract).join(", "),
         }
     })?;
-    targets.push((image, engine));
+    targets.push((None, image, engine, Vec::new()));
     Ok(targets)
 }
 
@@ -1332,12 +1363,48 @@ enum TaskExecutionMode {
     Capture,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntime {
+    pub kind: TaskRuntimeKind,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub listeners: BTreeMap<String, ResolvedTaskRuntimeListener>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntimeListener {
+    pub protocol: TaskRuntimeProtocol,
+    pub bind: ResolvedTaskRuntimeBind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedTaskRuntimeResolution>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntimeBind {
+    pub address: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntimeResolution {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<ResolvedTaskRuntimeHost>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRuntimeHost {
+    pub address: String,
+    pub port: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct TaskCommandOutput {
     pub(crate) exit_code: i32,
     pub(crate) stdout: String,
     pub(crate) stderr: String,
     pub(crate) target: Option<String>,
+    pub(crate) runtime: Option<ResolvedTaskRuntime>,
 }
 
 #[derive(Debug, Default)]
@@ -1350,16 +1417,28 @@ struct TaskRunState {
     stdout: String,
     stderr: String,
     target: Option<String>,
+    runtime: Option<ResolvedTaskRuntime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContainerPortPublication {
+    bind_port: u16,
+    host_address: String,
+    host_port_mode: TaskRuntimeHostPortMode,
+    host_port: Option<u16>,
+    protocol: TaskRuntimeProtocol,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedExecutionBackend {
     Native,
     Container {
+        context_name: Option<String>,
         image: String,
         engine: String,
         lifecycle: Lifecycle,
         compose_networks: Vec<String>,
+        publications: Vec<ContainerPortPublication>,
     },
     Remote {
         provider: String,
@@ -1443,6 +1522,7 @@ fn run_task_internal(
         stdout: state.stdout,
         stderr: state.stderr,
         target: state.target,
+        runtime: state.runtime,
     })
 }
 
@@ -1513,6 +1593,7 @@ fn run_host_shell_command(
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
+                    runtime: None,
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -1528,6 +1609,7 @@ fn run_host_shell_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
+                runtime: None,
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }
@@ -1671,6 +1753,7 @@ fn execute_task_with_hooks(
     combined_env.extend(input_overrides);
     let command_output = execute_task_command(
         task_name,
+        Some(task),
         execution.body,
         working_dir,
         &combined_env,
@@ -1684,6 +1767,9 @@ fn execute_task_with_hooks(
     state.stderr.push_str(&command_output.stderr);
     if state.target.is_none() {
         state.target = command_output.target;
+    }
+    if matches!(relation, TaskExecutionRelation::Requested) {
+        state.runtime = command_output.runtime;
     }
     state.task_steps.push(ExecutedTaskStep {
         name: task_name.to_string(),
@@ -1924,6 +2010,7 @@ fn hook_generation_for_task(
 
 fn execute_task_command(
     task_name: &str,
+    task: Option<&TaskSpec>,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -1933,69 +2020,26 @@ fn execute_task_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     match backend {
-        ResolvedExecutionBackend::Native => match mode {
-            TaskExecutionMode::Stream { emit_progress } => {
-                let mut process = shell_command(command);
-                process.current_dir(working_dir).envs(env_overrides.iter());
-                let exit_code = if emit_progress {
-                    run_streaming_command_with_loader(
-                        &mut process,
-                        &running_loader_label(task_name, backend),
-                    )
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?
-                } else {
-                    process
-                        .stdin(Stdio::inherit())
-                        .stdout(Stdio::inherit())
-                        .stderr(Stdio::inherit())
-                        .status()
-                        .map_err(|source| RunError::SpawnFailed {
-                            task: task_name.to_string(),
-                            source,
-                        })?
-                        .code()
-                        .unwrap_or(1)
-                };
-
-                Ok(TaskCommandOutput {
-                    exit_code,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                    target: None,
-                })
-            }
-            TaskExecutionMode::Capture => {
-                let output = shell_command(command)
-                    .current_dir(working_dir)
-                    .envs(env_overrides.iter())
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .and_then(|child| child.wait_with_output())
-                    .map_err(|source| RunError::SpawnFailed {
-                        task: task_name.to_string(),
-                        source,
-                    })?;
-
-                Ok(TaskCommandOutput {
-                    exit_code: output.status.code().unwrap_or(1),
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                    target: None,
-                })
-            }
-        },
+        ResolvedExecutionBackend::Native => execute_native_task_command(
+            task_name,
+            task.and_then(TaskSpec::service_runtime),
+            command,
+            working_dir,
+            env_overrides,
+            mode,
+            backend,
+        ),
         ResolvedExecutionBackend::Container {
+            context_name,
             image,
             engine,
             lifecycle,
             compose_networks,
+            publications,
         } => execute_container_task_command(
             task_name,
+            task.and_then(TaskSpec::service_runtime),
+            context_name.as_deref(),
             command,
             working_dir,
             env_overrides,
@@ -2005,6 +2049,7 @@ fn execute_task_command(
             engine,
             *lifecycle,
             compose_networks,
+            publications,
             mode,
         ),
         ResolvedExecutionBackend::Remote {
@@ -2047,6 +2092,7 @@ pub(crate) fn run_backend_command_captured(
 ) -> Result<TaskCommandOutput, RunError> {
     execute_task_command(
         task_name,
+        None,
         command,
         working_dir,
         &BTreeMap::new(),
@@ -2292,6 +2338,97 @@ fn compose_networks_for_context(context: &ExecutionContext) -> Vec<String> {
         .collect()
 }
 
+fn task_container_context_name<'a>(contract: &'a Contract, task_name: &str) -> Option<&'a str> {
+    let effective = effective_task_execution(contract, task_name, ExecutionOverrides::default());
+    (effective.backend == Backend::Container)
+        .then_some(effective.context_name)
+        .flatten()
+}
+
+fn task_container_publications(
+    contract: &Contract,
+    task_name: &str,
+) -> Vec<ContainerPortPublication> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    let Some(runtime) = task.service_runtime() else {
+        return Vec::new();
+    };
+
+    runtime
+        .listeners
+        .values()
+        .filter_map(|listener| {
+            let host = listener.project.host.as_ref()?;
+            Some(ContainerPortPublication {
+                bind_port: listener
+                    .bind
+                    .port
+                    .value
+                    .expect("validated container runtime listener should declare a bind port"),
+                host_address: host.address.trim().to_string(),
+                host_port_mode: host.port.mode,
+                host_port: host.port.value,
+                protocol: listener.protocol,
+            })
+        })
+        .collect()
+}
+
+fn container_publications_for_context(
+    contract: &Contract,
+    context_name: Option<&str>,
+) -> Vec<ContainerPortPublication> {
+    let normalized_context = context_name.unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME);
+    let mut by_port = BTreeMap::new();
+
+    for task_name in contract.tasks.keys() {
+        if task_container_context_name(contract, task_name.as_str())
+            .unwrap_or(LEGACY_EXECUTION_CONTEXT_NAME)
+            != normalized_context
+        {
+            continue;
+        }
+        for publication in task_container_publications(contract, task_name.as_str()) {
+            by_port.entry(publication.bind_port).or_insert(publication);
+        }
+    }
+
+    by_port.into_values().collect()
+}
+
+fn container_identity_seed(
+    context_name: Option<&str>,
+    publications: &[ContainerPortPublication],
+) -> Option<String> {
+    let context_name = context_name?;
+    let mut seed = context_name.to_string();
+    if !publications.is_empty() {
+        seed.push('|');
+        seed.push_str(
+            &publications
+                .iter()
+                .map(|publication| {
+                    let host_port = publication
+                        .host_port
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| String::from("auto"));
+                    format!(
+                        "{}:{}:{}:{host_port}:{}",
+                        publication.bind_port,
+                        publication.host_address,
+                        publication.host_port_mode as u8,
+                        publication.protocol as u8,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    Some(seed)
+}
+
 pub(crate) fn effective_task_execution<'a>(
     contract: &'a Contract,
     task_name: &str,
@@ -2381,7 +2518,11 @@ pub(crate) fn resolve_execution_backend(
                 task: task_name.to_string(),
             })?;
 
+            let context_name = effective.context_name.map(str::to_string);
+            let publications = container_publications_for_context(contract, effective.context_name);
+
             Ok(ResolvedExecutionBackend::Container {
+                context_name,
                 image: container.image.clone(),
                 engine,
                 lifecycle,
@@ -2389,6 +2530,7 @@ pub(crate) fn resolve_execution_backend(
                     .filter(|(_, context)| context.backend == Backend::Container)
                     .map(|(_, context)| compose_networks_for_context(context))
                     .unwrap_or_default(),
+                publications,
             })
         }
         Backend::Remote => effective
@@ -2446,6 +2588,131 @@ pub(crate) fn resolve_execution_backend(
     }
 }
 
+pub(crate) fn resolve_prepared_task_runtime(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<Option<ResolvedTaskRuntime>, RunError> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Ok(None);
+    };
+    let Some(runtime) = task.service_runtime() else {
+        return Ok(None);
+    };
+
+    match resolve_execution_backend(contract, task_name, overrides)? {
+        ResolvedExecutionBackend::Native => resolve_static_native_task_runtime(runtime),
+        ResolvedExecutionBackend::Container {
+            context_name,
+            image,
+            engine,
+            lifecycle,
+            compose_networks,
+            publications,
+        } => {
+            if lifecycle != Lifecycle::Persistent {
+                return Ok(None);
+            }
+
+            if let Some(issue) = probe_container_backend(&engine, task_name)? {
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: String::from("container"),
+                    details: issue,
+                });
+            }
+
+            let identity_seed = container_identity_seed(context_name.as_deref(), &publications);
+            let container_name = persistent_container_name_for_seed(
+                contract_working_dir(contract_path),
+                &image,
+                &engine,
+                identity_seed.as_deref(),
+            );
+            if let Some(failure) = ensure_persistent_container_ready(
+                task_name,
+                contract_working_dir(contract_path),
+                &image,
+                &engine,
+                &container_name,
+                &compose_networks,
+                &publications,
+            )? {
+                let details = if failure.stderr.trim().is_empty() {
+                    failure.stdout.trim().to_string()
+                } else {
+                    failure.stderr.trim().to_string()
+                };
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: String::from("container"),
+                    details: if details.is_empty() {
+                        String::from("failed to prepare the persistent container context")
+                    } else {
+                        details
+                    },
+                });
+            }
+            resolve_container_task_runtime(Some(runtime), &engine, &container_name, task_name)
+        }
+        ResolvedExecutionBackend::Remote { .. }
+        | ResolvedExecutionBackend::BackendProvider { .. } => Ok(None),
+    }
+}
+
+fn resolve_static_native_task_runtime(
+    runtime: &crate::schema::TaskRuntimeSpec,
+) -> Result<Option<ResolvedTaskRuntime>, RunError> {
+    let mut listeners = BTreeMap::new();
+
+    for (listener_name, listener) in &runtime.listeners {
+        let bind_port = match listener.bind.port.mode {
+            crate::schema::TaskRuntimePortMode::Fixed => listener
+                .bind
+                .port
+                .value
+                .expect("validated fixed native listener should include a bind port"),
+            crate::schema::TaskRuntimePortMode::Discover => return Ok(None),
+        };
+
+        let resolved = listener
+            .project
+            .host
+            .as_ref()
+            .map(|host| ResolvedTaskRuntimeResolution {
+                host: Some(ResolvedTaskRuntimeHost {
+                    address: host.address.trim().to_string(),
+                    port: bind_port,
+                    url: listener.protocol.url_scheme().map(|scheme| {
+                        format!(
+                            "{scheme}://{}:{bind_port}{}",
+                            host.address.trim(),
+                            normalized_runtime_path(host.path.as_deref())
+                        )
+                    }),
+                }),
+            });
+
+        listeners.insert(
+            listener_name.clone(),
+            ResolvedTaskRuntimeListener {
+                protocol: listener.protocol,
+                bind: ResolvedTaskRuntimeBind {
+                    address: listener.bind.address.trim().to_string(),
+                    port: bind_port,
+                },
+                resolved,
+            },
+        );
+    }
+
+    Ok(Some(ResolvedTaskRuntime {
+        kind: runtime.kind,
+        listeners,
+    }))
+}
+
 pub(crate) fn resolve_context_execution_backend(
     contract: &Contract,
     context_name: &str,
@@ -2482,10 +2749,12 @@ pub(crate) fn resolve_context_execution_backend(
                     })?;
 
             Ok(ResolvedExecutionBackend::Container {
+                context_name: Some(context_name.to_string()),
                 image: container.image.clone(),
                 engine,
                 lifecycle,
                 compose_networks: compose_networks_for_context(context),
+                publications: container_publications_for_context(contract, Some(context_name)),
             })
         }
         Backend::Remote => {
@@ -2617,6 +2886,7 @@ fn execute_remote_task_command(
                 stdout: String::new(),
                 stderr: String::new(),
                 target: Some(target.to_string()),
+                runtime: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -2636,6 +2906,7 @@ fn execute_remote_task_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(target.to_string()),
+                runtime: None,
             })
         }
     }
@@ -2954,6 +3225,7 @@ fn backend_provider_output(
         stdout: result.stdout,
         stderr: result.stderr,
         target: Some(result.target.unwrap_or_else(|| fallback_target.to_string())),
+        runtime: None,
     })
 }
 
@@ -3058,8 +3330,395 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
+fn execute_native_task_command(
+    task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    command: &str,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    mode: TaskExecutionMode,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
+    let mut process = shell_command(command);
+    process.current_dir(working_dir).envs(env_overrides.iter());
+
+    match mode {
+        TaskExecutionMode::Stream { emit_progress } => {
+            if emit_progress {
+                let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
+                let notifier = loader.as_ref().map(|loader| loader.notifier());
+                let mut child = process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+
+                let stdout_notifier = notifier.clone();
+                let stdout_handle = child.stdout.take().map(|stdout| {
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stdout, io::stdout(), stdout_notifier, false)
+                    })
+                });
+                let stderr_notifier = notifier;
+                let stderr_handle = child.stderr.take().map(|stderr| {
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, false)
+                    })
+                });
+
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+                let _ =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let _ =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                if let Some(loader) = loader {
+                    loader.stop();
+                }
+
+                Ok(TaskCommandOutput {
+                    exit_code: status.code().unwrap_or(1),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: None,
+                    runtime,
+                })
+            } else {
+                let mut child = process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+                Ok(TaskCommandOutput {
+                    exit_code: status.code().unwrap_or(1),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: None,
+                    runtime,
+                })
+            }
+        }
+        TaskExecutionMode::Capture => {
+            let mut child = process
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true))
+            });
+
+            let runtime = resolve_native_task_runtime(runtime, task_name, &mut child)?;
+            let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stderr =
+                join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+
+            Ok(TaskCommandOutput {
+                exit_code: status.code().unwrap_or(1),
+                stdout,
+                stderr,
+                target: None,
+                runtime,
+            })
+        }
+    }
+}
+
+fn resolve_native_task_runtime(
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    task_name: &str,
+    child: &mut Child,
+) -> Result<Option<ResolvedTaskRuntime>, RunError> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+
+    let pid = child.id();
+    let mut listeners = BTreeMap::new();
+
+    for (listener_name, listener) in &runtime.listeners {
+        let bind_port = match listener.bind.port.mode {
+            crate::schema::TaskRuntimePortMode::Fixed => listener
+                .bind
+                .port
+                .value
+                .expect("validated fixed native listener should include a bind port"),
+            crate::schema::TaskRuntimePortMode::Discover => {
+                discover_native_listener_port(child, pid, task_name, listener_name)?
+            }
+        };
+
+        let resolved = listener
+            .project
+            .host
+            .as_ref()
+            .map(|host| ResolvedTaskRuntimeResolution {
+                host: Some(ResolvedTaskRuntimeHost {
+                    address: host.address.trim().to_string(),
+                    port: bind_port,
+                    url: listener.protocol.url_scheme().map(|scheme| {
+                        format!(
+                            "{scheme}://{}:{bind_port}{}",
+                            host.address.trim(),
+                            normalized_runtime_path(host.path.as_deref())
+                        )
+                    }),
+                }),
+            });
+
+        listeners.insert(
+            listener_name.clone(),
+            ResolvedTaskRuntimeListener {
+                protocol: listener.protocol,
+                bind: ResolvedTaskRuntimeBind {
+                    address: listener.bind.address.trim().to_string(),
+                    port: bind_port,
+                },
+                resolved,
+            },
+        );
+    }
+
+    Ok(Some(ResolvedTaskRuntime {
+        kind: runtime.kind,
+        listeners,
+    }))
+}
+
+fn discover_native_listener_port(
+    child: &mut Child,
+    pid: u32,
+    task_name: &str,
+    listener_name: &str,
+) -> Result<u16, RunError> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: listener_name.to_string(),
+                    details: format!(
+                        "the process exited before ota could discover a listening port (exit code {})",
+                        status.code().unwrap_or(1)
+                    ),
+                });
+            }
+            Ok(None) => {}
+            Err(source) => {
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: listener_name.to_string(),
+                    details: format!("failed to inspect the running process: {source}"),
+                });
+            }
+        }
+
+        match native_listening_ports_for_pid(pid) {
+            Ok(ports) if ports.len() == 1 => {
+                return Ok(*ports
+                    .iter()
+                    .next()
+                    .expect("single discovered port should exist"));
+            }
+            Ok(ports) if ports.len() > 1 => {
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: listener_name.to_string(),
+                    details: format!(
+                        "multiple listening ports were discovered for pid {pid} ({}); declare a fixed bind port instead",
+                        ports
+                            .into_iter()
+                            .map(|port| port.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                });
+            }
+            Ok(_) => {}
+            Err(details) => {
+                return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                    task: task_name.to_string(),
+                    listener: listener_name.to_string(),
+                    details,
+                });
+            }
+        }
+
+        if Instant::now() >= deadline {
+            return Err(RunError::RuntimeEndpointDiscoveryFailed {
+                task: task_name.to_string(),
+                listener: listener_name.to_string(),
+                details: String::from(
+                    "timed out waiting for the declared service listener to start listening",
+                ),
+            });
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn native_listening_ports_for_pid(pid: u32) -> Result<BTreeSet<u16>, String> {
+    #[cfg(unix)]
+    {
+        return native_listening_ports_for_pid_unix(pid);
+    }
+
+    #[cfg(windows)]
+    {
+        return native_listening_ports_for_pid_windows(pid);
+    }
+
+    #[allow(unreachable_code)]
+    Err(String::from(
+        "runtime port discovery is not supported on this operating system yet",
+    ))
+}
+
+#[cfg(unix)]
+fn native_listening_ports_for_pid_unix(pid: u32) -> Result<BTreeSet<u16>, String> {
+    let mut ports = lsof_listening_ports_for_args(["-Pan", "-p", &pid.to_string()])?;
+
+    if ports.is_empty()
+        && let Some(process_group) = unix_process_group_id(pid)?
+    {
+        ports.extend(lsof_listening_ports_for_args([
+            "-Pan",
+            "-g",
+            &process_group.to_string(),
+        ])?);
+    }
+
+    Ok(ports)
+}
+
+#[cfg(unix)]
+fn unix_process_group_id(pid: u32) -> Result<Option<u32>, String> {
+    let output = Command::new("ps")
+        .args(["-o", "pgid=", "-p", &pid.to_string()])
+        .output()
+        .map_err(|error| format!("failed to run `ps` for pid {pid}: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok())
+}
+
+#[cfg(unix)]
+fn lsof_listening_ports_for_args<const N: usize>(
+    base_args: [&str; N],
+) -> Result<BTreeSet<u16>, String> {
+    let mut args = base_args.iter().copied().collect::<Vec<_>>();
+    args.push("-iTCP");
+    args.push("-sTCP:LISTEN");
+    let output = Command::new("lsof")
+        .args(&args)
+        .output()
+        .map_err(|error| format!("failed to run `lsof`: {error}"))?;
+    if !output.status.success() {
+        return Ok(BTreeSet::new());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(parse_lsof_listening_port)
+        .collect())
+}
+
+#[cfg(windows)]
+fn native_listening_ports_for_pid_windows(pid: u32) -> Result<BTreeSet<u16>, String> {
+    let output = Command::new("netstat")
+        .args(["-ano", "-p", "tcp"])
+        .output()
+        .map_err(|error| format!("failed to run `netstat` for pid {pid}: {error}"))?;
+    if !output.status.success() {
+        return Ok(BTreeSet::new());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| parse_netstat_listening_port(line, pid))
+        .collect())
+}
+
+#[cfg(unix)]
+fn parse_lsof_listening_port(line: &str) -> Option<u16> {
+    let mut tokens = line.split_whitespace().rev();
+    if tokens.next()? != "(LISTEN)" {
+        return None;
+    }
+    parse_socket_port(tokens.next()?)
+}
+
+#[cfg(windows)]
+fn parse_netstat_listening_port(line: &str, pid: u32) -> Option<u16> {
+    let columns = line.split_whitespace().collect::<Vec<_>>();
+    if columns.len() < 5 || columns[0] != "TCP" || columns[3] != "LISTENING" {
+        return None;
+    }
+    if columns[4].parse::<u32>().ok()? != pid {
+        return None;
+    }
+    parse_socket_port(columns[1])
+}
+
+fn parse_socket_port(value: &str) -> Option<u16> {
+    let (_, port) = value.rsplit_once(':')?;
+    port.trim().parse::<u16>().ok()
+}
+
 fn execute_container_task_command(
     task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    context_name: Option<&str>,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -3069,6 +3728,7 @@ fn execute_container_task_command(
     engine: &str,
     lifecycle: Lifecycle,
     compose_networks: &[String],
+    publications: &[ContainerPortPublication],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     if let Some(issue) = probe_container_backend(engine, task_name)? {
@@ -3077,12 +3737,15 @@ fn execute_container_task_command(
             stdout: String::new(),
             stderr: issue,
             target: None,
+            runtime: None,
         });
     }
 
     match lifecycle {
         Lifecycle::Ephemeral => execute_ephemeral_container_task_command(
             task_name,
+            runtime,
+            context_name,
             command,
             working_dir,
             env_overrides,
@@ -3091,10 +3754,13 @@ fn execute_container_task_command(
             image,
             engine,
             compose_networks,
+            publications,
             mode,
         ),
         Lifecycle::Persistent => execute_persistent_container_task_command(
             task_name,
+            runtime,
+            context_name,
             command,
             working_dir,
             env_overrides,
@@ -3103,6 +3769,7 @@ fn execute_container_task_command(
             image,
             engine,
             compose_networks,
+            publications,
             mode,
         ),
     }
@@ -3131,6 +3798,8 @@ fn probe_container_backend(engine: &str, task_name: &str) -> Result<Option<Strin
 
 fn execute_ephemeral_container_task_command(
     task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    context_name: Option<&str>,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -3139,9 +3808,12 @@ fn execute_ephemeral_container_task_command(
     image: &str,
     engine: &str,
     compose_networks: &[String],
+    publications: &[ContainerPortPublication],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let container_name = ephemeral_container_name(working_dir, image, engine);
+    let identity_seed = container_identity_seed(context_name, publications);
+    let container_name =
+        ephemeral_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
     let mut create = Command::new(engine);
     create
         .arg("create")
@@ -3157,6 +3829,7 @@ fn execute_ephemeral_container_task_command(
     if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
+    append_container_publication_args(&mut create, publications);
     for (name, value) in env_overrides {
         if secret_env_names.contains(name) {
             create.env(name, value);
@@ -3180,6 +3853,7 @@ fn execute_ephemeral_container_task_command(
             stdout: String::from_utf8_lossy(&create_status.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&create_status.stderr).into_owned(),
             target: Some(container_name.clone()),
+            runtime: None,
         });
     }
 
@@ -3189,6 +3863,8 @@ fn execute_ephemeral_container_task_command(
         let _ = remove_persistent_container(engine, &container_name, task_name);
         return Ok(container_command_failure(failure, container_name.clone()));
     }
+    let resolved_runtime =
+        resolve_container_task_runtime(runtime, engine, &container_name, task_name)?;
 
     match mode {
         TaskExecutionMode::Stream { .. } => {
@@ -3209,6 +3885,7 @@ fn execute_ephemeral_container_task_command(
                 stdout: String::new(),
                 stderr: String::new(),
                 target: Some(container_name.clone()),
+                runtime: resolved_runtime.clone(),
             })
         }
         TaskExecutionMode::Capture => {
@@ -3231,6 +3908,7 @@ fn execute_ephemeral_container_task_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name),
+                runtime: resolved_runtime,
             })
         }
     }
@@ -3238,6 +3916,8 @@ fn execute_ephemeral_container_task_command(
 
 fn execute_persistent_container_task_command(
     task_name: &str,
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    context_name: Option<&str>,
     command: &str,
     working_dir: &Path,
     env_overrides: &BTreeMap<String, String>,
@@ -3246,9 +3926,12 @@ fn execute_persistent_container_task_command(
     image: &str,
     engine: &str,
     compose_networks: &[String],
+    publications: &[ContainerPortPublication],
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    let container_name = persistent_container_name(working_dir, image, engine);
+    let identity_seed = container_identity_seed(context_name, publications);
+    let container_name =
+        persistent_container_name_for_seed(working_dir, image, engine, identity_seed.as_deref());
 
     if let Some(failure) = ensure_persistent_container_ready(
         task_name,
@@ -3257,6 +3940,7 @@ fn execute_persistent_container_task_command(
         engine,
         &container_name,
         compose_networks,
+        publications,
     )? {
         return Ok(failure);
     }
@@ -3283,11 +3967,12 @@ fn execute_persistent_container_task_command(
             engine,
             &container_name,
             compose_networks,
+            publications,
         )?;
         if create.exit_code != 0 {
             return Ok(container_command_failure(create, container_name.clone()));
         }
-        return exec_persistent_container_task_command(
+        let output = exec_persistent_container_task_command(
             task_name,
             command,
             env_overrides,
@@ -3296,10 +3981,17 @@ fn execute_persistent_container_task_command(
             engine,
             mode,
             &container_name,
-        );
+        )?;
+        return Ok(TaskCommandOutput {
+            runtime: resolve_container_task_runtime(runtime, engine, &container_name, task_name)?,
+            ..output
+        });
     }
 
-    Ok(output)
+    Ok(TaskCommandOutput {
+        runtime: resolve_container_task_runtime(runtime, engine, &container_name, task_name)?,
+        ..output
+    })
 }
 
 fn ensure_persistent_container_ready(
@@ -3309,6 +4001,7 @@ fn ensure_persistent_container_ready(
     engine: &str,
     container_name: &str,
     compose_networks: &[String],
+    publications: &[ContainerPortPublication],
 ) -> Result<Option<TaskCommandOutput>, RunError> {
     let inspect = container_command_output(engine, &["inspect", container_name], None, task_name)?;
     if inspect.exit_code != 0 {
@@ -3319,6 +4012,7 @@ fn ensure_persistent_container_ready(
             engine,
             container_name,
             compose_networks,
+            publications,
         )?;
         if status.exit_code != 0 {
             return Ok(Some(container_command_failure(
@@ -3364,6 +4058,7 @@ fn ensure_persistent_container_ready(
                 engine,
                 container_name,
                 compose_networks,
+                publications,
             )?;
             if create.exit_code != 0 {
                 return Ok(Some(container_command_failure(
@@ -3411,6 +4106,7 @@ fn create_persistent_container(
     engine: &str,
     container_name: &str,
     compose_networks: &[String],
+    publications: &[ContainerPortPublication],
 ) -> Result<ContainerCommandOutput, RunError> {
     let mut args = vec![
         "run".to_string(),
@@ -3432,11 +4128,160 @@ fn create_persistent_container(
         args.push("--network".to_string());
         args.push(network.clone());
     }
+    append_container_publication_vec(&mut args, publications);
     args.push(image.to_string());
     args.push("-lc".to_string());
     args.push("while true; do sleep 3600; done".to_string());
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     container_command_output(engine, &arg_refs, None, task_name)
+}
+
+fn append_container_publication_args(
+    command: &mut Command,
+    publications: &[ContainerPortPublication],
+) {
+    for publication in publications {
+        command
+            .arg("-p")
+            .arg(container_publication_arg(publication));
+    }
+}
+
+fn append_container_publication_vec(
+    args: &mut Vec<String>,
+    publications: &[ContainerPortPublication],
+) {
+    for publication in publications {
+        args.push("-p".to_string());
+        args.push(container_publication_arg(publication));
+    }
+}
+
+fn container_publication_arg(publication: &ContainerPortPublication) -> String {
+    let transport = publication.protocol.network_protocol();
+    match publication.host_port_mode {
+        TaskRuntimeHostPortMode::Fixed => format!(
+            "{}:{}:{}/{}",
+            publication.host_address,
+            publication
+                .host_port
+                .expect("validated fixed host publication should include a host port"),
+            publication.bind_port,
+            transport
+        ),
+        TaskRuntimeHostPortMode::Auto => format!(
+            "{}::{}/{}",
+            publication.host_address, publication.bind_port, transport
+        ),
+    }
+}
+
+fn resolve_container_task_runtime(
+    runtime: Option<&crate::schema::TaskRuntimeSpec>,
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+) -> Result<Option<ResolvedTaskRuntime>, RunError> {
+    let Some(runtime) = runtime else {
+        return Ok(None);
+    };
+
+    let listeners = runtime
+        .listeners
+        .iter()
+        .map(|(listener_name, listener)| {
+            let bind_port = listener
+                .bind
+                .port
+                .value
+                .expect("validated container listener should have a fixed bind port");
+            let resolved = match listener.project.host.as_ref() {
+                Some(host) => {
+                    let port = container_published_port(
+                        engine,
+                        container_name,
+                        bind_port,
+                        listener.protocol,
+                        task_name,
+                    )?
+                    .ok_or_else(|| RunError::RuntimeEndpointDiscoveryFailed {
+                        task: task_name.to_string(),
+                        listener: listener_name.clone(),
+                        details: format!(
+                            "the container engine did not report a published host port for `{container_name}`"
+                        ),
+                    })?;
+                    Some(ResolvedTaskRuntimeResolution {
+                        host: Some(ResolvedTaskRuntimeHost {
+                            address: host.address.trim().to_string(),
+                            port,
+                            url: listener.protocol.url_scheme().map(|scheme| {
+                                format!(
+                                    "{scheme}://{}:{port}{}",
+                                    host.address.trim(),
+                                    normalized_runtime_path(host.path.as_deref())
+                                )
+                            }),
+                        }),
+                    })
+                }
+                None => None,
+            };
+
+            Ok((
+                listener_name.clone(),
+                ResolvedTaskRuntimeListener {
+                    protocol: listener.protocol,
+                    bind: ResolvedTaskRuntimeBind {
+                        address: listener.bind.address.trim().to_string(),
+                        port: bind_port,
+                    },
+                    resolved,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, RunError>>()?;
+
+    Ok(Some(ResolvedTaskRuntime {
+        kind: runtime.kind,
+        listeners,
+    }))
+}
+
+fn container_published_port(
+    engine: &str,
+    container_name: &str,
+    bind_port: u16,
+    protocol: TaskRuntimeProtocol,
+    task_name: &str,
+) -> Result<Option<u16>, RunError> {
+    let transport = protocol.network_protocol();
+    let query = format!("{bind_port}/{transport}");
+    let output =
+        container_command_output(engine, &["port", container_name, &query], None, task_name)?;
+    if output.exit_code != 0 {
+        return Ok(None);
+    }
+
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .and_then(parse_published_port_line))
+}
+
+fn parse_published_port_line(value: &str) -> Option<u16> {
+    let (_, port) = value.rsplit_once(':')?;
+    port.trim().parse::<u16>().ok()
+}
+
+fn normalized_runtime_path(value: Option<&str>) -> String {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(path) if path.starts_with('/') => path.to_string(),
+        Some(path) => format!("/{path}"),
+        None => String::from("/"),
+    }
 }
 
 fn ensure_container_networks(
@@ -3538,6 +4383,7 @@ fn container_command_failure(
         stdout: status.stdout,
         stderr: status.stderr,
         target: Some(container_name),
+        runtime: None,
     }
 }
 
@@ -3583,6 +4429,7 @@ fn exec_persistent_container_task_command(
                 stdout: String::new(),
                 stderr: String::new(),
                 target: Some(container_name.to_string()),
+                runtime: None,
             })
         }
         TaskExecutionMode::Capture => {
@@ -3602,6 +4449,7 @@ fn exec_persistent_container_task_command(
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: Some(container_name.to_string()),
+                runtime: None,
             })
         }
     }
@@ -3647,19 +4495,39 @@ struct ContainerCommandOutput {
 }
 
 pub(crate) fn persistent_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
+    persistent_container_name_for_seed(working_dir, image, engine, None)
+}
+
+fn persistent_container_name_for_seed(
+    working_dir: &Path,
+    image: &str,
+    engine: &str,
+    identity_seed: Option<&str>,
+) -> String {
     let mut hasher = DefaultHasher::new();
     working_dir.display().to_string().hash(&mut hasher);
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
+    identity_seed.hash(&mut hasher);
     format!("ota-{:x}", hasher.finish())
 }
 
 pub(crate) fn ephemeral_container_name(working_dir: &Path, image: &str, engine: &str) -> String {
+    ephemeral_container_name_for_seed(working_dir, image, engine, None)
+}
+
+fn ephemeral_container_name_for_seed(
+    working_dir: &Path,
+    image: &str,
+    engine: &str,
+    identity_seed: Option<&str>,
+) -> String {
     let mut hasher = DefaultHasher::new();
     std::process::id().hash(&mut hasher);
     working_dir.display().to_string().hash(&mut hasher);
     image.hash(&mut hasher);
     engine.hash(&mut hasher);
+    identity_seed.hash(&mut hasher);
     format!("ota-ephemeral-{:x}", hasher.finish())
 }
 
@@ -4662,8 +5530,142 @@ tasks:
                 stdout: String::from("hello"),
                 stderr: String::from("error"),
                 target: None,
+                runtime: None,
             }
         );
+    }
+
+    #[test]
+    fn run_task_captured_reports_fixed_native_runtime_endpoint() {
+        let _guard = env_mutex_lock();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: |
+      python3 - <<'PY'
+      import socket
+      import time
+      sock = socket.socket()
+      sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      sock.bind(("127.0.0.1", {port}))
+      sock.listen(1)
+      time.sleep(1)
+      PY
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              path: /
+"#
+        ));
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+        let runtime = outcome
+            .runtime
+            .expect("fixed native service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+
+        assert_eq!(listener.bind.address, "127.0.0.1");
+        assert_eq!(listener.bind.port, port);
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("fixed native listener should resolve a host endpoint");
+        assert_eq!(host.address, "127.0.0.1");
+        assert_eq!(host.port, port);
+        let expected_url = format!("http://127.0.0.1:{port}/");
+        assert_eq!(host.url.as_deref(), Some(expected_url.as_str()));
+    }
+
+    #[test]
+    fn run_task_captured_discovers_native_runtime_endpoint() {
+        #[cfg(unix)]
+        if std::process::Command::new("lsof")
+            .arg("-v")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: |
+      python3 - <<'PY'
+      import socket
+      import time
+      sock = socket.socket()
+      sock.bind(("127.0.0.1", 0))
+      sock.listen(1)
+      time.sleep(1)
+      PY
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: discover
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
+        let runtime = outcome
+            .runtime
+            .expect("discover native service task should report runtime metadata");
+        let listener = runtime
+            .listeners
+            .get("http")
+            .expect("http listener should be present");
+        let host = listener
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.host.as_ref())
+            .expect("discover native listener should resolve a host endpoint");
+
+        assert!(listener.bind.port > 0);
+        assert_eq!(host.address, "127.0.0.1");
+        assert_eq!(host.port, listener.bind.port);
+        let expected_url = format!("http://127.0.0.1:{}/", listener.bind.port);
+        assert_eq!(host.url.as_deref(), Some(expected_url.as_str()));
     }
 
     #[test]
@@ -4688,10 +5690,12 @@ tasks:
             running_loader_label(
                 "test",
                 &ResolvedExecutionBackend::Container {
+                    context_name: None,
                     image: String::from("rust:1.94-bookworm"),
                     engine: String::from("docker"),
                     lifecycle: Lifecycle::Ephemeral,
                     compose_networks: Vec::new(),
+                    publications: Vec::new(),
                 }
             ),
             "Running test (container)"
@@ -4791,6 +5795,7 @@ tasks:
                 engine,
                 lifecycle,
                 compose_networks,
+                ..
             } => {
                 assert_eq!(image, "ghcr.io/ota/test:latest");
                 assert_eq!(engine, "podman");

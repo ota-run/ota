@@ -710,11 +710,31 @@ tasks:
     run: pnpm install
     safe_for_agent: true
   build:
+    context: app
     requires_services:
       - postgres
     depends_on:
       - setup
     run: pnpm build
+  dev:
+    context: app
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
   package:
     depends_on:
       - build
@@ -741,12 +761,43 @@ Fields:
 - `category`: optional string
 - `env`: optional map of fixed task-scoped environment overrides
 - `inputs`: optional map of named task inputs
+- `context`: optional execution context name
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
+- `runtime`: optional long-running workload shape for endpoint-bearing tasks
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
+
+`runtime` fields:
+
+- `kind`: currently `service`
+- `listeners`: named listener map
+- `listeners.<name>.protocol`: `http`, `https`, or `tcp`
+- `listeners.<name>.bind.address`: bind address inside the task execution context
+- `listeners.<name>.bind.port.mode`: `fixed` or `discover`
+- `listeners.<name>.bind.port.value`: required when `mode: fixed`
+- `listeners.<name>.project.host.address`: host-visible address for the projected listener
+- `listeners.<name>.project.host.port.mode`: `fixed` or `auto`
+- `listeners.<name>.project.host.port.value`: required when host port `mode: fixed`
+- `listeners.<name>.project.host.path`: optional URL path for `http` and `https`
+
+`runtime` mode semantics:
+
+- `bind.port.mode: fixed`: the task must listen on one explicit port inside its execution context
+- `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
+- `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
+- `project.host.port.mode: auto`: ota asks the backend for any free host port, then reports the resolved URL in receipts and JSON output
+
+Current execution rules:
+
+- native tasks may use `bind.port.mode: fixed` or `discover`
+- native tasks with `bind.port.mode: discover` must not also declare `project.host.port.mode: fixed`
+- container tasks with `project.host` must use `bind.port.mode: fixed`
+- container tasks may use `project.host.port.mode: fixed` or `auto`
+- remote execution contexts do not support `runtime.kind: service` host projection yet
+- loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
 
 Use cases:
 
@@ -754,6 +805,11 @@ Use cases:
 - use `script` when the task needs multiple lines, shell setup, or cleanup steps
 - use `env` when a task needs fixed environment values that should override repo-level env for that task
 - use `inputs` when a task needs named per-run values like `base_url`, `tenant`, or `mode`
+- use `context` when one task should run in a different execution plane from the repo default
+- use `runtime.kind: service` when a task is a long-running workload that should publish a deterministic host endpoint
+- use `bind.port.mode: fixed` when the app should stay on one known internal port
+- use `bind.port.mode: discover` when a native dev server may choose its final port at runtime
+- use `project.host.port.mode: auto` when the host port should be conflict-free but does not need to stay fixed
 - use `description` for the short summary and `notes` for the task purpose plus extra guidance
 - use `requires_services` when a task needs canonical services brought up through their manager before the task runs
 - use `depends_on` to model a build/package/upload chain without hiding order in shell scripts
@@ -771,6 +827,9 @@ Task input semantics:
 - if every declared input has a default, the task can be run with no input flags
 - task input names may overlap ota command flags such as `mode` or `jobs`; when they do, put ota command flags before the task and task inputs after the task
 - `requires_services` resolves declared services before the task body and keeps lifecycle ownership with `services.<name>.manager`
+- `runtime.listeners` keep workload ingress with the task instead of overloading `services`
+- `ota run` records the resolved runtime endpoint in receipts and JSON output when ota can authoritatively resolve it
+- `ota up` prepares and reports resolvable workload endpoints from the selected topology without turning workload ingress into a service definition
 
 Example:
 

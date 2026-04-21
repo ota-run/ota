@@ -24,7 +24,7 @@
 
 # Execution Topology
 
-Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, `tasks.<name>.requires_services`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
+Status: evolving. The execution-topology foundation is shipped: `execution.default_context`, `execution.contexts`, `tasks.<name>.context`, `tasks.<name>.requires_services`, task-scoped workload listeners via `tasks.<name>.runtime.kind: service`, typed Compose service managers, context-scoped `services.<name>.endpoints`, `services.<name>.readiness.from`, and Compose-network attachment for container contexts. Broader manager coverage and deeper topology validation are still in progress.
 
 ## Core truth
 
@@ -54,14 +54,15 @@ The current single repo-wide execution story is too coarse for that reality.
 
 Model the repo as execution topology, not as one flat backend choice.
 
-The current shipped model makes five things first-class:
+The current shipped model makes these things first-class:
 
 1. execution contexts
 2. typed service managers
 3. task-level service requirements
-4. context-scoped endpoint projection
-5. context-scoped readiness
-6. context-scoped requirements
+4. task-level workload listeners
+5. context-scoped endpoint projection
+6. context-scoped readiness
+7. context-scoped requirements
 
 ## Design principles
 
@@ -156,6 +157,42 @@ tasks:
 
 This makes orchestration tasks and workload tasks honest without forcing Docker into the app image.
 `requires_services` lets a task declare that canonical services must be ready before its body runs, while ownership still stays with `services.<name>.manager`.
+
+### `tasks.<name>.runtime.kind: service`
+
+Long-running app workloads should keep their ingress declaration with the task that owns the process.
+
+```yaml
+tasks:
+  dev:
+    context: app
+    requires_services:
+      - postgres
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+```
+
+This keeps the boundary honest:
+
+- `services` still model dependencies like Postgres
+- `tasks.<name>.runtime.listeners` model app ingress like a dev server or Spring Boot API
+- `ota run dev` records the resolved host endpoint after the workload starts
+- `ota up` can prepare and report resolvable workload endpoints from persistent container contexts without pretending the app is a dependency service
 
 ### `services.<name>.manager`
 
@@ -266,6 +303,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 3. ensure workload attachments are valid
 4. run `setup` in the task context
 5. re-check readiness from the declared contexts
+6. surface resolvable workload endpoints for runtime-bearing tasks so the host can see the published URL without guessing container port mappings
 
 ### `ota run`
 
@@ -274,6 +312,7 @@ That should fail explicitly instead of falling back to a guessed host path.
 - resolve the task context
 - attach the workload to declared service topology when needed
 - execute inside that context
+- record the resolved workload endpoint when the task declares one
 - emit receipts that report the resolved context and attached topology
 
 ## Container task semantics
@@ -446,6 +485,7 @@ Compatibility interpretation:
 
 - legacy contracts use a single-context model
 - legacy service fields remain host-bound unless upgraded to typed topology-aware service blocks
+- task-scoped workload listeners are canonical on the named-context topology model and should not be backported into legacy service semantics
 
 Warn when topology-sensitive container usage mixes with legacy service semantics.
 
