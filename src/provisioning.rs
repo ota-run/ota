@@ -3678,6 +3678,20 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    fn make_executable(path: &Path) {
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(path).unwrap().permissions();
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+            fs::set_permissions(path, perms).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let _ = fs::metadata(path).unwrap();
+        }
+    }
+
     fn make_shim(dir: &Path, name: &str, log: &Path) {
         let shim = dir.join(name);
         let script = format!(
@@ -3685,26 +3699,14 @@ mod tests {
             log.display()
         );
         fs::write(&shim, script).unwrap();
-        let mut perms = fs::metadata(&shim).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&shim, perms).unwrap();
+        make_executable(&shim);
     }
 
     fn make_passthrough_shim(dir: &Path, name: &str, target: &str) {
         let shim = dir.join(name);
         let script = format!("#!/bin/sh\nexec {} \"$@\"\n", target);
         fs::write(&shim, script).unwrap();
-        let mut perms = fs::metadata(&shim).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&shim, perms).unwrap();
+        make_executable(&shim);
     }
 
     fn make_powershell_bootstrap_shim(dir: &Path, target_name: &str, version: &str, log: &Path) {
@@ -3719,13 +3721,7 @@ mod tests {
             target.display(),
         );
         fs::write(&shim, script).unwrap();
-        let mut perms = fs::metadata(&shim).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&shim, perms).unwrap();
+        make_executable(&shim);
     }
 
     #[test]
@@ -4692,13 +4688,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"E: Version '8.13.0' for 'curl' was not found\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -4760,13 +4750,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *mise*install*node@22*) echo 'mise install failed' >&2; exit 1 ;;\n    *mise*ls-remote*node@22*) printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1; exit 0 ;;\n  esac\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -4828,13 +4812,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo \"Err:1 http://deb.debian.org/debian bookworm InRelease\" >&2\n  echo \"  Temporary failure resolving 'deb.debian.org'\" >&2\n  echo \"E: Failed to fetch http://deb.debian.org/debian/dists/bookworm/InRelease\" >&2\n  echo \"E: Some index files failed to download. They have been ignored, or old ones used instead.\" >&2\n  exit 100\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -4893,13 +4871,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Error: No available formula with the name \"node@22\"' >&2\n  exit 1\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -4958,13 +4930,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'No match for argument: jq-1.7.1' >&2\n  echo 'Error: Unable to find a match: jq-1.7.1' >&2\n  exit 1\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5023,13 +4989,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'error: target not found: jq' >&2\n  exit 1\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5088,13 +5048,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'Found Microsoft.VisualStudioCode' >&1\n  echo 'Version' >&1\n  echo '1.89.0' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5150,13 +5104,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  echo 'git|2.46.0' >&1\n  echo 'git|2.45.0' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5212,13 +5160,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '{\"version\":\"0.10.0\"}\\n' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5274,13 +5216,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '[\"21.0.0\",\"21.1.0\"]\\n' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5336,13 +5272,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '21.0.0\\n21.1.0\\n' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5398,13 +5328,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf '================================================================================\\nAvailable Java Versions\\n================================================================================\\n     17.0.9-tem\\n     22.0.1-tem\\n' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
@@ -5460,13 +5384,7 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'cpython-3.11.9-linux-x86_64-none\\n' >&1\n  exit 0\nfi\nexit 1\n",
         )
         .unwrap();
-        let mut perms = fs::metadata(&docker).unwrap().permissions();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        fs::set_permissions(&docker, perms).unwrap();
+        make_executable(&docker);
 
         let original_path = env::var("PATH").unwrap_or_default();
         unsafe {
