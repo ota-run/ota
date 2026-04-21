@@ -24,39 +24,67 @@
 version: 1
 project:
   name: basic-services
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
 services:
   api:
-    required: true
-    provider: docker-compose
-    start: docker compose up -d api
-    stop: docker compose stop api
-    healthcheck: curl -fsS http://localhost:3000/health
-    depends_on:
-      - postgres
-    timeout: 5000
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 3000
+    readiness:
+      from: host
+      run: docker compose exec -T api sh -lc 'curl -fsS http://localhost:3000/health'
   postgres:
-    required: true
-    provider: docker-compose
-    start: docker compose up -d postgres
-    stop: docker compose stop postgres
-    healthcheck: pg_isready -h localhost -p 5432
-    timeout: 5000
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      run: docker compose exec -T postgres sh -lc 'pg_isready -h localhost -p 5432'
   redis:
-    required: false
-    provider: docker-compose
-    start: docker compose up -d redis
-    stop: docker compose stop redis
-    healthcheck: redis-cli ping
-    depends_on:
-      - postgres
-    timeout: 3000
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: redis
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 6379
+    readiness:
+      from: host
+      run: docker compose exec -T redis sh -lc 'redis-cli ping'
 tasks:
   setup:
+    context: host
     run: pnpm install
   dev:
+    context: host
     run: pnpm dev
     depends_on:
       - setup
+    requires_services:
+      - api
+      - postgres
+      - redis
 agent:
   entrypoint: setup
   default_task: dev
@@ -72,4 +100,4 @@ agent:
     - ota.yaml
   notes: |
     Use `ota up` before starting the service stack.
-    Keep service startup and healthchecks in the contract instead of in README prose.
+    Keep service startup and readiness in the contract instead of in README prose.

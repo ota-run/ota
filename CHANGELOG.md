@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+## 1.6.0
+
+- refreshed the shipped example contracts and public execution templates to the current execution-context and typed-service-manager model, including the adoption starter, container/remote templates, and the in-repo advanced examples
 - expanded the topology guide with a service-scoped requirements comparison so users can distinguish contract-wide runtimes/tools from service-owned lifecycle and readiness concerns
 - added a docs decision guide that compares top-level requirements, execution-context requirements, service managers, task prerequisites, and execution modes, and linked it from the docs home page so users can choose the right contract shape faster
 - fixed `requires_services` enforcement so task service prerequisites fail on any readiness/healthcheck finding, including warning-severity service checks
