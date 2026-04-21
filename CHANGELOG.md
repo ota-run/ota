@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- made shell-based task execution forward `Ctrl+C`/termination to the task process group so long-running container and native dev commands stop cleanly instead of leaving orphaned listeners behind
+- fixed auto-projected container endpoints so `ota run` resolves the published host port after the workload starts instead of failing before the engine has reported the mapping
 - fixed workload-endpoint projection boundaries so `ota up` no longer advertises task endpoints before the workload actually ran, task-scoped host publications no longer leak into unrelated container tasks, and persistent container cleanup/reuse now follows the same seeded identity as execution
 - added task-scoped workload endpoint projection through `tasks.<name>.runtime.kind: service`, including named listeners with bind plus host projection settings, validation for impossible native/container projection plans, resolved runtime endpoints in `ota run` receipts/JSON, and workload endpoint reporting in `ota up` summaries and receipts
 - updated the flagship adoption example and spec docs so containerized app ingress is modeled as task-owned workload topology instead of overloading `services`
