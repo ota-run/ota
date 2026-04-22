@@ -27909,7 +27909,7 @@ fn render_run_runtime_validation_text(
                 format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
             let why_lines = vec![
                 format!(
-                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                    "task `{task_name}` listener `{listener_name}` must use `bind.port.mode: fixed` when `project.host` is declared in a container context"
                 ),
                 String::from(
                     "container workloads with `project.host` declared must use a fixed internal bind port",
@@ -28785,7 +28785,7 @@ fn render_task_runtime_bind_validation_text(
                 format!("tasks.{task_name}.runtime.listeners.{listener_name}.bind.port.mode");
             let why_lines = vec![
                 format!(
-                    "task `{task_name}` listener `{listener_name}` with `bind.port.mode: auto` is invalid"
+                    "task `{task_name}` listener `{listener_name}` must use `bind.port.mode: fixed` when `project.host` is declared in a container context"
                 ),
                 String::from(
                     "container workloads with `project.host` declared must use a fixed internal bind port",

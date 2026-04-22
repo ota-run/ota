@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::schema::{
     AgentConfig, Backend, Contract, EnvConfig, ExtensionKind, RuntimeRequirement, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
-    TaskRuntimeProtocol, TaskSpec,
+    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1025,6 +1025,8 @@ fn validate_task_runtime(
         )));
     }
 
+    validate_runtime_listener_env_suffix_collisions(task_name, runtime, errors);
+
     for (listener_name, listener) in &runtime.listeners {
         if listener_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
@@ -1107,6 +1109,49 @@ fn validate_task_runtime(
                 )));
         }
     }
+}
+
+fn validate_runtime_listener_env_suffix_collisions(
+    task_name: &str,
+    runtime: &TaskRuntimeSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let mut listeners_by_suffix = BTreeMap::<String, Vec<String>>::new();
+    for (listener_name, listener) in &runtime.listeners {
+        if listener.project.host.is_none() {
+            continue;
+        }
+        listeners_by_suffix
+            .entry(runtime_listener_env_suffix(listener_name))
+            .or_default()
+            .push(listener_name.clone());
+    }
+
+    for (suffix, listeners) in listeners_by_suffix {
+        if listeners.len() < 2 {
+            continue;
+        }
+        let rendered_listeners = listeners
+            .iter()
+            .map(|listener_name| format!("`{listener_name}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` projected listeners {rendered_listeners} collapse to the same `OTA_PUBLIC_URL_{suffix}` env key; rename listeners so each projected listener maps to a unique `OTA_PUBLIC_URL_<LISTENER>` key",
+        )));
+    }
+}
+
+fn runtime_listener_env_suffix(listener_name: &str) -> String {
+    let mut suffix = String::new();
+    for ch in listener_name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            suffix.push(ch.to_ascii_uppercase());
+        } else {
+            suffix.push('_');
+        }
+    }
+    suffix
 }
 
 fn validate_task_runtime_host_projection(
@@ -1973,6 +2018,68 @@ tasks:
             error.to_string().contains(
                 "declares multiple listeners with `project.host.primary: true` (`http`, `metrics`)",
             )
+        }));
+    }
+
+    #[test]
+    fn rejects_projected_listener_names_that_collapse_to_the_same_public_url_env_key() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      listeners:
+        api-http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: auto
+              path: /
+        api_http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3001
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /metrics
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("collapse to the same `OTA_PUBLIC_URL_API_HTTP` env key")
         }));
     }
 

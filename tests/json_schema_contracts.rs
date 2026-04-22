@@ -652,6 +652,7 @@ fn up_schema_includes_member_grouping() {
     let schema = load_schema("docs/spec/json-schemas/up.json");
     let preview_properties = &schema["oneOf"][0]["properties"];
     let runtime_properties = &schema["oneOf"][1]["properties"];
+    let runtime_receipt_properties = &runtime_properties["receipt"]["properties"];
     let runtime_member_properties =
         &runtime_properties["members"]["items"]["oneOf"][0]["properties"];
     let preview_member_properties =
@@ -672,6 +673,8 @@ fn up_schema_includes_member_grouping() {
     assert!(preview_properties.get("stderr").is_some());
     assert!(runtime_properties.get("stderr").is_some());
     assert!(runtime_properties.get("members").is_some());
+    assert!(runtime_receipt_properties.get("runtime").is_some());
+    assert!(runtime_receipt_properties.get("workloads").is_some());
     assert!(runtime_member_properties.get("member").is_some());
     assert!(runtime_member_properties.get("status").is_some());
     assert!(runtime_member_properties.get("phase").is_some());
@@ -679,6 +682,20 @@ fn up_schema_includes_member_grouping() {
     assert!(preview_member_properties.get("dry_run").is_some());
     assert!(preview_member_properties.get("plan").is_some());
     assert_eq!(validate_failure_ref, "./validate.json#/oneOf/1");
+}
+
+#[test]
+fn receipt_schema_includes_runtime_endpoint_metadata() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let shared = load_schema("docs/spec/json-schemas/shared.json");
+    let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
+    let resolved_runtime = &shared["$defs"]["resolvedTaskRuntime"]["properties"];
+
+    assert!(receipt_properties.get("runtime").is_some());
+    assert!(receipt_properties.get("workloads").is_some());
+    assert!(resolved_runtime.get("primary_listener").is_some());
+    assert!(resolved_runtime.get("primary_endpoint").is_some());
+    assert!(resolved_runtime.get("exposed_endpoints").is_some());
 }
 
 #[test]

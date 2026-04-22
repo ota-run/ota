@@ -789,7 +789,7 @@ Fields:
 - `bind.port.mode: fixed`: the task must listen on one explicit port inside its execution context
 - `bind.port.mode: discover`: ota discovers the final listening port after the task starts; use this only for native tasks where the process may auto-bump to a free port
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
-- `project.host.port.mode: auto`: ota reserves a free host port in container contexts before process start, injects runtime URL env values, and reports the resolved URL in receipts and JSON output
+- `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs resolve the current published host mapping
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
 
 Current execution rules:
@@ -800,7 +800,7 @@ Current execution rules:
 - container tasks may use `project.host.port.mode: fixed` or `auto`
 - remote execution contexts do not support `runtime.kind: service` host projection yet
 - loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
-- for container tasks with `project.host.port.mode: auto`, ota verifies the container engine published the reserved host port and retries bounded times on host-port conflict before failing
+- for container tasks with `project.host.port.mode: auto`, ota verifies resolved host publication; ephemeral runs retry bounded times on host-port conflict before failing
 
 Use cases:
 
